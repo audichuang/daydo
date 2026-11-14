@@ -1,8 +1,27 @@
 import SwiftUI
 import DayDoCore
 
-/// 4a / 4b · Date panel: summary cards first, calendar and option rows
-/// expand on demand. 確定 commits; 取消 returns to the detail.
+/// Date editor used by both the composer and the task detail. Page 1 is the
+/// date panel (calendar always open, then 時間／提醒／重複 rows); page 2 is the
+/// time-block editor reached from 持續時間.
+struct DateEditorFlow: View {
+    @Binding var draft: DateDraft
+    var today: LocalDay
+    var title: String
+    var excludeTaskId: String?
+    var cancel: () -> Void
+    var confirm: () -> Void
+    @State private var timeline = false
+
+    var body: some View {
+        if timeline {
+            TimeBlockEditor(draft: $draft, title: title, excludeTaskId: excludeTaskId, cancel: { timeline = false }, save: { timeline = false })
+        } else {
+            DatePanel(draft: $draft, today: today, cancel: cancel, confirm: confirm, openTime: { timeline = true })
+        }
+    }
+}
+
 struct DatePanel: View {
     @Environment(\.accent) private var accent
     @Binding var draft: DateDraft
@@ -12,16 +31,14 @@ struct DatePanel: View {
     var openTime: () -> Void
 
     @State private var tab = 0
-    @State private var calOpen = false
-    @State private var endCalOpen = false
-    @State private var open: Set<String> = []
+    @State private var expanded: String?
     @State private var month = LocalDay(year: 2000, month: 1, day: 1)
     @State private var endMonth = LocalDay(year: 2000, month: 1, day: 1)
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                PillButton(title: "取消", action: cancel)
+                circleButton("xmark", fill: Palette.control, fg: Palette.text, label: "取消", action: cancel)
                 Spacer()
                 HStack(spacing: 2) {
                     tabButton("日期", 0)
@@ -30,287 +47,288 @@ struct DatePanel: View {
                 .padding(3)
                 .background(Capsule().fill(Palette.control))
                 Spacer()
-                PillButton(title: "確定", kind: .primary, action: confirm)
+                circleButton("checkmark", fill: accent.color, fg: accent.onAccent, label: "確定", action: confirm)
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 16)
-            .frame(height: 68)
+            .padding(.horizontal, 16)
+            .padding(.top, 18)
+            .padding(.bottom, 6)
 
             ScrollView {
-                VStack(spacing: 12) {
-                    if tab == 0 { summaryCards } else { durationCard }
-                    if calOpen { calendar }
-                    optionsCard
-                    Button("清除日期") {
+                VStack(spacing: 14) {
+                    if tab == 0 { dateTab } else { durationTab }
+                    Button("清除") {
                         draft.day = nil
                         draft.endDay = nil
+                        draft.allDay = true
                         draft.reminders = []
                         draft.repeatRule = nil
                     }
-                    .txt(15)
+                    .txt(16)
                     .foregroundStyle(Palette.danger)
-                    .frame(height: 44)
+                    .frame(maxWidth: .infinity, minHeight: 48)
                     .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 12)
-                .padding(.bottom, 40)
+                .padding(.top, 8)
+                .padding(.bottom, 30)
             }
+            .scrollIndicators(.hidden)
         }
+        .background(Palette.card)
         .onAppear {
             month = (draft.day ?? today).firstOfMonth
             endMonth = (draft.endDay ?? draft.day ?? today).firstOfMonth
-            if draft.day == nil { calOpen = true }
         }
+    }
+
+    func circleButton(_ icon: String, fill: Color, fg: Color, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 17, weight: .semibold)).foregroundStyle(fg)
+                .frame(width: 44, height: 44).background(Circle().fill(fill))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     func tabButton(_ title: String, _ i: Int) -> some View {
-        Button { withAnimation(.snappy) { tab = i } } label: {
-            Text(title).txt(14, .semibold)
+        Button { withAnimation(.snappy) { tab = i; expanded = nil } } label: {
+            Text(title).txt(15, .semibold)
                 .foregroundStyle(tab == i ? .white : Palette.textSecondary)
-                .padding(.horizontal, 16).frame(height: 32)
+                .padding(.horizontal, 18).frame(height: 36)
                 .background(Capsule().fill(tab == i ? Palette.handle : .clear))
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier(i == 0 ? "dateTab" : "durationTab")
         .accessibilityAddTraits(tab == i ? .isSelected : [])
     }
 
-    var dateText: String { draft.day.map(DateText.full) ?? "未設定日期" }
+    // MARK: 日期
 
-    var relText: String {
-        guard let d = draft.day else { return "" }
-        let n = today.days(until: d)
-        if n == 0 { return "今天" }
-        return n > 0 ? "\(n) 天後" : "\(-n) 天前"
-    }
-
-    var timeText: String {
-        if draft.allDay {
-            if let e = draft.endDay, let d = draft.day, e > d { return "全天・\(d.days(until: e) + 1) 天" }
-            return "全天"
-        }
-        if draft.end <= draft.start { return DateText.hm(draft.start) }
-        return DateText.hm(draft.start) + " – " + (draft.end >= 1440 ? "隔日 " : "") + DateText.hm(draft.end)
-    }
-
-    var durText: String {
-        if draft.allDay { return "整天" }
-        if draft.end <= draft.start { return "時間點" }
-        return "持續 " + DateText.duration(draft.duration)
-    }
-
-    var summaryCards: some View {
-        HStack(spacing: 10) {
-            Button { withAnimation(.snappy) { calOpen.toggle() } } label: {
-                card("日期", dateText, relText, highlighted: calOpen)
-            }
-            .buttonStyle(.plain)
-            .accessibilityValue(calOpen ? "日曆已展開" : "")
-            .accessibilityIdentifier("dateCard")
-            Button {
-                if draft.day == nil { draft.day = today }
-                if draft.allDay { setTimed() }
-                openTime()
-            } label: {
-                card("時間", timeText, durText, highlighted: false)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("timeCard")
-        }
-    }
-
-    func card(_ label: String, _ value: String, _ sub: String, highlighted: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label).txt(12).foregroundStyle(Palette.textSecondary)
-            Text(value).txt(17, .bold).foregroundStyle(accent.text).lineLimit(1).minimumScaleFactor(0.7)
-            Text(sub).txt(12).foregroundStyle(Palette.textSecondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14).padding(.vertical, 12)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Palette.raised))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(highlighted ? accent.color : Palette.separator, lineWidth: 1))
-    }
-
-    var durationCard: some View {
-        VStack(spacing: 0) {
-            if draft.allDay {
-                durRow("開始", draft.day.map(DateText.full) ?? "未設定", "") { withAnimation(.snappy) { calOpen.toggle() } }
-                durRow("結束", (draft.endDay ?? draft.day).map(DateText.full) ?? "未設定", "") { withAnimation(.snappy) { endCalOpen.toggle() } }
-                if endCalOpen {
-                    MonthPicker(month: $endMonth, selected: draft.endDay ?? draft.day, today: today) { d in
-                        if let s = draft.day, d >= s { draft.endDay = d > s ? d : nil }
-                        withAnimation(.snappy) { endCalOpen = false }
-                    }
-                    .padding(.vertical, 8)
-                }
-            } else {
-                durRow("開始", dateText, DateText.hm(draft.start), action: openTime)
-                durRow("結束", draft.day.map { DateText.full($0.adding(days: draft.end / 1440)) } ?? "", DateText.hm(draft.end), action: openTime)
-            }
-            HStack {
-                Text("總時長").txt(14).foregroundStyle(Palette.textMuted)
-                Spacer()
-                Text(totalText).txt(14, .semibold).foregroundStyle(Palette.text)
-            }
-            .frame(minHeight: 48)
-        }
-        .padding(.horizontal, 14)
-        .card(16, color: Palette.raised)
-    }
-
-    var totalText: String {
-        if draft.allDay {
-            guard let d = draft.day else { return "—" }
-            return "\((draft.endDay.map { d.days(until: $0) } ?? 0) + 1) 天"
-        }
-        return draft.end > draft.start ? DateText.duration(draft.duration) : "時間點"
-    }
-
-    func durRow(_ label: String, _ date: String, _ time: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Text(label).txt(13).foregroundStyle(Palette.textSecondary).frame(width: 40, alignment: .leading)
-                Text(date).txt(15).foregroundStyle(Palette.text)
-                Spacer()
-                Text(time).txt(17, .bold).foregroundStyle(accent.text)
-            }
-            .frame(minHeight: 56)
-            .overlay(alignment: .bottom) { Rectangle().fill(Palette.separatorSoft).frame(height: 1) }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    var nextMonday: LocalDay {
-        let n = (8 - today.weekday) % 7
-        return today.adding(days: n == 0 ? 7 : n)
-    }
-
-    var calendar: some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 6) {
-                quick("今天", today)
-                quick("明天", today.adding(days: 1))
-                quick("下週一", nextMonday)
-                quick("無日期", nil)
-            }
-            .padding(.horizontal, 4)
-            .padding(.bottom, 4)
+    var dateTab: some View {
+        VStack(spacing: 14) {
             MonthPicker(month: $month, selected: draft.day, today: today) { d in pickDay(d) }
+            VStack(spacing: 0) {
+                row("clock", "時間", timeValue, key: "time", highlight: !draft.allDay)
+                if expanded == "time" {
+                    VStack(spacing: 6) {
+                        wheel(minute: draft.start) { setStartTime($0) }
+                        Button("不設時間（全天）") { withAnimation(.snappy) { draft.allDay = true; expanded = nil } }
+                            .txt(14, .semibold).foregroundStyle(accent.text).buttonStyle(.plain).padding(.bottom, 10)
+                    }
+                }
+                divider
+                reminderMenu
+                divider
+                repeatMenu
+                if !draft.allDay {
+                    divider
+                    zoneMenu
+                }
+            }
+            .padding(.horizontal, 16)
+            .card(18, color: Palette.raised)
         }
-        .padding(.horizontal, 6).padding(.vertical, 8)
-        .card(16, color: Palette.raised)
     }
 
-    func quick(_ label: String, _ d: LocalDay?) -> some View {
-        let on = draft.day == d
-        return Button {
-            if let d { pickDay(d); month = d.firstOfMonth } else { draft.day = nil; draft.endDay = nil }
-        } label: {
-            Text(label).txt(13, .semibold)
-                .foregroundStyle(on ? accent.onAccent : Palette.textBody)
-                .frame(maxWidth: .infinity, minHeight: 34)
-                .background(RoundedRectangle(cornerRadius: 10).fill(on ? accent.color : Palette.chip))
+    var timeValue: String {
+        if draft.allDay { return "無" }
+        if draft.end > draft.start { return DateText.hm(draft.start) + " – " + (draft.end >= 1440 ? "隔日 " : "") + DateText.hm(draft.end) }
+        return DateText.hm(draft.start)
+    }
+
+    func setStartTime(_ m: Int) {
+        if draft.day == nil { draft.day = today }
+        let len = draft.allDay ? 0 : max(0, draft.end - draft.start)
+        if draft.allDay {
+            draft.allDay = false
+            draft.endDay = nil
+            if draft.timeZone == nil { draft.timeZone = TimeZone.current.identifier }
+            draft.reminders = draft.reminders.isEmpty ? [] : [Reminder(offsetSeconds: 0).trigger]
         }
-        .buttonStyle(.plain)
+        draft.start = m
+        draft.end = m + len
     }
 
     func pickDay(_ d: LocalDay) {
-        // Keep multi-day length when moving the start.
         if let s = draft.day, let e = draft.endDay { draft.endDay = d.adding(days: s.days(until: e)) }
         draft.day = d
     }
 
-    func setTimed() {
-        draft.allDay = false
-        draft.endDay = nil
-        if draft.timeZone == nil { draft.timeZone = TimeZone.current.identifier }
-        // Convert all-day reminders into the timed preset.
-        draft.reminders = draft.reminders.isEmpty ? [] : [Reminder(offsetSeconds: -900).trigger]
+    var divider: some View { Rectangle().fill(Palette.separatorSoft).frame(height: 1).padding(.leading, 40) }
+
+    func rowLabel(_ icon: String, _ label: String, _ value: String, highlight: Bool, chevron: String = "chevron.up.chevron.down") -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon).font(.system(size: 19)).foregroundStyle(Palette.textBody).frame(width: 26)
+            Text(label).txt(17).foregroundStyle(Palette.text)
+            Spacer()
+            Text(value).txt(15).foregroundStyle(highlight ? accent.text : Palette.textSecondary).lineLimit(1)
+            Image(systemName: chevron).font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textTertiary)
+        }
+        .frame(minHeight: 56)
+        .contentShape(Rectangle())
     }
 
-    // MARK: Options
+    func row(_ icon: String, _ label: String, _ value: String, key: String, highlight: Bool) -> some View {
+        Button {
+            withAnimation(.snappy) { expanded = expanded == key ? nil : key }
+        } label: {
+            rowLabel(icon, label, value, highlight: highlight)
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(value)
+    }
 
-    var optionsCard: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("全天").txt(15).foregroundStyle(Palette.text)
-                Spacer()
-                Toggle("全天", isOn: Binding(get: { draft.allDay }, set: { on in
-                    if on {
-                        draft.allDay = true
-                        draft.reminders = draft.reminders.isEmpty ? [] : [Reminder(offsetSeconds: 9 * 3600).trigger]
-                    } else {
-                        setTimed()
-                    }
-                }))
-                .labelsHidden()
-                .tint(accent.color)
+    var reminderMenu: some View {
+        let presets = draft.allDay ? Reminder.allDayPresets : Reminder.timedPresets
+        let summary = draft.reminders.isEmpty ? "無" : draft.reminders.compactMap(Reminder.init(trigger:)).map { $0.label(allDay: draft.allDay) }.joined(separator: "、")
+        return Menu {
+            Button("無") { draft.reminders = [] }
+            ForEach(presets, id: \.self) { r in
+                let on = draft.reminders.contains(r.trigger)
+                Button {
+                    if draft.day == nil { draft.day = today }
+                    if on { draft.reminders.removeAll { $0 == r.trigger } } else { draft.reminders.append(r.trigger) }
+                } label: {
+                    if on { Label(r.label(allDay: draft.allDay), systemImage: "checkmark") } else { Text(r.label(allDay: draft.allDay)) }
+                }
             }
-            .frame(minHeight: 52)
-            .overlay(alignment: .bottom) { Rectangle().fill(Palette.separatorSoft).frame(height: 1) }
+        } label: {
+            rowLabel("alarm", "提醒時間", summary, highlight: !draft.reminders.isEmpty)
+        }
+        .menuActionDismissBehavior(.disabled)
+    }
+
+    var repeatMenu: some View {
+        let anchor = draft.day ?? today
+        let current = draft.repeatRule.flatMap(Recurrence.init(rrule:))
+        return Menu {
+            Button("無") { draft.repeatRule = nil }
+            ForEach(Recurrence.presets(anchor: anchor), id: \.self) { r in
+                Button {
+                    if draft.day == nil { draft.day = today }
+                    draft.repeatRule = r.rrule
+                } label: {
+                    if current == r { Label(r.label(anchor: anchor), systemImage: "checkmark") } else { Text(r.label(anchor: anchor)) }
+                }
+            }
+        } label: {
+            rowLabel("repeat", "重複", current?.label(anchor: anchor) ?? (draft.repeatRule ?? "無"), highlight: draft.repeatRule != nil)
+        }
+    }
+
+    var zoneMenu: some View {
+        Menu {
+            ForEach(TimeZoneOption.options, id: \.self) { id in
+                Button {
+                    draft.timeZone = id
+                } label: {
+                    if draft.timeZone == id { Label(TimeZoneOption.label(id), systemImage: "checkmark") } else { Text(TimeZoneOption.label(id)) }
+                }
+            }
+        } label: {
+            rowLabel("globe", "時區", TimeZoneOption.label(draft.timeZone), highlight: false)
+        }
+    }
+
+    // MARK: 持續時間
+
+    var durationTab: some View {
+        VStack(spacing: 14) {
+            VStack(spacing: 0) {
+                HStack(spacing: 14) {
+                    Image(systemName: "sun.max").font(.system(size: 19)).foregroundStyle(Palette.textBody).frame(width: 26)
+                    Text("全天").txt(17).foregroundStyle(Palette.text)
+                    Spacer()
+                    Toggle("全天", isOn: Binding(get: { draft.allDay }, set: { on in
+                        if on { draft.allDay = true } else { setStartTime(draft.start); if draft.end <= draft.start { draft.end = draft.start + 60 } }
+                    }))
+                    .labelsHidden().tint(accent.color)
+                    .accessibilityIdentifier("allDayToggle")
+                }
+                .frame(minHeight: 56)
+                divider
+                if draft.allDay {
+                    row("calendar", "開始", draft.day.map(DateText.full) ?? "未設定", key: "startDate", highlight: true)
+                    if expanded == "startDate" {
+                        MonthPicker(month: $month, selected: draft.day, today: today) { d in pickDay(d); expanded = nil }.padding(.bottom, 8)
+                    }
+                    divider
+                    row("calendar.badge.checkmark", "結束", (draft.endDay ?? draft.day).map(DateText.full) ?? "未設定", key: "endDate", highlight: true)
+                    if expanded == "endDate" {
+                        MonthPicker(month: $endMonth, selected: draft.endDay ?? draft.day, today: today) { d in
+                            if draft.day == nil { draft.day = d }
+                            if let s = draft.day, d >= s { draft.endDay = d > s ? d : nil }
+                            expanded = nil
+                        }
+                        .padding(.bottom, 8)
+                    }
+                } else {
+                    row("play.circle", "開始", (draft.day.map(DateText.monthDay) ?? "") + " " + DateText.hm(draft.start), key: "start", highlight: true)
+                    if expanded == "start" { wheel(minute: draft.start) { setStartTime($0) } }
+                    divider
+                    row("stop.circle", "結束", endText, key: "end", highlight: true)
+                    if expanded == "end" {
+                        wheel(minute: draft.end % 1440) { m in
+                            var e = m
+                            if e <= draft.start { e += 1440 }
+                            draft.end = min(e, TimeBlockEditor.maxEnd)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .card(18, color: Palette.raised)
 
             if !draft.allDay {
-                optionRow("tz", "時區", TimeZoneOption.label(draft.timeZone), highlight: false) {
-                    ForEach(TimeZoneOption.options, id: \.self) { id in
-                        OptionChip(label: TimeZoneOption.label(id), on: draft.timeZone == id) { draft.timeZone = id }
+                ScrollView(.horizontal) {
+                    HStack(spacing: 6) {
+                        ForEach([(15, "15 分"), (30, "30 分"), (45, "45 分"), (60, "1 小時"), (90, "1.5 小時"), (120, "2 小時"), (180, "3 小時")], id: \.0) { d in
+                            OptionChip(label: d.1, on: draft.end - draft.start == d.0, filled: true) {
+                                draft.end = min(draft.start + d.0, TimeBlockEditor.maxEnd)
+                            }
+                        }
                     }
                 }
-            }
-            optionRow("rem", "提醒", reminderSummary, highlight: !draft.reminders.isEmpty) {
-                ForEach(draft.allDay ? Reminder.allDayPresets : Reminder.timedPresets, id: \.self) { r in
-                    let on = draft.reminders.contains(r.trigger)
-                    OptionChip(label: r.label(allDay: draft.allDay), on: on) {
-                        if on { draft.reminders.removeAll { $0 == r.trigger } } else { draft.reminders.append(r.trigger) }
-                    }
-                }
-            }
-            .disabled(draft.day == nil)
-            optionRow("rep", "重複", repeatSummary, highlight: false, last: true) {
-                OptionChip(label: "不重複", on: draft.repeatRule == nil) { draft.repeatRule = nil }
-                ForEach(Recurrence.presets(anchor: draft.day ?? today), id: \.self) { r in
-                    OptionChip(label: r.label(anchor: draft.day ?? today), on: draft.repeatRule.flatMap(Recurrence.init(rrule:)) == r) { draft.repeatRule = r.rrule }
-                }
-            }
-            .disabled(draft.day == nil)
-        }
-        .padding(.horizontal, 14)
-        .card(16, color: Palette.raised)
-    }
-
-    var reminderSummary: String {
-        if draft.reminders.isEmpty { return "無" }
-        return draft.reminders.compactMap(Reminder.init(trigger:)).map { $0.label(allDay: draft.allDay) }.joined(separator: "、")
-    }
-
-    var repeatSummary: String {
-        guard let r = draft.repeatRule else { return "不重複" }
-        return Recurrence(rrule: r)?.label(anchor: draft.day ?? today) ?? r
-    }
-
-    func optionRow<Opts: View>(_ key: String, _ label: String, _ value: String, highlight: Bool, last: Bool = false, @ViewBuilder options: () -> Opts) -> some View {
-        let isOpen = open.contains(key)
-        return VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.snappy) { if isOpen { open.remove(key) } else { open.insert(key) } }
-            } label: {
-                HStack(spacing: 8) {
-                    Text(label).txt(15).foregroundStyle(Palette.text)
+                .scrollIndicators(.hidden)
+                HStack {
+                    Text("總時長").txt(15).foregroundStyle(Palette.textMuted)
                     Spacer()
-                    Text(value).txt(14).foregroundStyle(highlight ? accent.text : Palette.textSecondary).lineLimit(1).frame(maxWidth: 200, alignment: .trailing)
-                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textTertiary)
-                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    Text(draft.end > draft.start ? DateText.duration(draft.duration) : "時間點").txt(15, .semibold).foregroundStyle(Palette.text)
                 }
-                .frame(minHeight: 52)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityValue(isOpen ? "已展開" : "")
-            if isOpen {
-                FlowLayout(spacing: 6) { options() }.padding(.bottom, 12)
+                .padding(.horizontal, 4)
+                Button {
+                    if draft.day == nil { draft.day = today }
+                    openTime()
+                } label: {
+                    Label("在時間軸上拖曳調整", systemImage: "rectangle.split.1x2")
+                        .txt(15, .semibold).foregroundStyle(accent.text)
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                        .card(14, color: Palette.raised)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("openTimeline")
             }
         }
-        .overlay(alignment: .bottom) { if !last { Rectangle().fill(Palette.separatorSoft).frame(height: 1) } }
+    }
+
+    var endText: String {
+        guard let d = draft.day else { return DateText.hm(draft.end) }
+        if draft.end <= draft.start { return "無" }
+        return DateText.monthDay(d.adding(days: draft.end / 1440)) + " " + DateText.hm(draft.end)
+    }
+
+    func wheel(minute: Int, set: @escaping (Int) -> Void) -> some View {
+        DatePicker("", selection: Binding(get: {
+            (draft.day ?? today).date(minute: minute % 1440, in: .current)
+        }, set: { d in
+            set(Calendar.current.component(.hour, from: d) * 60 + Calendar.current.component(.minute, from: d))
+        }), displayedComponents: .hourAndMinute)
+        .datePickerStyle(.wheel)
+        .labelsHidden()
+        .environment(\.locale, Locale(identifier: "zh_TW"))
+        .frame(maxWidth: .infinity)
+        .frame(height: 150)
+        .clipped()
     }
 }
 

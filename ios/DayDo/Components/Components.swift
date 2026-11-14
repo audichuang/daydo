@@ -162,7 +162,7 @@ struct MonthPicker: View {
             HStack {
                 Button { month = month.adding(months: -1) } label: { Image(systemName: "chevron.left").frame(width: 36, height: 32) }
                 Spacer()
-                Text("\(String(month.year)) 年 \(month.month) 月").txt(14, .semibold).foregroundStyle(Palette.text)
+                Text(month.year == LocalDay(date: Date(), in: .current).year ? "\(month.month)月" : "\(String(month.year)) 年 \(month.month) 月").txt(17, .bold).foregroundStyle(Palette.text)
                 Spacer()
                 Button { month = month.adding(months: 1) } label: { Image(systemName: "chevron.right").frame(width: 36, height: 32) }
             }
@@ -181,16 +181,16 @@ struct MonthPicker: View {
                     Button { pick(d) } label: {
                         Text("\(d.day)")
                             .txt(14, sel || isToday ? .bold : .medium)
-                            .foregroundStyle(sel ? accent.onAccent : (isToday ? accent.text : Color(hex: "#E6E9E8")))
-                            .frame(width: 34, height: 34)
-                            .background(Circle().fill(sel ? accent.color : .clear))
-                            .overlay(Circle().strokeBorder(sel ? accent.color : (isToday ? accent.text : .clear), lineWidth: 2))
-                            .frame(maxWidth: .infinity, minHeight: 40)
+                            .foregroundStyle(sel ? accent.onAccent : (isToday ? accent.color : Color(hex: "#E6E9E8")))
+                            .frame(width: 38, height: 38)
+                            .background(Circle().fill(sel ? accent.color : (isToday ? Color.white : .clear)))
+                            .frame(maxWidth: .infinity, minHeight: 46)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .opacity(inMonth ? 1 : 0.38)
                     .accessibilityLabel(DateText.full(d))
+                    .accessibilityIdentifier("monthDay.\(d)")
                     .accessibilityAddTraits(sel ? .isSelected : [])
                 }
             }

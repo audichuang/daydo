@@ -7,3 +7,4 @@ build/
 ios/Doneday.xcodeproj/
 .swiftpm/
 .orca/
+.agy-staff/

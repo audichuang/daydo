@@ -125,5 +125,7 @@ struct ComposeRequest: Identifiable {
     let id = UUID()
     var projectId: String?
     var day: LocalDay?
+    /// Start minute when created from a time slot in the week/day grid.
+    var minute: Int?
     var tag: String?
 }

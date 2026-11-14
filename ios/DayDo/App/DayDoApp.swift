@@ -105,7 +105,8 @@ enum DebugLaunch {
         switch screen {
         case "drawer": model.drawerOpen = true
         case "calendar": model.tab = .calendar
-        case "events": UserDefaults.standard.set(true, forKey: "calendarMode"); model.tab = .calendar
+        case "events": UserDefaults.standard.set("month", forKey: "calendarViewMode"); model.tab = .calendar
+        case "week": UserDefaults.standard.set("week", forKey: "calendarViewMode"); model.tab = .calendar
         case "search": model.tab = .search
         case "shared": model.tab = .shared
         case "detail", "date", "time":

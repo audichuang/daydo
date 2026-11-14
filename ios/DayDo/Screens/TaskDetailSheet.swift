@@ -40,8 +40,9 @@ struct TaskDetailSheet: View {
             Palette.card.ignoresSafeArea()
             switch page {
             case .detail: detail
-            case .date: DatePanel(draft: $draft, today: model.today, cancel: { page = .detail }, confirm: commitDate, openTime: { page = .time })
-            case .time: TimeBlockEditor(draft: $draft, task: task, cancel: { page = .date }, save: { page = .date })
+            case .date, .time:
+                DateEditorFlow(draft: $draft, today: model.today, title: task?.title ?? "", excludeTaskId: task?.id,
+                               cancel: { page = .detail }, confirm: commitDate)
             }
         }
         .presentationDetents([.fraction(0.56), .large], selection: $detent)

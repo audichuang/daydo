@@ -205,3 +205,47 @@ public enum DateText {
         return dayPart.isEmpty ? r : dayPart + " " + r
     }
 }
+
+/// Time-grid layout for the 週／3日／日 views: timed items of one day placed in
+/// side-by-side lanes when they overlap. Blocks crossing midnight are clipped
+/// to the day; point-in-time items get a 30-minute block.
+public enum DayLayout {
+    public struct Block: Hashable, Sendable {
+        public var task: TodoTask
+        public var start: Int
+        public var end: Int
+        public var lane: Int
+        public var lanes: Int
+    }
+
+    public static func blocks(for tasks: [TodoTask], on day: LocalDay) -> [Block] {
+        var items: [(TodoTask, Int, Int)] = []
+        for t in tasks {
+            guard let s = t.schedule, let sm = s.startMinute, s.occurs(on: day) else { continue }
+            let offset = s.startDay.days(until: day) * 1440
+            let rawEnd = s.endOffsetMinutes ?? (sm + 30)
+            let start = max(0, sm - offset)
+            let end = min(1440, max(rawEnd, sm + 15) - offset)
+            guard end > start else { continue }
+            items.append((t, start, end))
+        }
+        items.sort { ($0.1, -$0.2) < ($1.1, -$1.2) }
+        var out: [Block] = []
+        var cluster: [Block] = []
+        var clusterEnd = -1
+        func flush() {
+            let n = (cluster.map(\.lane).max() ?? -1) + 1
+            out += cluster.map { var b = $0; b.lanes = n; return b }
+            cluster = []
+        }
+        for (t, s, e) in items {
+            if s >= clusterEnd { flush() }
+            var lane = 0
+            while cluster.contains(where: { $0.lane == lane && $0.end > s }) { lane += 1 }
+            cluster.append(Block(task: t, start: s, end: e, lane: lane, lanes: 1))
+            clusterEnd = max(clusterEnd, e)
+        }
+        flush()
+        return out
+    }
+}

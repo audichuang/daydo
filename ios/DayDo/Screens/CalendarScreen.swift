@@ -1,82 +1,198 @@
 import SwiftUI
 import DayDoCore
 
-/// 2a / 2b · Date grid with dots + the selected day's agenda (collapsible to
-/// one week); 2c · event month with spanning bars and "+N".
+enum CalMode: String, CaseIterable, Identifiable {
+    case list, year, month, week, threeDay, day
+    var id: String { rawValue }
+    var label: String {
+        switch self { case .list: "清單"; case .year: "年"; case .month: "月"; case .week: "週"; case .threeDay: "3日"; case .day: "日" }
+    }
+    var icon: String {
+        switch self {
+        case .list: "list.bullet.below.rectangle"
+        case .year: "square.grid.3x3"
+        case .month: "calendar"
+        case .week: "rectangle.split.3x1"
+        case .threeDay: "rectangle.split.2x1"
+        case .day: "rectangle"
+        }
+    }
+    var dayCount: Int { switch self { case .week: 7; case .threeDay: 3; default: 1 } }
+}
+
+/// 日曆: 清單 (date grid + the selected day's items, 2a/2b), 年, 月 (event
+/// bars, 2c), and 週／3日／日 time grids.
 struct CalendarScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
 
-    @AppStorage("calendarMode") private var eventMode = false
+    @AppStorage("calendarViewMode") private var modeRaw = CalMode.list.rawValue
     @AppStorage("calendarCollapsed") private var collapsed = false
+    @AppStorage("agendaTimeline") private var timelineStyle = false
+    @AppStorage("calendarShowCompleted") private var showCompleted = true
     @State private var selected: LocalDay?
     @State private var month: LocalDay?
     @State private var memberFilter: String?
     @State private var projectFilter: String?
     @State private var tasks: [TodoTask] = []
 
+    var mode: CalMode { CalMode(rawValue: modeRaw) ?? .list }
     var sel: LocalDay { selected ?? model.today }
-    var shownMonth: LocalDay { month ?? model.today.firstOfMonth }
+    var shownMonth: LocalDay { month ?? sel.firstOfMonth }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            ScrollView {
-                VStack(spacing: 12) {
-                    filters
-                    if eventMode { eventMonth } else { dateGrid; agenda }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 60)
-                .padding(.bottom, 140)
+        ZStack(alignment: .bottomTrailing) {
+            VStack(spacing: 0) {
+                header
+                if model.members.count > 1 || projectFilter != nil { filters.padding(.horizontal, 16).padding(.bottom, 6) }
+                content
             }
-            .scrollIndicators(.hidden)
-
-            ScreenHeader {
-                Button {
-                    if !eventMode { withAnimation(.snappy) { collapsed.toggle() } }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("\(String(shownMonth.year)) 年 \(shownMonth.month) 月").txt(17, .bold).foregroundStyle(Palette.text)
-                        if !eventMode {
-                            Image(systemName: "chevron.up").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.textSecondary)
-                                .rotationEffect(.degrees(collapsed ? 180 : 0))
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(eventMode ? "月份" : (collapsed ? "展開整個月份" : "收合成單週"))
-                .accessibilityIdentifier("calendarTitle")
-            } trailing: {
-                HeaderAction(systemName: "plus", label: "新增任務", tint: accent.text) {
-                    model.composing = ComposeRequest(day: sel)
-                }
-                HeaderAction(systemName: eventMode ? "list.bullet.below.rectangle" : "calendar", label: eventMode ? "切換為日期格與議程" : "切換為事件月曆") {
-                    withAnimation(.snappy) { eventMode.toggle() }
-                }
+            Button { compose(day: sel, minute: nil) } label: {
+                Image(systemName: "plus").font(.system(size: 24, weight: .semibold)).foregroundStyle(accent.onAccent)
+                    .frame(width: 60, height: 60)
+                    .background(Circle().fill(accent.color))
+                    .shadow(color: .black.opacity(0.35), radius: 10, y: 6)
             }
+            .buttonStyle(.plain)
+            .padding(.trailing, 18)
+            .padding(.bottom, 92)
+            .accessibilityLabel("新增任務")
         }
-        .task(id: CalReload(month: shownMonth, member: memberFilter, revision: model.revision)) { await load() }
-        .gesture(DragGesture(minimumDistance: 30).onEnded { v in
-            guard abs(v.translation.width) > abs(v.translation.height) * 1.5 else { return }
-            shift(v.translation.width < 0 ? 1 : -1)
-        })
+        .task(id: CalReload(range: range, member: memberFilter, completed: showCompleted, revision: model.revision)) { await load() }
     }
 
-    func shift(_ dir: Int) {
-        withAnimation(.snappy) {
-            if collapsed && !eventMode {
-                selected = sel.adding(days: 7 * dir)
-                month = selected!.firstOfMonth
-            } else {
-                month = shownMonth.adding(months: dir)
-                if let s = selected, s.month != month!.month { selected = month }
+    // MARK: Header
+
+    var header: some View {
+        HStack {
+            Menu {
+                ForEach(CalMode.allCases) { m in
+                    Button {
+                        withAnimation(.snappy) { modeRaw = m.rawValue }
+                    } label: {
+                        if m == mode { Label(m.label, systemImage: "checkmark") } else { Label(m.label, systemImage: m.icon) }
+                    }
+                }
+            } label: {
+                Image(systemName: mode.icon).font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text)
+                    .frame(width: 44, height: 44)
+                    .glassEffect(.regular.interactive(), in: .circle)
             }
+            .accessibilityLabel("切換檢視：目前\(mode.label)")
+            .accessibilityIdentifier("calendarMode")
+            Spacer()
+            Button { goToday() } label: {
+                Text(title).txt(18, .bold).foregroundStyle(Palette.text)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(title + "，點兩下回到今天")
+            .accessibilityIdentifier("calendarTitle")
+            Spacer()
+            HStack(spacing: 0) {
+                if mode == .list {
+                    HeaderAction(systemName: timelineStyle ? "list.bullet.rectangle" : "calendar.day.timeline.left", label: timelineStyle ? "切換為卡片清單" : "切換為時間軸清單") {
+                        withAnimation(.snappy) { timelineStyle.toggle() }
+                    }
+                }
+                Menu {
+                    Button("回到今天", systemImage: "arrow.uturn.backward") { goToday() }
+                    Button(showCompleted ? "隱藏已完成" : "顯示已完成", systemImage: "checkmark.circle") { showCompleted.toggle() }
+                    Menu("清單篩選", systemImage: "line.3.horizontal.decrease") {
+                        Button {
+                            projectFilter = nil
+                        } label: { if projectFilter == nil { Label("全部清單", systemImage: "checkmark") } else { Text("全部清單") } }
+                        ForEach(model.projects) { p in
+                            Button {
+                                projectFilter = p.id
+                            } label: { if projectFilter == p.id { Label(p.name, systemImage: "checkmark") } else { Text(p.name) } }
+                        }
+                    }
+                    if mode == .list {
+                        Button(collapsed ? "展開整個月份" : "收合成單週", systemImage: "rectangle.compress.vertical") { withAnimation(.snappy) { collapsed.toggle() } }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
+                }
+                .accessibilityLabel("更多選項")
+            }
+            .padding(.horizontal, 2)
+            .frame(height: 44)
+            .glassEffect(.regular, in: .capsule)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+    }
+
+    var title: String {
+        let thisYear = model.today.year
+        switch mode {
+        case .year: return "\(String(shownMonth.year)) 年"
+        case .week, .threeDay, .day:
+            let d = rangeDays.first ?? sel
+            return d.year == thisYear ? "\(d.month)月" : "\(String(d.year)) 年 \(d.month) 月"
+        default:
+            return shownMonth.year == thisYear ? "\(shownMonth.month)月" : "\(String(shownMonth.year)) 年 \(shownMonth.month) 月"
+        }
+    }
+
+    var filters: some View {
+        HStack(spacing: 6) {
+            if model.members.count > 1 {
+                chip("全部", on: memberFilter == nil) { memberFilter = nil }
+                ForEach(model.members) { m in chip(m.isMe ? "我參與" : m.name, on: memberFilter == m.id) { memberFilter = m.id } }
+            }
+            if let p = model.project(projectFilter) {
+                Button { projectFilter = nil } label: {
+                    HStack(spacing: 4) { ListDot(color: p.color); Text(p.name).txt(13, .semibold); Image(systemName: "xmark").font(.system(size: 10, weight: .bold)) }
+                        .foregroundStyle(Palette.textNav).padding(.horizontal, 12).frame(height: 30)
+                        .overlay(Capsule().strokeBorder(Palette.separator))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("移除清單篩選：\(p.name)")
+            }
+            Spacer()
+        }
+    }
+
+    func chip(_ label: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label).txt(13, .semibold)
+                .foregroundStyle(on ? Palette.background : Palette.textNav)
+                .padding(.horizontal, 12).frame(height: 30)
+                .background(Capsule().fill(on ? Palette.text : .clear))
+                .overlay(Capsule().strokeBorder(on ? Palette.text : Palette.separator))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Data
+
+    var rangeDays: [LocalDay] {
+        switch mode {
+        case .week:
+            let start = sel.adding(days: -sel.weekday)
+            return (0..<7).map { start.adding(days: $0) }
+        case .threeDay: return (0..<3).map { sel.adding(days: $0) }
+        case .day: return [sel]
+        default: return []
+        }
+    }
+
+    var range: ClosedRange<LocalDay> {
+        switch mode {
+        case .year:
+            return LocalDay(year: shownMonth.year, month: 1, day: 1)...LocalDay(year: shownMonth.year, month: 12, day: 31)
+        case .week, .threeDay, .day:
+            return rangeDays.first!...rangeDays.last!
+        default:
+            let g = MonthLayout.gridDays(for: shownMonth)
+            return g.first!...g.last!
         }
     }
 
     func load() async {
-        let days = MonthLayout.gridDays(for: shownMonth)
-        let q = TaskQuery(from: days.first!, to: days.last!, includeCompleted: true, memberId: memberFilter)
+        let q = TaskQuery(from: range.lowerBound, to: range.upperBound, includeCompleted: showCompleted, memberId: memberFilter)
         tasks = (try? await model.api.listTasks(q)) ?? []
     }
 
@@ -85,47 +201,89 @@ struct CalendarScreen: View {
         return tasks.filter { $0.projectId == projectFilter }
     }
 
-    // MARK: Filters
-
-    var filters: some View {
-        HStack(spacing: 6) {
-            if model.members.count > 1 {
-                chip("全部", on: memberFilter == nil, member: nil) { memberFilter = nil }
-                ForEach(model.members) { m in
-                    chip(m.isMe ? "我參與" : m.name, on: memberFilter == m.id, member: m) { memberFilter = m.id }
-                }
-            }
-            Menu {
-                Button("全部清單") { projectFilter = nil }
-                ForEach(model.projects) { p in Button(p.name) { projectFilter = p.id } }
-            } label: {
-                HStack(spacing: 4) {
-                    Text("清單：" + (model.project(projectFilter)?.name ?? "全部")).txt(13, .semibold)
-                    Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold))
-                }
-                .foregroundStyle(Palette.textNav)
-                .padding(.horizontal, 12).frame(height: 32)
-                .overlay(Capsule().strokeBorder(Palette.separator))
-            }
-            Spacer()
+    func goToday() {
+        withAnimation(.snappy) {
+            selected = model.today
+            month = model.today.firstOfMonth
         }
     }
 
-    func chip(_ label: String, on: Bool, member: Member?, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if let member { AvatarStack(members: [member], size: 22) }
-                Text(label).txt(13, .semibold)
+    func shift(_ dir: Int) {
+        withAnimation(.snappy) {
+            switch mode {
+            case .list where collapsed:
+                selected = sel.adding(days: 7 * dir)
+                month = selected!.firstOfMonth
+            case .list, .month:
+                month = shownMonth.adding(months: dir)
+                selected = month
+            case .year:
+                month = shownMonth.adding(months: 12 * dir)
+            case .week, .threeDay, .day:
+                selected = sel.adding(days: mode.dayCount * dir)
+                month = selected!.firstOfMonth
             }
-            .foregroundStyle(on ? Palette.background : Palette.textNav)
-            .padding(.leading, member == nil ? 12 : 5).padding(.trailing, 12).frame(height: 32)
-            .background(Capsule().fill(on ? Palette.text : .clear))
-            .overlay(Capsule().strokeBorder(on ? Palette.text : Palette.separator))
         }
-        .buttonStyle(.plain)
     }
 
-    // MARK: 2a / 2b
+    func compose(day: LocalDay, minute: Int?) {
+        model.composing = ComposeRequest(projectId: projectFilter, day: day, minute: minute)
+    }
+
+    var swipe: some Gesture {
+        DragGesture(minimumDistance: 30).onEnded { v in
+            guard abs(v.translation.width) > abs(v.translation.height) * 1.5 else { return }
+            shift(v.translation.width < 0 ? 1 : -1)
+        }
+    }
+
+    // MARK: Content
+
+    @ViewBuilder var content: some View {
+        switch mode {
+        case .list:
+            ScrollView {
+                VStack(spacing: 12) {
+                    dateGrid.gesture(swipe)
+                    if timelineStyle { timelineAgenda } else { cardAgenda }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 170)
+            }
+            .scrollIndicators(.hidden)
+        case .year:
+            ScrollView {
+                YearGrid(year: shownMonth.year, today: model.today, busy: busyDays) { m in
+                    withAnimation(.snappy) { month = m; selected = m; modeRaw = CalMode.list.rawValue; collapsed = false }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 170)
+            }
+            .gesture(swipe)
+        case .month:
+            ScrollView { eventMonth.padding(.horizontal, 8).padding(.bottom, 170) }
+                .gesture(swipe)
+        case .week, .threeDay, .day:
+            TimeGrid(days: rangeDays, tasks: filtered, today: model.today, selected: sel,
+                     openTask: { model.detailTaskId = $0 },
+                     tapSlot: { d, m in compose(day: d, minute: m) },
+                     tapDay: { d in withAnimation(.snappy) { selected = d; modeRaw = CalMode.day.rawValue } })
+                .gesture(swipe)
+        }
+    }
+
+    var busyDays: Set<LocalDay> {
+        var s = Set<LocalDay>()
+        for t in filtered {
+            guard let sch = t.schedule else { continue }
+            var d = max(sch.startDay, range.lowerBound)
+            let end = min(sch.lastDay, range.upperBound)
+            while d <= end { s.insert(d); d = d.adding(days: 1) }
+        }
+        return s
+    }
+
+    // MARK: 清單 — date grid
 
     var dateGrid: some View {
         let days = MonthLayout.gridDays(for: shownMonth)
@@ -135,21 +293,21 @@ struct CalendarScreen: View {
         }() : days
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
-                ForEach(LocalDay.weekdaySymbols, id: \.self) { Text($0).txt(11).foregroundStyle(Palette.textTertiary).frame(maxWidth: .infinity) }
+                ForEach(LocalDay.weekdaySymbols, id: \.self) { Text($0).txt(12).foregroundStyle(Palette.textTertiary).frame(maxWidth: .infinity) }
             }
             .padding(.bottom, 6)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 4) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 2) {
                 ForEach(shown, id: \.self) { d in dayCell(d) }
             }
             Button { withAnimation(.snappy) { collapsed.toggle() } } label: {
-                Capsule().fill(Palette.handle).frame(width: 36, height: 4).frame(maxWidth: .infinity, minHeight: 20)
+                Capsule().fill(Palette.handle).frame(width: 36, height: 4).frame(maxWidth: .infinity, minHeight: 18)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(collapsed ? "展開整個月份" : "收合成單週")
         }
-        .padding(.horizontal, 6).padding(.top, 10)
-        .card()
+        .padding(.top, 4)
         .gesture(DragGesture(minimumDistance: 20).onEnded { v in
+            guard abs(v.translation.height) > abs(v.translation.width) else { return }
             if v.translation.height < -30 && !collapsed { withAnimation(.snappy) { collapsed = true } }
             if v.translation.height > 30 && collapsed { withAnimation(.snappy) { collapsed = false } }
         })
@@ -158,7 +316,7 @@ struct CalendarScreen: View {
     func dayCell(_ d: LocalDay) -> some View {
         let isSel = d == sel, isToday = d == model.today, inMonth = d.month == shownMonth.month || collapsed
         var colors: [String] = []
-        for t in filtered where t.schedule?.occurs(on: d) == true {
+        for t in filtered where t.schedule?.occurs(on: d) == true && !t.isCompleted {
             let c = model.project(t.projectId)?.color ?? "#5B6461"
             if !colors.contains(c) { colors.append(c) }
         }
@@ -167,17 +325,16 @@ struct CalendarScreen: View {
         } label: {
             VStack(spacing: 3) {
                 Text("\(d.day)")
-                    .txt(15, isSel || isToday ? .bold : .medium)
-                    .foregroundStyle(isSel ? accent.onAccent : (isToday ? accent.text : Color(hex: "#E6E9E8")))
-                    .frame(width: 34, height: 34)
-                    .background(Circle().fill(isSel ? accent.color : .clear))
-                    .overlay(Circle().strokeBorder(isSel ? accent.color : (isToday ? accent.text : .clear), lineWidth: 2))
+                    .txt(17, isSel || isToday ? .bold : .medium)
+                    .foregroundStyle(isSel ? accent.onAccent : (isToday ? accent.color : Color(hex: "#E6E9E8")))
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(isSel ? accent.color : (isToday ? Color.white : .clear)))
                 HStack(spacing: 3) {
                     ForEach(colors.prefix(3), id: \.self) { c in Circle().fill(Color(hex: c)).frame(width: 4, height: 4) }
                 }
                 .frame(height: 4)
             }
-            .frame(maxWidth: .infinity, minHeight: 46)
+            .frame(maxWidth: .infinity, minHeight: 50)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -187,78 +344,64 @@ struct CalendarScreen: View {
     }
 
     var dayItems: [TodoTask] {
-        TaskGrouping.sortForDay(filtered.filter { $0.schedule?.occurs(on: sel) == true })
+        let items = filtered.filter { $0.schedule?.occurs(on: sel) == true }
+        return TaskGrouping.sortForDay(items.filter { !$0.isCompleted }) + items.filter(\.isCompleted)
     }
 
-    var agenda: some View {
+    var dayTitle: String { DateText.monthDay(sel).replacingOccurrences(of: " ", with: "") + (sel == model.today ? "・今天" : "") }
+
+    var emptyDay: some View {
+        Button { compose(day: sel, minute: nil) } label: {
+            Text("這天沒有項目，點這裡新增").txt(14).foregroundStyle(Palette.textSecondary).frame(maxWidth: .infinity, minHeight: 64)
+        }
+        .buttonStyle(.plain)
+    }
+
+    var cardAgenda: some View {
         let items = dayItems
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(DateText.full(sel) + (sel == model.today ? "・今天" : "")).txt(16, .bold).foregroundStyle(Palette.text)
-                Text("\(items.count) 項").txt(13).foregroundStyle(Palette.textTertiary)
-            }
-            .padding(.bottom, 8)
-            if items.isEmpty {
-                Button { model.composing = ComposeRequest(day: sel) } label: {
-                    Text("這天沒有項目，點這裡新增").txt(14).foregroundStyle(Palette.textSecondary).frame(maxWidth: .infinity, minHeight: 60)
-                }
-                .buttonStyle(.plain)
-            }
-            ForEach(Array(items.enumerated()), id: \.element.id) { i, t in
-                AgendaRow(task: t, day: sel)
-                    .overlay(alignment: .top) { if i > 0 { Rectangle().fill(Palette.separator).frame(height: 1) } }
-            }
+            Text(dayTitle).txt(19, .bold).foregroundStyle(Palette.text).padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 6)
+            if items.isEmpty { emptyDay }
+            ForEach(items) { t in AgendaRow(task: t, day: sel) }
+            Spacer().frame(height: 8)
         }
-        .padding(.horizontal, 14).padding(.vertical, 14)
-        .card()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
-    // MARK: 2c
+    var timelineAgenda: some View {
+        let items = dayItems
+        return VStack(alignment: .leading, spacing: 0) {
+            Text(dayTitle).txt(17, .bold).foregroundStyle(Palette.text).padding(.vertical, 8)
+            if items.isEmpty { emptyDay.card(16) }
+            ForEach(Array(items.enumerated()), id: \.element.id) { i, t in
+                TimelineAgendaRow(task: t, day: sel, last: i == items.count - 1)
+            }
+        }
+    }
+
+    // MARK: 月 — event bars
 
     var eventMonth: some View {
-        let layout = MonthLayout(month: shownMonth, tasks: filtered)
-        let dayCount = filtered.filter { $0.schedule?.occurs(on: sel) == true }
-        return VStack(spacing: 10) {
-            VStack(spacing: 0) {
-                HStack(spacing: 0) {
-                    ForEach(LocalDay.weekdaySymbols, id: \.self) { Text($0).txt(11).foregroundStyle(Palette.textTertiary).frame(maxWidth: .infinity) }
-                }
-                .padding(.bottom, 4)
-                ForEach(Array(layout.weeks.enumerated()), id: \.offset) { i, w in
-                    WeekRow(week: w, month: shownMonth, selected: sel, today: model.today) { d in
-                        withAnimation(.snappy) { selected = d }
-                    } open: { id in model.detailTaskId = id }
-                    .overlay(alignment: .top) { if i > 0 { Rectangle().fill(Color(hex: "#1E2022")).frame(height: 1) } }
-                }
+        let layout = MonthLayout(month: shownMonth, tasks: filtered, maxLanes: 5)
+        return VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(LocalDay.weekdaySymbols, id: \.self) { Text($0).txt(12).foregroundStyle(Palette.textTertiary).frame(maxWidth: .infinity) }
             }
-            HStack(spacing: 10) {
-                ForEach(model.projects.filter { p in filtered.contains { $0.projectId == p.id } }) { p in
-                    HStack(spacing: 4) { ListDot(color: p.color, size: 7); Text(p.name).txt(11).foregroundStyle(Palette.textTertiary) }
-                }
-                Spacer()
+            .padding(.bottom, 4)
+            ForEach(Array(layout.weeks.enumerated()), id: \.offset) { _, w in
+                WeekRow(week: w, month: shownMonth, selected: sel, today: model.today, lanes: 5) { d in
+                    withAnimation(.snappy) { selected = d; modeRaw = CalMode.day.rawValue }
+                } open: { id in model.detailTaskId = id }
             }
-            .padding(.horizontal, 4)
-            Button {
-                withAnimation(.snappy) { eventMode = false; collapsed = true }
-            } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(DateText.full(sel) + "・\(dayCount.count) 項").txt(15, .bold).foregroundStyle(Palette.text)
-                        Text(dayCount.isEmpty ? "沒有項目" : dayCount.map(\.title).joined(separator: "、")).txt(12).foregroundStyle(Palette.textSecondary).lineLimit(1)
-                    }
-                    Spacer()
-                    Text("查看議程").txt(13, .semibold).foregroundStyle(accent.text)
-                }
-                .padding(.horizontal, 14).padding(.vertical, 12)
-                .card()
-            }
-            .buttonStyle(.plain)
         }
     }
 }
 
-struct CalReload: Hashable { var month: LocalDay; var member: String?; var revision: Int }
+struct CalReload: Hashable { var range: ClosedRange<LocalDay>; var member: String?; var completed: Bool; var revision: Int }
 
+/// Card-style agenda row with a checkbox (清單 view).
 struct AgendaRow: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
@@ -267,54 +410,153 @@ struct AgendaRow: View {
 
     var body: some View {
         let project = model.project(task.projectId)
-        Button { model.detailTaskId = task.id } label: {
-            HStack(alignment: .top, spacing: 10) {
-                RoundedRectangle(cornerRadius: 2).fill(Palette.listColor(project?.color)).frame(width: 3)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(task.title).txt(15, .bold).foregroundStyle(task.isCompleted ? Palette.done : Palette.text)
+        HStack(alignment: .top, spacing: 12) {
+            Button { toggle() } label: {
+                TaskCheckbox(done: task.isCompleted, priority: task.priority, size: 22).frame(width: 32, height: 34)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel((task.isCompleted ? "取消完成：" : "完成：") + task.title)
+            Button { model.detailTaskId = task.id } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(task.title).txt(17, .medium).foregroundStyle(task.isCompleted ? Palette.done : Palette.text)
                         .strikethrough(task.isCompleted, color: Palette.done).lineLimit(2).multilineTextAlignment(.leading)
                     if !task.content.isEmpty {
-                        Text(task.content.split(whereSeparator: \.isNewline).first.map(String.init) ?? "").txt(13).foregroundStyle(Palette.textSecondary).lineLimit(1)
+                        Text(task.content.split(whereSeparator: \.isNewline).first.map(String.init) ?? "").txt(14).foregroundStyle(Palette.textSecondary).lineLimit(1)
                     }
                     HStack(spacing: 8) {
-                        Text(timeText).txt(13, .semibold).foregroundStyle(timeColor)
-                        if task.commentCount > 0 { Label("\(task.commentCount)", systemImage: "bubble.left").labelStyle(MetaLabel()) }
-                        Spacer()
+                        Text(AgendaText.line(task, today: model.today)).txt(14, .medium).foregroundStyle(AgendaText.color(task, today: model.today, accent: accent))
+                        Spacer(minLength: 4)
                         if let project, project.isShared { AvatarStack(members: model.members.filter { project.memberIds.contains($0.id) }) }
-                        Text(project?.name ?? "").txt(13).foregroundStyle(Palette.textTertiary)
+                        Text(project?.name ?? "").txt(14).foregroundStyle(Palette.textTertiary).lineLimit(1)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+        .padding(.leading, 14).padding(.trailing, 16).padding(.vertical, 12)
+        .overlay(alignment: .leading) { Rectangle().fill(Palette.listColor(project?.color)).frame(width: 4) }
     }
 
-    var timeText: String {
-        if task.isCompleted { return "已完成" }
-        guard let s = task.schedule else { return "" }
-        return DateText.taskLine(s, on: day, today: model.today)
-    }
-
-    var timeColor: Color {
-        if task.isCompleted { return Palette.done }
-        return TaskGrouping.isOverdue(task, today: model.today) ? Palette.overdue : accent.text
+    func toggle() {
+        let id = task.id, done = task.isCompleted
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Task { await model.perform { done ? try await $0.uncompleteTask(id: id) : try await $0.completeTask(id: id) } }
     }
 }
 
-/// One week of the event month: day numbers on top, up to 3 bar lanes.
+/// Timeline-style agenda row: date/time on the left, a connector, the card.
+struct TimelineAgendaRow: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.accent) private var accent
+    var task: TodoTask
+    var day: LocalDay
+    var last: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .trailing, spacing: 0) {
+                if let s = task.schedule {
+                    Text(String(format: "%02d-%02d", s.startDay.month, s.startDay.day)).font(.system(size: 13)).foregroundStyle(Palette.textFaint)
+                    if let m = s.startMinute { Text(DateText.hm(m)).font(.system(size: 15)).foregroundStyle(Palette.textSecondary) }
+                }
+            }
+            .frame(width: 48, alignment: .trailing)
+            .padding(.top, 12)
+            VStack(spacing: 0) {
+                Circle().strokeBorder(Palette.textSecondary, lineWidth: 1.5).frame(width: 14, height: 14).padding(.top, 16)
+                if !last { Rectangle().fill(Palette.separator).frame(width: 1.5).frame(maxHeight: .infinity) }
+            }
+            .frame(width: 14)
+            Button { model.detailTaskId = task.id } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(AgendaText.line(task, today: model.today, includeDay: task.schedule?.isMultiDay ?? false))
+                        .txt(15, .medium).foregroundStyle(AgendaText.color(task, today: model.today, accent: accent))
+                    Text(task.title).txt(17, .medium).foregroundStyle(task.isCompleted ? Palette.done : Palette.text)
+                        .strikethrough(task.isCompleted, color: Palette.done).multilineTextAlignment(.leading)
+                    if !task.content.isEmpty {
+                        Text(task.content.split(whereSeparator: \.isNewline).first.map(String.init) ?? "").txt(14).foregroundStyle(Palette.textSecondary).lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14).padding(.vertical, 12)
+                .card(14)
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, 12)
+        }
+    }
+}
+
+enum AgendaText {
+    /// "11月13日, 11:00 – 12:00", "11月13日 – 11月17日", "全天".
+    static func line(_ t: TodoTask, today: LocalDay, includeDay: Bool = true) -> String {
+        if t.isCompleted { return "已完成" }
+        guard let s = t.schedule else { return "" }
+        func md(_ d: LocalDay) -> String { "\(d.month)月\(d.day)日" }
+        if s.isAllDay {
+            return s.isMultiDay ? md(s.startDay) + " – " + md(s.lastDay) : (includeDay ? md(s.startDay) : "全天")
+        }
+        let r = DateText.range(s)
+        return includeDay ? md(s.startDay) + ", " + r : r
+    }
+
+    static func color(_ t: TodoTask, today: LocalDay, accent: AccentTheme) -> Color {
+        if t.isCompleted { return Palette.done }
+        return TaskGrouping.isOverdue(t, today: today) ? Palette.overdue : accent.text
+    }
+}
+
+/// 年: twelve mini months; tapping one opens it in 清單.
+struct YearGrid: View {
+    @Environment(\.accent) private var accent
+    var year: Int
+    var today: LocalDay
+    var busy: Set<LocalDay>
+    var open: (LocalDay) -> Void
+
+    var body: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 3), spacing: 18) {
+            ForEach(1...12, id: \.self) { m in
+                let first = LocalDay(year: year, month: m, day: 1)
+                Button { open(first) } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(m)月").txt(15, .bold).foregroundStyle(first.month == today.month && year == today.year ? accent.text : Palette.text)
+                        let days = MonthLayout.gridDays(for: first)
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 2) {
+                            ForEach(days, id: \.self) { d in
+                                let isToday = d == today
+                                Text(d.month == m ? "\(d.day)" : "")
+                                    .font(.system(size: 8.5, weight: isToday ? .bold : .regular))
+                                    .foregroundStyle(isToday ? accent.onAccent : (busy.contains(d) ? accent.text : Palette.textSecondary))
+                                    .frame(width: 13, height: 13)
+                                    .background(Circle().fill(isToday && d.month == m ? accent.color : .clear))
+                            }
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(year) 年 \(m) 月")
+            }
+        }
+        .padding(.top, 8)
+    }
+}
+
+/// One week of the event month: day numbers on top, bars in lanes.
 struct WeekRow: View {
     @Environment(\.accent) private var accent
+    @Environment(AppModel.self) private var model
     var week: MonthLayout.Week
     var month: LocalDay
     var selected: LocalDay
     var today: LocalDay
+    var lanes: Int
     var pick: (LocalDay) -> Void
     var open: (String) -> Void
-    @Environment(AppModel.self) private var model
 
-    let laneH: CGFloat = 15
+    let laneH: CGFloat = 17
 
     var body: some View {
         GeometryReader { geo in
@@ -322,57 +564,231 @@ struct WeekRow: View {
             ZStack(alignment: .topLeading) {
                 HStack(spacing: 0) {
                     ForEach(Array(week.days.enumerated()), id: \.offset) { i, d in
-                        let isSel = d == selected, isToday = d == today
+                        let isToday = d == today
                         Button { pick(d) } label: {
                             VStack(spacing: 0) {
                                 Text("\(d.day)")
-                                    .font(.system(size: 12, weight: isSel || isToday ? .bold : .semibold))
-                                    .foregroundStyle(isSel ? accent.onAccent : (isToday ? accent.text : Color(hex: "#E6E9E8")))
-                                    .frame(width: 22, height: 22)
-                                    .background(Circle().fill(isSel ? accent.color : .clear))
-                                    .overlay(Circle().strokeBorder(isToday && !isSel ? accent.text : .clear, lineWidth: 1.5))
+                                    .font(.system(size: 14, weight: isToday ? .bold : .semibold))
+                                    .foregroundStyle(isToday ? accent.onAccent : Color(hex: "#E6E9E8"))
+                                    .frame(width: 28, height: 28)
+                                    .background(Circle().fill(isToday ? accent.color : .clear))
                                     .padding(.top, 4)
                                 Spacer()
                                 if let n = week.overflow[i] {
-                                    Text("+\(n) 項").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.textSecondary)
-                                        .frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 3).padding(.bottom, 3)
+                                    Text("+\(n)").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.textSecondary)
+                                        .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 4).padding(.bottom, 2)
                                 }
                             }
                             .frame(width: colW, height: geo.size.height)
-                            .background(isSel ? accent.color.opacity(0.12) : .clear)
-                            .overlay(alignment: .leading) { if i > 0 { Rectangle().fill(Color(hex: "#1E2022")).frame(width: 1) } }
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .opacity(d.month == month.month ? 1 : 0.38)
+                        .opacity(d.month == month.month ? 1 : 0.4)
                         .accessibilityLabel(DateText.full(d))
                     }
                 }
                 ForEach(Array(week.bars.enumerated()), id: \.offset) { _, bar in
-                    let color = model.project(bar.task.projectId)?.color ?? "#5B6461"
+                    let color = Color(hex: model.project(bar.task.projectId)?.color ?? "#5B6461")
                     let done = bar.task.isCompleted
+                    let timed = bar.task.schedule?.startMinute.map { "[\(DateText.hm($0))] " } ?? ""
                     Button { open(bar.task.id) } label: {
-                        Text((bar.continues ? "‹ " : "") + bar.task.title)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(done ? Palette.done : mix(color))
-                            .strikethrough(done)
-                            .lineLimit(1)
-                            .padding(.horizontal, 3)
-                            .frame(width: colW * CGFloat(bar.endColumn - bar.startColumn + 1) - 3, height: laneH - 2, alignment: .leading)
-                            .background(RoundedRectangle(cornerRadius: 3).fill(done ? Palette.separator : Color(hex: color).opacity(0.22)))
+                        HStack(spacing: 0) {
+                            Rectangle().fill(color).frame(width: 2)
+                            Text((bar.continues ? "‹ " : "") + (bar.startColumn == bar.endColumn ? timed : "") + bar.task.title)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(done ? Palette.done : Palette.text.opacity(0.92))
+                                .strikethrough(done)
+                                .lineLimit(1)
+                                .padding(.horizontal, 3)
+                            Spacer(minLength: 0)
+                        }
+                        .frame(width: colW * CGFloat(bar.endColumn - bar.startColumn + 1) - 3, height: laneH - 2, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 3).fill(color.opacity(done ? 0.1 : 0.28)))
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
                     .buttonStyle(.plain)
-                    .offset(x: colW * CGFloat(bar.startColumn) + 1.5, y: 30 + CGFloat(bar.lane) * laneH)
+                    .offset(x: colW * CGFloat(bar.startColumn) + 1.5, y: 36 + CGFloat(bar.lane) * laneH)
                 }
             }
         }
-        .frame(height: 30 + laneH * 3 + 16)
+        .frame(height: 36 + laneH * CGFloat(lanes) + 18)
+    }
+}
+
+/// 週／3日／日 time grid with an all-day strip, overlapping blocks side by
+/// side, a now line on today, and tap-to-create on empty slots.
+struct TimeGrid: View {
+    @Environment(\.accent) private var accent
+    @Environment(AppModel.self) private var model
+    var days: [LocalDay]
+    var tasks: [TodoTask]
+    var today: LocalDay
+    var selected: LocalDay
+    var openTask: (String) -> Void
+    var tapSlot: (LocalDay, Int) -> Void
+    var tapDay: (LocalDay) -> Void
+
+    let hourH: CGFloat = 56
+    let gutter: CGFloat = 40
+
+    var allDayItems: [(TodoTask, Int, Int, Int)] {
+        // (task, firstColumn, lastColumn, lane)
+        guard let first = days.first, let last = days.last else { return [] }
+        var lanes: [[ClosedRange<Int>]] = []
+        var out: [(TodoTask, Int, Int, Int)] = []
+        for t in tasks {
+            guard let s = t.schedule, s.isAllDay, s.overlaps(first, last) else { continue }
+            let a = max(0, first.days(until: s.startDay)), b = min(days.count - 1, first.days(until: s.lastDay))
+            var lane = 0
+            while lane < lanes.count, lanes[lane].contains(where: { $0.overlaps(a...b) }) { lane += 1 }
+            if lane == lanes.count { lanes.append([]) }
+            lanes[lane].append(a...b)
+            out.append((t, a, b, lane))
+        }
+        return out
     }
 
-    func mix(_ hex: String) -> Color {
-        let c = UIColor(Color(hex: hex))
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        c.getRed(&r, green: &g, blue: &b, alpha: &a)
-        return Color(red: r * 0.55 + 0.45, green: g * 0.55 + 0.45, blue: b * 0.55 + 0.45)
+    var body: some View {
+        GeometryReader { geo in
+            let colW = (geo.size.width - gutter - 8) / CGFloat(days.count)
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    Spacer().frame(width: gutter)
+                    ForEach(days, id: \.self) { d in
+                        Button { tapDay(d) } label: {
+                            VStack(spacing: 2) {
+                                Text(LocalDay.weekdaySymbols[d.weekday]).font(.system(size: 12)).foregroundStyle(Palette.textTertiary)
+                                Text("\(d.day)").font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(d == today ? accent.onAccent : Palette.text)
+                                    .frame(width: 30, height: 30)
+                                    .background(Circle().fill(d == today ? accent.color : .clear))
+                            }
+                            .frame(width: colW)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(DateText.full(d))
+                    }
+                }
+                .padding(.bottom, 4)
+
+                let ad = allDayItems
+                let laneCount = min(3, (ad.map(\.3).max() ?? -1) + 1)
+                if laneCount > 0 {
+                    ZStack(alignment: .topLeading) {
+                        Text("全天").font(.system(size: 10)).foregroundStyle(Palette.textFaint).frame(width: gutter).padding(.top, 4)
+                        ForEach(Array(ad.filter { $0.3 < 3 }.enumerated()), id: \.offset) { _, item in
+                            let (t, a, b, lane) = item
+                            let color = Color(hex: model.project(t.projectId)?.color ?? "#5B6461")
+                            Button { openTask(t.id) } label: {
+                                HStack(spacing: 0) {
+                                    Rectangle().fill(color).frame(width: 2)
+                                    Text(t.title).font(.system(size: 11, weight: .medium)).foregroundStyle(t.isCompleted ? Palette.done : Palette.text).lineLimit(1).padding(.horizontal, 4)
+                                    Spacer(minLength: 0)
+                                }
+                                .frame(width: colW * CGFloat(b - a + 1) - 3, height: 19)
+                                .background(RoundedRectangle(cornerRadius: 3).fill(color.opacity(0.28)))
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                            }
+                            .buttonStyle(.plain)
+                            .offset(x: gutter + colW * CGFloat(a) + 1.5, y: CGFloat(lane) * 21 + 2)
+                        }
+                    }
+                    .frame(height: CGFloat(laneCount) * 21 + 6, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(alignment: .bottom) { Rectangle().fill(Palette.separator).frame(height: 1) }
+                }
+
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        ZStack(alignment: .topLeading) {
+                            VStack(spacing: 0) {
+                                ForEach(0..<25, id: \.self) { h in
+                                    HStack(alignment: .top, spacing: 0) {
+                                        Text(h == 24 ? "00" : String(format: "%02d", h)).font(.system(size: 12)).foregroundStyle(Palette.textTertiary)
+                                            .frame(width: gutter, alignment: .center).offset(y: -7)
+                                        Rectangle().fill(Color(hex: "#222426")).frame(height: 1)
+                                    }
+                                    .frame(height: h == 24 ? 1 : hourH, alignment: .top)
+                                    .id(h)
+                                }
+                            }
+                            // Column separators + tap-to-create
+                            HStack(spacing: 0) {
+                                Spacer().frame(width: gutter)
+                                ForEach(days, id: \.self) { d in
+                                    Rectangle().fill(Color.white.opacity(0.001))
+                                        .frame(width: colW, height: hourH * 24)
+                                        .overlay(alignment: .leading) { Rectangle().fill(Color(hex: "#1E2022")).frame(width: 1) }
+                                        .onTapGesture(coordinateSpace: .local) { p in
+                                            let m = Int(p.y / hourH * 60) / 30 * 30
+                                            tapSlot(d, min(m, 23 * 60 + 30))
+                                        }
+                                        .accessibilityLabel("\(DateText.full(d)) 空白時段，點兩下新增")
+                                }
+                            }
+                            ForEach(Array(days.enumerated()), id: \.offset) { i, d in
+                                ForEach(DayLayout.blocks(for: tasks, on: d), id: \.self) { b in
+                                    block(b, colW: colW).offset(x: gutter + colW * CGFloat(i) + colW / CGFloat(b.lanes) * CGFloat(b.lane) + 1, y: CGFloat(b.start) / 60 * hourH)
+                                }
+                                if d == today { nowLine(colW: colW).offset(x: gutter + colW * CGFloat(i), y: nowY - 4) }
+                            }
+                        }
+                        .frame(height: hourH * 24 + 10, alignment: .topLeading)
+                        .padding(.top, 8)
+                        .padding(.bottom, 160)
+                    }
+                    .defaultScrollAnchor(UnitPoint(x: 0, y: min(1, CGFloat(initialHour) * hourH / 900)), for: .initialOffset)
+                    .scrollIndicators(.hidden)
+                    .task(id: days) {
+                        // Wait for menu dismiss / transition & initial layout, then snap accurately.
+                        try? await Task.sleep(for: .milliseconds(350))
+                        proxy.scrollTo(initialHour, anchor: .top)
+                    }
+                }
+            }
+            .padding(.trailing, 8)
+        }
+    }
+
+    var initialHour: Int {
+        max(0, (days.contains(today) ? nowMinute / 60 : 8) - 2)
+    }
+
+    var nowMinute: Int {
+        let c = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        return c.hour! * 60 + c.minute!
+    }
+    var nowY: CGFloat { CGFloat(nowMinute) / 60 * hourH }
+
+    func nowLine(colW: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            Circle().fill(Palette.overdue).frame(width: 8, height: 8)
+            Rectangle().fill(Palette.overdue).frame(width: colW - 8, height: 1.5)
+        }
+        .allowsHitTesting(false)
+    }
+
+    func block(_ b: DayLayout.Block, colW: CGFloat) -> some View {
+        let color = Color(hex: model.project(b.task.projectId)?.color ?? "#5B6461")
+        let w = colW / CGFloat(b.lanes) - 2
+        let h = max(CGFloat(b.end - b.start) / 60 * hourH - 2, 18)
+        let done = b.task.isCompleted
+        return Button { openTask(b.task.id) } label: {
+            HStack(spacing: 0) {
+                Rectangle().fill(color).frame(width: 3)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(b.task.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(done ? Palette.done : Palette.text)
+                        .strikethrough(done).lineLimit(h > 40 ? 3 : 1).multilineTextAlignment(.leading)
+                    if h > 34, let s = b.task.schedule { Text(DateText.range(s)).font(.system(size: 10)).foregroundStyle(Palette.textSecondary).lineLimit(1) }
+                }
+                .padding(.horizontal, 4).padding(.vertical, 3)
+                Spacer(minLength: 0)
+            }
+            .frame(width: w, height: h, alignment: .topLeading)
+            .background(RoundedRectangle(cornerRadius: 4).fill(color.opacity(done ? 0.12 : 0.3)))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(b.task.title + "，" + (b.task.schedule.map(DateText.range) ?? ""))
     }
 }

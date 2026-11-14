@@ -29,6 +29,14 @@ final class DayDoFlowTests: XCTestCase {
         }
     }
 
+    func dayString(offset: Int) -> String {
+        let d = Calendar.current.date(byAdding: .day, value: offset, to: Date())!
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f.string(from: d)
+    }
+
     func dismissNotificationPrompt() {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let allow = springboard.buttons["允許"]
@@ -88,17 +96,21 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["2 / 3"].waitForExistence(timeout: 3))
         shot("06-detail-full")
 
-        // Date panel (4a/4b): open calendar + reminder options, pick tomorrow.
+        // Date panel: pick tomorrow in the calendar, switch to 持續時間, open timeline.
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH '設定日期與時間'")).firstMatch.tap()
         XCTAssertTrue(app.buttons["確定"].waitForExistence(timeout: 3))
         shot("07-date-panel")
-        app.buttons["dateCard"].tap()
-        app.buttons.matching(NSPredicate(format: "label BEGINSWITH '提醒'")).firstMatch.tap()
-        shot("08-date-expanded")
-        app.buttons["明天"].firstMatch.tap()
+        let tomorrow = app.buttons["monthDay.\(dayString(offset: 1))"].firstMatch
+        XCTAssertTrue(tomorrow.waitForExistence(timeout: 3), app.debugDescription)
+        tomorrow.tap()
+        app.buttons["durationTab"].tap()
 
-        // Time block (4c): drag the block down by ~60 min.
-        app.buttons["timeCard"].tap()
+        // Time block: open timeline and drag the block down by ~60 min (18:00 -> 19:00).
+        let openTimeline = app.buttons["openTimeline"]
+        XCTAssertTrue(openTimeline.waitForExistence(timeout: 3))
+        sleep(1)
+        shot("08-date-duration")
+        openTimeline.tap()
         let block = app.otherElements["正在編輯的時間區塊，可拖曳移動或調整起訖"]
         XCTAssertTrue(block.waitForExistence(timeout: 3))
         let start = block.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
@@ -108,6 +120,7 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["19:00 – 19:30"].waitForExistence(timeout: 3), app.debugDescription)
         // End handle past midnight is covered by unit tests; save and confirm.
         app.buttons["儲存"].tap()
+        XCTAssertTrue(app.buttons["確定"].waitForExistence(timeout: 3))
         app.buttons["確定"].tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS '明天 19:00 – 19:30'")).firstMatch.waitForExistence(timeout: 3))
         shot("10-detail-after-date")
@@ -118,11 +131,29 @@ final class DayDoFlowTests: XCTestCase {
         app.buttons["日曆"].tap()
         let title = app.buttons["calendarTitle"]
         XCTAssertTrue(title.waitForExistence(timeout: 3), app.debugDescription)
-        shot("11-calendar")
-        title.tap()
-        shot("12-calendar-week")
-        app.buttons["切換為事件月曆"].tap()
-        shot("13-calendar-events")
+        shot("11-calendar-list")
+
+        for (mode, shotName) in [("月", "12-calendar-month"), ("週", "13-calendar-week"), ("日", "14-calendar-day"), ("年", "15-calendar-year")] {
+            app.buttons["calendarMode"].tap()
+            let item = app.buttons[mode].firstMatch
+            XCTAssertTrue(item.waitForExistence(timeout: 3), "Calendar mode \(mode) not found")
+            item.tap()
+            sleep(1)
+            if mode == "週" || mode == "日" {
+                let hour = Calendar.current.component(.hour, from: Date())
+                if hour <= 14 {
+                    let h08 = app.staticTexts["08"].firstMatch
+                    XCTAssertTrue(h08.waitForExistence(timeout: 3) && h08.isHittable, "\(mode): Hour 08 should be hittable without scrolling")
+                } else {
+                    let brief = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).firstMatch
+                    XCTAssertTrue(brief.waitForExistence(timeout: 3) && brief.isHittable, "\(mode): 18:00 event should be hittable without scrolling")
+                }
+                if hour >= 5 {
+                    XCTAssertFalse(app.staticTexts["01"].firstMatch.isHittable, "\(mode): TimeGrid should scroll past 01:00")
+                }
+            }
+            shot(shotName)
+        }
     }
 
     func testCreateTaskAndEditList() {
@@ -131,9 +162,14 @@ final class DayDoFlowTests: XCTestCase {
         let field = app.descendants(matching: .any)["composerTitle"]
         XCTAssertTrue(field.waitForExistence(timeout: 3))
         field.typeText("UI 測試新增的任務")
-        shot("14-composer")
+        shot("16-composer")
         app.buttons["新增"].tap()
         XCTAssertTrue(app.buttons["完成：UI 測試新增的任務"].waitForExistence(timeout: 3))
+
+        // Composer stays open for quick capture; close it before opening the drawer.
+        app.buttons["composerMore"].tap()
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(field.waitForNonExistence(timeout: 3))
 
         app.buttons["開啟清單抽屜"].tap()
         app.buttons["新增清單或資料夾"].tap()
@@ -142,9 +178,41 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 3))
         name.typeText("旅行")
         app.buttons["看板"].tap()
-        shot("15-edit-list")
+        shot("17-edit-list")
         app.buttons["儲存"].tap()
         XCTAssertTrue(app.staticTexts["旅行"].waitForExistence(timeout: 3))
+    }
+
+    func testComposerDurationTask() {
+        dismissNotificationPrompt()
+        app.buttons["新增任務"].firstMatch.tap()
+        let field = app.descendants(matching: .any)["composerTitle"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        field.typeText("帶時間區段的任務")
+
+        app.buttons["composerDate"].tap()
+        XCTAssertTrue(app.buttons["確定"].waitForExistence(timeout: 3))
+        app.buttons["durationTab"].tap()
+
+        let allDay = app.switches["allDayToggle"].firstMatch
+        XCTAssertTrue(allDay.waitForExistence(timeout: 3))
+        allDay.tap()
+
+        let chip = app.buttons["1 小時"]
+        XCTAssertTrue(chip.waitForExistence(timeout: 3))
+        chip.tap()
+        shot("18-composer-duration")
+        app.buttons["確定"].tap()
+
+        XCTAssertTrue(app.buttons["新增"].waitForExistence(timeout: 3))
+        app.buttons["新增"].tap()
+        app.buttons["composerMore"].tap()
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(field.waitForNonExistence(timeout: 3))
+
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS '帶時間區段的任務' AND label CONTAINS '09:00 – 10:00'")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 3), app.debugDescription)
+        shot("19-task-with-duration")
     }
 
     func testSearchDeleteAndRestore() {
@@ -156,7 +224,7 @@ final class DayDoFlowTests: XCTestCase {
         field.typeText("訂位")
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS '晚餐：巷口火鍋'")).element(boundBy: 1)
         XCTAssertTrue(row.waitForExistence(timeout: 3))
-        shot("16-search")
+        shot("20-search")
 
         // Delete from the context menu, then restore from 垃圾桶.
         row.press(forDuration: 1.0)
@@ -167,7 +235,7 @@ final class DayDoFlowTests: XCTestCase {
         app.buttons["垃圾桶"].tap()
         let trashed = app.buttons.matching(NSPredicate(format: "label CONTAINS '晚餐：巷口火鍋'")).element(boundBy: 0)
         XCTAssertTrue(trashed.waitForExistence(timeout: 3))
-        shot("17-trash")
+        shot("21-trash")
         trashed.press(forDuration: 1.0)
         app.buttons["還原"].tap()
         XCTAssertTrue(trashed.waitForNonExistence(timeout: 3))

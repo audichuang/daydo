@@ -149,3 +149,27 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         #expect(s[1].tasks.map(\.id) == ["allday", "late"])
     }
 }
+
+@Suite struct DayLayoutTests {
+    func task(_ id: String, _ s: Schedule) -> TodoTask { LayoutTests().task(id, s) }
+
+    @Test func overlapsGoSideBySide() {
+        let d = day("2026-11-15")
+        let blocks = DayLayout.blocks(for: [
+            task("a", .timed(d, start: 1080, end: 1110)),
+            task("b", .timed(d, start: 1140, end: 1260)),
+            task("c", .timed(d, start: 1170, end: 1230)),
+            task("all", .allDay(d)),
+        ], on: d)
+        #expect(blocks.map(\.task.id) == ["a", "b", "c"])
+        #expect(blocks[0].lanes == 1)
+        #expect(blocks[1].lane == 0 && blocks[2].lane == 1 && blocks[2].lanes == 2)
+    }
+
+    @Test func crossMidnightIsClippedPerDay() {
+        let d = day("2026-11-15")
+        let t = task("late", .timed(d, start: 1410, end: 30))
+        #expect(DayLayout.blocks(for: [t], on: d).map { [$0.start, $0.end] } == [[1410, 1440]])
+        #expect(DayLayout.blocks(for: [t], on: d.adding(days: 1)).map { [$0.start, $0.end] } == [[0, 30]])
+    }
+}

@@ -8,7 +8,8 @@ struct TimeBlockEditor: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
     @Binding var draft: DateDraft
-    var task: TodoTask?
+    var title: String
+    var excludeTaskId: String?
     var cancel: () -> Void
     var save: () -> Void
 
@@ -109,8 +110,7 @@ struct TimeBlockEditor: View {
             }
             .scrollIndicators(.hidden)
             if !allDayTitles.isEmpty || conflicts > 0 {
-                (Text(allDayTitles.isEmpty ? "" : "全天：" + allDayTitles.joined(separator: "・"))
-                    + Text(conflicts > 0 ? "　與 \(conflicts) 項重疊" : "").foregroundColor(Palette.conflict))
+                Text("\(allDayTitles.isEmpty ? "" : "全天：" + allDayTitles.joined(separator: "・"))\(Text(conflicts > 0 ? "　與 \(conflicts) 項重疊" : "").foregroundStyle(Palette.conflict))")
                     .txt(12).foregroundStyle(Palette.textSecondary).lineLimit(2)
             }
         }
@@ -186,7 +186,7 @@ struct TimeBlockEditor: View {
             RoundedRectangle(cornerRadius: 10).fill(accent.color.opacity(0.8))
             RoundedRectangle(cornerRadius: 10).strokeBorder(accent.color, lineWidth: 2)
             VStack(alignment: .leading, spacing: 1) {
-                Text(task?.title ?? "").font(.system(size: 13, weight: .bold)).lineLimit(1)
+                Text(title.isEmpty ? "新任務" : title).font(.system(size: 13, weight: .bold)).lineLimit(1)
                 if h > 34 {
                     Text(DateText.hm(s) + " – " + (e >= 1440 ? "隔日 " : "") + DateText.hm(e)).font(.system(size: 12)).opacity(0.85)
                 }
@@ -253,7 +253,7 @@ struct TimeBlockEditor: View {
 
     func loadDay() async {
         guard let list = try? await model.api.listTasks(TaskQuery(from: day, to: day.adding(days: 1))) else { return }
-        let rest = list.filter { $0.id != task?.id }
+        let rest = list.filter { $0.id != excludeTaskId }
         others = rest.filter { !($0.schedule?.isAllDay ?? true) }.sorted { ($0.schedule!.startDay, $0.schedule!.startMinute!) < ($1.schedule!.startDay, $1.schedule!.startMinute!) }
         allDayTitles = rest.filter { $0.schedule?.isAllDay == true && $0.schedule!.occurs(on: day) }.map { t in
             if let (i, n) = t.schedule!.dayPosition(on: day) { return "\(t.title)（第 \(i)/\(n) 天）" }
