@@ -45,6 +45,7 @@ struct CalendarScreen: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(eventMode ? "月份" : (collapsed ? "展開整個月份" : "收合成單週"))
+                .accessibilityIdentifier("calendarTitle")
             } trailing: {
                 HeaderAction(systemName: "plus", label: "新增任務", tint: accent.text) {
                     model.composing = ComposeRequest(day: sel)

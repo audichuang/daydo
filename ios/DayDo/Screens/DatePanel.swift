@@ -106,6 +106,7 @@ struct DatePanel: View {
             }
             .buttonStyle(.plain)
             .accessibilityValue(calOpen ? "日曆已展開" : "")
+            .accessibilityIdentifier("dateCard")
             Button {
                 if draft.day == nil { draft.day = today }
                 if draft.allDay { setTimed() }
@@ -114,6 +115,7 @@ struct DatePanel: View {
                 card("時間", timeText, durText, highlighted: false)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("timeCard")
         }
     }
 

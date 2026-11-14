@@ -17,17 +17,20 @@ struct DrawerOverlay: View {
                     .onTapGesture { close() }
                     .allowsHitTesting(open)
                     .accessibilityLabel("關閉抽屜")
+                if open {
                 DrawerView(close: close)
                     .frame(width: width)
                     .frame(maxHeight: .infinity)
                     .background(Palette.card.ignoresSafeArea())
                     .clipShape(UnevenRoundedRectangle(bottomTrailingRadius: 28, topTrailingRadius: 28, style: .continuous))
                     .ignoresSafeArea(edges: .bottom)
-                    .offset(x: open ? min(0, drag) : -width - 20)
+                    .offset(x: min(0, drag))
                     .gesture(DragGesture().onChanged { drag = $0.translation.width }.onEnded { v in
                         if v.translation.width < -80 { close() }
                         withAnimation(.snappy) { drag = 0 }
                     })
+                    .transition(.move(edge: .leading))
+                }
             }
             .animation(.snappy(duration: 0.28), value: open)
         }
@@ -213,6 +216,7 @@ struct DrawerView: View {
             trailing: p.isShared ? AnyView(Image(systemName: "person.2").font(.system(size: 11)).foregroundStyle(Palette.textTertiary).accessibilityLabel("共享清單")) : nil) {
             pick(.project(p.id))
         }
+        .accessibilityIdentifier("drawer.list.\(p.name)")
         .contextMenu {
             Button("編輯清單", systemImage: "slider.horizontal.3") { close(); model.editingProjectId = p.id }
         }

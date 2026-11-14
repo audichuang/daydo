@@ -27,6 +27,7 @@ struct DayDoApp: App {
         let dir = storageDirectory()
         if ProcessInfo.processInfo.arguments.contains("-DayDoReset") {
             try? FileManager.default.removeItem(at: dir)
+            if let bundle = Bundle.main.bundleIdentifier { UserDefaults.standard.removePersistentDomain(forName: bundle) }
         }
         do {
             let db = try AppDatabase.open(at: dir.appendingPathComponent("daydo.sqlite"))

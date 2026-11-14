@@ -31,6 +31,7 @@ struct ComposerSheet: View {
                 .txt(20, .bold)
                 .foregroundStyle(Palette.text)
                 .focused($focused)
+                .accessibilityIdentifier("composerTitle")
                 .lineLimit(1...3)
                 .submitLabel(.done)
                 .onSubmit { if canSave { save(openDetail: false) } }

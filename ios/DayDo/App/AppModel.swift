@@ -95,7 +95,9 @@ final class AppModel {
     func didWrite() async {
         await refreshLookups()
         revision += 1
-        await reminders.reschedule(api: api)
+        // Never block the UI on the notification permission prompt.
+        let scheduler = reminders, api = api
+        Task.detached { await scheduler.reschedule(api: api) }
     }
 
     func scopeTitle(_ scope: TaskScope) -> String {

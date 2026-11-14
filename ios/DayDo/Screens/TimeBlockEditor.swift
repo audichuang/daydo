@@ -212,7 +212,7 @@ struct TimeBlockEditor: View {
     enum DragKind { case move, start, end }
 
     func dragGesture(_ kind: DragKind) -> some Gesture {
-        DragGesture(minimumDistance: 2)
+        DragGesture(minimumDistance: 2, coordinateSpace: .global)
             .onChanged { v in
                 if dragStart == nil { dragStart = (s, e) }
                 let (s0, e0) = dragStart!

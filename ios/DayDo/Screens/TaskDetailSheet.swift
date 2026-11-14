@@ -79,6 +79,7 @@ struct TaskDetailSheet: View {
                             .strikethrough(task.isCompleted, color: Palette.done)
                             .lineLimit(1...6)
                             .focused($focus, equals: .title)
+                            .accessibilityIdentifier("taskTitleField")
                         tagsRow(task)
                         VStack(alignment: .leading, spacing: 6) {
                             Text("描述").txt(12, .semibold).foregroundStyle(Palette.textTertiary)

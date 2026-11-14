@@ -46,3 +46,23 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_PREVIEWS: YES
+  DayDoUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: DayDoUITests
+    dependencies:
+      - target: DayDo
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.audichuang.daydo.uitests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  DayDo:
+    build:
+      targets:
+        DayDo: all
+        DayDoUITests: [test]
+    test:
+      targets:
+        - DayDoUITests
