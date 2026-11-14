@@ -1,0 +1,193 @@
+import Foundation
+import GRDB
+
+/// Owns the SQLite file and its schema.
+public final class AppDatabase: Sendable {
+    public let writer: any DatabaseWriter
+
+    public init(_ writer: any DatabaseWriter) throws {
+        self.writer = writer
+        try Self.migrator.migrate(writer)
+    }
+
+    /// File-backed database. Pass the App Group container so the widget
+    /// extension can read the same file.
+    public static func open(at url: URL) throws -> AppDatabase {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var config = Configuration()
+        config.foreignKeysEnabled = true
+        let pool = try DatabasePool(path: url.path, configuration: config)
+        return try AppDatabase(pool)
+    }
+
+    public static func inMemory() throws -> AppDatabase {
+        var config = Configuration()
+        config.foreignKeysEnabled = true
+        return try AppDatabase(try DatabaseQueue(configuration: config))
+    }
+
+    static var migrator: DatabaseMigrator {
+        var m = DatabaseMigrator()
+        m.registerMigration("v1") { db in
+            func stamps(_ t: TableDefinition) {
+                t.column("createdAt", .integer).notNull()
+                t.column("updatedAt", .integer).notNull()
+                t.column("deletedAt", .integer)
+            }
+            try db.create(table: "member") { t in
+                t.primaryKey("id", .text)
+                t.column("name", .text).notNull()
+                t.column("initial", .text).notNull()
+                t.column("color", .text).notNull()
+                t.column("isMe", .boolean).notNull().defaults(to: false)
+                stamps(t)
+            }
+            try db.create(table: "folder") { t in
+                t.primaryKey("id", .text)
+                t.column("name", .text).notNull()
+                t.column("sortKey", .text).notNull()
+                stamps(t)
+            }
+            try db.create(table: "project") { t in
+                t.primaryKey("id", .text)
+                t.column("name", .text).notNull()
+                t.column("color", .text)
+                t.column("icon", .text)
+                t.column("folderId", .text).references("folder", onDelete: .setNull)
+                t.column("viewMode", .text).notNull().defaults(to: "list")
+                t.column("kind", .text).notNull().defaults(to: "TASK")
+                t.column("isInbox", .boolean).notNull().defaults(to: false)
+                t.column("ownerId", .text).notNull()
+                t.column("sortKey", .text).notNull()
+                t.column("showInSmart", .text).notNull().defaults(to: "all")
+                t.column("notifyMode", .text).notNull().defaults(to: "all")
+                t.column("archivedAt", .integer)
+                stamps(t)
+            }
+            try db.create(table: "projectMember") { t in
+                t.column("projectId", .text).notNull().references("project", onDelete: .cascade)
+                t.column("memberId", .text).notNull().references("member", onDelete: .cascade)
+                t.column("role", .text).notNull()
+                t.primaryKey(["projectId", "memberId"])
+                stamps(t)
+            }
+            try db.create(table: "task") { t in
+                t.primaryKey("id", .text)
+                t.column("projectId", .text).notNull().references("project", onDelete: .cascade).indexed()
+                t.column("title", .text).notNull()
+                t.column("content", .text).notNull().defaults(to: "")
+                t.column("priority", .integer).notNull().defaults(to: 0)
+                t.column("status", .integer).notNull().defaults(to: 0)
+                t.column("startDay", .text).indexed()
+                t.column("startMinute", .integer)
+                t.column("endDay", .text)
+                t.column("endMinute", .integer)
+                t.column("timeZone", .text)
+                t.column("reminders", .jsonText).notNull().defaults(to: "[]")
+                t.column("repeatRule", .text)
+                t.column("tags", .jsonText).notNull().defaults(to: "[]")
+                t.column("assigneeId", .text)
+                t.column("sortKey", .text).notNull()
+                t.column("completedAt", .integer)
+                t.column("sourceRaw", .text)
+                t.column("importNote", .text)
+                stamps(t)
+            }
+            try db.create(table: "checklistItem") { t in
+                t.primaryKey("id", .text)
+                t.column("taskId", .text).notNull().references("task", onDelete: .cascade).indexed()
+                t.column("title", .text).notNull()
+                t.column("status", .integer).notNull().defaults(to: 0)
+                t.column("sortKey", .text).notNull()
+                stamps(t)
+            }
+            try db.create(table: "tag") { t in
+                t.primaryKey("name", .text)
+                t.column("label", .text).notNull()
+                t.column("color", .text)
+                t.column("sortKey", .text).notNull()
+                stamps(t)
+            }
+            try db.create(table: "attachment") { t in
+                t.primaryKey("id", .text)
+                t.column("taskId", .text).notNull().references("task", onDelete: .cascade).indexed()
+                t.column("fileName", .text).notNull()
+                t.column("size", .integer).notNull()
+                t.column("mimeType", .text).notNull()
+                t.column("localPath", .text)
+                t.column("originalPath", .text)
+                stamps(t)
+            }
+            try db.create(table: "comment") { t in
+                t.primaryKey("id", .text)
+                t.column("taskId", .text).notNull().references("task", onDelete: .cascade).indexed()
+                t.column("authorId", .text).notNull()
+                t.column("body", .text).notNull()
+                stamps(t)
+            }
+            try db.create(table: "change") { t in
+                t.autoIncrementedPrimaryKey("seq")
+                t.column("entity", .text).notNull()
+                t.column("entityId", .text).notNull()
+                t.column("op", .text).notNull()
+                t.column("fields", .jsonText).notNull()
+                t.column("row", .jsonText).notNull()
+                t.column("at", .integer).notNull()
+            }
+            try db.create(table: "meta") { t in
+                t.primaryKey("key", .text)
+                t.column("value", .text).notNull()
+            }
+        }
+        return m
+    }
+}
+
+// MARK: - Change tracking
+
+enum Outbox {
+    static let encoder: JSONEncoder = {
+        let e = JSONEncoder()
+        e.outputFormatting = [.sortedKeys]
+        return e
+    }()
+
+    /// Inserts or updates `record` and appends an outbox entry listing the
+    /// fields that actually changed. No-op writes produce no outbox entry.
+    @discardableResult
+    static func save<R: PersistableRecord & FetchableRecord & Encodable & Equatable>(
+        _ record: R, entity: String, id: String, key: [String: any DatabaseValueConvertible]? = nil,
+        in db: Database, now: EpochMillis
+    ) throws -> Bool {
+        let before = try R.fetchOne(db, key: key ?? ["id": id])
+        if let before, before == record { return false }
+        try record.save(db)
+        let newDict = try dict(record)
+        let changed: [String]
+        if let before {
+            let oldDict = try dict(before)
+            changed = Set(oldDict.keys).union(newDict.keys).filter { !jsonEqual(oldDict[$0], newDict[$0]) }.sorted()
+        } else {
+            changed = newDict.keys.sorted()
+        }
+        var change = ChangeRecord(
+            seq: nil, entity: entity, entityId: id,
+            op: "upsert", fields: changed,
+            row: String(data: try encoder.encode(record), encoding: .utf8)!, at: now)
+        try change.insert(db)
+        return true
+    }
+
+    private static func dict<R: Encodable>(_ r: R) throws -> [String: Any] {
+        let data = try encoder.encode(r)
+        return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    private static func jsonEqual(_ a: Any?, _ b: Any?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): return true
+        case let (a?, b?): return (a as AnyObject).isEqual(b as AnyObject)
+        default: return false
+        }
+    }
+}

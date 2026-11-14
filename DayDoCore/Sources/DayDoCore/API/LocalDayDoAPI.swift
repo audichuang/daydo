@@ -1,0 +1,837 @@
+import Foundation
+import GRDB
+
+/// On-device implementation of `DayDoAPI` backed by SQLite. Every write
+/// appends to the `change` outbox in the same transaction.
+public final class LocalDayDoAPI: DayDoAPI {
+    public let database: AppDatabase
+    public let clock: Clock
+    public let attachmentsDirectory: URL
+
+    public init(database: AppDatabase, clock: Clock = .system, attachmentsDirectory: URL) {
+        self.database = database
+        self.clock = clock
+        self.attachmentsDirectory = attachmentsDirectory
+    }
+
+    var writer: any DatabaseWriter { database.writer }
+    func now() -> EpochMillis { clock.now().epochMillis }
+    var today: LocalDay { clock.today }
+
+    // MARK: Bootstrap
+
+    public static let defaultLists: [(String, String)] = [("工作", "#4AA8E8"), ("個人", "#E98A5B"), ("購物", "#C77DDB")]
+
+    /// Creates the local user, the inbox and starter lists on first launch.
+    public func bootstrap(meName: String = "我") async throws {
+        let now = now()
+        try await writer.write { db in
+            if try MemberRecord.filter(Column("isMe") == true).fetchOne(db) != nil { return }
+            let me = MemberRecord(id: ID.make(), name: meName, initial: String(meName.prefix(1)), color: "#9BB8FF", isMe: true, createdAt: now, updatedAt: now)
+            try Outbox.save(me, entity: "member", id: me.id, in: db, now: now)
+            var key: String? = nil
+            func project(_ name: String, _ color: String?, inbox: Bool) throws {
+                key = SortKey.after(key)
+                let p = ProjectRecord(id: ID.make(), name: name, color: color, icon: inbox ? "inbox" : nil, folderId: nil, viewMode: "list", kind: "TASK",
+                                      isInbox: inbox, ownerId: me.id, sortKey: key!, showInSmart: "all", notifyMode: "all",
+                                      archivedAt: nil, createdAt: now, updatedAt: now)
+                try Outbox.save(p, entity: "project", id: p.id, in: db, now: now)
+                let pm = ProjectMemberRecord(projectId: p.id, memberId: me.id, role: "owner", createdAt: now, updatedAt: now)
+                try Outbox.save(pm, entity: "projectMember", id: "\(p.id):\(me.id)", key: ["projectId": p.id, "memberId": me.id], in: db, now: now)
+            }
+            try project("收件匣", nil, inbox: true)
+            for (n, c) in Self.defaultLists { try project(n, c, inbox: false) }
+        }
+    }
+
+    // MARK: Helpers (run inside a transaction)
+
+    func me(_ db: Database) throws -> MemberRecord {
+        guard let m = try MemberRecord.filter(Column("isMe") == true).fetchOne(db) else {
+            throw DayDoError.invalid("Database not bootstrapped")
+        }
+        return m
+    }
+
+    func inbox(_ db: Database) throws -> ProjectRecord {
+        guard let p = try ProjectRecord.filter(Column("isInbox") == true && Column("deletedAt") == nil).fetchOne(db) else {
+            throw DayDoError.invalid("Inbox missing")
+        }
+        return p
+    }
+
+    func projectRecord(_ db: Database, _ id: String) throws -> ProjectRecord {
+        guard let p = try ProjectRecord.fetchOne(db, key: id), p.deletedAt == nil else { throw DayDoError.notFound("project", id) }
+        return p
+    }
+
+    func taskRecord(_ db: Database, _ id: String, includeDeleted: Bool = false) throws -> TaskRecord {
+        guard let t = try TaskRecord.fetchOne(db, key: id), includeDeleted || t.deletedAt == nil else { throw DayDoError.notFound("task", id) }
+        return t
+    }
+
+    func saveTask(_ db: Database, _ t: TaskRecord) throws {
+        try Outbox.save(t, entity: "task", id: t.id, in: db, now: t.updatedAt)
+    }
+
+    func recordDelete(_ db: Database, entity: String, id: String) throws {
+        var c = ChangeRecord(seq: nil, entity: entity, entityId: id, op: "delete", fields: [], row: "{}", at: now())
+        try c.insert(db)
+    }
+
+    func tasks(_ db: Database, _ records: [TaskRecord]) throws -> [TodoTask] {
+        guard !records.isEmpty else { return [] }
+        let ids = records.map(\.id)
+        let items = try ChecklistItemRecord.filter(ids.contains(Column("taskId")) && Column("deletedAt") == nil).fetchAll(db)
+        let atts = try AttachmentRecord.filter(ids.contains(Column("taskId")) && Column("deletedAt") == nil).fetchAll(db)
+        let comments = try Row.fetchAll(db, sql: "SELECT taskId, COUNT(*) AS n FROM comment WHERE deletedAt IS NULL AND taskId IN (\(ids.map { _ in "?" }.joined(separator: ","))) GROUP BY taskId", arguments: StatementArguments(ids))
+        let itemsBy = Dictionary(grouping: items, by: \.taskId)
+        let attsBy = Dictionary(grouping: atts, by: \.taskId)
+        var counts: [String: Int] = [:]
+        for r in comments { counts[r["taskId"]] = r["n"] }
+        let tz = clock.timeZone()
+        return records.map { r in
+            let sched = r.schedule?.localized(to: tz)
+            return TodoTask(
+                id: r.id, projectId: r.projectId, title: r.title, content: r.content,
+                priority: Priority(rawValue: r.priority) ?? .none, status: r.status,
+                schedule: sched, start: sched?.apiStart, due: sched?.apiDue, allDay: sched?.isAllDay ?? false,
+                timeZone: r.timeZone, reminders: r.reminders, repeat: r.repeatRule, tags: r.tags,
+                items: (itemsBy[r.id] ?? []).sorted { $0.sortKey < $1.sortKey }.map { ChecklistItem(id: $0.id, title: $0.title, status: $0.status, sortKey: $0.sortKey) },
+                assigneeId: r.assigneeId, sortKey: r.sortKey, completedAt: r.completedAt,
+                createdAt: r.createdAt, updatedAt: r.updatedAt, deletedAt: r.deletedAt,
+                attachments: (attsBy[r.id] ?? []).sorted { $0.createdAt < $1.createdAt }.map {
+                    Attachment(id: $0.id, fileName: $0.fileName, size: $0.size, mimeType: $0.mimeType, localPath: $0.localPath, originalPath: $0.originalPath, createdAt: $0.createdAt)
+                },
+                commentCount: counts[r.id] ?? 0, sourceRaw: r.sourceRaw, importNote: r.importNote)
+        }
+    }
+
+    func task(_ db: Database, _ r: TaskRecord) throws -> TodoTask { try tasks(db, [r])[0] }
+
+    func project(_ db: Database, _ p: ProjectRecord) throws -> Project {
+        let members = try String.fetchAll(db, sql: "SELECT memberId FROM projectMember WHERE projectId = ? AND deletedAt IS NULL ORDER BY createdAt", arguments: [p.id])
+        let active = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM task WHERE projectId = ? AND deletedAt IS NULL AND status = 0", arguments: [p.id]) ?? 0
+        return Project(id: p.id, name: p.name, color: p.color, icon: p.icon, folderId: p.folderId, viewMode: p.viewMode, kind: p.kind,
+                       isInbox: p.isInbox, ownerId: p.ownerId, sortKey: p.sortKey, showInSmart: p.showInSmart, notifyMode: p.notifyMode,
+                       archived: p.archivedAt != nil, memberIds: members, activeCount: active, createdAt: p.createdAt, updatedAt: p.updatedAt)
+    }
+
+    /// Live (not deleted, not archived) project ids, optionally only those
+    /// that feed smart lists.
+    func liveProjectIds(_ db: Database, smartOnly: Bool) throws -> Set<String> {
+        var sql = "SELECT id FROM project WHERE deletedAt IS NULL AND archivedAt IS NULL"
+        if smartOnly { sql += " AND showInSmart = 'all'" }
+        return Set(try String.fetchAll(db, sql: sql))
+    }
+
+    func normalizeTags(_ db: Database, _ labels: [String], now: EpochMillis) throws -> [String] {
+        var out: [String] = []
+        for raw in labels {
+            let label = raw.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+            guard !label.isEmpty else { continue }
+            let name = label.lowercased()
+            if out.contains(name) { continue }
+            out.append(name)
+            if let existing = try TagRecord.fetchOne(db, key: name) {
+                if existing.deletedAt != nil {
+                    var t = existing
+                    t.deletedAt = nil
+                    t.updatedAt = now
+                    try Outbox.save(t, entity: "tag", id: name, key: ["name": name], in: db, now: now)
+                }
+            } else {
+                let last = try String.fetchOne(db, sql: "SELECT MAX(sortKey) FROM tag")
+                let t = TagRecord(name: name, label: label, color: nil, sortKey: SortKey.after(last), createdAt: now, updatedAt: now)
+                try Outbox.save(t, entity: "tag", id: name, key: ["name": name], in: db, now: now)
+            }
+        }
+        return out
+    }
+
+    static func reminderList(_ list: [String]?, _ csv: String?) throws -> [String]? {
+        var raw = list
+        if raw == nil, let csv { raw = csv.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
+        guard let raw else { return nil }
+        return try raw.map { s in
+            guard let r = Reminder(trigger: s) else { throw DayDoError.invalid("Invalid reminder trigger: \(s)") }
+            return r.trigger
+        }
+    }
+
+    static func validateRepeat(_ s: String) throws -> String {
+        guard let r = Recurrence(rrule: s) else { throw DayDoError.invalid("Unsupported repeat rule: \(s)") }
+        return s.uppercased().hasPrefix("RRULE:") ? s : r.rrule
+    }
+}
+
+// MARK: - Members & folders
+
+extension LocalDayDoAPI {
+    public func listMembers() async throws -> [Member] {
+        try await writer.read { db in
+            try MemberRecord.filter(Column("deletedAt") == nil).order(Column("createdAt")).fetchAll(db)
+                .map { Member(id: $0.id, name: $0.name, initial: $0.initial, color: $0.color, isMe: $0.isMe) }
+        }
+    }
+
+    public func listFolders() async throws -> [Folder] {
+        try await writer.read { db in
+            try FolderRecord.filter(Column("deletedAt") == nil).order(Column("sortKey")).fetchAll(db)
+                .map { Folder(id: $0.id, name: $0.name, sortKey: $0.sortKey) }
+        }
+    }
+
+    public func createFolder(name: String) async throws -> Folder {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw DayDoError.invalid("Folder name is required") }
+        let now = now()
+        return try await writer.write { db in
+            let last = try String.fetchOne(db, sql: "SELECT MAX(sortKey) FROM folder")
+            let f = FolderRecord(id: ID.make(), name: name, sortKey: SortKey.after(last), createdAt: now, updatedAt: now)
+            try Outbox.save(f, entity: "folder", id: f.id, in: db, now: now)
+            return Folder(id: f.id, name: f.name, sortKey: f.sortKey)
+        }
+    }
+
+    public func updateFolder(id: String, name: String) async throws -> Folder {
+        let now = now()
+        return try await writer.write { db in
+            guard var f = try FolderRecord.fetchOne(db, key: id), f.deletedAt == nil else { throw DayDoError.notFound("folder", id) }
+            f.name = name
+            f.updatedAt = now
+            try Outbox.save(f, entity: "folder", id: f.id, in: db, now: now)
+            return Folder(id: f.id, name: f.name, sortKey: f.sortKey)
+        }
+    }
+
+    public func deleteFolder(id: String) async throws {
+        let now = now()
+        try await writer.write { db in
+            guard var f = try FolderRecord.fetchOne(db, key: id), f.deletedAt == nil else { throw DayDoError.notFound("folder", id) }
+            for var p in try ProjectRecord.filter(Column("folderId") == id).fetchAll(db) {
+                p.folderId = nil
+                p.updatedAt = now
+                try Outbox.save(p, entity: "project", id: p.id, in: db, now: now)
+            }
+            f.deletedAt = now
+            f.updatedAt = now
+            try Outbox.save(f, entity: "folder", id: f.id, in: db, now: now)
+        }
+    }
+}
+
+// MARK: - Projects
+
+extension LocalDayDoAPI {
+    public func listProjects(includeArchived: Bool = false) async throws -> [Project] {
+        try await writer.read { db in
+            var req = ProjectRecord.filter(Column("deletedAt") == nil)
+            if !includeArchived { req = req.filter(Column("archivedAt") == nil) }
+            return try req.order(Column("isInbox").desc, Column("sortKey")).fetchAll(db).map { try self.project(db, $0) }
+        }
+    }
+
+    public func getProject(id: String) async throws -> Project {
+        try await writer.read { db in try self.project(db, try self.projectRecord(db, id)) }
+    }
+
+    public func getProjectData(id: String) async throws -> ProjectData {
+        try await writer.read { db in
+            let p = try self.projectRecord(db, id)
+            let recs = try TaskRecord.filter(Column("projectId") == id && Column("deletedAt") == nil && Column("status") == 0).order(Column("sortKey")).fetchAll(db)
+            return ProjectData(project: try self.project(db, p), tasks: try self.tasks(db, recs))
+        }
+    }
+
+    public func createProject(_ input: CreateProjectInput) async throws -> Project {
+        let name = input.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw DayDoError.invalid("Project name is required") }
+        let now = now()
+        return try await writer.write { db in
+            let me = try self.me(db)
+            if let fid = input.folderId, try FolderRecord.fetchOne(db, key: fid)?.deletedAt != nil || FolderRecord.fetchOne(db, key: fid) == nil {
+                throw DayDoError.notFound("folder", fid)
+            }
+            let last = try String.fetchOne(db, sql: "SELECT MAX(sortKey) FROM project")
+            let p = ProjectRecord(id: ID.make(), name: name, color: input.color, icon: input.icon, folderId: input.folderId,
+                                  viewMode: input.viewMode ?? "list", kind: input.kind ?? "TASK", isInbox: false, ownerId: me.id,
+                                  sortKey: SortKey.after(last), showInSmart: "all", notifyMode: "all", archivedAt: nil, createdAt: now, updatedAt: now)
+            try Outbox.save(p, entity: "project", id: p.id, in: db, now: now)
+            let pm = ProjectMemberRecord(projectId: p.id, memberId: me.id, role: "owner", createdAt: now, updatedAt: now)
+            try Outbox.save(pm, entity: "projectMember", id: "\(p.id):\(me.id)", key: ["projectId": p.id, "memberId": me.id], in: db, now: now)
+            return try self.project(db, p)
+        }
+    }
+
+    public func updateProject(_ input: UpdateProjectInput) async throws -> Project {
+        let now = now()
+        return try await writer.write { db in
+            var p = try self.projectRecord(db, input.projectId)
+            if let name = input.name {
+                let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !n.isEmpty else { throw DayDoError.invalid("Project name is required") }
+                p.name = n
+            }
+            switch input.color { case .unset: break; case .clear: p.color = nil; case let .set(v): p.color = v }
+            switch input.icon { case .unset: break; case .clear: p.icon = nil; case let .set(v): p.icon = v }
+            switch input.folderId {
+            case .unset: break
+            case .clear: p.folderId = nil
+            case let .set(v):
+                guard let f = try FolderRecord.fetchOne(db, key: v), f.deletedAt == nil else { throw DayDoError.notFound("folder", v) }
+                p.folderId = v
+            }
+            if let v = input.viewMode {
+                guard ["list", "kanban", "timeline"].contains(v) else { throw DayDoError.invalid("view_mode must be list, kanban or timeline") }
+                p.viewMode = v
+            }
+            if let v = input.kind { p.kind = v }
+            if let v = input.showInSmart { p.showInSmart = v }
+            if let v = input.notifyMode { p.notifyMode = v }
+            if let v = input.archived {
+                if p.isInbox && v { throw DayDoError.invalid("The inbox cannot be archived") }
+                p.archivedAt = v ? (p.archivedAt ?? now) : nil
+            }
+            p.updatedAt = now
+            try Outbox.save(p, entity: "project", id: p.id, in: db, now: now)
+            return try self.project(db, p)
+        }
+    }
+
+    public func deleteProject(id: String) async throws {
+        let now = now()
+        try await writer.write { db in
+            var p = try self.projectRecord(db, id)
+            if p.isInbox { throw DayDoError.invalid("The inbox cannot be deleted") }
+            for var t in try TaskRecord.filter(Column("projectId") == id && Column("deletedAt") == nil).fetchAll(db) {
+                t.deletedAt = now
+                t.updatedAt = now
+                try self.saveTask(db, t)
+            }
+            p.deletedAt = now
+            p.updatedAt = now
+            try Outbox.save(p, entity: "project", id: p.id, in: db, now: now)
+        }
+    }
+}
+
+// MARK: - Task queries
+
+extension LocalDayDoAPI {
+    func fetchActive(_ db: Database, query: TaskQuery, smartOnly: Bool) throws -> [TodoTask] {
+        let live = try liveProjectIds(db, smartOnly: smartOnly)
+        var req = TaskRecord.filter(Column("deletedAt") == nil)
+        if !query.includeCompleted { req = req.filter(Column("status") == 0) }
+        if let pid = query.projectId { req = req.filter(Column("projectId") == pid) }
+        var recs = try req.order(Column("sortKey")).fetchAll(db).filter { live.contains($0.projectId) || $0.projectId == query.projectId }
+        if let tag = query.tag?.lowercased() { recs = recs.filter { $0.tags.contains(tag) } }
+        if let mid = query.memberId {
+            let rows = try Row.fetchAll(db, sql: "SELECT projectId, memberId FROM projectMember WHERE deletedAt IS NULL")
+            var members: [String: Set<String>] = [:]
+            for r in rows { members[r["projectId"], default: []].insert(r["memberId"]) }
+            let meId = try me(db).id
+            recs = recs.filter { t in
+                let m = members[t.projectId] ?? []
+                if m.count <= 1 { return mid == meId }
+                return m.contains(mid)
+            }
+        }
+        var out = try tasks(db, recs)
+        if let from = query.from {
+            let to = query.to ?? from
+            out = out.filter { $0.schedule?.overlaps(from, to) ?? false }
+        }
+        return out
+    }
+
+    func completedToday(_ db: Database) throws -> [TodoTask] {
+        let tz = clock.timeZone()
+        let start = today.date(minute: 0, in: tz).epochMillis
+        let live = try liveProjectIds(db, smartOnly: true)
+        let recs = try TaskRecord.filter(Column("deletedAt") == nil && Column("status") == 2 && Column("completedAt") >= start)
+            .order(Column("completedAt").desc).fetchAll(db).filter { live.contains($0.projectId) }
+        return try tasks(db, recs)
+    }
+
+    public func listTasks(_ query: TaskQuery) async throws -> [TodoTask] {
+        try await writer.read { db in try self.fetchActive(db, query: query, smartOnly: false) }
+    }
+
+    public func listSections(_ scope: TaskScope) async throws -> [TaskSection] {
+        let today = today
+        return try await writer.read { db in
+            let meId = try self.me(db).id
+            switch scope {
+            case .smart(let v):
+                switch v {
+                case .today, .tomorrow, .next7:
+                    let active = try self.fetchActive(db, query: TaskQuery(), smartOnly: true).filter { $0.schedule != nil }
+                    let done = v == .next7 ? [] : try self.completedToday(db)
+                    return TaskGrouping.sections(for: scope, tasks: active, completed: v == .tomorrow ? [] : done, today: today)
+                case .inbox:
+                    let pid = try self.inbox(db).id
+                    let active = try self.fetchActive(db, query: TaskQuery(projectId: pid), smartOnly: false)
+                    let done = try self.completed(db, projectId: pid, limit: 30)
+                    return TaskGrouping.sections(for: scope, tasks: active, completed: done, today: today)
+                case .assigned:
+                    let active = try self.fetchActive(db, query: TaskQuery(), smartOnly: false).filter { $0.assigneeId == meId }
+                    return TaskGrouping.sections(for: scope, tasks: active, completed: [], today: today)
+                case .completed:
+                    return TaskGrouping.sections(for: scope, tasks: [], completed: try self.completed(db, projectId: nil, limit: 300), today: today)
+                case .trash:
+                    let recs = try TaskRecord.filter(Column("deletedAt") != nil).order(Column("deletedAt").desc).limit(300).fetchAll(db)
+                    return TaskGrouping.sections(for: scope, tasks: try self.tasks(db, recs), completed: [], today: today)
+                }
+            case .project(let pid):
+                _ = try self.projectRecord(db, pid)
+                let active = try self.fetchActive(db, query: TaskQuery(projectId: pid), smartOnly: false)
+                let done = try self.completed(db, projectId: pid, limit: 30)
+                return TaskGrouping.sections(for: scope, tasks: active, completed: done, today: today)
+            case .tag(let name):
+                let active = try self.fetchActive(db, query: TaskQuery(tag: name), smartOnly: false)
+                return TaskGrouping.sections(for: scope, tasks: active, completed: [], today: today)
+            }
+        }
+    }
+
+    func completed(_ db: Database, projectId: String?, limit: Int) throws -> [TodoTask] {
+        let live = try liveProjectIds(db, smartOnly: false)
+        var req = TaskRecord.filter(Column("deletedAt") == nil && Column("status") == 2)
+        if let projectId { req = req.filter(Column("projectId") == projectId) }
+        let recs = try req.order(Column("completedAt").desc).limit(limit).fetchAll(db).filter { live.contains($0.projectId) }
+        return try tasks(db, recs)
+    }
+
+    public func getCompletedTasks(projectId: String?, limit: Int = 100) async throws -> [TodoTask] {
+        try await writer.read { db in try self.completed(db, projectId: projectId, limit: limit) }
+    }
+
+    public func searchTasks(text: String, activeOnly: Bool = false) async throws -> [TodoTask] {
+        let q = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return [] }
+        return try await writer.read { db in
+            let live = try self.liveProjectIds(db, smartOnly: false)
+            let pattern = "%\(q)%"
+            var sql = """
+                SELECT DISTINCT task.* FROM task
+                LEFT JOIN checklistItem ci ON ci.taskId = task.id AND ci.deletedAt IS NULL
+                WHERE task.deletedAt IS NULL AND (LOWER(task.title) LIKE ? OR LOWER(task.content) LIKE ? OR LOWER(task.tags) LIKE ? OR LOWER(ci.title) LIKE ?)
+                """
+            if activeOnly { sql += " AND task.status = 0" }
+            sql += " ORDER BY task.status, task.updatedAt DESC LIMIT 200"
+            let recs = try TaskRecord.fetchAll(db, sql: sql, arguments: [pattern, pattern, pattern, pattern]).filter { live.contains($0.projectId) }
+            return try self.tasks(db, recs)
+        }
+    }
+
+    public func getTask(id: String) async throws -> TodoTask {
+        try await writer.read { db in try self.task(db, try self.taskRecord(db, id, includeDeleted: true)) }
+    }
+
+    public func smartCounts() async throws -> SmartCounts {
+        let today = today
+        return try await writer.read { db in
+            let meId = try self.me(db).id
+            let smart = try self.fetchActive(db, query: TaskQuery(), smartOnly: true)
+            let all = try self.fetchActive(db, query: TaskQuery(), smartOnly: false)
+            let inboxId = try self.inbox(db).id
+            func count(_ f: (Schedule) -> Bool) -> Int { smart.filter { $0.schedule.map(f) ?? false }.count }
+            let overdue = count { $0.lastDay < today }
+            let completed = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM task WHERE deletedAt IS NULL AND status = 2") ?? 0
+            let trash = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM task WHERE deletedAt IS NOT NULL") ?? 0
+            return SmartCounts(
+                today: overdue + count { $0.occurs(on: today) },
+                tomorrow: count { $0.occurs(on: today.adding(days: 1)) && $0.lastDay >= today },
+                next7Days: overdue + count { $0.overlaps(today, today.adding(days: 6)) },
+                inbox: all.filter { $0.projectId == inboxId }.count,
+                assignedToMe: all.filter { $0.assigneeId == meId }.count,
+                completed: completed, trash: trash)
+        }
+    }
+}
+
+// MARK: - Task commands
+
+extension LocalDayDoAPI {
+    public func createTask(_ input: CreateTaskInput) async throws -> TodoTask {
+        let title = input.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { throw DayDoError.invalid("title is required") }
+        let schedule = try input.schedule ?? Schedule.fromAPI(start: input.start, due: input.due, allDay: input.allDay, timeZone: input.timeZone)
+        let reminders = try Self.reminderList(input.reminders, input.reminder) ?? []
+        if !reminders.isEmpty && schedule == nil {
+            throw DayDoError.invalid("reminders need a start/due date in the same call")
+        }
+        let rrule: String? = try {
+            guard let r = input.repeat, !r.isEmpty else { return nil }
+            guard schedule != nil else { throw DayDoError.invalid("repeat needs a start/due date") }
+            return try Self.validateRepeat(r)
+        }()
+        let now = now()
+        return try await writer.write { db in
+            let pid = try input.projectId ?? self.inbox(db).id
+            _ = try self.projectRecord(db, pid)
+            if let a = input.assigneeId, try MemberRecord.fetchOne(db, key: a) == nil { throw DayDoError.notFound("member", a) }
+            let first = try String.fetchOne(db, sql: "SELECT MIN(sortKey) FROM task WHERE projectId = ?", arguments: [pid])
+            let tags = try self.normalizeTags(db, input.tags ?? [], now: now)
+            var t = TaskRecord(id: ID.make(), projectId: pid, title: title, content: input.content ?? "",
+                               priority: (input.priority ?? .none).rawValue, status: 0,
+                               reminders: reminders, repeatRule: rrule, tags: tags, assigneeId: input.assigneeId,
+                               sortKey: SortKey.before(first), completedAt: nil,
+                               sourceRaw: input.sourceRaw, importNote: input.importNote,
+                               createdAt: now, updatedAt: now)
+            t.schedule = schedule
+            try self.saveTask(db, t)
+            var key: String?
+            for s in input.subtasks ?? [] where !s.trimmingCharacters(in: .whitespaces).isEmpty {
+                key = SortKey.after(key)
+                let item = ChecklistItemRecord(id: ID.make(), taskId: t.id, title: s, status: 0, sortKey: key!, createdAt: now, updatedAt: now)
+                try Outbox.save(item, entity: "checklistItem", id: item.id, in: db, now: now)
+            }
+            return try self.task(db, t)
+        }
+    }
+
+    public func updateTask(_ input: UpdateTaskInput) async throws -> TodoTask {
+        let now = now()
+        return try await writer.write { db in
+            var t = try self.taskRecord(db, input.taskId)
+            if let pid = input.projectId { _ = try self.projectRecord(db, pid); t.projectId = pid }
+            if let title = input.title {
+                let s = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !s.isEmpty else { throw DayDoError.invalid("title cannot be empty") }
+                t.title = s
+            }
+            if let c = input.content { t.content = c }
+            if let p = input.priority { t.priority = p.rawValue }
+
+            // Schedule
+            switch input.schedule {
+            case let .set(s): t.schedule = s
+            case .clear: t.schedule = nil
+            case .unset:
+                switch input.start {
+                case .clear: t.schedule = nil
+                case let .set(s) where s.isEmpty: t.schedule = nil
+                case let .set(s):
+                    t.schedule = try Schedule.fromAPI(start: s, due: input.due.value.flatMap { $0.isEmpty ? nil : $0 }, allDay: input.allDay, timeZone: input.timeZone ?? t.timeZone)
+                case .unset:
+                    if let due = input.due.value, !due.isEmpty, let cur = t.schedule {
+                        let startStr = cur.isAllDay ? cur.startDay.description : cur.apiStart
+                        t.schedule = try Schedule.fromAPI(start: startStr, due: due, allDay: input.allDay ?? cur.isAllDay, timeZone: input.timeZone ?? cur.timeZone)
+                    } else if case .clear = input.due, var cur = t.schedule {
+                        cur.endDay = nil
+                        cur.endMinute = nil
+                        t.schedule = cur
+                    } else if let tz = input.timeZone, var cur = t.schedule {
+                        guard TimeZone(identifier: tz) != nil else { throw ScheduleError.unknownTimeZone(tz) }
+                        cur.timeZone = tz
+                        t.schedule = cur
+                    }
+                }
+            }
+            let explicitReminders = try Self.reminderList(input.reminders, input.reminder)
+            if let r = explicitReminders { t.reminders = r }
+            switch input.repeat {
+            case .unset: break
+            case .clear: t.repeatRule = nil
+            case let .set(s): t.repeatRule = s.isEmpty ? nil : try Self.validateRepeat(s)
+            }
+            if t.schedule == nil {
+                if let r = explicitReminders, !r.isEmpty {
+                    throw DayDoError.invalid("reminders need a start/due date")
+                }
+                t.reminders = []
+                t.repeatRule = nil
+            }
+            if let tags = input.tags { t.tags = try self.normalizeTags(db, tags, now: now) }
+            switch input.assigneeId {
+            case .unset: break
+            case .clear: t.assigneeId = nil
+            case let .set(a):
+                guard try MemberRecord.fetchOne(db, key: a) != nil else { throw DayDoError.notFound("member", a) }
+                t.assigneeId = a
+            }
+            t.updatedAt = now
+            try self.saveTask(db, t)
+            if let subs = input.subtasks {
+                for var item in try ChecklistItemRecord.filter(Column("taskId") == t.id && Column("deletedAt") == nil).fetchAll(db) {
+                    item.deletedAt = now
+                    item.updatedAt = now
+                    try Outbox.save(item, entity: "checklistItem", id: item.id, in: db, now: now)
+                }
+                var key: String?
+                for s in subs where !s.trimmingCharacters(in: .whitespaces).isEmpty {
+                    key = SortKey.after(key)
+                    let item = ChecklistItemRecord(id: ID.make(), taskId: t.id, title: s, status: 0, sortKey: key!, createdAt: now, updatedAt: now)
+                    try Outbox.save(item, entity: "checklistItem", id: item.id, in: db, now: now)
+                }
+            }
+            return try self.task(db, t)
+        }
+    }
+
+    /// Completing a repeating task records a completed copy and moves the
+    /// original to its next occurrence (TickTick behaviour).
+    public func completeTask(id: String) async throws -> TodoTask {
+        let now = now()
+        return try await writer.write { db in
+            var t = try self.taskRecord(db, id)
+            if t.status == 2 { return try self.task(db, t) }
+            if let rule = t.repeatRule.flatMap(Recurrence.init(rrule:)), let s = t.schedule {
+                var done = t
+                done.id = ID.make()
+                done.status = 2
+                done.completedAt = now
+                done.repeatRule = nil
+                done.createdAt = now
+                done.updatedAt = now
+                try self.saveTask(db, done)
+                let items = try ChecklistItemRecord.filter(Column("taskId") == t.id && Column("deletedAt") == nil).fetchAll(db)
+                for var item in items {
+                    let copy = ChecklistItemRecord(id: ID.make(), taskId: done.id, title: item.title, status: item.status, sortKey: item.sortKey, createdAt: now, updatedAt: now)
+                    try Outbox.save(copy, entity: "checklistItem", id: copy.id, in: db, now: now)
+                    if item.status != 0 {
+                        item.status = 0
+                        item.updatedAt = now
+                        try Outbox.save(item, entity: "checklistItem", id: item.id, in: db, now: now)
+                    }
+                }
+                var next = rule.next(after: s.startDay)
+                // Skip occurrences already in the past when catching up.
+                var guardCount = 0
+                while next < self.today && guardCount < 1000 { next = rule.next(after: next); guardCount += 1 }
+                t.schedule = s.moved(to: next)
+                t.updatedAt = now
+                try self.saveTask(db, t)
+                return try self.task(db, done)
+            }
+            t.status = 2
+            t.completedAt = now
+            t.updatedAt = now
+            try self.saveTask(db, t)
+            return try self.task(db, t)
+        }
+    }
+
+    public func uncompleteTask(id: String) async throws -> TodoTask {
+        let now = now()
+        return try await writer.write { db in
+            var t = try self.taskRecord(db, id)
+            t.status = 0
+            t.completedAt = nil
+            t.updatedAt = now
+            try self.saveTask(db, t)
+            return try self.task(db, t)
+        }
+    }
+
+    public func deleteTask(id: String) async throws {
+        let now = now()
+        try await writer.write { db in
+            var t = try self.taskRecord(db, id)
+            t.deletedAt = now
+            t.updatedAt = now
+            try self.saveTask(db, t)
+        }
+    }
+
+    public func restoreTask(id: String) async throws -> TodoTask {
+        let now = now()
+        return try await writer.write { db in
+            var t = try self.taskRecord(db, id, includeDeleted: true)
+            if try ProjectRecord.fetchOne(db, key: t.projectId)?.deletedAt != nil { t.projectId = try self.inbox(db).id }
+            t.deletedAt = nil
+            t.updatedAt = now
+            try self.saveTask(db, t)
+            return try self.task(db, t)
+        }
+    }
+
+    public func purgeTask(id: String) async throws {
+        try await writer.write { db in
+            let t = try self.taskRecord(db, id, includeDeleted: true)
+            _ = try t.delete(db)
+            try self.recordDelete(db, entity: "task", id: id)
+        }
+    }
+
+    public func moveTask(id: String, toProjectId: String) async throws -> TodoTask {
+        var u = UpdateTaskInput(taskId: id)
+        u.projectId = toProjectId
+        return try await updateTask(u)
+    }
+
+    public func postponeOverdue() async throws -> Int {
+        let now = now()
+        let today = today
+        return try await writer.write { db in
+            let live = try self.liveProjectIds(db, smartOnly: true)
+            var n = 0
+            for var t in try TaskRecord.filter(Column("deletedAt") == nil && Column("status") == 0).fetchAll(db) where live.contains(t.projectId) {
+                guard let s = t.schedule?.localized(to: self.clock.timeZone()), s.lastDay < today else { continue }
+                // Keep the shape; land the last day on today.
+                t.schedule = s.moved(to: today.adding(days: -s.startDay.days(until: s.lastDay)))
+                t.updatedAt = now
+                try self.saveTask(db, t)
+                n += 1
+            }
+            return n
+        }
+    }
+}
+
+// MARK: - Checklist, tags, attachments
+
+extension LocalDayDoAPI {
+    public func addChecklistItem(taskId: String, title: String) async throws -> ChecklistItem {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { throw DayDoError.invalid("title is required") }
+        let now = now()
+        return try await writer.write { db in
+            _ = try self.taskRecord(db, taskId)
+            let last = try String.fetchOne(db, sql: "SELECT MAX(sortKey) FROM checklistItem WHERE taskId = ?", arguments: [taskId])
+            let item = ChecklistItemRecord(id: ID.make(), taskId: taskId, title: title, status: 0, sortKey: SortKey.after(last), createdAt: now, updatedAt: now)
+            try Outbox.save(item, entity: "checklistItem", id: item.id, in: db, now: now)
+            return ChecklistItem(id: item.id, title: item.title, status: item.status, sortKey: item.sortKey)
+        }
+    }
+
+    public func updateChecklistItem(id: String, title: String?, done: Bool?) async throws -> ChecklistItem {
+        let now = now()
+        return try await writer.write { db in
+            guard var item = try ChecklistItemRecord.fetchOne(db, key: id), item.deletedAt == nil else { throw DayDoError.notFound("checklist_item", id) }
+            if let title { item.title = title }
+            if let done { item.status = done ? 1 : 0 }
+            item.updatedAt = now
+            try Outbox.save(item, entity: "checklistItem", id: item.id, in: db, now: now)
+            return ChecklistItem(id: item.id, title: item.title, status: item.status, sortKey: item.sortKey)
+        }
+    }
+
+    public func deleteChecklistItem(id: String) async throws {
+        let now = now()
+        try await writer.write { db in
+            guard var item = try ChecklistItemRecord.fetchOne(db, key: id), item.deletedAt == nil else { throw DayDoError.notFound("checklist_item", id) }
+            item.deletedAt = now
+            item.updatedAt = now
+            try Outbox.save(item, entity: "checklistItem", id: item.id, in: db, now: now)
+        }
+    }
+
+    public func listTags() async throws -> [Tag] {
+        try await writer.read { db in
+            let recs = try TagRecord.filter(Column("deletedAt") == nil).order(Column("sortKey")).fetchAll(db)
+            let tasks = try TaskRecord.filter(Column("deletedAt") == nil && Column("status") == 0).fetchAll(db)
+            var counts: [String: Int] = [:]
+            for t in tasks { for tag in t.tags { counts[tag, default: 0] += 1 } }
+            return recs.map { Tag(name: $0.name, label: $0.label, color: $0.color, activeCount: counts[$0.name] ?? 0) }
+        }
+    }
+
+    public func createTag(label: String, color: String?) async throws -> Tag {
+        let now = now()
+        return try await writer.write { db in
+            guard let name = try self.normalizeTags(db, [label], now: now).first, var rec = try TagRecord.fetchOne(db, key: name) else {
+                throw DayDoError.invalid("Tag label is required")
+            }
+            if let color {
+                rec.color = color
+                rec.updatedAt = now
+                try Outbox.save(rec, entity: "tag", id: name, key: ["name": name], in: db, now: now)
+            }
+            return Tag(name: rec.name, label: rec.label, color: rec.color, activeCount: 0)
+        }
+    }
+
+    public func updateTag(name: String, label: String?, color: String?) async throws -> Tag {
+        let now = now()
+        return try await writer.write { db in
+            guard var rec = try TagRecord.fetchOne(db, key: name.lowercased()), rec.deletedAt == nil else { throw DayDoError.notFound("tag", name) }
+            if let label { rec.label = label }
+            if let color { rec.color = color }
+            rec.updatedAt = now
+            try Outbox.save(rec, entity: "tag", id: rec.name, key: ["name": rec.name], in: db, now: now)
+            return Tag(name: rec.name, label: rec.label, color: rec.color, activeCount: 0)
+        }
+    }
+
+    public func deleteTag(name: String) async throws {
+        let now = now()
+        let key = name.lowercased()
+        try await writer.write { db in
+            guard var rec = try TagRecord.fetchOne(db, key: key), rec.deletedAt == nil else { throw DayDoError.notFound("tag", name) }
+            for var t in try TaskRecord.fetchAll(db) where t.tags.contains(key) {
+                t.tags.removeAll { $0 == key }
+                t.updatedAt = now
+                try self.saveTask(db, t)
+            }
+            rec.deletedAt = now
+            rec.updatedAt = now
+            try Outbox.save(rec, entity: "tag", id: key, key: ["name": key], in: db, now: now)
+        }
+    }
+
+    public func addAttachment(taskId: String, fileName: String, data: Data, mimeType: String, originalPath: String?) async throws -> Attachment {
+        let id = ID.make()
+        let safeName = fileName.replacingOccurrences(of: "/", with: "_")
+        let rel = "\(id)/\(safeName)"
+        let url = attachmentsDirectory.appendingPathComponent(rel)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+        let now = now()
+        do {
+            return try await writer.write { db in
+                _ = try self.taskRecord(db, taskId)
+                let a = AttachmentRecord(id: id, taskId: taskId, fileName: safeName, size: Int64(data.count), mimeType: mimeType,
+                                         localPath: rel, originalPath: originalPath, createdAt: now, updatedAt: now)
+                try Outbox.save(a, entity: "attachment", id: id, in: db, now: now)
+                return Attachment(id: id, fileName: safeName, size: a.size, mimeType: mimeType, localPath: rel, originalPath: originalPath, createdAt: now)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+            throw error
+        }
+    }
+
+    public func deleteAttachment(id: String) async throws {
+        let now = now()
+        let rel: String? = try await writer.write { db in
+            guard var a = try AttachmentRecord.fetchOne(db, key: id), a.deletedAt == nil else { throw DayDoError.notFound("attachment", id) }
+            a.deletedAt = now
+            a.updatedAt = now
+            try Outbox.save(a, entity: "attachment", id: id, in: db, now: now)
+            return a.localPath
+        }
+        if let rel { try? FileManager.default.removeItem(at: attachmentsDirectory.appendingPathComponent(rel).deletingLastPathComponent()) }
+    }
+
+    public func attachmentURL(_ attachment: Attachment) -> URL? {
+        attachment.localPath.map { attachmentsDirectory.appendingPathComponent($0) }
+    }
+
+    public func upcomingReminders(limit: Int = 60) async throws -> [ScheduledReminder] {
+        let now = clock.now()
+        return try await writer.read { db in
+            let live = try self.liveProjectIds(db, smartOnly: false)
+            let recs = try TaskRecord.filter(Column("deletedAt") == nil && Column("status") == 0 && Column("startDay") != nil).fetchAll(db)
+            var out: [ScheduledReminder] = []
+            for t in recs where live.contains(t.projectId) && !t.reminders.isEmpty {
+                guard let s = t.schedule else { continue }
+                for trig in t.reminders {
+                    guard let r = Reminder(trigger: trig) else { continue }
+                    let fire = r.fireDate(for: s)
+                    guard fire > now else { continue }
+                    let body = s.isAllDay ? "全天" : DateText.range(s)
+                    out.append(ScheduledReminder(id: "\(t.id)|\(trig)", taskId: t.id, title: t.title, body: body, fireDate: fire))
+                }
+            }
+            return Array(out.sorted { $0.fireDate < $1.fireDate }.prefix(limit))
+        }
+    }
+
+    /// Outbox entries not yet pushed (phase 2 sync).
+    public func pendingChanges(limit: Int = 500) async throws -> [ChangeRecord] {
+        try await writer.read { db in try ChangeRecord.order(Column("seq")).limit(limit).fetchAll(db) }
+    }
+}

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-Hant"><head>
+<meta charset="utf-8">
+<title>Doneday v2 · 同一類型的三種尺寸</title>
+<script src="20e8fe90-71ef-4fdc-889a-fd3e7bbc3f5a"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>/*fonts*/</style>
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1240px; height: 1500px; background: #0B0C0D; color: #F1F3F2; font-family: 'Inter', 'Noto Sans TC', system-ui, sans-serif; box-sizing: border-box; padding: 48px 56px; display: flex; flex-direction: column; gap: 36px">
+  <header style="display: flex; flex-direction: column; gap: 6px">
+    <h1 style="margin: 0; font-size: 30px; font-weight: 700">小工具：先選類型，再選尺寸</h1>
+    <p style="margin: 0; font-size: 15px; color: #9BA3A0">同一類型切換尺寸時，用途不變，只增加可見的資訊量。內容與 App 內「今天」「日曆」使用同一份資料。</p>
+  </header>
+  <sc-for list="{{rows}}" as="r" hint-placeholder-count="3">
+    <section style="display: flex; gap: 32px; align-items: flex-start; padding-top: 24px; border-top: 1px solid #1E2022">
+      <div style="width: 200px; display: flex; flex-direction: column; gap: 6px">
+        <h2 style="margin: 0; font-size: 20px; font-weight: 700">{{r.name}}</h2>
+        <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #9BA3A0; white-space: pre-line">{{r.desc}}</p>
+      </div>
+      <div style="display: flex; gap: 28px; align-items: flex-start">
+        <div style="display: flex; flex-direction: column; gap: 8px"><dc-import name="V2Widget" accent="{{accent}}" type="{{r.type}}" size="s" hint-size="170px,170px"></dc-import><span style="font-size: 12px; color: #8A928F">小 · {{r.s}}</span></div>
+        <div style="display: flex; flex-direction: column; gap: 8px"><dc-import name="V2Widget" accent="{{accent}}" type="{{r.type}}" size="m" hint-size="364px,170px"></dc-import><span style="font-size: 12px; color: #8A928F">中 · {{r.m}}</span></div>
+        <div style="display: flex; flex-direction: column; gap: 8px"><dc-import name="V2Widget" accent="{{accent}}" type="{{r.type}}" size="l" hint-size="364px,382px"></dc-import><span style="font-size: 12px; color: #8A928F">大 · {{r.l}}</span></div>
+      </div>
+    </section>
+  </sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#FF8A1E&quot;,&quot;options&quot;:[&quot;#FF8A1E&quot;,&quot;#4772FA&quot;,&quot;#2BB673&quot;,&quot;#8B6CE8&quot;]},&quot;$preview&quot;:{&quot;width&quot;:1240,&quot;height&quot;:1500}}">
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      accent: this.props.accent ?? '#FF8A1E',
+      rows: [
+        { type: 'today', name: '今日任務', desc: '用途：今天要做什麼。\n逾期永遠排最前面。', s: '數量＋前 3 項', m: '日期＋4 項與時間', l: '逾期／今天分組，長標題兩行' },
+        { type: 'next', name: '下一個行程', desc: '用途：接下來要去哪裡。\n只看有時間的項目。', s: '下一項＋之後一項', m: '下一項詳情＋之後 2 項', l: '17:00–22:00 時間軸，含全天項目' },
+        { type: 'month', name: '日曆', desc: '用途：這個月排了什麼。\n事件名稱、跨日長條與＋N。', s: '月份＋有事件的日期點', m: '本週與下週，事件名稱', l: '整月，跨日長條與＋N' }
+      ]
+    };
+  }
+}
+</script>
+
+
+</body></html>

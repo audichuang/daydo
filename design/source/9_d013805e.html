@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-Hant"><head>
+<meta charset="utf-8">
+<title>Doneday v2 · 日期面板（展開日曆）</title>
+<script src="2013be85-290e-43b8-a7ae-4bcc3ae3cd5b"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>/*fonts*/</style>
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; background: #0E0F10; font-family: 'Inter', 'Noto Sans TC', system-ui, sans-serif; color: #F1F3F2">
+  <dc-import name="V2Task" accent="{{accent}}" mode="full" view="date" expand="cal+rem" hint-size="390px,844px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#FF8A1E&quot;,&quot;options&quot;:[&quot;#FF8A1E&quot;,&quot;#4772FA&quot;,&quot;#2BB673&quot;,&quot;#8B6CE8&quot;]},&quot;$preview&quot;:{&quot;width&quot;:390,&quot;height&quot;:844}}">
+class Component extends DCLogic {
+  renderVals() { return { accent: this.props.accent ?? '#FF8A1E' }; }
+}
+</script>
+
+
+</body></html>

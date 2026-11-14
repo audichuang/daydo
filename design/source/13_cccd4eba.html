@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-Hant"><head>
+<meta charset="utf-8">
+<title>Doneday v2 · 新增小工具</title>
+<script src="18b881bb-61c5-4bbd-ace5-8898d5d404ef"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>/*fonts*/</style>
+<style>
+body{margin:0}
+button{font:inherit;color:inherit}
+a{color:#FF9A3D}a:hover{color:#FFB46E}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; position: relative; overflow: hidden; background: #0E0F10; color: #F1F3F2; font-family: 'Inter', 'Noto Sans TC', system-ui, sans-serif; box-sizing: border-box; display: flex; flex-direction: column; padding: 56px 0 34px">
+  <div style="display: flex; align-items: center; gap: 8px; padding: 0 16px 8px">
+    <a href="V2Today.dc.html" aria-label="關閉" style="width: 40px; height: 40px; border-radius: 20px; background: #232527; color: #E6E9E8; display: flex; align-items: center; justify-content: center"><svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></a>
+    <h1 style="flex: 1; margin: 0; text-align: center; font-size: 17px; font-weight: 700; padding-right: 40px">新增小工具</h1>
+  </div>
+
+  <div style="padding: 8px 16px 0; display: flex; flex-direction: column; gap: 8px">
+    <span style="font-size: 12px; font-weight: 600; color: #8A928F">1 · 選擇類型</span>
+    <div role="radiogroup" aria-label="小工具類型" style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+      <sc-for list="{{types}}" as="t" hint-placeholder-count="3">
+        <button type="button" role="radio" aria-checked="{{t.on}}" sc-camel-on-click="{{t.pick}}" style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px 12px; border: 1.5px solid {{t.bd}}; border-radius: 14px; background: {{t.bg}}; text-align: left">
+          <span style="font-size: 14px; font-weight: 700">{{t.name}}</span>
+          <span style="font-size: 11px; line-height: 1.4; color: #9BA3A0">{{t.desc}}</span>
+        </button>
+      </sc-for>
+    </div>
+    <span style="font-size: 12px; font-weight: 600; color: #8A928F; padding-top: 6px">2 · 選擇尺寸</span>
+    <div role="radiogroup" aria-label="尺寸" style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; padding: 3px; border-radius: 12px; background: #1F2123">
+      <sc-for list="{{sizes}}" as="z" hint-placeholder-count="3">
+        <button type="button" role="radio" aria-checked="{{z.on}}" sc-camel-on-click="{{z.pick}}" style="height: 34px; border: 0; border-radius: 10px; background: {{z.bg}}; color: {{z.fg}}; font-size: 13px; font-weight: 600">{{z.l}}</button>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 0 13px">
+    <dc-import name="V2Widget" accent="{{accent}}" type="{{wtype}}" size="{{wsize}}" hint-size="364px,382px"></dc-import>
+    <span style="font-size: 13px; color: #9BA3A0; text-align: center">{{hint}}</span>
+  </div>
+
+  <div style="padding: 0 16px">
+    <button type="button" style="width: 100%; height: 52px; border: 0; border-radius: 26px; background: {{accent}}; color: {{onAccent}}; font-size: 16px; font-weight: 700">加入小工具</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#FF8A1E&quot;,&quot;options&quot;:[&quot;#FF8A1E&quot;,&quot;#4772FA&quot;,&quot;#2BB673&quot;,&quot;#8B6CE8&quot;]},&quot;$preview&quot;:{&quot;width&quot;:390,&quot;height&quot;:844}}">
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { type: 'month', size: 'l' }; }
+  renderVals() {
+    const accent = this.props.accent ?? '#FF8A1E';
+    const onAccent = (() => { const v = [1, 3, 5].map((i) => { const c = parseInt(accent.slice(i, i + 2), 16) / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }); return (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]) > 0.3 ? '#1A1206' : '#FFFFFF'; })();
+    const s = this.state;
+    const T = [['today', '今日任務', '今天要做什麼'], ['next', '下一個行程', '接下來去哪裡'], ['month', '日曆', '這個月排了什麼']];
+    const Z = [['s', '小'], ['m', '中'], ['l', '大']];
+    const H = {
+      today: { s: '數量與前 3 項', m: '今天日期、4 項任務與時間', l: '逾期與今天分組，長標題顯示兩行' },
+      next: { s: '下一個行程與之後一項', m: '下一項詳情與之後 2 項', l: '今晚時間軸，含全天項目' },
+      month: { s: '整月日期與有事件的日期點', m: '本週與下週，顯示事件名稱與＋N', l: '整月，事件名稱、跨日長條與＋N' }
+    };
+    return { onAccent,
+      accent, wtype: s.type, wsize: s.size, hint: H[s.type][s.size],
+      types: T.map((t) => ({ name: t[1], desc: t[2], on: s.type === t[0] ? 'true' : 'false', bd: s.type === t[0] ? accent : '#26282A', bg: s.type === t[0] ? accent + '1F' : '#17181A', pick: () => this.setState({ type: t[0] }) })),
+      sizes: Z.map((z) => ({ l: z[1], on: s.size === z[0] ? 'true' : 'false', bg: s.size === z[0] ? '#3A3D40' : 'transparent', fg: s.size === z[0] ? '#FFFFFF' : '#9BA3A0', pick: () => this.setState({ size: z[0] }) }))
+    };
+  }
+}
+</script>
+
+
+</body></html>

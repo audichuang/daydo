@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Doneday v2 · 今天</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Noto+Sans+TC:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+button,input,textarea{font:inherit;color:inherit}
+a{color:#FF9A3D}a:hover{color:#FFB46E}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; position: relative; overflow: hidden; background: #0E0F10; color: #F1F3F2; font-family: 'Inter', 'Noto Sans TC', system-ui, sans-serif; font-size: {{fs}}px; box-sizing: border-box">
+
+  <div style="position: absolute; left: 0; top: 0; right: 0; bottom: 0; overflow-y: auto; overflow-x: hidden; padding: 112px 16px 140px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px">
+    <div style="display: flex; flex-direction: column; gap: 2px; padding: 0 4px">
+      <h1 style="margin: 0; font-size: 1.875em; font-weight: 700; letter-spacing: -0.01em">今天</h1>
+      <span style="font-size: 0.875em; color: #9BA3A0">11 月 15 日 週日 · {{remaining}} 項待辦</span>
+    </div>
+
+    <sc-for list="{{sections}}" as="sec" hint-placeholder-count="3">
+      <section style="display: flex; flex-direction: column; border-radius: 16px; background: #18191B; overflow: hidden">
+        <button type="button" onClick="{{sec.toggle}}" aria-expanded="{{sec.open}}" style="display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px 0 16px; border: 0; background: transparent; text-align: left">
+          <span style="flex: 1; font-size: 0.9375em; font-weight: 700; color: {{sec.color}}">{{sec.name}}</span>
+          <sc-if value="{{sec.isOverdue}}" hint-placeholder-val="{{false}}"><span style="font-size: 0.8125em; font-weight: 600; color: {{accentText}}; padding-right: 6px">全部延到今天</span></sc-if>
+          <span style="font-size: 0.8125em; color: #8A928F">{{sec.count}}</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A928F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform: rotate({{sec.rot}})"><path d="M6 9l6 6 6-6"></path></svg>
+        </button>
+        <sc-if value="{{sec.isOpen}}" hint-placeholder-val="{{true}}">
+          <div style="display: flex; flex-direction: column">
+            <sc-for list="{{sec.items}}" as="t" hint-placeholder-count="3">
+              <div style="display: flex; align-items: flex-start">
+                <button type="button" aria-label="{{t.checkLabel}}" onClick="{{t.toggle}}" style="flex: 0 0 auto; width: 48px; min-height: 44px; padding: {{padTop}} 0 0; border: 0; background: transparent; display: flex; justify-content: center">
+                  <span style="width: 20px; height: 20px; border-radius: 6px; border: 2px solid {{t.pc}}; background: {{t.cbg}}; color: #0E0F10; display: flex; align-items: center; justify-content: center; box-sizing: border-box">
+                    <sc-if value="{{t.done}}" hint-placeholder-val="{{false}}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></sc-if>
+                  </span>
+                </button>
+                <a href="V2Task.dc.html" style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; padding: {{rowPad}} 16px {{rowPad}} 0; border-top: {{t.sep}}; text-decoration: none; color: #F1F3F2">
+                  <span style="font-size: 1.0625em; line-height: 1.35; font-weight: 500; color: {{t.titleColor}}; text-decoration: {{t.deco}}; display: -webkit-box; -webkit-line-clamp: {{clamp}}; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word">{{t.title}}</span>
+                  <sc-if value="{{t.showNote}}" hint-placeholder-val="{{true}}"><span style="font-size: 0.875em; line-height: 1.4; color: #9BA3A0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{t.note}}</span></sc-if>
+                  <span style="display: flex; align-items: center; gap: 10px; font-size: 0.8125em; line-height: 1.3; min-height: 18px">
+                    <sc-if value="{{t.hasDate}}" hint-placeholder-val="{{true}}"><span style="font-weight: 600; color: {{t.dateColor}}; white-space: nowrap">{{t.date}}</span></sc-if>
+                    <sc-if value="{{t.hasSubs}}" hint-placeholder-val="{{false}}"><span style="display: flex; align-items: center; gap: 3px; color: #8A928F"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"></path></svg>{{t.subs}}</span></sc-if>
+                    <sc-if value="{{t.hasCmt}}" hint-placeholder-val="{{false}}"><span style="display: flex; align-items: center; gap: 3px; color: #8A928F"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg>{{t.cmt}}</span></sc-if>
+                    <span style="flex: 1"></span>
+                    <sc-if value="{{t.shared}}" hint-placeholder-val="{{false}}">
+                      <span style="display: flex">
+                        <sc-for list="{{t.avs}}" as="a" hint-placeholder-count="2"><span style="width: 18px; height: 18px; margin-left: -4px; border-radius: 9px; border: 1.5px solid #18191B; background: {{a.c}}; color: #0E0F10; font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center">{{a.i}}</span></sc-for>
+                      </span>
+                    </sc-if>
+                    <span style="display: flex; align-items: center; gap: 5px; color: #8A928F; white-space: nowrap"><span style="width: 7px; height: 7px; border-radius: 2px; background: {{t.lc}}"></span>{{t.list}}</span>
+                  </span>
+                </a>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </section>
+    </sc-for>
+    <div style="text-align: center; font-size: 0.75em; color: #6E7673; padding: 4px 0">已顯示全部</div>
+  </div>
+
+  <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 0; height: 108px; background: linear-gradient(#0E0F10 55%, rgba(14,15,16,0)); pointer-events: none"></div>
+  <header style="position: absolute; left: 16px; right: 16px; top: 54px; display: flex; align-items: center; justify-content: space-between">
+    <a href="V2Drawer.dc.html" aria-label="開啟清單抽屜" style="width: 44px; height: 44px; border-radius: 22px; color: #F1F3F2; display: flex; align-items: center; justify-content: center; background: rgba(40,42,44,0.78); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.08); box-sizing: border-box">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
+    </a>
+    <div style="display: flex; align-items: center; height: 44px; padding: 0 2px; border-radius: 22px; background: rgba(40,42,44,0.78); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.08); box-sizing: border-box">
+      <a href="V2Task.dc.html" aria-label="新增任務" style="width: 44px; height: 40px; border-radius: 20px; color: {{accentText}}; display: flex; align-items: center; justify-content: center">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+      </a>
+      <button type="button" onClick="{{toggleDensity}}" aria-label="切換密度：目前{{densityLabel}}" style="width: 44px; height: 40px; border: 0; border-radius: 20px; background: transparent; color: #F1F3F2; display: flex; align-items: center; justify-content: center">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="{{densityIcon}}"></path></svg>
+      </button>
+      <button type="button" aria-label="更多選項" style="width: 44px; height: 40px; border: 0; border-radius: 20px; background: transparent; color: #F1F3F2; display: flex; align-items: center; justify-content: center">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="19" cy="12" r="1.7"></circle></svg>
+      </button>
+    </div>
+  </header>
+
+  <nav aria-label="主要功能" style="position: absolute; left: 16px; right: 16px; bottom: 30px; height: 62px; padding: 5px; border-radius: 31px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; background: rgba(36,38,40,0.82); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 8px 24px rgba(0,0,0,0.35); box-sizing: border-box">
+    <a href="V2Today.dc.html" aria-current="page" style="border-radius: 26px; background: rgba(255,255,255,0.08); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; font-weight: 600; text-decoration: none; color: {{accentText}}">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="5"></rect><path d="M8.5 12l2.5 2.5L15.5 10"></path></svg>任務
+    </a>
+    <a href="V2CalAgenda.dc.html" style="border-radius: 26px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; text-decoration: none; color: #C9CFCC">
+      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="16" rx="3.5" fill="none" stroke="currentColor" stroke-width="1.9"></rect><path d="M3.5 9h17M8 2.8v3.4M16 2.8v3.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path><text x="12" y="17.8" text-anchor="middle" font-size="8.5" font-weight="700" fill="currentColor" font-family="Inter, sans-serif">15</text></svg>日曆
+    </a>
+    <a href="V2CalMonth.dc.html" style="border-radius: 26px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; text-decoration: none; color: #C9CFCC">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="8.5" r="3.2"></circle><path d="M3 19.5c.8-3.2 3.2-5 6-5s5.2 1.8 6 5M16 5.5a3 3 0 0 1 0 6M17.5 14.6c1.8.6 3 2.4 3.5 4.9"></path></svg>共享
+    </a>
+    <a href="#" style="border-radius: 26px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; text-decoration: none; color: #C9CFCC">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4-4"></path></svg>搜尋
+    </a>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#FF8A1E","options":["#FF8A1E","#4772FA","#2BB673","#8B6CE8"]},"density":{"editor":"enum","options":["standard","compact"],"default":"standard"},"textScale":{"editor":"enum","options":["100","115","130"],"default":"100"},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { done: { t13: true }, closed: { done: true }, density: null };
+  }
+  renderVals() {
+    const accent = this.props.accent ?? '#FF8A1E';
+    const onAccent = (() => { const v = [1, 3, 5].map((i) => { const c = parseInt(accent.slice(i, i + 2), 16) / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }); return (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]) > 0.3 ? '#1A1206' : '#FFFFFF'; })();
+    const mix = (h, p) => '#' + [1, 3, 5].map((i) => Math.round(parseInt(h.slice(i, i + 2), 16) * (1 - p) + 255 * p).toString(16).padStart(2, '0')).join('');
+    const accentText = mix(accent, 0.1);
+    const density = this.state.density || this.props.density || 'standard';
+    const compact = density === 'compact';
+    const fs = Math.round(16 * Number(this.props.textScale || '100') / 100);
+    const s = this.state;
+    // ---- 共用示範資料（所有 v2 畫面一致）----
+    const LISTS = { work: ['工作', '#4AA8E8'], life: ['個人', '#E98A5B'], shop: ['購物', '#C77DDB'], study: ['學習', '#4FC3A1'], ours: ['我們的行程', '#E8C14E'] };
+    const PRI = { 3: '#F2555A', 2: '#F7B500', 1: '#4E8BF7', 0: '#7C8582' };
+    const MEM = { me: ['我', '#9BB8FF'], an: ['安', '#FF9FC2'] };
+    const T = [
+      { id: 't1', t: '回覆客戶報價信，並附上修訂後的合約條款與付款時程說明', n: '確認折扣條件後再寄出，副本給主管', l: 'work', p: 3, d: 14, s: 1020, sec: 'over', date: '昨天 17:00' },
+      { id: 't2', t: '準備週一產品會議簡報', n: '重點放在 Q4 上線時程與待決事項', l: 'work', p: 3, d: 15, s: 1080, e: 1110, sub: '1/3', sec: 'today', date: '18:00 – 18:30' },
+      { id: 't6', t: '花蓮小旅行', n: '火車票已訂，民宿待確認', l: 'ours', p: 0, d: 13, d2: 16, m: ['me', 'an'], c: 6, sec: 'today', date: '全天・第 3/4 天' },
+      { id: 't3', t: '去全聯買菜', n: '', l: 'shop', p: 2, d: 15, sec: 'today', date: '' },
+      { id: 't5', t: '晚餐：巷口火鍋', n: '記得先訂位，四個人', l: 'ours', p: 0, d: 15, s: 1140, e: 1260, m: ['me', 'an'], c: 3, sec: 'today', date: '19:00 – 21:00' },
+      { id: 't4', t: '健身房 — 腿部訓練', n: '深蹲 5×5、硬舉 3×5、伸展 10 分鐘', l: 'life', p: 1, d: 15, s: 1170, e: 1230, sec: 'today', date: '19:30 – 20:30' },
+      { id: 't8', t: '週會', n: '', l: 'work', p: 1, d: 16, s: 600, e: 660, sec: 'tmr', date: '明天 10:00 – 11:00' },
+      { id: 't9', t: '繳信用卡帳單', n: '', l: 'life', p: 2, d: 16, sec: 'tmr', date: '明天' },
+      { id: 't7', t: 'Day 3｜Two Pointers 練習', n: '完成 3 題，記錄是否使用提示與解題時間', l: 'study', p: 2, d: 16, s: 1260, e: 1320, sec: 'tmr', date: '明天 21:00 – 22:00' },
+      { id: 't13', t: '預約牙醫洗牙', n: '', l: 'life', p: 0, d: 15, sec: 'today', date: '' }
+    ];
+    const deco = (t) => {
+      const done = !!s.done[t.id];
+      return {
+        title: t.t, note: t.n, showNote: !!t.n && !compact, done,
+        pc: done ? accent : PRI[t.p], cbg: done ? accent : 'transparent',
+        titleColor: done ? '#7A827F' : '#F1F3F2', deco: done ? 'line-through' : 'none',
+        hasDate: !!t.date && !done, date: t.date, dateColor: t.sec === 'over' ? '#FF7A70' : (t.sec === 'today' ? accentText : '#B7BEBB'),
+        hasSubs: !!t.sub, subs: t.sub, hasCmt: !!t.c, cmt: t.c,
+        shared: !!t.m, avs: (t.m || []).map((k) => ({ i: MEM[k][0], c: MEM[k][1] })),
+        list: LISTS[t.l][0], lc: LISTS[t.l][1],
+        checkLabel: (done ? '取消完成：' : '完成：') + t.t,
+        toggle: () => this.setState((st) => ({ done: Object.assign({}, st.done, { [t.id]: !st.done[t.id] }) }))
+      };
+    };
+    const G = [['over', '已逾期', '#FF7A70'], ['today', '今天', '#F1F3F2'], ['tmr', '明天', '#F1F3F2'], ['done', '已完成', '#9BA3A0']];
+    const sections = G.map((g) => {
+      const items = T.filter((t) => g[0] === 'done' ? s.done[t.id] : (t.sec === g[0] && !s.done[t.id])).map(deco);
+      const open = !s.closed[g[0]];
+      return {
+        name: g[1], color: g[2], count: items.length, isOverdue: g[0] === 'over', isOpen: open, open: open ? 'true' : 'false', rot: open ? '0deg' : '-90deg',
+        items: items.map((it, i) => Object.assign(it, { sep: i === 0 ? '0' : '1px solid #26282A' })),
+        toggle: () => this.setState((st) => ({ closed: Object.assign({}, st.closed, { [g[0]]: !st.closed[g[0]] }) }))
+      };
+    }).filter((x) => x.count > 0);
+    const remaining = T.filter((t) => (t.sec === 'over' || t.sec === 'today') && !s.done[t.id]).length;
+    return { onAccent,
+      accent, accentText, fs, sections, remaining,
+      rowPad: compact ? '9px' : '12px', padTop: compact ? '9px' : '12px', clamp: compact ? '1' : '2',
+      densityLabel: compact ? '緊湊' : '標準',
+      densityIcon: compact ? 'M4 6h16M4 10h16M4 14h16M4 18h16' : 'M4 7h16M4 12h16M4 17h16',
+      toggleDensity: () => this.setState({ density: compact ? 'standard' : 'compact' })
+    };
+  }
+}
+</script>
+</body>
+</html>

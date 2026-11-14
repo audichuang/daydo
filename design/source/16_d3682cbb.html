@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-Hant"><head>
+<meta charset="utf-8">
+<title>Doneday v2 · 視覺系統</title>
+<script src="8dea096a-1215-4b52-b7ed-0de6d5edf788"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>/*fonts*/</style>
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1240px; height: 1060px; background: #0B0C0D; color: #F1F3F2; font-family: 'Inter', 'Noto Sans TC', system-ui, sans-serif; box-sizing: border-box; padding: 48px 56px; display: flex; flex-direction: column; gap: 28px">
+  <header style="display: flex; flex-direction: column; gap: 6px">
+    <h1 style="margin: 0; font-size: 30px; font-weight: 700">Doneday 視覺系統（深色）</h1>
+    <p style="margin: 0; font-size: 15px; color: #9BA3A0">內容區用穩定底色，玻璃只用在頂部工具列與底部導覽。每種顏色只負責一件事。</p>
+  </header>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px">
+    <section style="display: flex; flex-direction: column; gap: 14px; padding: 20px; border-radius: 18px; background: #141516">
+      <h2 style="margin: 0; font-size: 17px; font-weight: 700">色彩分工</h2>
+      <sc-for list="{{roles}}" as="r" hint-placeholder-count="4">
+        <div style="display: flex; gap: 14px; align-items: flex-start">
+          <div style="width: 150px; display: flex; flex-wrap: wrap; gap: 6px">
+            <sc-for list="{{r.sw}}" as="c" hint-placeholder-count="4"><span title="{{c.n}}" style="width: 26px; height: 26px; border-radius: {{r.rad}}; background: {{c.h}}; border: {{c.bd}}; box-sizing: border-box"></span></sc-for>
+          </div>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 14px; font-weight: 700">{{r.name}}</span><span style="font-size: 13px; line-height: 1.55; color: #B7BEBB">{{r.use}}</span></div>
+        </div>
+      </sc-for>
+    </section>
+
+    <section style="display: flex; flex-direction: column; gap: 12px; padding: 20px; border-radius: 18px; background: #141516">
+      <h2 style="margin: 0; font-size: 17px; font-weight: 700">文字級距（可放大到 130%）</h2>
+      <sc-for list="{{type}}" as="t" hint-placeholder-count="7">
+        <div style="display: flex; align-items: baseline; gap: 14px; border-top: 1px solid #1F2123; padding-top: 8px">
+          <span style="width: 64px; font-size: 12px; color: #8A928F">{{t.px}}</span>
+          <span style="flex: 1; font-size: {{t.px}}; font-weight: {{t.w}}; color: {{t.c}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{t.sample}}</span>
+          <span style="font-size: 12px; color: #8A928F">{{t.use}}</span>
+        </div>
+      </sc-for>
+    </section>
+
+    <section style="display: flex; flex-direction: column; gap: 14px; padding: 20px; border-radius: 18px; background: #141516">
+      <h2 style="margin: 0; font-size: 17px; font-weight: 700">底色層級與材質</h2>
+      <div style="display: flex; gap: 10px">
+        <sc-for list="{{surfaces}}" as="s" hint-placeholder-count="5">
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 6px">
+            <span style="height: 64px; border-radius: 12px; background: {{s.h}}; border: 1px solid #2A2C2E; backdrop-filter: {{s.bf}}"></span>
+            <span style="font-size: 12px; font-weight: 600">{{s.n}}</span><span style="font-size: 11px; color: #8A928F">{{s.v}}</span>
+          </div>
+        </sc-for>
+      </div>
+      <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #B7BEBB">玻璃：72–82% 不透明、模糊 16–18px、1px 細邊、單層柔和陰影，不加額外高光。內容卡片一律實色，閱讀時不會被背景干擾。</p>
+    </section>
+
+    <section style="display: flex; flex-direction: column; gap: 12px; padding: 20px; border-radius: 18px; background: #141516">
+      <h2 style="margin: 0; font-size: 17px; font-weight: 700">間距、圓角、圖示與版面安全區</h2>
+      <sc-for list="{{rules}}" as="r" hint-placeholder-count="7">
+        <div style="display: flex; gap: 12px; border-top: 1px solid #1F2123; padding-top: 8px; font-size: 13px; line-height: 1.5"><span style="width: 110px; flex: 0 0 auto; color: #8A928F">{{r.k}}</span><span style="color: #D3D8D6">{{r.v}}</span></div>
+      </sc-for>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#FF8A1E&quot;,&quot;options&quot;:[&quot;#FF8A1E&quot;,&quot;#4772FA&quot;,&quot;#2BB673&quot;,&quot;#8B6CE8&quot;]},&quot;$preview&quot;:{&quot;width&quot;:1240,&quot;height&quot;:1060}}">
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#FF8A1E';
+    const onAccent = (() => { const v = [1, 3, 5].map((i) => { const c = parseInt(accent.slice(i, i + 2), 16) / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }); return (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]) > 0.3 ? '#1A1206' : '#FFFFFF'; })();
+    const sw = (arr) => arr.map((x) => ({ n: x[0], h: x[1], bd: x[2] || '0' }));
+    return { onAccent,
+      roles: [
+        { name: '主題色（可自訂）', rad: '13px', use: '今天、選取日期、主要按鈕（儲存、確定）、未來日期文字、目前導覽與目前清單。按鈕上的字會依主題色亮度自動用深色或白色，確保看得清楚。', sw: sw([['預設橘', accent], ['藍', '#4772FA'], ['綠', '#2BB673'], ['紫', '#8B6CE8']]) },
+        { name: '清單來源色', rad: '6px', use: '只出現在小方點、日曆長條與清單圖示。工作、個人、購物、學習、我們的行程。', sw: sw([['工作', '#4AA8E8'], ['個人', '#E98A5B'], ['購物', '#C77DDB'], ['學習', '#4FC3A1'], ['我們的行程', '#E8C14E']]) },
+        { name: '優先級', rad: '6px', use: '只用在勾選框外框與旗標：高、中、低、無。不拿來塗整列或日期。', sw: sw([['高', 'transparent', '3px solid #F2555A'], ['中', 'transparent', '3px solid #F7B500'], ['低', 'transparent', '3px solid #4E8BF7'], ['無', 'transparent', '3px solid #7C8582']]) },
+        { name: '狀態', rad: '13px', use: '逾期：只用在日期文字。時間重疊：琥珀色提示。已完成：灰字加刪除線、勾選框改填主題色。', sw: sw([['逾期', '#FF7A70'], ['重疊', '#F7B500'], ['已完成', '#7A827F']]) }
+      ],
+      type: [
+        ['30px', 700, '#F1F3F2', '今天', '頁面大標題'], ['22px', 700, '#F1F3F2', '準備週一產品會議簡報', '詳情標題'], ['17px', 500, '#F1F3F2', '回覆客戶報價信，並附上修訂後的合約…', '任務標題（最多兩行）'],
+        ['15px', 400, '#D3D8D6', '重點放在 Q4 上線時程與待決事項', '內文、描述'], ['14px', 400, '#9BA3A0', '確認折扣條件後再寄出', '備註摘要（一行）'], ['13px', 600, '#FF9A3D', '18:00 – 18:30', '日期時間、輔助資訊'], ['11px', 600, '#C9CFCC', '任務　日曆　共享　搜尋', '導覽標籤']
+      ].map((t) => ({ px: t[0], w: t[1], c: t[2], sample: t[3], use: t[4] })),
+      surfaces: [['背景', '#0E0F10', '#0E0F10'], ['卡片', '#18191B', '#18191B'], ['次層', '#1F2123', '#1F2123'], ['分隔線', '#26282A', '#26282A'], ['玻璃工具列', 'rgba(40,42,44,0.78)', '78%・模糊 16']].map((s) => ({ n: s[0], h: s[1], v: s[2], bf: s[0] === '玻璃工具列' ? 'blur(16px)' : 'none' })),
+      rules: [
+        ['左右邊距', '頁面 16px；卡片內距 14–16px；任務列文字與勾選框對齊 48px 欄。'],
+        ['列高', '標準 ≥ 56px（上下 12px）；緊湊 ≥ 44px（上下 9px、隱藏備註、標題一行）。'],
+        ['圓角', '底部面板 28／卡片 16／次層卡 12–14／勾選框 6／膠囊按鈕全圓／小工具 22–24。'],
+        ['圖示', '24 格線、線寬 1.9（14px 以下用 2.2–2.4）、圓角端點；同一畫面只用線性圖示。'],
+        ['觸控', '可點區域至少 44×44px；勾選框視覺 20px，點擊熱區 48×44px。'],
+        ['安全區', '頂部工具列 top 54px；內容從 108–112px 開始；底部導覽 62px＋距底 30px，列表底部留 140px，最後一筆不會被遮住。'],
+        ['放大與鍵盤', '文字以 em 計算，可放大到 130%；編輯在可捲動區進行，「儲存」放在頂部，鍵盤彈出時仍看得到。']
+      ].map((r) => ({ k: r[0], v: r[1] }))
+    };
+  }
+}
+</script>
+
+
+</body></html>

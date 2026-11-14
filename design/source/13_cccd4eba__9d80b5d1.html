@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Doneday v2 · 小工具元件</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Noto+Sans+TC:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+button{font:inherit;color:inherit}
+</style>
+</helmet>
+<section aria-label="{{aria}}" style="width: {{w}}; height: {{h}}; border-radius: {{r}}; background: #1A1B1D; border: 1px solid #26282A; color: #F1F3F2; font-family: 'Inter', 'Noto Sans TC', system-ui, sans-serif; box-sizing: border-box; overflow: hidden; position: relative; padding: {{p}}; display: flex; flex-direction: column">
+
+  <sc-if value="{{isTodayS}}" hint-placeholder-val="{{false}}">
+    <div style="display: flex; flex-direction: column; gap: 7px; height: 100%">
+      <div style="display: flex; align-items: baseline; justify-content: space-between"><span style="font-size: 13px; font-weight: 700; color: {{accentText}}">今天</span><span style="font-size: 24px; font-weight: 700; line-height: 1">{{todayCount}}</span></div>
+      <sc-for list="{{todayS}}" as="t" hint-placeholder-count="3">
+        <div style="display: flex; align-items: center; gap: 7px; font-size: 12px"><span style="flex: 0 0 auto; width: 12px; height: 12px; border-radius: 4px; border: 1.6px solid {{t.pc}}; box-sizing: border-box"></span><span style="flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: {{t.tc}}">{{t.t}}</span></div>
+      </sc-for>
+      <div style="flex: 1"></div>
+      <span style="font-size: 11px; color: #8A928F">另有 {{todayMoreS}} 項</span>
+    </div>
+  </sc-if>
+  <sc-if value="{{isTodayM}}" hint-placeholder-val="{{false}}">
+    <div style="display: flex; gap: 14px; height: 100%">
+      <div style="width: 84px; display: flex; flex-direction: column">
+        <span style="font-size: 12px; font-weight: 700; color: {{accentText}}">週日</span>
+        <span style="font-size: 36px; font-weight: 700; line-height: 1.05">15</span>
+        <div style="flex: 1"></div>
+        <span style="font-size: 11px; color: #8A928F">剩 {{todayCount}} 項</span>
+      </div>
+      <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: space-between">
+        <sc-for list="{{todayM}}" as="t" hint-placeholder-count="4">
+          <div style="display: flex; align-items: center; gap: 8px; height: 30px"><span style="flex: 0 0 auto; width: 15px; height: 15px; border-radius: 5px; border: 1.8px solid {{t.pc}}; box-sizing: border-box"></span><span style="flex: 1; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{t.t}}</span><span style="font-size: 11px; font-weight: 600; color: {{t.dc}}">{{t.d}}</span></div>
+        </sc-for>
+      </div>
+    </div>
+  </sc-if>
+  <sc-if value="{{isTodayL}}" hint-placeholder-val="{{false}}">
+    <div style="display: flex; flex-direction: column; gap: 6px; height: 100%">
+      <div style="display: flex; align-items: baseline; gap: 8px"><span style="font-size: 15px; font-weight: 700; color: {{accentText}}">今天</span><span style="font-size: 12px; color: #8A928F">11 月 15 日 週日・{{todayCount}} 項</span></div>
+      <sc-for list="{{todayL}}" as="g" hint-placeholder-count="2">
+        <div style="display: flex; flex-direction: column; gap: 2px">
+          <span style="font-size: 11px; font-weight: 700; color: {{g.c}}; padding-top: 4px">{{g.name}}</span>
+          <sc-for list="{{g.items}}" as="t" hint-placeholder-count="3">
+            <div style="display: flex; align-items: center; gap: 8px; min-height: 34px; border-top: {{t.sep}}"><span style="flex: 0 0 auto; width: 15px; height: 15px; border-radius: 5px; border: 1.8px solid {{t.pc}}; box-sizing: border-box"></span><span style="flex: 1; min-width: 0; font-size: 13px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden">{{t.t}}</span><span style="font-size: 11px; font-weight: 600; color: {{t.dc}}; white-space: nowrap">{{t.d}}</span></div>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{isNextS}}" hint-placeholder-val="{{false}}">
+    <div style="display: flex; flex-direction: column; gap: 4px; height: 100%">
+      <span style="font-size: 12px; font-weight: 700; color: {{accentText}}">接下來・18:00</span>
+      <div style="display: flex; gap: 7px; margin-top: 6px"><span style="flex: 0 0 auto; width: 3px; border-radius: 2px; background: #4AA8E8"></span><span style="font-size: 15px; font-weight: 700; line-height: 1.3">準備週一產品會議簡報</span></div>
+      <span style="font-size: 12px; color: #9BA3A0; padding-left: 10px">18:00 – 18:30・工作</span>
+      <div style="flex: 1"></div>
+      <span style="font-size: 11px; color: #8A928F">之後：晚餐 19:00</span>
+    </div>
+  </sc-if>
+  <sc-if value="{{isNextM}}" hint-placeholder-val="{{false}}">
+    <div style="display: flex; gap: 14px; height: 100%">
+      <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px">
+        <span style="font-size: 12px; font-weight: 700; color: {{accentText}}">接下來・18:00</span>
+        <div style="display: flex; gap: 7px; margin-top: 6px"><span style="flex: 0 0 auto; width: 3px; border-radius: 2px; background: #4AA8E8"></span><span style="font-size: 16px; font-weight: 700; line-height: 1.3">準備週一產品會議簡報</span></div>
+        <span style="font-size: 12px; color: #9BA3A0; padding-left: 10px">18:00 – 18:30・工作</span>
+        <div style="flex: 1"></div>
+        <span style="font-size: 11px; color: #8A928F">子任務 1/3・附件 2</span>
+      </div>
+      <div style="width: 150px; display: flex; flex-direction: column; gap: 6px; padding-left: 12px; border-left: 1px solid #2A2C2E">
+        <span style="font-size: 11px; font-weight: 600; color: #8A928F">之後</span>
+        <sc-for list="{{nextAfter}}" as="e" hint-placeholder-count="2">
+          <div style="display: flex; gap: 6px"><span style="flex: 0 0 auto; width: 3px; border-radius: 2px; background: {{e.c}}"></span><span style="display: flex; flex-direction: column; min-width: 0"><span style="font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{e.t}}</span><span style="font-size: 11px; color: #9BA3A0">{{e.time}}</span></span></div>
+        </sc-for>
+      </div>
+    </div>
+  </sc-if>
+  <sc-if value="{{isNextL}}" hint-placeholder-val="{{false}}">
+    <div style="display: flex; flex-direction: column; gap: 8px; height: 100%">
+      <div style="display: flex; align-items: baseline; gap: 8px"><span style="font-size: 15px; font-weight: 700; color: {{accentText}}">接下來</span><span style="font-size: 12px; color: #8A928F">今天 17:00 – 22:00</span></div>
+      <div style="display: flex; gap: 6px; flex-wrap: wrap"><span style="font-size: 11px; padding: 3px 8px; border-radius: 6px; background: #E8C14E33; color: #F3D88A">花蓮小旅行 3/4</span><span style="font-size: 11px; padding: 3px 8px; border-radius: 6px; background: #C77DDB33; color: #E2B6EE">去全聯買菜</span></div>
+      <div style="position: relative; flex: 1">
+        <sc-for list="{{tlHours}}" as="h" hint-placeholder-count="6"><div style="position: absolute; left: 0; right: 0; top: {{h.top}}; border-top: 1px solid #26282A"><span style="position: absolute; left: 0; top: -7px; font-size: 10px; color: #737B78; background: #1A1B1D; padding-right: 4px">{{h.l}}</span></div></sc-for>
+        <sc-for list="{{tlBlocks}}" as="b" hint-placeholder-count="3"><div style="position: absolute; top: {{b.top}}; height: {{b.h}}; left: {{b.left}}; width: {{b.w}}; border-radius: 6px; background: {{b.bg}}; border: {{b.bd}}; padding: 3px 6px; box-sizing: border-box; overflow: hidden"><span style="display: block; font-size: 11px; font-weight: 700; color: {{b.fg}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{b.t}}</span><span style="display: block; font-size: 10px; color: {{b.fg}}; opacity: 0.85">{{b.time}}</span></div></sc-for>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{isMonthS}}" hint-placeholder-val="{{false}}">
+    <div style="display: flex; flex-direction: column; gap: 2px; height: 100%">
+      <span style="font-size: 12px; font-weight: 700; color: {{accentText}}; padding-left: 2px">11 月</span>
+      <div style="flex: 1; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); align-content: space-between; text-align: center">
+        <sc-for list="{{wd}}" as="w" hint-placeholder-count="7"><span style="font-size: 9px; color: #737B78">{{w.n}}</span></sc-for>
+        <sc-for list="{{mini}}" as="c" hint-placeholder-count="35">
+          <span style="display: flex; flex-direction: column; align-items: center; gap: 1px; opacity: {{c.op}}"><span style="width: 17px; height: 17px; border-radius: 9px; box-sizing: border-box; border: 1.2px solid {{c.ring}}; background: {{c.bg}}; color: {{c.fg}}; font-size: 10px; font-weight: {{c.fw}}; display: flex; align-items: center; justify-content: center">{{c.n}}</span><span style="width: 3px; height: 3px; border-radius: 2px; background: {{c.dot}}"></span></span>
+        </sc-for>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{isMonthWide}}" hint-placeholder-val="{{false}}">
+    <div style="display: flex; flex-direction: column; height: 100%">
+      <sc-if value="{{showMonthTitle}}" hint-placeholder-val="{{true}}"><span style="font-size: 13px; font-weight: 700; color: {{accentText}}; padding: 0 0 4px 2px">{{monthTitle}}</span></sc-if>
+      <div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); text-align: center; padding-bottom: 2px">
+        <sc-for list="{{wd}}" as="w" hint-placeholder-count="7"><span style="font-size: 9px; color: #737B78">{{w.n}}</span></sc-for>
+      </div>
+      <sc-for list="{{weeks}}" as="wk" hint-placeholder-count="5">
+        <div style="flex: 1; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); grid-template-rows: {{rowTpl}}; row-gap: 1px; border-top: 1px solid #26282A; padding-top: 2px; min-height: 0; overflow: hidden">
+          <sc-for list="{{wk.days}}" as="d" hint-placeholder-count="7">
+            <span style="grid-row: 1; grid-column: {{d.col}}; padding-left: 2px; opacity: {{d.op}}"><span style="display: inline-flex; min-width: 15px; height: 15px; padding: 0 2px; box-sizing: border-box; border-radius: 8px; border: 1.2px solid {{d.ring}}; background: {{d.bg}}; color: {{d.fg}}; font-size: 10px; font-weight: {{d.fw}}; align-items: center; justify-content: center">{{d.n}}</span></span>
+          </sc-for>
+          <sc-for list="{{wk.bars}}" as="b" hint-placeholder-count="2">
+            <span style="grid-column: {{b.gc}}; grid-row: {{b.gr}}; margin: 0 1px; padding: 0 3px; border-radius: 3px; background: {{b.bg}}; color: {{b.fg}}; font-size: 9px; font-weight: 600; line-height: 11px; white-space: nowrap; overflow: hidden">{{b.t}}</span>
+          </sc-for>
+          <sc-for list="{{wk.more}}" as="m" hint-placeholder-count="1">
+            <span style="grid-column: {{m.gc}}; grid-row: {{m.gr}}; padding-left: 3px; font-size: 8.5px; font-weight: 600; line-height: 11px; color: #9BA3A0">＋{{m.n}}</span>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+  </sc-if>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#FF8A1E","options":["#FF8A1E","#4772FA","#2BB673","#8B6CE8"]},"type":{"editor":"enum","options":["today","next","month"],"default":"month"},"size":{"editor":"enum","options":["s","m","l"],"default":"l"},"$preview":{"width":364,"height":382}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#FF8A1E';
+    const onAccent = (() => { const v = [1, 3, 5].map((i) => { const c = parseInt(accent.slice(i, i + 2), 16) / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }); return (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]) > 0.3 ? '#1A1206' : '#FFFFFF'; })();
+    const type = this.props.type || 'month';
+    const size = this.props.size || 'l';
+    const mix = (h, p) => '#' + [1, 3, 5].map((i) => Math.round(parseInt(h.slice(i, i + 2), 16) * (1 - p) + 255 * p).toString(16).padStart(2, '0')).join('');
+    const accentText = mix(accent, 0.1);
+    const LISTS = { work: ['工作', '#4AA8E8'], life: ['個人', '#E98A5B'], shop: ['購物', '#C77DDB'], study: ['學習', '#4FC3A1'], ours: ['我們的行程', '#E8C14E'] };
+    const PRI = { 3: '#F2555A', 2: '#F7B500', 1: '#4E8BF7', 0: '#7C8582' };
+    const TODAY = 15;
+    const EV = [
+      ['e3', '週會', '', 'work', 2, 2, 600, 660], ['e1', '週會', '', 'work', 9, 9, 600, 660], ['e2', '讀書會', '', 'study', 11, 11, 1200, 1290],
+      ['t6', '花蓮小旅行', '火車票已訂，民宿待確認', 'ours', 13, 16, null, null, ['me', 'an'], 6],
+      ['t1', '回覆客戶報價信，並附上修訂後的合約條款與付款時程說明', '確認折扣條件後再寄出，副本給主管', 'work', 14, 14, 1020, null],
+      ['t3', '去全聯買菜', '', 'shop', 15, 15, null, null], ['t13', '預約牙醫洗牙', '', 'life', 15, 15, null, null],
+      ['t2', '準備週一產品會議簡報', '重點放在 Q4 上線時程與待決事項', 'work', 15, 15, 1080, 1110],
+      ['t5', '晚餐：巷口火鍋', '記得先訂位，四個人', 'ours', 15, 15, 1140, 1260, ['me', 'an'], 3],
+      ['t4', '健身房 — 腿部訓練', '深蹲 5×5、硬舉 3×5、伸展 10 分鐘', 'life', 15, 15, 1170, 1230],
+      ['t8', '週會', '', 'work', 16, 16, 600, 660], ['t9', '繳信用卡帳單', '', 'life', 16, 16, null, null],
+      ['t7', 'Day 3｜Two Pointers 練習', '完成 3 題，記錄是否使用提示與解題時間', 'study', 16, 16, 1260, 1320],
+      ['t10', '小安 台中出差', '', 'ours', 17, 19, null, null, ['an']], ['e7', '交 Q4 報告', '', 'work', 20, 20, null, null],
+      ['t11', '媽媽生日', '訂蛋糕、買花', 'ours', 22, 22, null, null, ['me', 'an']], ['e6', '週會', '', 'work', 23, 23, 600, 660],
+      ['e5', '年度健康檢查', '前一晚 10 點後禁食', 'life', 27, 27, 540, 660], ['t12', '搬家整理：打包書櫃', '', 'ours', 28, 29, null, null, ['me', 'an']],
+      ['e8', '週會', '', 'work', 30, 30, 600, 660]
+    ];
+    const dims = { s: ['170px', '170px', '22px', '14px'], m: ['364px', '170px', '22px', '14px 16px'], l: ['364px', '382px', '24px', '14px 14px 12px'] }[size];
+    // 今日任務（與列表同一份資料）
+    const TT = [
+      ['回覆客戶報價信，並附上修訂後的合約條款與付款時程說明', 3, '逾期', 'over'], ['準備週一產品會議簡報', 3, '18:00', 'today'],
+      ['花蓮小旅行', 0, '全天', 'today'], ['去全聯買菜', 2, '', 'today'], ['晚餐：巷口火鍋', 0, '19:00', 'today'], ['健身房 — 腿部訓練', 1, '19:30', 'today']
+    ];
+    const tdec = (t) => ({ t: t[0], pc: PRI[t[1]], d: t[2], dc: t[3] === 'over' ? '#FF7A70' : accentText, tc: '#F1F3F2' });
+    const todayL = [['over', '已逾期', '#FF7A70'], ['today', '今天', '#C9CFCC']].map((g) => {
+      const items = TT.filter((t) => t[3] === g[0]).map(tdec);
+      return { name: g[1], c: g[2], items: items.map((it, i) => Object.assign(it, { sep: i === 0 ? '0' : '1px solid #26282A' })) };
+    });
+    // 時間軸（17:00–22:00）
+    const H0 = 1020, H1 = 1320, PX = 230 / (H1 - H0);
+    const tlHours = []; for (let m = H0; m <= H1; m += 60) tlHours.push({ top: Math.round((m - H0) * PX) + 'px', l: String(m / 60).padStart(2, '0') + ':00' });
+    const BL = [[1080, 1110, '產品會議簡報', 'work', 0, true], [1140, 1260, '晚餐：巷口火鍋', 'ours', 0], [1170, 1230, '健身房', 'life', 1]];
+    const tlBlocks = BL.map((b) => {
+      const c = LISTS[b[3]][1];
+      return { t: b[2], time: String(Math.floor(b[0] / 60)).padStart(2, '0') + ':' + String(b[0] % 60).padStart(2, '0'), top: Math.round((b[0] - H0) * PX) + 'px', h: Math.round((b[1] - b[0]) * PX) + 'px', left: b[4] ? '190px' : '40px', w: b[4] ? '140px' : '145px',
+        bg: b[5] ? accent : c + '38', bd: b[5] ? '0' : '0', fg: b[5] ? onAccent : mix(c, 0.45) };
+    });
+    // 月曆
+    const wdN = ['日', '一', '二', '三', '四', '五', '六'];
+    const mini = [];
+    for (let i = 0; i < 35; i++) {
+      const n = i + 1, inM = n <= 30, today = n === TODAY;
+      const has = inM && EV.some((e) => e[4] <= n && e[5] >= n);
+      mini.push({ n: String(inM ? n : n - 30), op: inM ? '1' : '0.38', ring: today ? accentText : 'transparent', bg: 'transparent', fg: today ? accentText : '#E6E9E8', fw: today ? '700' : '500', dot: has ? '#9BA3A0' : 'transparent' });
+    }
+    const lanesMax = size === 'l' ? 3 : 2;
+    const wFrom = size === 'l' ? 0 : 2, wTo = size === 'l' ? 5 : 4;
+    const weeks = [];
+    for (let w = wFrom; w < wTo; w++) {
+      const first = w * 7 + 1, last = first + 6;
+      const days = [];
+      for (let c = 0; c < 7; c++) {
+        const n = first + c, inM = n <= 30, today = n === TODAY;
+        days.push({ col: String(c + 1), n: String(inM ? n : n - 30), op: inM ? '1' : '0.38', ring: today ? accent : 'transparent', bg: today ? accent : 'transparent', fg: today ? onAccent : '#E6E9E8', fw: today ? '700' : '500' });
+      }
+      const lanes = [], bars = [], hidden = {};
+      EV.filter((e) => e[4] <= last && e[5] >= first)
+        .sort((a, b) => (b[5] - b[4]) - (a[5] - a[4]) || a[4] - b[4] || (a[6] === null ? -1 : a[6]) - (b[6] === null ? -1 : b[6]))
+        .forEach((e) => {
+          const a = Math.max(e[4], first) - first + 1, b = Math.min(e[5], last) - first + 1;
+          let lane = 0;
+          while (lanes[lane] && lanes[lane].some((r) => !(b < r[0] || a > r[1]))) lane++;
+          if (lane >= lanesMax) { for (let k = a; k <= b; k++) hidden[k] = (hidden[k] || 0) + 1; return; }
+          (lanes[lane] = lanes[lane] || []).push([a, b]);
+          const col = LISTS[e[3]][1];
+          bars.push({ t: e[1], gc: a + ' / span ' + (b - a + 1), gr: String(lane + 2), bg: e[0] === 't13' ? '#26282A' : col + '38', fg: e[0] === 't13' ? '#7A827F' : mix(col, 0.45) });
+        });
+      weeks.push({ days, bars, more: Object.keys(hidden).map((k) => ({ gc: String(k), gr: String(lanesMax + 2), n: hidden[k] })) });
+    }
+    const isT = type === 'today', isN = type === 'next', isM = type === 'month';
+    const names = { today: '今日任務', next: '下一個行程', month: '日曆' }, sz = { s: '小', m: '中', l: '大' };
+    return { onAccent,
+      accent, accentText, w: dims[0], h: dims[1], r: dims[2], p: dims[3], aria: names[type] + '・' + sz[size] + '型小工具',
+      isTodayS: isT && size === 's', isTodayM: isT && size === 'm', isTodayL: isT && size === 'l',
+      isNextS: isN && size === 's', isNextM: isN && size === 'm', isNextL: isN && size === 'l',
+      isMonthS: isM && size === 's', isMonthWide: isM && size !== 's',
+      todayCount: 6, todayS: TT.slice(0, 3).map(tdec), todayMoreS: 3, todayM: TT.slice(0, 4).map(tdec), todayL,
+      nextAfter: [{ t: '晚餐：巷口火鍋', time: '19:00 – 21:00', c: '#E8C14E' }, { t: '健身房 — 腿部訓練', time: '19:30 – 20:30', c: '#E98A5B' }],
+      tlHours, tlBlocks,
+      wd: wdN.map((n) => ({ n })), mini, weeks,
+      showMonthTitle: size === 'l', monthTitle: '2026 年 11 月',
+      rowTpl: size === 'l' ? '16px 11px 11px 11px 10px' : '17px 12px 12px 11px'
+    };
+  }
+}
+</script>
+</body>
+</html>

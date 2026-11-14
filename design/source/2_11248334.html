@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-Hant"><head>
+<meta charset="utf-8">
+<title>Doneday v2 · 今天（緊湊）</title>
+<script src="e66ff45a-984e-4b7c-9303-858d57fe9b7c"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>/*fonts*/</style>
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; background: #0E0F10; font-family: 'Inter', 'Noto Sans TC', system-ui, sans-serif; color: #F1F3F2">
+  <dc-import name="V2Today" accent="{{accent}}" density="compact" text-scale="{{textScale}}" hint-size="390px,844px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#FF8A1E&quot;,&quot;options&quot;:[&quot;#FF8A1E&quot;,&quot;#4772FA&quot;,&quot;#2BB673&quot;,&quot;#8B6CE8&quot;]},&quot;textScale&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;100&quot;,&quot;115&quot;,&quot;130&quot;],&quot;default&quot;:&quot;100&quot;},&quot;$preview&quot;:{&quot;width&quot;:390,&quot;height&quot;:844}}">
+class Component extends DCLogic {
+  renderVals() {
+    return { accent: this.props.accent ?? '#FF8A1E', textScale: this.props.textScale ?? '100' };
+  }
+}
+</script>
+
+
+</body></html>

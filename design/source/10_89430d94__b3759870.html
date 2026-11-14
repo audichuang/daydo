@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Doneday v2 · 任務詳情</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Noto+Sans+TC:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+button,input,textarea{font:inherit;color:inherit}
+a{color:#FF9A3D}a:hover{color:#FFB46E}
+input[type=time]{color-scheme:dark}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; position: relative; overflow: hidden; background: #0E0F10; color: #F1F3F2; font-family: 'Inter', 'Noto Sans TC', system-ui, sans-serif; box-sizing: border-box">
+  <div aria-hidden="true" style="position: absolute; left: 0; top: 0; width: 390px; height: 844px; pointer-events: none">
+    <dc-import name="V2Today" accent="{{accent}}" hint-size="390px,844px"></dc-import>
+  </div>
+  <a href="V2Today.dc.html" aria-label="返回列表" style="position: absolute; left: 0; top: 0; right: 0; bottom: 0; background: rgba(0,0,0,{{dim}}); transition: background 0.3s"></a>
+
+  <section role="dialog" aria-label="任務詳情" style="position: absolute; left: 0; right: 0; top: {{sheetTop}}; bottom: 0; border-radius: 28px 28px 0 0; background: #18191B; border-top: 1px solid #26282A; transition: top 0.32s cubic-bezier(.2,.8,.2,1); overflow: hidden">
+    <div style="position: absolute; left: 0; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column">
+      <button type="button" onClick="{{toggleFull}}" aria-label="{{fullLabel}}" style="flex: 0 0 auto; height: 20px; border: 0; background: transparent; display: flex; align-items: center; justify-content: center">
+        <span style="width: 38px; height: 5px; border-radius: 3px; background: #3A3D40"></span>
+      </button>
+      <div style="flex: 0 0 auto; display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 14px">
+        <button type="button" onClick="{{toggleFull}}" aria-label="{{fullLabel}}" style="width: 40px; height: 40px; border: 0; border-radius: 20px; background: #232527; color: #E6E9E8; display: flex; align-items: center; justify-content: center">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{fullIcon}}"></path></svg>
+        </button>
+        <button type="button" aria-label="所屬清單：工作，點擊更換" style="flex: 1; min-width: 0; height: 40px; border: 0; background: transparent; display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 600; color: #E6E9E8">
+          <span style="width: 9px; height: 9px; border-radius: 3px; background: #4AA8E8"></span>工作
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A928F" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+        </button>
+        <button type="button" onClick="{{save}}" aria-disabled="{{saveDisabled}}" style="height: 36px; padding: 0 16px; border: 0; border-radius: 18px; background: {{saveBg}}; color: {{saveFg}}; font-size: 14px; font-weight: 700">{{saveLabel}}</button>
+        <button type="button" aria-label="更多選項" style="width: 40px; height: 40px; border: 0; border-radius: 20px; background: #232527; color: #E6E9E8; display: flex; align-items: center; justify-content: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="19" cy="12" r="1.7"></circle></svg></button>
+      </div>
+
+      <div style="flex: 1; overflow-y: auto; padding: 6px 20px 48px; display: flex; flex-direction: column; gap: 16px">
+        <div style="display: flex; align-items: center; gap: 4px; margin-left: -12px">
+          <button type="button" onClick="{{toggleDone}}" aria-label="{{checkLabel}}" style="width: 44px; height: 44px; border: 0; background: transparent; display: flex; align-items: center; justify-content: center">
+            <span style="width: 22px; height: 22px; border-radius: 6px; border: 2px solid {{checkBd}}; background: {{checkBg}}; color: #0E0F10; display: flex; align-items: center; justify-content: center; box-sizing: border-box">
+              <sc-if value="{{done}}" hint-placeholder-val="{{false}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></sc-if>
+            </span>
+          </button>
+          <button type="button" onClick="{{openDate}}" aria-label="設定日期與時間：{{dateSummary}}" style="flex: 1; min-width: 0; min-height: 40px; border: 0; background: transparent; display: flex; align-items: center; gap: 8px; text-align: left; padding: 0">
+            <span style="font-size: 15px; font-weight: 600; color: {{dateColor}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{dateSummary}}</span>
+            <sc-if value="{{hasRem}}" hint-placeholder-val="{{true}}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9BA3A0" stroke-width="2" stroke-linecap="round" aria-label="有提醒" role="img"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10 21h4"></path></svg></sc-if>
+            <sc-if value="{{hasRep}}" hint-placeholder-val="{{false}}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9BA3A0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="會重複" role="img"><path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3"></path><path d="M18 3v4h-4M6 21v-4h4"></path></svg></sc-if>
+          </button>
+          <span style="width: 22px; height: 22px; display: flex; align-items: center; justify-content: center" aria-label="優先級：高" role="img"><svg width="16" height="16" viewBox="0 0 24 24" fill="#F2555A" aria-hidden="true"><path d="M5 21V4h11l-2 4 2 4H5"></path></svg></span>
+        </div>
+
+        <label style="display: flex; flex-direction: column">
+          <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">任務標題</span>
+          <textarea rows="2" value="{{title}}" onChange="{{onTitle}}" style="resize: none; border: 0; outline: none; padding: 0; background: transparent; font-size: 22px; line-height: 1.38; font-weight: 700; color: {{titleColor}}; text-decoration: {{titleDeco}}"></textarea>
+        </label>
+
+        <div style="display: flex; flex-wrap: wrap; gap: 6px">
+          <span style="font-size: 12px; padding: 5px 10px; border-radius: 999px; background: #22284A; color: #B6C1FF"># 會議</span>
+          <span style="font-size: 12px; padding: 5px 10px; border-radius: 999px; background: #3A2D14; color: #F3C978"># Q4</span>
+          <button type="button" style="font-size: 12px; padding: 4px 10px; border: 1px dashed #3A3D40; border-radius: 999px; background: transparent; color: #9BA3A0">＋ 標籤</button>
+        </div>
+
+        <label style="display: flex; flex-direction: column; gap: 6px">
+          <span style="font-size: 12px; font-weight: 600; color: #8A928F">描述</span>
+          <textarea rows="3" value="{{note}}" onChange="{{onNote}}" placeholder="新增描述" style="resize: none; border: 0; outline: none; padding: 0; background: transparent; font-size: 15px; line-height: 1.7; color: #D3D8D6"></textarea>
+        </label>
+
+        <div style="display: flex; flex-direction: column; border-radius: 14px; background: #1F2123; padding: 4px 14px">
+          <div style="display: flex; justify-content: space-between; padding: 8px 0 4px; font-size: 12px; font-weight: 600; color: #8A928F"><span>子任務</span><span>{{subLabel}}</span></div>
+          <sc-for list="{{subs}}" as="t" hint-placeholder-count="3">
+            <button type="button" onClick="{{t.toggle}}" style="display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0; border: 0; border-top: {{t.sep}}; background: transparent; text-align: left">
+              <span style="flex: 0 0 auto; width: 18px; height: 18px; border-radius: 9px; border: 2px solid {{t.bd}}; background: {{t.bg}}; box-sizing: border-box"></span>
+              <span style="font-size: 15px; color: {{t.c}}; text-decoration: {{t.deco}}">{{t.text}}</span>
+            </button>
+          </sc-for>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <span style="font-size: 12px; font-weight: 600; color: #8A928F">附件 2</span>
+          <sc-for list="{{files}}" as="f" hint-placeholder-count="2">
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: #1F2123">
+              <span style="width: 34px; height: 40px; border-radius: 6px; background: {{f.c}}; color: #0E0F10; font-size: 10px; font-weight: 700; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 5px; box-sizing: border-box">{{f.ext}}</span>
+              <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+                <span style="font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{f.name}}</span>
+                <span style="font-size: 12px; color: #8A928F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left">{{f.path}}</span>
+              </span>
+              <span style="font-size: 12px; color: #8A928F">{{f.size}}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 14px; background: #1F2123">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <span style="flex: 1; font-size: 13px; line-height: 1.5; color: #B7BEBB">從郵件匯入。已移除 4 行多餘空白、縮短 2 個長路徑，並把重複的日期整理到上方日期欄位。</span>
+          </div>
+          <button type="button" onClick="{{toggleRaw}}" aria-expanded="{{rawExp}}" style="align-self: flex-start; height: 34px; padding: 0 12px; border: 1px solid #33363A; border-radius: 17px; background: transparent; font-size: 13px; font-weight: 600; color: {{accentText}}">{{rawLabel}}</button>
+          <sc-if value="{{showRaw}}" hint-placeholder-val="{{false}}">
+            <div style="max-height: 180px; overflow: auto; padding: 10px 12px; border-radius: 10px; background: #121314; font-family: ui-monospace, Menlo, monospace; font-size: 12px; line-height: 1.6; color: #C9CFCC; white-space: pre-wrap; word-break: break-all">{{raw}}</div>
+          </sc-if>
+        </div>
+
+        <div style="font-size: 12px; color: #737B78">建立於 11 月 10 日 09:12・最後修改 今天 08:40</div>
+      </div>
+    </div>
+    <div aria-hidden="{{dateHidden}}" style="position: absolute; left: 0; top: 0; right: 0; bottom: 0; background: #18191B; display: {{dateDisplay}}; flex-direction: column">
+      <div style="flex: 0 0 auto; display: flex; align-items: center; gap: 8px; height: 60px; padding: 8px 14px 0">
+        <button type="button" onClick="{{cancelDate}}" style="height: 38px; padding: 0 14px; border: 0; border-radius: 19px; background: #232527; font-size: 14px; font-weight: 600; color: #E6E9E8">取消</button>
+        <div role="tablist" aria-label="設定方式" style="flex: 1; display: flex; justify-content: center">
+          <div style="display: flex; gap: 2px; padding: 3px; border-radius: 19px; background: #232527">
+            <button type="button" role="tab" aria-selected="{{tabDSel}}" onClick="{{toTabD}}" style="height: 32px; padding: 0 16px; border: 0; border-radius: 16px; background: {{tabDBg}}; font-size: 14px; font-weight: 600; color: {{tabDFg}}">日期</button>
+            <button type="button" role="tab" aria-selected="{{tabRSel}}" onClick="{{toTabR}}" style="height: 32px; padding: 0 16px; border: 0; border-radius: 16px; background: {{tabRBg}}; font-size: 14px; font-weight: 600; color: {{tabRFg}}">持續時間</button>
+          </div>
+        </div>
+        <button type="button" onClick="{{confirmDate}}" style="height: 38px; padding: 0 16px; border: 0; border-radius: 19px; background: {{accent}}; font-size: 14px; font-weight: 700; color: {{onAccent}}">確定</button>
+      </div>
+
+      <div style="flex: 1; overflow-y: auto; padding: 12px 16px 40px; display: flex; flex-direction: column; gap: 12px">
+        <sc-if value="{{isTabD}}" hint-placeholder-val="{{true}}">
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+            <button type="button" onClick="{{toggleCal}}" aria-expanded="{{calExp}}" style="display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid {{calBd}}; border-radius: 16px; background: #1F2123; text-align: left">
+              <span style="font-size: 12px; color: #9BA3A0">日期</span>
+              <span style="font-size: 17px; font-weight: 700; color: {{accentText}}">{{dDate}}</span>
+              <span style="font-size: 12px; color: #9BA3A0">{{dRel}}</span>
+            </button>
+            <button type="button" onClick="{{openTime}}" style="display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid #26282A; border-radius: 16px; background: #1F2123; text-align: left">
+              <span style="font-size: 12px; color: #9BA3A0">時間</span>
+              <span style="font-size: 17px; font-weight: 700; color: {{accentText}}">{{dTime}}</span>
+              <span style="font-size: 12px; color: #9BA3A0">{{dDur}}</span>
+            </button>
+          </div>
+        </sc-if>
+        <sc-if value="{{isTabR}}" hint-placeholder-val="{{false}}">
+          <div style="display: flex; flex-direction: column; border-radius: 16px; background: #1F2123; padding: 0 14px">
+            <button type="button" onClick="{{openTime}}" style="display: flex; align-items: center; gap: 10px; min-height: 56px; border: 0; border-bottom: 1px solid #2A2C2E; background: transparent; text-align: left; padding: 0">
+              <span style="width: 40px; font-size: 13px; color: #9BA3A0">開始</span><span style="flex: 1; font-size: 15px">{{dDate}}</span><span style="font-size: 17px; font-weight: 700; color: {{accentText}}">{{rStart}}</span>
+            </button>
+            <button type="button" onClick="{{openTime}}" style="display: flex; align-items: center; gap: 10px; min-height: 56px; border: 0; border-bottom: 1px solid #2A2C2E; background: transparent; text-align: left; padding: 0">
+              <span style="width: 40px; font-size: 13px; color: #9BA3A0">結束</span><span style="flex: 1; font-size: 15px">{{rEndDate}}</span><span style="font-size: 17px; font-weight: 700; color: {{accentText}}">{{rEnd}}</span>
+            </button>
+            <div style="display: flex; align-items: center; min-height: 48px; font-size: 14px; color: #B7BEBB"><span style="flex: 1">總時長</span><span style="font-weight: 600; color: #F1F3F2">{{dDur}}</span></div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{calOpen}}" hint-placeholder-val="{{false}}">
+          <div style="border-radius: 16px; background: #1F2123; padding: 8px 6px">
+            <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 2px 4px 8px">
+              <sc-for list="{{quick}}" as="q" hint-placeholder-count="4"><button type="button" onClick="{{q.pick}}" style="height: 34px; border: 0; border-radius: 10px; background: {{q.bg}}; color: {{q.fg}}; font-size: 13px; font-weight: 600">{{q.l}}</button></sc-for>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); text-align: center">
+              <sc-for list="{{wd}}" as="w" hint-placeholder-count="7"><span style="font-size: 11px; color: #8A928F; padding-bottom: 2px">{{w.n}}</span></sc-for>
+              <sc-for list="{{cal}}" as="c" hint-placeholder-count="35">
+                <button type="button" onClick="{{c.pick}}" aria-label="{{c.aria}}" aria-pressed="{{c.pressed}}" style="height: 40px; padding: 0; border: 0; background: transparent; display: flex; align-items: center; justify-content: center; opacity: {{c.op}}">
+                  <span style="width: 34px; height: 34px; border-radius: 17px; box-sizing: border-box; border: 2px solid {{c.ring}}; background: {{c.bg}}; color: {{c.fg}}; font-size: 14px; font-weight: {{c.fw}}; display: flex; align-items: center; justify-content: center">{{c.n}}</span>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <div style="display: flex; flex-direction: column; border-radius: 16px; background: #1F2123; padding: 0 14px">
+          <div style="display: flex; align-items: center; min-height: 52px; border-bottom: 1px solid #2A2C2E">
+            <span style="flex: 1; font-size: 15px">全天</span>
+            <button type="button" role="switch" aria-checked="{{adOn}}" aria-label="全天" onClick="{{toggleAD}}" style="width: 50px; height: 30px; padding: 3px; border: 0; border-radius: 15px; background: {{adBg}}; display: flex; justify-content: {{adJ}}"><span style="width: 24px; height: 24px; border-radius: 12px; background: #FFFFFF"></span></button>
+          </div>
+          <sc-for list="{{rows}}" as="r" hint-placeholder-count="3">
+            <div style="display: flex; flex-direction: column; border-bottom: {{r.sep}}">
+              <button type="button" onClick="{{r.toggle}}" aria-expanded="{{r.exp}}" style="display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 0; border: 0; background: transparent; text-align: left">
+                <span style="flex: 1; font-size: 15px">{{r.label}}</span>
+                <span style="font-size: 14px; color: {{r.vc}}; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{r.value}}</span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#8A928F" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform: rotate({{r.rot}})"><path d="M9 6l6 6-6 6"></path></svg>
+              </button>
+              <sc-if value="{{r.open}}" hint-placeholder-val="{{false}}">
+                <div style="display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 12px">
+                  <sc-for list="{{r.opts}}" as="o" hint-placeholder-count="4"><button type="button" onClick="{{o.pick}}" aria-pressed="{{o.on}}" style="height: 32px; padding: 0 12px; border: 1px solid {{o.bd}}; border-radius: 16px; background: {{o.bg}}; color: {{o.fg}}; font-size: 13px; font-weight: 600">{{o.l}}</button></sc-for>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+        <button type="button" onClick="{{clearDate}}" style="height: 44px; border: 0; background: transparent; font-size: 15px; color: #FF7A70">清除日期</button>
+      </div>
+    </div>
+    <div aria-hidden="{{timeHidden}}" style="position: absolute; left: 0; top: 0; right: 0; bottom: 0; background: #18191B; display: {{timeDisplay}}; flex-direction: column">
+      <div style="flex: 0 0 auto; display: flex; align-items: center; gap: 8px; height: 60px; padding: 8px 14px 0">
+        <button type="button" onClick="{{cancelTime}}" style="height: 38px; padding: 0 14px; border: 0; border-radius: 19px; background: #232527; font-size: 14px; font-weight: 600; color: #E6E9E8">取消</button>
+        <span style="flex: 1; text-align: center; font-size: 15px; font-weight: 700">{{dDate}}</span>
+        <button type="button" onClick="{{saveTime}}" style="height: 38px; padding: 0 16px; border: 0; border-radius: 19px; background: {{accent}}; font-size: 14px; font-weight: 700; color: {{onAccent}}">儲存</button>
+      </div>
+      <div style="flex: 0 0 auto; padding: 10px 16px 8px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #26282A">
+        <div style="display: flex; align-items: baseline; gap: 10px" aria-live="polite">
+          <span style="font-size: 26px; font-weight: 700; color: {{accentText}}">{{tRange}}</span>
+          <span style="font-size: 14px; color: #B7BEBB">{{tDur}}</span>
+        </div>
+        <sc-if value="{{tCross}}" hint-placeholder-val="{{false}}"><span style="font-size: 13px; font-weight: 600; color: #F7B500">結束於 {{tEndDate}}（隔日）</span></sc-if>
+        <div style="display: flex; gap: 8px">
+          <label style="flex: 1; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 10px; border-radius: 10px; background: #1F2123; font-size: 13px; color: #9BA3A0">開始<input type="time" step="300" value="{{tStartV}}" onChange="{{onStart}}" style="flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 15px; font-weight: 600; color: #F1F3F2"></label>
+          <label style="flex: 1; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 10px; border-radius: 10px; background: #1F2123; font-size: 13px; color: #9BA3A0">結束<input type="time" step="300" value="{{tEndV}}" onChange="{{onEnd}}" style="flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 15px; font-weight: 600; color: #F1F3F2"></label>
+        </div>
+        <div style="display: flex; gap: 6px; overflow-x: auto">
+          <sc-for list="{{durs}}" as="d" hint-placeholder-count="6"><button type="button" onClick="{{d.pick}}" aria-pressed="{{d.on}}" style="flex: 0 0 auto; height: 30px; padding: 0 11px; border: 0; border-radius: 15px; background: {{d.bg}}; color: {{d.fg}}; font-size: 12px; font-weight: 600">{{d.l}}</button></sc-for>
+        </div>
+        <div style="font-size: 12px; color: #9BA3A0">全天：去全聯買菜・花蓮小旅行（第 3/4 天）<sc-if value="{{hasConflict}}" hint-placeholder-val="{{false}}"><span style="color: #F7B500">　與 {{conflicts}} 項重疊</span></sc-if></div>
+      </div>
+      <div ref="{{tlRef}}" style="flex: 1; overflow-y: auto; position: relative">
+        <div style="position: relative; height: 1580px">
+          <sc-for list="{{hours}}" as="h" hint-placeholder-count="26">
+            <div style="position: absolute; left: 0; right: 0; top: {{h.top}}; height: 60px; border-top: 1px solid #222426; background: {{h.bg}}">
+              <span style="position: absolute; left: 10px; top: -8px; font-size: 11px; color: {{h.c}}; background: #18191B; padding: 0 2px">{{h.l}}</span>
+            </div>
+          </sc-for>
+          <sc-for list="{{others}}" as="o" hint-placeholder-count="2">
+            <div style="position: absolute; top: {{o.top}}; height: {{o.h}}; left: {{o.left}}; width: {{o.w}}; border-radius: 8px; background: #26292B; border: 1px solid #33373A; padding: 4px 6px; box-sizing: border-box; overflow: hidden">
+              <span style="display: block; font-size: 11px; font-weight: 600; color: #C9CFCC; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{o.t}}</span>
+              <span style="display: block; font-size: 10px; color: #8A928F">{{o.time}}</span>
+            </div>
+          </sc-for>
+          <div role="group" aria-label="正在編輯的時間區塊，可拖曳移動或調整起訖" onPointerDown="{{downMove}}" onPointerMove="{{onDrag}}" onPointerUp="{{endDrag}}" onPointerCancel="{{endDrag}}" style="position: absolute; left: 56px; right: 10px; top: {{bTop}}; height: {{bH}}; border-radius: 10px; background: {{blockBg}}; border: 2px solid {{accent}}; box-sizing: border-box; padding: 6px 10px; touch-action: none; cursor: grab; user-select: none">
+            <span style="display: block; font-size: 13px; font-weight: 700; color: {{onAccent}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">準備週一產品會議簡報</span>
+            <span style="display: block; font-size: 12px; color: {{onAccent}}; opacity: 0.85">{{tRange}}</span>
+            <span onPointerDown="{{downStart}}" aria-label="拖曳調整開始時間" role="slider" aria-valuetext="{{tStartV}}" style="position: absolute; left: 50%; top: -12px; width: 56px; height: 24px; margin-left: -28px; display: flex; align-items: center; justify-content: center; cursor: ns-resize; touch-action: none"><span style="width: 30px; height: 6px; border-radius: 3px; background: #FFFFFF; box-shadow: 0 0 0 2px {{accent}}"></span></span>
+            <span onPointerDown="{{downEnd}}" aria-label="拖曳調整結束時間" role="slider" aria-valuetext="{{tEndV}}" style="position: absolute; left: 50%; bottom: -12px; width: 56px; height: 24px; margin-left: -28px; display: flex; align-items: center; justify-content: center; cursor: ns-resize; touch-action: none"><span style="width: 30px; height: 6px; border-radius: 3px; background: #FFFFFF; box-shadow: 0 0 0 2px {{accent}}"></span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#FF8A1E","options":["#FF8A1E","#4772FA","#2BB673","#8B6CE8"]},"mode":{"editor":"enum","options":["half","full"],"default":"half"},"view":{"editor":"enum","options":["detail","date","time"],"default":"detail"},"expand":{"editor":"enum","options":["none","cal","rem","cal+rem"],"default":"none"},"preset":{"editor":"enum","options":["normal","midnight"],"default":"normal"},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    const mid = props.preset === 'midnight';
+    const date = { day: 15, ad: false, s: mid ? 1410 : 1080, e: mid ? 1470 : 1110, rem: ['提前 15 分鐘'], rep: '不重複', tz: '台北 GMT+8' };
+    const ex = props.expand || 'none';
+    this.state = {
+      full: props.mode === 'full', view: props.view || 'detail', dtab: 'date', open: { cal: ex.indexOf('cal') >= 0, rem: ex.indexOf('rem') >= 0 },
+      title: '準備週一產品會議簡報', note: '重點放在 Q4 上線時程與待決事項。簡報檔放在共用雲端「產品會議」資料夾，會前一天寄給與會者預讀。',
+      dirty: false, saved: false, done: false, raw: false,
+      subs: [['整理上週數據', true], ['更新路線圖頁面', false], ['預演一次 10 分鐘版本', false]],
+      date, draft: Object.assign({}, date), td: { s: date.s, e: date.e }
+    };
+    this.drag = null;
+    this.scrolled = false;
+  }
+  renderVals() {
+    const accent = this.props.accent ?? '#FF8A1E';
+    const onAccent = (() => { const v = [1, 3, 5].map((i) => { const c = parseInt(accent.slice(i, i + 2), 16) / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }); return (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]) > 0.3 ? '#1A1206' : '#FFFFFF'; })();
+    const mix = (h, p) => '#' + [1, 3, 5].map((i) => Math.round(parseInt(h.slice(i, i + 2), 16) * (1 - p) + 255 * p).toString(16).padStart(2, '0')).join('');
+    const accentText = mix(accent, 0.1);
+    const s = this.state;
+    const TODAY = 15;
+    const wdN = ['日', '一', '二', '三', '四', '五', '六'];
+    const pad = (n) => String(n).padStart(2, '0');
+    const hm = (m) => pad(Math.floor((m % 1440) / 60)) + ':' + pad(m % 60);
+    const hmx = (m) => (m >= 1440 ? '隔日 ' : '') + hm(m);
+    const dayName = (d) => d === TODAY ? '今天' : (d === TODAY + 1 ? '明天' : (d === TODAY - 1 ? '昨天' : '11 月 ' + d + ' 日'));
+    const fullDate = (d) => (d > 30 ? '12 月 ' + (d - 30) : '11 月 ' + d) + ' 日 週' + wdN[(d - 1) % 7];
+    const durTxt = (m) => (m >= 60 ? Math.floor(m / 60) + ' 小時' + (m % 60 ? ' ' + (m % 60) + ' 分' : '') : m + ' 分鐘');
+    const D = s.date, R = s.draft, td = s.td;
+    // 詳情日期摘要
+    const dateSummary = D.day === 0 ? '設定日期' : dayName(D.day) + (D.ad ? '・全天' : ' ' + hm(D.s) + ' – ' + hmx(D.e));
+    const sw = (on) => ({ bg: on ? accent : '#3A3D40', j: on ? 'flex-end' : 'flex-start' });
+    const setDraft = (patch) => this.setState((st) => ({ draft: Object.assign({}, st.draft, patch) }));
+    const setOpen = (k) => this.setState((st) => ({ open: Object.assign({}, st.open, { [k]: !st.open[k] }) }));
+    // 月曆
+    const cal = [];
+    for (let i = 0; i < 35; i++) {
+      const n = i + 1, inM = n <= 30, sel = n === R.day, today = n === TODAY;
+      cal.push({ n: String(inM ? n : n - 30), aria: fullDate(n), pressed: sel ? 'true' : 'false', op: inM ? '1' : '0.38',
+        bg: sel ? accent : 'transparent', ring: sel ? accent : (today ? accentText : 'transparent'), fg: sel ? onAccent : (today ? accentText : '#E6E9E8'), fw: sel || today ? '700' : '500',
+        pick: () => setDraft({ day: n }) });
+    }
+    const quick = [['今天', 15], ['明天', 16], ['下週一', 23], ['無日期', 0]].map((q) => ({ l: q[0], bg: R.day === q[1] ? accent : '#2A2C2E', fg: R.day === q[1] ? onAccent : '#D3D8D6', pick: () => setDraft({ day: q[1] }) }));
+    const chip = (on) => ({ on: on ? 'true' : 'false', bd: on ? accent : '#33363A', bg: on ? accent + '2E' : 'transparent', fg: on ? accentText : '#C9CFCC' });
+    const REM = ['準時', '提前 5 分鐘', '提前 15 分鐘', '提前 30 分鐘', '提前 1 小時', '提前 1 天'];
+    const REP = ['不重複', '每天', '平日', '每週日', '每月 15 日', '自訂…'];
+    const TZ = ['台北 GMT+8', '東京 GMT+9', '浮動時間（跟著裝置）'];
+    const rowDefs = [
+      ['tz', '時區', R.tz, TZ.map((z) => Object.assign({ l: z, pick: () => setDraft({ tz: z }) }, chip(R.tz === z)))],
+      ['rem', '提醒', R.rem.length ? R.rem.join('、') : '無', REM.map((z) => Object.assign({ l: z, pick: () => setDraft({ rem: R.rem.indexOf(z) >= 0 ? R.rem.filter((x) => x !== z) : R.rem.concat([z]) }) }, chip(R.rem.indexOf(z) >= 0)))],
+      ['rep', '重複', R.rep, REP.map((z) => Object.assign({ l: z, pick: () => setDraft({ rep: z }) }, chip(R.rep === z)))]
+    ];
+    const rows = rowDefs.map((r, i) => ({ label: r[1], value: r[2], vc: r[0] === 'rem' && R.rem.length ? accentText : '#9BA3A0', opts: r[3], open: !!s.open[r[0]], exp: s.open[r[0]] ? 'true' : 'false', rot: s.open[r[0]] ? '90deg' : '0deg', sep: i < rowDefs.length - 1 ? '1px solid #2A2C2E' : '0', toggle: () => setOpen(r[0]) }));
+    // 時間區塊
+    const tDur = td.e - td.s;
+    const OTH = [[1140, 1260, '晚餐：巷口火鍋', 0], [1170, 1230, '健身房 — 腿部訓練', 1]];
+    const others = OTH.map((o) => ({ t: o[2], time: hm(o[0]) + ' – ' + hm(o[1]), top: (o[0] + 10) + 'px', h: (o[1] - o[0]) + 'px', left: o[3] === 0 ? '56px' : '210px', w: '150px' }));
+    const conflicts = OTH.filter((o) => td.s < o[1] && td.e > o[0]).length;
+    const hours = [];
+    for (let h = 0; h <= 26; h++) hours.push({ top: (h * 60 + 10) + 'px', l: (h >= 24 ? '隔日 ' : '') + pad(h % 24) + ':00', c: h >= 24 ? '#F7B500' : '#737B78', bg: h >= 24 ? 'rgba(245,166,35,0.05)' : 'transparent' });
+    const DU = [[15, '15 分'], [30, '30 分'], [45, '45 分'], [60, '1 小時'], [90, '1.5 小時'], [120, '2 小時']];
+    const setTd = (ns, ne) => this.setState({ td: { s: ns, e: ne } });
+    const startDrag = (kind) => (e) => {
+      e.stopPropagation();
+      if (e.currentTarget && e.currentTarget.setPointerCapture) { try { e.currentTarget.setPointerCapture(e.pointerId); } catch (x) {} }
+      this.drag = { kind, y0: e.clientY, s0: this.state.td.s, e0: this.state.td.e };
+    };
+    const parse = (v) => { const p = (v || '').split(':'); return p.length === 2 ? Number(p[0]) * 60 + Number(p[1]) : null; };
+    const view = s.view;
+    const crossDay = R.day + (td.e >= 1440 ? 1 : 0);
+    return { onAccent,
+      accent, accentText,
+      sheetTop: s.full ? '50px' : '372px', dim: s.full ? '0.65' : '0.45',
+      fullLabel: s.full ? '收合為半屏' : '展開為全屏', fullIcon: s.full ? 'M6 9l6 6 6-6' : 'M6 15l6-6 6 6',
+      toggleFull: () => this.setState((st) => ({ full: !st.full })),
+      saveLabel: s.saved && !s.dirty ? '已儲存' : '儲存', saveDisabled: s.dirty ? 'false' : 'true',
+      saveBg: s.dirty ? accent : '#26282A', saveFg: s.dirty ? onAccent : '#737B78',
+      save: () => { if (this.state.dirty) this.setState({ dirty: false, saved: true }); },
+      title: s.title, note: s.note,
+      onTitle: (e) => this.setState({ title: e.target.value, dirty: true, saved: false }),
+      onNote: (e) => this.setState({ note: e.target.value, dirty: true, saved: false }),
+      done: s.done, checkLabel: s.done ? '取消完成' : '完成任務', checkBd: s.done ? accent : '#F2555A', checkBg: s.done ? accent : 'transparent',
+      titleColor: s.done ? '#7A827F' : '#F1F3F2', titleDeco: s.done ? 'line-through' : 'none',
+      toggleDone: () => this.setState((st) => ({ done: !st.done })),
+      dateSummary, dateColor: D.day && D.day < TODAY ? '#FF7A70' : accentText, hasRem: D.rem.length > 0, hasRep: D.rep !== '不重複',
+      openDate: () => this.setState((st) => ({ view: 'date', draft: Object.assign({}, st.date), full: true })),
+      subLabel: s.subs.filter((x) => x[1]).length + ' / ' + s.subs.length,
+      subs: s.subs.map((x, i) => ({ text: x[0], bd: x[1] ? accent : '#5B6461', bg: x[1] ? accent : 'transparent', c: x[1] ? '#7A827F' : '#F1F3F2', deco: x[1] ? 'line-through' : 'none', sep: i === 0 ? '0' : '1px solid #2A2C2E',
+        toggle: () => this.setState((st) => ({ subs: st.subs.map((y, j) => j === i ? [y[0], !y[1]] : y) })) })),
+      files: [
+        { ext: 'KEY', c: '#4AA8E8', name: '產品會議簡報_v3.key', path: '/Users/me/Library/CloudStorage/共用雲端/產品會議/2026-Q4/產品會議簡報_v3.key', size: '4.2 MB' },
+        { ext: 'PDF', c: '#E98A5B', name: '需求說明.pdf', path: '/Users/me/Downloads/附件/轉寄/需求說明.pdf', size: '820 KB' }
+      ],
+      showRaw: s.raw, rawExp: s.raw ? 'true' : 'false', rawLabel: s.raw ? '收合原文' : '查看原文',
+      toggleRaw: () => this.setState((st) => ({ raw: !st.raw })),
+      raw: '日期：2026年11月15日（日）\n時間：18:00 ~ 18:30\n\n\n\n重點放在 Q4 上線時程與待決事項。   簡報檔放在共用雲端「產品會議」資料夾，會前一天寄給與會者預讀。\n\n\n附件：/Users/me/Library/CloudStorage/共用雲端/產品會議/2026-Q4/產品會議簡報_v3.key\n附件：/Users/me/Downloads/附件/轉寄/需求說明.pdf',
+      // 日期面板
+      dateDisplay: view === 'date' ? 'flex' : 'none', dateHidden: view === 'date' ? 'false' : 'true',
+      cancelDate: () => this.setState({ view: 'detail' }),
+      confirmDate: () => this.setState((st) => ({ view: 'detail', date: Object.assign({}, st.draft) })),
+      isTabD: s.dtab === 'date', isTabR: s.dtab === 'dur',
+      tabDSel: s.dtab === 'date' ? 'true' : 'false', tabRSel: s.dtab === 'dur' ? 'true' : 'false',
+      tabDBg: s.dtab === 'date' ? '#3A3D40' : 'transparent', tabRBg: s.dtab === 'dur' ? '#3A3D40' : 'transparent',
+      tabDFg: s.dtab === 'date' ? '#FFFFFF' : '#9BA3A0', tabRFg: s.dtab === 'dur' ? '#FFFFFF' : '#9BA3A0',
+      toTabD: () => this.setState({ dtab: 'date' }), toTabR: () => this.setState({ dtab: 'dur' }),
+      dDate: R.day ? fullDate(R.day) : '未設定日期', dRel: R.day ? (R.day === TODAY ? '今天' : (R.day > TODAY ? (R.day - TODAY) + ' 天後' : (TODAY - R.day) + ' 天前')) : '',
+      dTime: R.ad ? '全天' : hm(R.s) + ' – ' + hmx(R.e), dDur: R.ad ? '全天' : '持續 ' + durTxt(R.e - R.s),
+      rStart: R.ad ? '全天' : hm(R.s), rEnd: R.ad ? '全天' : hm(R.e), rEndDate: R.day ? fullDate(R.day + (R.e >= 1440 ? 1 : 0)) : '',
+      calOpen: !!s.open.cal, calExp: s.open.cal ? 'true' : 'false', calBd: s.open.cal ? accent : '#26282A', toggleCal: () => setOpen('cal'),
+      cal, quick, wd: wdN.map((n) => ({ n })),
+      adOn: R.ad ? 'true' : 'false', adBg: sw(R.ad).bg, adJ: sw(R.ad).j, toggleAD: () => setDraft({ ad: !R.ad }),
+      rows,
+      clearDate: () => setDraft({ day: 0, rem: [], rep: '不重複' }),
+      openTime: () => { this.scrolled = false; this.setState((st) => ({ view: 'time', td: { s: st.draft.s, e: st.draft.e } })); },
+      // 時間區塊
+      timeDisplay: view === 'time' ? 'flex' : 'none', timeHidden: view === 'time' ? 'false' : 'true',
+      cancelTime: () => this.setState({ view: 'date' }),
+      saveTime: () => this.setState((st) => ({ view: 'date', draft: Object.assign({}, st.draft, { s: st.td.s, e: st.td.e, ad: false }) })),
+      tRange: hm(td.s) + ' – ' + hmx(td.e), tDur: '共 ' + durTxt(tDur), tCross: td.e > 1440, tEndDate: fullDate(crossDay),
+      tStartV: hm(td.s), tEndV: hm(td.e),
+      onStart: (e) => { const v = parse(e.target.value); if (v === null) return; const d = this.state.td.e - this.state.td.s; setTd(v, v + d); },
+      onEnd: (e) => { let v = parse(e.target.value); if (v === null) return; if (v <= this.state.td.s) v += 1440; setTd(this.state.td.s, Math.min(v, 1560)); },
+      durs: DU.map((d) => ({ l: d[1], on: tDur === d[0] ? 'true' : 'false', bg: tDur === d[0] ? accent : '#2A2C2E', fg: tDur === d[0] ? onAccent : '#D3D8D6', pick: () => setTd(td.s, Math.min(td.s + d[0], 1560)) })),
+      hasConflict: conflicts > 0, conflicts,
+      hours, others,
+      bTop: (td.s + 10) + 'px', bH: Math.max(tDur, 20) + 'px', blockBg: accent + 'CC',
+      downMove: startDrag('move'), downStart: startDrag('start'), downEnd: startDrag('end'),
+      onDrag: (e) => {
+        const d = this.drag; if (!d) return;
+        const dm = Math.round((e.clientY - d.y0) / 5) * 5;
+        const len = d.e0 - d.s0;
+        if (d.kind === 'move') { const ns = Math.max(0, Math.min(1440 - 5, d.s0 + dm)); setTd(ns, Math.min(ns + len, 1560)); }
+        else if (d.kind === 'start') { setTd(Math.max(0, Math.min(d.s0 + dm, d.e0 - 5)), d.e0); }
+        else { setTd(d.s0, Math.min(1560, Math.max(d.e0 + dm, d.s0 + 5))); }
+      },
+      endDrag: () => { this.drag = null; },
+      tlRef: (el) => { if (el && view === 'time' && !this.scrolled) { el.scrollTop = Math.max(0, td.s - 120); this.scrolled = true; } }
+    };
+  }
+}
+</script>
+</body>
+</html>
