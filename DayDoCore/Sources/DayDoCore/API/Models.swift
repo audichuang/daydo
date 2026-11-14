@@ -153,6 +153,11 @@ public struct SmartCounts: Codable, Hashable, Sendable {
     public var assignedToMe: Int
     public var completed: Int
     public var trash: Int
+
+    public init(today: Int, tomorrow: Int, next7Days: Int, inbox: Int, assignedToMe: Int, completed: Int, trash: Int) {
+        self.today = today; self.tomorrow = tomorrow; self.next7Days = next7Days; self.inbox = inbox
+        self.assignedToMe = assignedToMe; self.completed = completed; self.trash = trash
+    }
 }
 
 public enum SmartView: String, Codable, Sendable, CaseIterable {
