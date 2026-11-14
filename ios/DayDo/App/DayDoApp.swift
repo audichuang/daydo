@@ -5,6 +5,7 @@ import DayDoCore
 @main
 struct DayDoApp: App {
     @State private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         let api = Self.makeAPI()
@@ -53,6 +54,14 @@ struct DayDoApp: App {
                     await model.didWrite()
                     model.ready = true
                     await DebugLaunch.apply(to: model)
+                }
+                // Day boundaries: re-read when returning to the app or when the
+                // date changes, so 今天／逾期 never show yesterday's view.
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active && model.ready { Task { await model.didWrite() } }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+                    if model.ready { Task { await model.didWrite() } }
                 }
         }
     }

@@ -146,4 +146,30 @@ final class DayDoFlowTests: XCTestCase {
         app.buttons["儲存"].tap()
         XCTAssertTrue(app.staticTexts["旅行"].waitForExistence(timeout: 3))
     }
+
+    func testSearchDeleteAndRestore() {
+        dismissNotificationPrompt()
+        app.buttons["搜尋"].firstMatch.tap()
+        let field = app.textFields["搜尋任務、描述、標籤、子任務"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        field.tap()
+        field.typeText("訂位")
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS '晚餐：巷口火鍋'")).element(boundBy: 1)
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        shot("16-search")
+
+        // Delete from the context menu, then restore from 垃圾桶.
+        row.press(forDuration: 1.0)
+        app.buttons["刪除"].tap()
+        XCTAssertTrue(app.staticTexts["找不到「訂位」"].waitForExistence(timeout: 3))
+        app.buttons["任務"].firstMatch.tap()
+        app.buttons["開啟清單抽屜"].tap()
+        app.buttons["垃圾桶"].tap()
+        let trashed = app.buttons.matching(NSPredicate(format: "label CONTAINS '晚餐：巷口火鍋'")).element(boundBy: 0)
+        XCTAssertTrue(trashed.waitForExistence(timeout: 3))
+        shot("17-trash")
+        trashed.press(forDuration: 1.0)
+        app.buttons["還原"].tap()
+        XCTAssertTrue(trashed.waitForNonExistence(timeout: 3))
+    }
 }

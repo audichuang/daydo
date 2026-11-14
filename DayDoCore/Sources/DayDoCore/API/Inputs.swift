@@ -68,6 +68,13 @@ public struct CreateTaskInput: Codable, Hashable, Sendable {
     public var sourceRaw: String?
     public var importNote: String?
 
+    /// JSON uses `timezone` like ticktick-mcp.
+    enum CodingKeys: String, CodingKey {
+        case projectId, title, content, priority, start, due, allDay, schedule, reminders, reminder, `repeat`
+        case subtasks, tags, assigneeId, sourceRaw, importNote
+        case timeZone = "timezone"
+    }
+
     public init(projectId: String? = nil, title: String, content: String? = nil, priority: Priority? = nil,
                 start: String? = nil, due: String? = nil, allDay: Bool? = nil, timeZone: String? = nil,
                 schedule: Schedule? = nil, reminders: [String]? = nil, reminder: String? = nil, repeat: String? = nil,
@@ -106,7 +113,8 @@ public struct UpdateTaskInput: Codable, Hashable, Sendable {
     public init(taskId: String) { self.taskId = taskId }
 
     enum CodingKeys: String, CodingKey {
-        case taskId, projectId, title, content, priority, start, due, allDay, timeZone, schedule
+        case taskId, projectId, title, content, priority, start, due, allDay, schedule
+        case timeZone = "timezone"
         case reminders, reminder, `repeat`, subtasks, tags, assigneeId
     }
 

@@ -158,5 +158,8 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         #expect(json.contains("\"project_id\""))
         #expect(json.contains("\"start\" : \"2026-11-15T09:00:00+08:00\""))
         #expect(json.contains("\"all_day\" : false"))
+        #expect(json.contains("\"timezone\" : \"Asia/Taipei\""))
+        let input = try DayDoJSON.decoder.decode(CreateTaskInput.self, from: Data(#"{"title":"x","start":"2026-11-15T09:00","timezone":"Asia/Tokyo"}"#.utf8))
+        #expect(input.timeZone == "Asia/Tokyo")
     }
 }

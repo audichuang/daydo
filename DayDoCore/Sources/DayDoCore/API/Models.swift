@@ -134,6 +134,13 @@ public struct TodoTask: Codable, Hashable, Sendable, Identifiable {
     public var sourceRaw: String?
     public var importNote: String?
 
+    /// JSON uses `timezone` like ticktick-mcp.
+    enum CodingKeys: String, CodingKey {
+        case id, projectId, title, content, priority, status, schedule, start, due, allDay, reminders, `repeat`, tags, items
+        case assigneeId, sortKey, completedAt, createdAt, updatedAt, deletedAt, attachments, commentCount, sourceRaw, importNote
+        case timeZone = "timezone"
+    }
+
     public var isCompleted: Bool { status == 2 }
     public var completedItemCount: Int { items.filter(\.isDone).count }
 }

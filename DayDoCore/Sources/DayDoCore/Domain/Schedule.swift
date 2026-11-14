@@ -14,6 +14,11 @@ public struct Schedule: Codable, Hashable, Sendable {
     public var endMinute: Int?
     public var timeZone: String?
 
+    enum CodingKeys: String, CodingKey {
+        case startDay, startMinute, endDay, endMinute
+        case timeZone = "timezone"
+    }
+
     public init(startDay: LocalDay, startMinute: Int? = nil, endDay: LocalDay? = nil, endMinute: Int? = nil, timeZone: String? = nil) {
         self.startDay = startDay
         self.startMinute = startMinute

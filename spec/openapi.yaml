@@ -14,8 +14,8 @@ info:
     - priority: 0 none, 1 low, 3 medium, 5 high (also accepts "none"/"low"/"medium"/"high").
     - status: 0 active, 2 completed. Checklist item status: 0 open, 1 done.
     - Schedules: `start`/`due` are ISO 8601. Without an offset they are wall-clock
-      in `time_zone` (floating when `time_zone` is null). With an offset they are
-      converted into `time_zone`, or a zone is inferred from the offset.
+      in `timezone` (floating when `timezone` is null). With an offset they are
+      converted into `timezone`, or a zone is inferred from the offset.
       All-day tasks use plain dates and `due` is the inclusive last day.
     - Reminders are TickTick trigger strings: `TRIGGER:-PT15M`, `TRIGGER:PT0S`,
       `TRIGGER:-P1D`, all-day `TRIGGER:P0DT9H0M0S`. They require a date.
@@ -129,7 +129,7 @@ paths:
       operationId: search_tasks
       description: Full-text search over title, description, tags and checklist items.
       parameters:
-        - { name: q, in: query, required: true, schema: { type: string } }
+        - { name: query, in: query, required: true, schema: { type: string } }
         - { name: active_only, in: query, schema: { type: boolean, default: false } }
       responses:
         "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Task" } } } } }
@@ -198,7 +198,7 @@ paths:
     parameters: [{ $ref: "#/components/parameters/TaskId" }]
     post:
       operationId: move_task
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [to_project_id], properties: { to_project_id: { type: string } } } } } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [to_project_id], properties: { to_project_id: { type: string }, from_project_id: { type: string, description: Optional; accepted for ticktick-mcp compatibility } } } } } }
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
   /tasks/{task_id}/items:
@@ -228,11 +228,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [file_name, content_base64]
+              required: [filename, content_base64]
               properties:
-                file_name: { type: string }
+                filename: { type: string }
                 content_base64: { type: string }
-                mime_type: { type: string, default: application/octet-stream }
+                content_type: { type: string, default: application/octet-stream }
                 original_path: { type: string }
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Attachment" } } } }
@@ -336,7 +336,7 @@ components:
         start_minute: { type: [integer, "null"], minimum: 0, maximum: 1439 }
         end_day: { type: [string, "null"], format: date }
         end_minute: { type: [integer, "null"] }
-        time_zone: { type: [string, "null"], description: IANA zone; null = floating }
+        timezone: { type: [string, "null"], description: IANA zone; null = floating }
     ChecklistItem:
       type: object
       properties: { id: { type: string }, title: { type: string }, status: { type: integer, enum: [0, 1] }, sort_key: { type: string } }
@@ -366,7 +366,7 @@ components:
         start: { type: [string, "null"], description: ISO 8601 (date for all-day) }
         due: { type: [string, "null"] }
         all_day: { type: boolean }
-        time_zone: { type: [string, "null"] }
+        timezone: { type: [string, "null"] }
         reminders: { type: array, items: { type: string } }
         repeat: { type: [string, "null"] }
         tags: { type: array, items: { type: string } }
@@ -408,7 +408,7 @@ components:
         start: { type: string, example: "2026-11-15T18:00:00+08:00" }
         due: { type: string, example: "2026-11-15T18:30:00+08:00" }
         all_day: { type: boolean }
-        time_zone: { type: string, example: Asia/Taipei }
+        timezone: { type: string, example: Asia/Taipei }
         schedule: { $ref: "#/components/schemas/Schedule" }
         reminders: { type: array, items: { type: string }, example: ["TRIGGER:-PT15M"] }
         reminder: { type: string, description: Comma-separated triggers (ticktick-mcp form) }
@@ -425,10 +425,10 @@ components:
         title: { type: string }
         content: { type: string }
         priority: { oneOf: [{ type: integer, enum: [0, 1, 3, 5] }, { type: string, enum: [none, low, medium, high] }] }
-        start: { type: [string, "null"], description: Rebuilds the schedule from start/due/all_day/time_zone; null or "" clears the date (and reminders, repeat) }
+        start: { type: [string, "null"], description: Rebuilds the schedule from start/due/all_day/timezone; null or "" clears the date (and reminders, repeat) }
         due: { type: [string, "null"], description: Alone, only moves the end; null drops the end }
         all_day: { type: boolean }
-        time_zone: { type: string }
+        timezone: { type: string }
         schedule: { oneOf: [{ $ref: "#/components/schemas/Schedule" }, { type: "null" }] }
         reminders: { type: array, items: { type: string } }
         reminder: { type: string }

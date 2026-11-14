@@ -69,6 +69,8 @@ struct EditListSheet: View {
                             viewOption("timeline", "時間軸")
                         }
                         .padding(12)
+                        Text("看板與時間軸檢視尚未完成，目前都以列表顯示。").txt(12).foregroundStyle(Palette.textFaint)
+                            .padding(.horizontal, 12).padding(.bottom, 10)
                     }
 
                     group("顏色") {
@@ -94,7 +96,7 @@ struct EditListSheet: View {
                             Button("有變更時通知") { notifyMode = "all" }
                             Button("不通知") { notifyMode = "none" }
                         } label: { rowLabel("提醒與通知", value: notifyMode == "all" ? "有變更時通知" : "不通知") }
-                        Text("邀請成員與轉移擁有者會在同步功能上線後開放").txt(12).foregroundStyle(Palette.textFaint).padding(.vertical, 10)
+                        Text("邀請成員、變更通知與轉移擁有者會在同步功能上線後開放").txt(12).foregroundStyle(Palette.textFaint).padding(.vertical, 10)
                     }
 
                     section("整理") {
@@ -105,7 +107,7 @@ struct EditListSheet: View {
                         Menu {
                             Button("任務清單") { kind = "TASK" }
                             Button("筆記清單") { kind = "NOTE" }
-                        } label: { rowLabel("清單類型", value: kind == "NOTE" ? "筆記清單" : "任務清單") }
+                        } label: { rowLabel("清單類型", value: kind == "NOTE" ? "筆記清單（顯示同任務清單）" : "任務清單") }
                         Menu {
                             Button("所有任務") { showInSmart = "all" }
                             Button("不顯示") { showInSmart = "none" }
