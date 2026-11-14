@@ -1,0 +1,438 @@
+openapi: 3.1.0
+info:
+  title: DayDo API
+  version: 0.1.0
+  description: |
+    HTTP contract of `DayDoAPI` (DayDoCore/Sources/DayDoCore/API/DayDoAPI.swift).
+    The iOS app implements it locally (`LocalDayDoAPI`); the phase-2 Cloudflare
+    Worker serves it over HTTP, and the MCP server maps one tool per operation
+    (operationId = MCP tool name, aligned with ticktick-mcp).
+
+    Conventions
+    - JSON keys are snake_case.
+    - IDs are client-generated UUIDv7 strings; timestamps are epoch milliseconds.
+    - priority: 0 none, 1 low, 3 medium, 5 high (also accepts "none"/"low"/"medium"/"high").
+    - status: 0 active, 2 completed. Checklist item status: 0 open, 1 done.
+    - Schedules: `start`/`due` are ISO 8601. Without an offset they are wall-clock
+      in `time_zone` (floating when `time_zone` is null). With an offset they are
+      converted into `time_zone`, or a zone is inferred from the offset.
+      All-day tasks use plain dates and `due` is the inclusive last day.
+    - Reminders are TickTick trigger strings: `TRIGGER:-PT15M`, `TRIGGER:PT0S`,
+      `TRIGGER:-P1D`, all-day `TRIGGER:P0DT9H0M0S`. They require a date.
+    - repeat is an RRULE (`RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR`). Completing a
+      repeating task stores a completed copy and moves the task to its next date.
+    - Partial updates: an absent key leaves a field alone, `null` clears it.
+servers:
+  - url: https://api.daydo.example/v1
+    description: Phase 2 (Cloudflare Worker) — not deployed yet
+security:
+  - bearer: []
+paths:
+  /members:
+    get:
+      operationId: list_members
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Member" } } } } }
+  /folders:
+    get:
+      operationId: list_folders
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Folder" } } } } }
+    post:
+      operationId: create_folder
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string } } } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Folder" } } } }
+  /folders/{folder_id}:
+    parameters: [{ $ref: "#/components/parameters/FolderId" }]
+    patch:
+      operationId: update_folder
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string } } } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Folder" } } } }
+    delete:
+      operationId: delete_folder
+      description: Soft-deletes the folder; its lists become top-level.
+      responses: { "204": { description: Deleted } }
+  /projects:
+    get:
+      operationId: list_projects
+      description: Lists (清單). The inbox comes first.
+      parameters:
+        - { name: include_archived, in: query, schema: { type: boolean, default: false } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Project" } } } } }
+    post:
+      operationId: create_project
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CreateProjectInput" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+  /projects/{project_id}:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+    get:
+      operationId: get_project
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: update_project
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/UpdateProjectInput" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+    delete:
+      operationId: delete_project
+      description: Soft-deletes the list and moves its tasks to the trash. The inbox cannot be deleted.
+      responses: { "204": { description: Deleted } }
+  /projects/{project_id}/data:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+    get:
+      operationId: get_project_data
+      description: The list with its active tasks.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { project: { $ref: "#/components/schemas/Project" }, tasks: { type: array, items: { $ref: "#/components/schemas/Task" } } } }
+  /tasks:
+    get:
+      operationId: list_tasks
+      parameters:
+        - { name: project_id, in: query, schema: { type: string } }
+        - { name: tag, in: query, schema: { type: string } }
+        - { name: from, in: query, description: Inclusive day (YYYY-MM-DD); tasks overlapping the range, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: include_completed, in: query, schema: { type: boolean, default: false } }
+        - { name: member_id, in: query, description: Only tasks visible to this member, schema: { type: string } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Task" } } } } }
+    post:
+      operationId: create_task
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CreateTaskInput" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
+        "400": { $ref: "#/components/responses/Invalid" }
+  /tasks/sections:
+    get:
+      operationId: list_sections
+      description: |
+        Tasks grouped the way the app shows them. `today` returns 已逾期 / 今天 / 明天 / 已完成;
+        lists and tags return overdue / today / tomorrow / later / nodate / completed.
+      parameters:
+        - { name: view, in: query, schema: { type: string, enum: [today, tomorrow, next7, inbox, assigned, completed, trash] } }
+        - { name: project_id, in: query, schema: { type: string } }
+        - { name: tag, in: query, schema: { type: string } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/TaskSection" } } } } }
+  /tasks/search:
+    get:
+      operationId: search_tasks
+      description: Full-text search over title, description, tags and checklist items.
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+        - { name: active_only, in: query, schema: { type: boolean, default: false } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Task" } } } } }
+  /tasks/completed:
+    get:
+      operationId: get_completed_tasks
+      parameters:
+        - { name: project_id, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 100 } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Task" } } } } }
+  /tasks/counts:
+    get:
+      operationId: smart_counts
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/SmartCounts" } } } }
+  /tasks/postpone-overdue:
+    post:
+      operationId: postpone_overdue
+      description: 全部延到今天 — moves every overdue active task so it ends today, keeping times.
+      responses:
+        "200": { description: Number of tasks moved, content: { application/json: { schema: { type: object, properties: { moved: { type: integer } } } } } }
+  /tasks/{task_id}:
+    parameters: [{ $ref: "#/components/parameters/TaskId" }]
+    get:
+      operationId: get_task
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: update_task
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/UpdateTaskInput" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
+        "400": { $ref: "#/components/responses/Invalid" }
+    delete:
+      operationId: delete_task
+      description: Moves the task to the trash (soft delete).
+      responses: { "204": { description: Deleted } }
+  /tasks/{task_id}/complete:
+    parameters: [{ $ref: "#/components/parameters/TaskId" }]
+    post:
+      operationId: complete_task
+      description: Returns the completed task (for repeating tasks, the completed copy).
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
+  /tasks/{task_id}/uncomplete:
+    parameters: [{ $ref: "#/components/parameters/TaskId" }]
+    post:
+      operationId: uncomplete_task
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
+  /tasks/{task_id}/restore:
+    parameters: [{ $ref: "#/components/parameters/TaskId" }]
+    post:
+      operationId: restore_task
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
+  /tasks/{task_id}/purge:
+    parameters: [{ $ref: "#/components/parameters/TaskId" }]
+    delete:
+      operationId: purge_task
+      description: Permanently deletes a task (normally from the trash).
+      responses: { "204": { description: Deleted } }
+  /tasks/{task_id}/move:
+    parameters: [{ $ref: "#/components/parameters/TaskId" }]
+    post:
+      operationId: move_task
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [to_project_id], properties: { to_project_id: { type: string } } } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
+  /tasks/{task_id}/items:
+    parameters: [{ $ref: "#/components/parameters/TaskId" }]
+    post:
+      operationId: add_checklist_item
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [title], properties: { title: { type: string } } } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ChecklistItem" } } } }
+  /items/{item_id}:
+    parameters: [{ name: item_id, in: path, required: true, schema: { type: string } }]
+    patch:
+      operationId: update_checklist_item
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { title: { type: string }, done: { type: boolean } } } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ChecklistItem" } } } }
+    delete:
+      operationId: delete_checklist_item
+      responses: { "204": { description: Deleted } }
+  /tasks/{task_id}/attachments:
+    parameters: [{ $ref: "#/components/parameters/TaskId" }]
+    post:
+      operationId: add_attachment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file_name, content_base64]
+              properties:
+                file_name: { type: string }
+                content_base64: { type: string }
+                mime_type: { type: string, default: application/octet-stream }
+                original_path: { type: string }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Attachment" } } } }
+  /attachments/{attachment_id}:
+    parameters: [{ name: attachment_id, in: path, required: true, schema: { type: string } }]
+    delete:
+      operationId: delete_attachment
+      responses: { "204": { description: Deleted } }
+  /tags:
+    get:
+      operationId: list_tags
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Tag" } } } } }
+    post:
+      operationId: create_tag
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [label], properties: { label: { type: string }, color: { type: string } } } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Tag" } } } }
+  /tags/{name}:
+    parameters: [{ name: name, in: path, required: true, description: Lowercased tag key, schema: { type: string } }]
+    patch:
+      operationId: update_tag
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { label: { type: string }, color: { type: string } } } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Tag" } } } }
+    delete:
+      operationId: delete_tag
+      description: Removes the tag from every task.
+      responses: { "204": { description: Deleted } }
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+  parameters:
+    TaskId: { name: task_id, in: path, required: true, schema: { type: string } }
+    ProjectId: { name: project_id, in: path, required: true, schema: { type: string } }
+    FolderId: { name: folder_id, in: path, required: true, schema: { type: string } }
+  responses:
+    NotFound:
+      description: Entity not found
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Invalid:
+      description: Validation failed (e.g. reminders without a date, unknown time zone, due before start)
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+  schemas:
+    Error:
+      type: object
+      properties: { error: { type: string }, message: { type: string } }
+    Member:
+      type: object
+      properties: { id: { type: string }, name: { type: string }, initial: { type: string }, color: { type: string }, is_me: { type: boolean } }
+    Folder:
+      type: object
+      properties: { id: { type: string }, name: { type: string }, sort_key: { type: string } }
+    Project:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        color: { type: [string, "null"] }
+        icon: { type: [string, "null"] }
+        folder_id: { type: [string, "null"] }
+        view_mode: { type: string, enum: [list, kanban, timeline] }
+        kind: { type: string, enum: [TASK, NOTE] }
+        is_inbox: { type: boolean }
+        owner_id: { type: string }
+        sort_key: { type: string }
+        show_in_smart: { type: string, enum: [all, none] }
+        notify_mode: { type: string, enum: [all, none] }
+        archived: { type: boolean }
+        member_ids: { type: array, items: { type: string } }
+        active_count: { type: integer }
+        created_at: { type: integer }
+        updated_at: { type: integer }
+    CreateProjectInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        color: { type: string }
+        icon: { type: string }
+        folder_id: { type: string }
+        view_mode: { type: string, enum: [list, kanban, timeline] }
+        kind: { type: string, enum: [TASK, NOTE] }
+    UpdateProjectInput:
+      type: object
+      properties:
+        name: { type: string }
+        color: { type: [string, "null"] }
+        icon: { type: [string, "null"] }
+        folder_id: { type: [string, "null"] }
+        view_mode: { type: string, enum: [list, kanban, timeline] }
+        kind: { type: string, enum: [TASK, NOTE] }
+        show_in_smart: { type: string, enum: [all, none] }
+        notify_mode: { type: string, enum: [all, none] }
+        archived: { type: boolean }
+    Schedule:
+      type: object
+      description: Canonical wall-clock schedule. start_minute null = all-day. end may be on the next day (cross-midnight).
+      properties:
+        start_day: { type: string, format: date }
+        start_minute: { type: [integer, "null"], minimum: 0, maximum: 1439 }
+        end_day: { type: [string, "null"], format: date }
+        end_minute: { type: [integer, "null"] }
+        time_zone: { type: [string, "null"], description: IANA zone; null = floating }
+    ChecklistItem:
+      type: object
+      properties: { id: { type: string }, title: { type: string }, status: { type: integer, enum: [0, 1] }, sort_key: { type: string } }
+    Attachment:
+      type: object
+      properties:
+        id: { type: string }
+        file_name: { type: string }
+        size: { type: integer }
+        mime_type: { type: string }
+        local_path: { type: [string, "null"] }
+        original_path: { type: [string, "null"] }
+        created_at: { type: integer }
+    Tag:
+      type: object
+      properties: { name: { type: string }, label: { type: string }, color: { type: [string, "null"] }, active_count: { type: integer } }
+    Task:
+      type: object
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        title: { type: string }
+        content: { type: string }
+        priority: { type: integer, enum: [0, 1, 3, 5] }
+        status: { type: integer, enum: [0, 2] }
+        schedule: { oneOf: [{ $ref: "#/components/schemas/Schedule" }, { type: "null" }] }
+        start: { type: [string, "null"], description: ISO 8601 (date for all-day) }
+        due: { type: [string, "null"] }
+        all_day: { type: boolean }
+        time_zone: { type: [string, "null"] }
+        reminders: { type: array, items: { type: string } }
+        repeat: { type: [string, "null"] }
+        tags: { type: array, items: { type: string } }
+        items: { type: array, items: { $ref: "#/components/schemas/ChecklistItem" } }
+        assignee_id: { type: [string, "null"] }
+        sort_key: { type: string }
+        completed_at: { type: [integer, "null"] }
+        created_at: { type: integer }
+        updated_at: { type: integer }
+        deleted_at: { type: [integer, "null"] }
+        attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+        comment_count: { type: integer }
+        source_raw: { type: [string, "null"] }
+        import_note: { type: [string, "null"] }
+    TaskSection:
+      type: object
+      properties:
+        id: { type: string, description: "overdue | today | tomorrow | later | nodate | completed | trash | day:YYYY-MM-DD" }
+        title: { type: string }
+        tasks: { type: array, items: { $ref: "#/components/schemas/Task" } }
+    SmartCounts:
+      type: object
+      properties:
+        today: { type: integer }
+        tomorrow: { type: integer }
+        next7_days: { type: integer }
+        inbox: { type: integer }
+        assigned_to_me: { type: integer }
+        completed: { type: integer }
+        trash: { type: integer }
+    CreateTaskInput:
+      type: object
+      required: [title]
+      properties:
+        project_id: { type: string, description: Defaults to the inbox }
+        title: { type: string }
+        content: { type: string, description: Use real newlines, not the two characters \n }
+        priority: { oneOf: [{ type: integer, enum: [0, 1, 3, 5] }, { type: string, enum: [none, low, medium, high] }] }
+        start: { type: string, example: "2026-11-15T18:00:00+08:00" }
+        due: { type: string, example: "2026-11-15T18:30:00+08:00" }
+        all_day: { type: boolean }
+        time_zone: { type: string, example: Asia/Taipei }
+        schedule: { $ref: "#/components/schemas/Schedule" }
+        reminders: { type: array, items: { type: string }, example: ["TRIGGER:-PT15M"] }
+        reminder: { type: string, description: Comma-separated triggers (ticktick-mcp form) }
+        repeat: { type: string, example: "RRULE:FREQ=DAILY" }
+        subtasks: { type: array, items: { type: string } }
+        tags: { type: array, items: { type: string } }
+        assignee_id: { type: string }
+        source_raw: { type: string }
+        import_note: { type: string }
+    UpdateTaskInput:
+      type: object
+      properties:
+        project_id: { type: string }
+        title: { type: string }
+        content: { type: string }
+        priority: { oneOf: [{ type: integer, enum: [0, 1, 3, 5] }, { type: string, enum: [none, low, medium, high] }] }
+        start: { type: [string, "null"], description: Rebuilds the schedule from start/due/all_day/time_zone; null or "" clears the date (and reminders, repeat) }
+        due: { type: [string, "null"], description: Alone, only moves the end; null drops the end }
+        all_day: { type: boolean }
+        time_zone: { type: string }
+        schedule: { oneOf: [{ $ref: "#/components/schemas/Schedule" }, { type: "null" }] }
+        reminders: { type: array, items: { type: string } }
+        reminder: { type: string }
+        repeat: { type: [string, "null"] }
+        subtasks: { type: array, items: { type: string }, description: Replaces the whole checklist }
+        tags: { type: array, items: { type: string } }
+        assignee_id: { type: [string, "null"] }
