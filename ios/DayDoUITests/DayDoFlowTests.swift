@@ -54,10 +54,17 @@ final class DayDoFlowTests: XCTestCase {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH '已完成'")).firstMatch.tap()
         XCTAssertTrue(app.buttons["取消完成：去全聯買菜"].waitForExistence(timeout: 3))
 
-        // Density toggle → compact (1c)
-        app.buttons.matching(NSPredicate(format: "label BEGINSWITH '切換密度'")).firstMatch.tap()
+        // Density toggle → compact (1c) via ⋯ menu
+        app.buttons["更多選項"].tap()
+        let hideDetails = app.buttons["隱藏詳情"]
+        XCTAssertTrue(hideDetails.waitForExistence(timeout: 3))
+        shot("01b-task-menu")
+        hideDetails.tap()
         shot("02-today-compact")
-        app.buttons.matching(NSPredicate(format: "label BEGINSWITH '切換密度'")).firstMatch.tap()
+        app.buttons["更多選項"].tap()
+        let showDetails = app.buttons["顯示詳情"]
+        XCTAssertTrue(showDetails.waitForExistence(timeout: 3))
+        showDetails.tap()
 
         // Drawer (1a): expand folder, pick a list
         app.buttons["開啟清單抽屜"].tap()
@@ -181,7 +188,6 @@ final class DayDoFlowTests: XCTestCase {
         let name = app.textFields["清單名稱"]
         XCTAssertTrue(name.waitForExistence(timeout: 3))
         name.typeText("旅行")
-        app.buttons["看板"].tap()
         shot("17-edit-list")
         app.buttons["儲存"].tap()
         XCTAssertTrue(app.staticTexts["旅行"].waitForExistence(timeout: 3))
@@ -284,13 +290,15 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(work.waitForExistence(timeout: 3))
         work.tap()
         app.buttons["更多選項"].tap()
-        app.buttons["編輯清單"].tap()
+        app.buttons["編輯"].tap()
         let archiveBtn = app.buttons["封存清單"]
         XCTAssertTrue(archiveBtn.waitForExistence(timeout: 3))
         archiveBtn.tap()
 
-        app.buttons["更多選項"].tap()
-        app.buttons["設定"].tap()
+        app.buttons["設定"].firstMatch.tap()
+        let archivedRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '已封存的清單'")).firstMatch
+        XCTAssertTrue(archivedRow.waitForExistence(timeout: 3), app.debugDescription)
+        archivedRow.tap()
         let unarchiveBtn = app.buttons["取消封存"].firstMatch
         XCTAssertTrue(unarchiveBtn.waitForExistence(timeout: 3), app.debugDescription)
         shot("24-archived")
@@ -313,5 +321,69 @@ final class DayDoFlowTests: XCTestCase {
         // Verify time grid stays visible below the capped 4-lane all-day strip.
         XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label ENDSWITH '空白時段，點兩下新增'")).firstMatch.isHittable)
         shot("25-day-allday-many")
+    }
+
+    @MainActor
+    func testSettingsTabAndAppearance() {
+        dismissNotificationPrompt()
+        app.buttons["設定"].firstMatch.tap()
+        let appearance = app.buttons["外觀"].firstMatch
+        XCTAssertTrue(appearance.waitForExistence(timeout: 3), app.debugDescription)
+        shot("26-settings")
+        appearance.tap()
+        XCTAssertTrue(app.staticTexts["主題色"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["列表密度"].waitForExistence(timeout: 3))
+        shot("27-settings-appearance")
+    }
+
+    @MainActor
+    func testDrawerSwipePinAndDelete() {
+        dismissNotificationPrompt()
+        app.buttons["開啟清單抽屜"].tap()
+        let folder = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '工作與學習'")).firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 3))
+        folder.tap()
+
+        let work = app.buttons["drawer.list.工作"]
+        let study = app.buttons["drawer.list.學習"]
+        XCTAssertTrue(work.waitForExistence(timeout: 3))
+        XCTAssertTrue(study.waitForExistence(timeout: 3))
+        XCTAssertLessThan(work.frame.minY, study.frame.minY)
+
+        // Short left swipe -> 1 button (刪除)
+        let start = study.coordinate(withNormalizedOffset: CGVector(dx: 0.88, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: -60, dy: 0)))
+        XCTAssertTrue(app.buttons["刪除"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(app.buttons["編輯"].exists)
+        XCTAssertFalse(app.buttons["置頂"].exists)
+        shot("28a-drawer-swipe-1")
+
+        // Swipe further left -> all 3 buttons (置頂, 編輯, 刪除)
+        let start2 = study.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5))
+        start2.press(forDuration: 0.05, thenDragTo: start2.withOffset(CGVector(dx: -130, dy: 0)))
+        let pin = app.buttons["置頂"]
+        XCTAssertTrue(pin.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.buttons["編輯"].exists)
+        XCTAssertTrue(app.buttons["刪除"].exists)
+        shot("28-drawer-swipe")
+
+        // Tap 置頂 -> 學習 moves to top of 工作與學習 folder (above 工作)
+        pin.tap()
+        let movedUp = NSPredicate { _, _ in
+            study.exists && work.exists && study.frame.minY < work.frame.minY
+        }
+        let exp = XCTNSPredicateExpectation(predicate: movedUp, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [exp], timeout: 3), .completed)
+
+        // Swipe -> 刪除 -> confirm removes 學習
+        let start3 = study.coordinate(withNormalizedOffset: CGVector(dx: 0.88, dy: 0.5))
+        start3.press(forDuration: 0.05, thenDragTo: start3.withOffset(CGVector(dx: -70, dy: 0)))
+        let del = app.buttons["刪除"]
+        XCTAssertTrue(del.waitForExistence(timeout: 3), app.debugDescription)
+        del.tap()
+        let confirm = app.buttons["刪除清單"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3), app.debugDescription)
+        confirm.tap()
+        XCTAssertTrue(study.waitForNonExistence(timeout: 3))
     }
 }

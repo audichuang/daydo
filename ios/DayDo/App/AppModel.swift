@@ -43,7 +43,6 @@ final class AppModel {
     }
     var composing: ComposeRequest?
     var editingProjectId: String?
-    var showSettings = false
 
     // Preferences
     var accentHex: String { didSet { UserDefaults.standard.set(accentHex, forKey: "accent") } }
@@ -152,7 +151,7 @@ final class AppModel {
     }
 }
 
-enum MainTab: Hashable { case tasks, calendar, search }
+enum MainTab: Hashable { case tasks, calendar, search, settings }
 
 /// Opening the composer with defaults (e.g. the day selected in the calendar).
 struct ComposeRequest: Identifiable {

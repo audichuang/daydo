@@ -299,6 +299,45 @@ extension LocalDayDoAPI {
         }
     }
 
+    public func moveProject(id: String, beforeProjectId: String?) async throws -> Project {
+        let now = now()
+        return try await writer.write { db in
+            var p = try self.projectRecord(db, id)
+            if p.isInbox { throw DayDoError.invalid("The inbox cannot be reordered") }
+            let siblings = try ProjectRecord
+                .filter(Column("deletedAt") == nil && Column("archivedAt") == nil && Column("isInbox") == false && Column("folderId") == p.folderId && Column("id") != p.id)
+                .order(Column("sortKey"))
+                .fetchAll(db)
+            let newKey: String
+            if let targetId = beforeProjectId {
+                if targetId == id { return try self.project(db, p) }
+                let target = try self.projectRecord(db, targetId)
+                guard !target.isInbox, target.folderId == p.folderId else {
+                    throw DayDoError.invalid("Target list must be in the same group")
+                }
+                guard let idx = siblings.firstIndex(where: { $0.id == targetId }) else {
+                    throw DayDoError.invalid("Target list is archived")
+                }
+                let prevKey = idx > 0 ? siblings[idx - 1].sortKey : nil
+                let nextKey = siblings[idx].sortKey
+                if (prevKey == nil || prevKey! < p.sortKey) && p.sortKey < nextKey {
+                    return try self.project(db, p)
+                }
+                newKey = SortKey.between(prevKey, nextKey)
+            } else {
+                let lastKey = siblings.last?.sortKey
+                if lastKey.map({ p.sortKey > $0 }) ?? true {
+                    return try self.project(db, p)
+                }
+                newKey = SortKey.after(lastKey)
+            }
+            p.sortKey = newKey
+            p.updatedAt = now
+            try Outbox.save(p, entity: "project", id: p.id, in: db, now: now)
+            return try self.project(db, p)
+        }
+    }
+
     public func deleteProject(id: String) async throws {
         let now = now()
         try await writer.write { db in

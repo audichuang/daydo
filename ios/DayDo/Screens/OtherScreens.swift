@@ -88,89 +88,70 @@ struct SearchScreen: View {
 struct SearchKey: Hashable { var text: String; var activeOnly: Bool; var revision: Int }
 
 /// Appearance and data settings.
-struct SettingsSheet: View {
+struct SettingsScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
-    @Environment(\.dismiss) private var dismiss
-    @AppStorage("demoLoaded") private var demoLoaded = false
-    @State private var exporting: URL?
     @State private var archivedProjects: [Project] = []
 
+    private var versionText: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+        return "\(v) (\(b))"
+    }
+
     var body: some View {
-        @Bindable var model = model
         NavigationStack {
-            Form {
-                Section("主題色") {
-                    HStack(spacing: 14) {
-                        ForEach(Palette.accentOptions, id: \.self) { hex in
-                            Button { model.accentHex = hex } label: {
-                                Circle().fill(Color(hex: hex)).frame(width: 30, height: 30)
-                                    .padding(3)
-                                    .overlay(Circle().strokeBorder(model.accentHex == hex ? Palette.text : .clear, lineWidth: 2))
+            ZStack {
+                Palette.background.ignoresSafeArea()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("設定").txt(30, .bold).foregroundStyle(Palette.text)
+                            .padding(.horizontal, 4)
+
+                        VStack(spacing: 0) {
+                            NavigationLink {
+                                AppearanceSettingsView()
+                            } label: {
+                                row(icon: "paintpalette", title: "外觀")
+                            }
+                            .buttonStyle(.plain)
+
+                            if !archivedProjects.isEmpty {
+                                divider
+                                NavigationLink {
+                                    ArchivedProjectsView()
+                                } label: {
+                                    row(icon: "archivebox", title: "已封存的清單", value: "\(archivedProjects.count)")
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .card()
+
+                        VStack(spacing: 0) {
+                            NavigationLink {
+                                DataSettingsView()
+                            } label: {
+                                row(icon: "externaldrive", title: "資料")
                             }
                             .buttonStyle(.plain)
                         }
-                    }
-                    .padding(.vertical, 4)
-                }
-                Section("顯示") {
-                    Picker("列表密度", selection: $model.compact) {
-                        Text("標準").tag(false)
-                        Text("緊湊").tag(true)
-                    }
-                    Picker("文字大小", selection: $model.textScale) {
-                        Text("100%").tag(1.0)
-                        Text("115%").tag(1.15)
-                        Text("130%").tag(1.3)
-                    }
-                }
-                Section {
-                    Button("載入範例資料") {
-                        Task {
-                            await model.perform { try await DemoData.load(into: $0) }
-                            demoLoaded = true
+                        .card()
+
+                        VStack(spacing: 0) {
+                            row(icon: "info.circle", title: "關於", value: versionText, chevron: false)
                         }
+                        .card()
                     }
-                    .disabled(demoLoaded)
-                    if let exporting {
-                        ShareLink("分享匯出的 JSON", item: exporting)
-                    } else {
-                        Button("匯出所有任務（JSON）") { Task { exporting = await export() } }
-                    }
-                } header: {
-                    Text("資料")
-                } footer: {
-                    Text("資料目前只存在這台裝置。匯出格式與之後的同步 API 相同（snake_case JSON）。")
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 140)
                 }
-                if !archivedProjects.isEmpty {
-                    Section("已封存的清單") {
-                        ForEach(archivedProjects) { p in
-                            HStack(spacing: 10) {
-                                ListDot(color: p.color, size: 9)
-                                Text(p.name).foregroundStyle(Palette.text)
-                                Spacer()
-                                Button("取消封存") {
-                                    var u = UpdateProjectInput(projectId: p.id)
-                                    u.archived = false
-                                    let input = u
-                                    Task { await model.perform { try await $0.updateProject(input) } }
-                                }
-                                .foregroundStyle(accent.text)
-                            }
-                        }
-                    }
-                }
-                Section("關於") {
-                    LabeledContent("版本", value: (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "") + " (" + (Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "") + ")")
-                }
+                .scrollIndicators(.hidden)
             }
-            .scrollContentBackground(.hidden)
-            .background(Palette.card)
             .navigationTitle("設定")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+            .toolbar(.hidden, for: .navigationBar)
         }
-        .presentationBackground(Palette.card)
         .task(id: model.revision) {
             do {
                 let all = try await model.api.listProjects(includeArchived: true)
@@ -182,6 +163,237 @@ struct SettingsSheet: View {
                 if !Task.isCancelled { model.errorMessage = error.localizedDescription }
             }
         }
+    }
+
+    private var divider: some View {
+        Rectangle().fill(Palette.separatorSoft).frame(height: 1).padding(.leading, 50)
+    }
+
+    private func row(icon: String, title: String, value: String? = nil, chevron: Bool = true) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(accent.text)
+                .frame(width: 24)
+            Text(title).txt(15).foregroundStyle(Palette.text)
+            Spacer()
+            if let value {
+                Text(value).txt(14).foregroundStyle(Palette.textSecondary)
+            }
+            if chevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Palette.textTertiary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 52)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct AppearanceSettingsView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        ZStack {
+            Palette.background.ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    section("主題色") {
+                        HStack(spacing: 14) {
+                            ForEach(Palette.accentOptions, id: \.self) { hex in
+                                Button { model.accentHex = hex } label: {
+                                    Circle().fill(Color(hex: hex)).frame(width: 30, height: 30)
+                                        .padding(3)
+                                        .overlay(Circle().strokeBorder(model.accentHex == hex ? Palette.text : .clear, lineWidth: 2))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityAddTraits(model.accentHex == hex ? .isSelected : [])
+                            }
+                            Spacer()
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                    }
+
+                    section("顯示") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("列表密度").txt(15).foregroundStyle(Palette.text)
+                            HStack(spacing: 8) {
+                                OptionChip(label: "標準", on: !model.compact) { model.compact = false }
+                                OptionChip(label: "緊湊", on: model.compact) { model.compact = true }
+                                Spacer()
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+
+                        Rectangle().fill(Palette.separatorSoft).frame(height: 1).padding(.leading, 14)
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("文字大小").txt(15).foregroundStyle(Palette.text)
+                            HStack(spacing: 8) {
+                                OptionChip(label: "100%", on: model.textScale == 1.0) { model.textScale = 1.0 }
+                                OptionChip(label: "115%", on: model.textScale == 1.15) { model.textScale = 1.15 }
+                                OptionChip(label: "130%", on: model.textScale == 1.3) { model.textScale = 1.3 }
+                                Spacer()
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 140)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .navigationTitle("外觀")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func section<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).txt(12, .semibold).foregroundStyle(Palette.textTertiary).padding(.leading, 4)
+            VStack(spacing: 0) { content() }.card()
+        }
+    }
+}
+
+private struct ArchivedProjectsView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.accent) private var accent
+    @State private var archivedProjects: [Project] = []
+
+    var body: some View {
+        ZStack {
+            Palette.background.ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if archivedProjects.isEmpty {
+                        Text("沒有已封存的清單")
+                            .txt(14)
+                            .foregroundStyle(Palette.textSecondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 40)
+                            .card()
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(Array(archivedProjects.enumerated()), id: \.element.id) { i, p in
+                                if i > 0 {
+                                    Rectangle().fill(Palette.separatorSoft).frame(height: 1).padding(.leading, 14)
+                                }
+                                HStack(spacing: 10) {
+                                    ListDot(color: p.color, size: 9)
+                                    Text(p.name).txt(15).foregroundStyle(Palette.text)
+                                    Spacer()
+                                    Button("取消封存") {
+                                        var u = UpdateProjectInput(projectId: p.id)
+                                        u.archived = false
+                                        let input = u
+                                        Task { await model.perform { try await $0.updateProject(input) } }
+                                    }
+                                    .txt(14, .semibold)
+                                    .foregroundStyle(accent.text)
+                                    .buttonStyle(.plain)
+                                }
+                                .padding(.horizontal, 14)
+                                .frame(minHeight: 52)
+                            }
+                        }
+                        .card()
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 140)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .navigationTitle("已封存的清單")
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: model.revision) {
+            do {
+                let all = try await model.api.listProjects(includeArchived: true)
+                guard !Task.isCancelled else { return }
+                archivedProjects = all.filter(\.archived)
+            } catch is CancellationError {
+                return
+            } catch {
+                if !Task.isCancelled { model.errorMessage = error.localizedDescription }
+            }
+        }
+    }
+}
+
+private struct DataSettingsView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.accent) private var accent
+    @AppStorage("demoLoaded") private var demoLoaded = false
+    @State private var exporting: URL?
+
+    var body: some View {
+        ZStack {
+            Palette.background.ignoresSafeArea()
+            ScrollView {
+                VStack(spacing: 0) {
+                    Button {
+                        Task {
+                            await model.perform { try await DemoData.load(into: $0) }
+                            demoLoaded = true
+                        }
+                    } label: {
+                        HStack {
+                            Text("載入範例資料").txt(15).foregroundStyle(demoLoaded ? Palette.textFaint : Palette.text)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 52)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(demoLoaded)
+
+                    Rectangle().fill(Palette.separatorSoft).frame(height: 1).padding(.leading, 14)
+
+                    if let exporting {
+                        ShareLink(item: exporting) {
+                            HStack {
+                                Text("分享匯出的 JSON").txt(15).foregroundStyle(accent.text)
+                                Spacer()
+                                Image(systemName: "square.and.arrow.up").foregroundStyle(accent.text)
+                            }
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 52)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Button {
+                            Task { exporting = await export() }
+                        } label: {
+                            HStack {
+                                Text("匯出所有任務（JSON）").txt(15).foregroundStyle(Palette.text)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 52)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .card()
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 140)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .navigationTitle("資料")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     struct Export: Encodable {

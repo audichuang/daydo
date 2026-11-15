@@ -15,6 +15,7 @@ struct RootView: View {
                 case .tasks: TaskListScreen(scope: model.scope)
                 case .calendar: CalendarScreen()
                 case .search: SearchScreen()
+                case .settings: SettingsScreen()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -40,7 +41,6 @@ struct RootView: View {
         .sheet(item: Binding(get: { model.editingProjectId.map(TaskRef.init) }, set: { model.editingProjectId = $0?.id })) { ref in
             EditListSheet(projectId: ref.id == "new" ? nil : ref.id)
         }
-        .sheet(isPresented: $model.showSettings) { SettingsSheet() }
         .alert("出了點問題", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("好", role: .cancel) {}
         } message: {
@@ -51,7 +51,7 @@ struct RootView: View {
 
 struct TaskRef: Identifiable { let id: String }
 
-/// Floating glass navigation: 任務／日曆／搜尋 (62pt high, 30pt from bottom).
+/// Floating glass navigation: 任務／日曆／搜尋／設定 (62pt high, 30pt from bottom).
 struct BottomNav: View {
     @Environment(\.accent) private var accent
     @Binding var tab: MainTab
@@ -62,6 +62,7 @@ struct BottomNav: View {
             item(.tasks, "任務", "checkmark.square")
             item(.calendar, "日曆", "calendar")
             item(.search, "搜尋", "magnifyingglass")
+            item(.settings, "設定", "gearshape")
         }
         .padding(5)
         .frame(height: 62)

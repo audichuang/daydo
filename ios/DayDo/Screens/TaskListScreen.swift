@@ -54,18 +54,17 @@ struct TaskListScreen: View {
                 if scope != .smart(.trash) && scope != .smart(.completed) {
                     HeaderAction(systemName: "plus", label: "新增任務", tint: accent.text) { compose() }
                 }
-                HeaderAction(systemName: model.compact ? "line.3.horizontal.decrease" : "line.3.horizontal", label: "切換密度：目前\(model.compact ? "緊湊" : "標準")") {
-                    withAnimation(.snappy) { model.compact.toggle() }
-                }
                 Menu {
                     if case .project(let id) = scope {
-                        Button("編輯清單", systemImage: "slider.horizontal.3") { model.editingProjectId = id }
+                        Button("編輯", systemImage: "slider.horizontal.3") { model.editingProjectId = id }
                     }
+                    Button(model.compact ? "顯示詳情" : "隱藏詳情", systemImage: model.compact ? "eye" : "eye.slash") {
+                        withAnimation(.snappy) { model.compact.toggle() }
+                    }
+                    Button(closed.contains("completed") ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle("completed") }
                     if let overdue = sections.first(where: { $0.id == "overdue" }) {
                         Button("全部延到今天", systemImage: "arrow.uturn.forward") { postpone(overdue.tasks.map(\.id)) }
                     }
-                    Button(closed.contains("completed") ? "顯示已完成" : "收合已完成", systemImage: "checkmark.circle") { toggle("completed") }
-                    Button("設定", systemImage: "gearshape") { model.showSettings = true }
                 } label: {
                     Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
                 }

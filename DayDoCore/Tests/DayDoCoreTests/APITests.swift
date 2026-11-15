@@ -226,6 +226,46 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         await #expect(throws: DayDoError.self) { try await api.deleteProject(id: inbox.id) }
     }
 
+    @Test func moveProjectReordersWithinGroupAndRecordsOutbox() async throws {
+        let api = try await makeAPI()
+        let initial = try await api.listProjects(includeArchived: false)
+        // Initial order: [收件匣(inbox), 工作, 個人, 購物]
+        #expect(initial.map(\.name) == ["收件匣", "工作", "個人", "購物"])
+        let work = initial[1], personal = initial[2], shop = initial[3]
+
+        let beforeChanges = try await api.pendingChanges().count
+        // Pin 購物 to the top of root lists (before 工作); inbox must stay first.
+        _ = try await api.moveProject(id: shop.id, beforeProjectId: work.id)
+        let afterPin = try await api.listProjects(includeArchived: false)
+        #expect(afterPin.map(\.name) == ["收件匣", "購物", "工作", "個人"])
+
+        let changes = try await api.pendingChanges()
+        #expect(changes.count == beforeChanges + 1)
+        #expect(changes.last?.entity == "project")
+        #expect(changes.last?.entityId == shop.id)
+        #expect(changes.last?.fields == ["sortKey"])
+
+        // Move 購物 to the end (beforeProjectId: nil).
+        _ = try await api.moveProject(id: shop.id, beforeProjectId: nil)
+        #expect(try await api.listProjects(includeArchived: false).map(\.name) == ["收件匣", "工作", "個人", "購物"])
+
+        // Move 個人 between 工作 and 購物? Actually move 個人 before 工作 -> [收件匣, 個人, 工作, 購物].
+        _ = try await api.moveProject(id: personal.id, beforeProjectId: work.id)
+        #expect(try await api.listProjects(includeArchived: false).map(\.name) == ["收件匣", "個人", "工作", "購物"])
+
+        // Folder-scoped lists reorder independently within their folder.
+        let folder = try await api.createFolder(name: "資料夾")
+        let f1 = try await api.createProject(CreateProjectInput(name: "F1", folderId: folder.id))
+        let f2 = try await api.createProject(CreateProjectInput(name: "F2", folderId: folder.id))
+        _ = try await api.moveProject(id: f2.id, beforeProjectId: f1.id)
+        let folderLists = try await api.listProjects(includeArchived: false).filter { $0.folderId == folder.id }
+        #expect(folderLists.map(\.name) == ["F2", "F1"])
+
+        // Inbox cannot be reordered, and cross-group move is rejected.
+        await #expect(throws: DayDoError.self) { try await api.moveProject(id: initial[0].id, beforeProjectId: work.id) }
+        await #expect(throws: DayDoError.self) { try await api.moveProject(id: f1.id, beforeProjectId: work.id) }
+    }
+
     @Test func remindersAreScheduledInTheFuture() async throws {
         let api = try await makeAPI()
         _ = try await api.createTask(CreateTaskInput(title: "簡報", start: "2026-11-15T18:00", due: "2026-11-15T18:30", timeZone: "Asia/Taipei", reminders: ["TRIGGER:-PT15M", "TRIGGER:-P1D"]))

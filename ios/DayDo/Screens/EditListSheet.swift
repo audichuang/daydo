@@ -1,8 +1,8 @@
 import SwiftUI
 import DayDoCore
 
-/// 5 · Edit (or create) a list: name, view, color, members & notifications,
-/// folder, type, smart-list visibility; archive / delete at the bottom.
+/// 5 · Edit (or create) a list: name, color, folder, type,
+/// smart-list visibility; archive / delete at the bottom.
 struct EditListSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
@@ -62,17 +62,6 @@ struct EditListSheet: View {
                     .padding(10)
                     .card(16, color: Palette.raised)
 
-                    group("檢視") {
-                        HStack(spacing: 10) {
-                            viewOption("list", "列表")
-                            viewOption("kanban", "看板")
-                            viewOption("timeline", "時間軸")
-                        }
-                        .padding(12)
-                        Text("看板與時間軸檢視尚未完成，目前都以列表顯示。").txt(12).foregroundStyle(Palette.textFaint)
-                            .padding(.horizontal, 12).padding(.bottom, 10)
-                    }
-
                     group("顏色") {
                         HStack(spacing: 0) {
                             ForEach(Palette.listColors, id: \.1) { c in
@@ -88,15 +77,6 @@ struct EditListSheet: View {
                             }
                         }
                         .padding(.horizontal, 6)
-                    }
-
-                    section("成員與通知") {
-                        row("成員", value: "\(original?.memberIds.count ?? 1) 位", members: true) {}
-                        Menu {
-                            Button("有變更時通知") { notifyMode = "all" }
-                            Button("不通知") { notifyMode = "none" }
-                        } label: { rowLabel("提醒與通知", value: notifyMode == "all" ? "有變更時通知" : "不通知") }
-                        Text("邀請成員、變更通知與轉移擁有者會在同步功能上線後開放").txt(12).foregroundStyle(Palette.textFaint).padding(.vertical, 10)
                     }
 
                     section("整理") {
@@ -176,41 +156,6 @@ struct EditListSheet: View {
         }
     }
 
-    func viewOption(_ id: String, _ label: String) -> some View {
-        let on = viewMode == id
-        let barColor = on ? Color(hex: color).opacity(0.55) : Palette.handle
-        return Button { viewMode = id } label: {
-            VStack(spacing: 6) {
-                Group {
-                    if id == "kanban" {
-                        HStack(spacing: 4) { ForEach(0..<3, id: \.self) { _ in RoundedRectangle(cornerRadius: 3).fill(barColor) } }
-                    } else {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(0..<3, id: \.self) { i in
-                                RoundedRectangle(cornerRadius: 3).fill(barColor)
-                                    .padding(.leading, id == "timeline" ? [0, 18, 8][i] : 0)
-                            }
-                        }
-                    }
-                }
-                .padding(8)
-                .frame(height: 64)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Palette.card))
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(on ? accent.color : Palette.chip, lineWidth: 2))
-                .overlay(alignment: .topTrailing) {
-                    if on {
-                        Image(systemName: "checkmark").font(.system(size: 9, weight: .heavy)).foregroundStyle(accent.onAccent)
-                            .frame(width: 18, height: 18).background(Circle().fill(accent.color)).offset(x: 6, y: -6)
-                    }
-                }
-                Text(label).txt(13, on ? .bold : .regular).foregroundStyle(on ? Palette.text : Palette.textSecondary)
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(on ? .isSelected : [])
-    }
-
     func group<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).txt(12, .semibold).foregroundStyle(Palette.textTertiary).padding(.leading, 12).padding(.top, 10)
@@ -236,18 +181,5 @@ struct EditListSheet: View {
         .frame(minHeight: 50)
         .overlay(alignment: .bottom) { if !last { Rectangle().fill(Palette.separatorSoft).frame(height: 1) } }
         .contentShape(Rectangle())
-    }
-
-    func row(_ label: String, value: String, members: Bool, action: @escaping () -> Void) -> some View {
-        HStack(spacing: 8) {
-            Text(label).txt(15).foregroundStyle(Palette.text)
-            Spacer()
-            if members, let o = original {
-                AvatarStack(members: model.members.filter { o.memberIds.contains($0.id) }, size: 22)
-            }
-            Text(value).txt(14).foregroundStyle(Palette.textSecondary)
-        }
-        .frame(minHeight: 50)
-        .overlay(alignment: .bottom) { Rectangle().fill(Palette.separatorSoft).frame(height: 1) }
     }
 }

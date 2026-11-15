@@ -171,7 +171,7 @@ enum DebugLaunch {
             if screen != "detail" { UserDefaults.standard.set(screen, forKey: "debugDetailPage") }
         case "editlist": model.editingProjectId = model.projects.first { !$0.isInbox }?.id
         case "compose": model.composing = ComposeRequest(day: model.today)
-        case "settings": model.showSettings = true
+        case "settings": model.tab = .settings
         default: break
         }
     }

@@ -94,6 +94,23 @@ paths:
           content:
             application/json:
               schema: { type: object, properties: { project: { $ref: "#/components/schemas/Project" }, tasks: { type: array, items: { $ref: "#/components/schemas/Task" } } } }
+  /projects/{project_id}/move:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+    post:
+      operationId: move_project
+      description: Reorders the list within its folder (or root lists) before the given sibling, or to the end when before_project_id is null.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                before_project_id: { type: [string, "null"], description: Target sibling project ID to insert before; null moves to the end. }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /tasks:
     get:
       operationId: list_tasks

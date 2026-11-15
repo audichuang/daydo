@@ -20,6 +20,7 @@ public protocol DayDoAPI: Sendable {
     func getProjectData(id: String) async throws -> ProjectData
     func createProject(_ input: CreateProjectInput) async throws -> Project
     func updateProject(_ input: UpdateProjectInput) async throws -> Project
+    func moveProject(id: String, beforeProjectId: String?) async throws -> Project
     func deleteProject(id: String) async throws
 
     // Tasks
