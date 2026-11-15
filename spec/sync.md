@@ -76,6 +76,14 @@
 - 附件只同步資料列，檔案本身還不上傳：別台裝置打不開，登出再登入後本機的附件路徑也會遺失（檔案還在手機上）。之後做附件上傳時一起處理。
 - refresh token 的 10 分鐘寬限：換發後 10 分鐘內、手機還沒用新 token 之前，持有舊 refresh token 的人能搶先換到新 session（要先偷到 Keychain 裡的 token）；真手機下次 refresh 時整條鏈會被撤銷。這是為了避免訊號差時回應遺失就被登出所接受的取捨。
 - 永久刪除清單在 App 還沒有入口；之後加入時，擁有者的其他裝置要另外收到清除通知（目前 pull 不再回傳那份清單，其他裝置會留著）。
+- refresh 寬限期內，後繼已被使用之後，另一個 client 又拿舊 token 來換，會讓整個 family 被撤銷，需要重新授權（需要異常的 client）。（MCP）
+- 沒用到的 DCR client、過期的 pending、code、refresh 列都不清理；`opApplied` 會隨 ICS 長期增長（家庭用量下可以接受）。
+- DCR 依 IP 限速，攻擊者換很多 IP 仍可灌入 client 列（只會讓表變大）。`/token` 與 `/authorize` 沒有限速：code 與 state 都是 256-bit 隨機值。
+- MCP 與 ICS 寫入要等 App 下次 pull 才看得到（沒有推播）。
+- 重複任務的副本與原任務若落在不同範圍（共享清單），兩邊的更新不是原子的，與 App 相同。
+- 在同一份來源中重新定義重複系列時，ICS 拒絕寫入，需要人工處理。
+- ICS 任務被移到使用者看不到的清單時，該 mapping 每輪記一次錯誤，不重建。
+- ICS 的 `CATEGORIES` 不轉成標籤。
 
 ## 線上格式（App 與 Worker 共用，兩邊各自實作前先以這裡為準）
 
@@ -148,6 +156,7 @@
 - Worker 自己發 token：access token 為 JWT，1 小時；refresh token 90 天，每次使用就換一組新的，D1 只存雜湊值。
 - **refresh 寬限期**：正常換發後 10 分鐘內且後繼 token 尚未被使用時，以舊 refresh token 重試視為遺失回應重試，撤銷該未使用的後繼 token 並換發新的一組；其餘重複使用撤銷整條 session 鏈並回 401。
 - 登入與 refresh 回應另帶 `hasData`（伺服器上已經有這個使用者的收件匣，等同 `inboxProjectId` 不是 null）、`meMemberId`（綁定的「我」，還沒有就是 null）、`inboxProjectId`（自己範圍裡的收件匣，還沒有就是 null）、`avatarUrl`（D1 `user.avatarUrl`，可為 null）。App 依「已定的決策」的第一次登入規則處理。
+- **網頁登入（MCP 授權頁）**：Google 用網頁 client（`GOOGLE_WEB_CLIENT_ID`／`GOOGLE_WEB_CLIENT_SECRET`），Apple 用 Services ID `com.audichuang.daydo.web`；帳號仍以 `(provider, sub)` 識別，與 App 登入是同一個帳號。細節見 `spec/mcp.md`。
 - **Cloudflare Access**：正式環境每個請求都要通過 Access（App 帶 service token），Worker 再驗 `Cf-Access-Jwt-Assertion`（簽章、`aud` 等於 Access 應用程式的 AUD）。本機開發與 e2e 用環境變數關掉這一層，只在開發建置有效。
 - App Store 規定：可以建立帳號的 App 必須能在 App 裡刪除帳號。刪除時要一併撤銷 Apple 的授權（需要 authorization code 和 client secret）。
 
@@ -190,4 +199,4 @@
 5. ✓ T5c Worker：成員與邀請 API、權限矩陣、成員投影、`listScopes` 與多範圍 pull、`gone` 與離開紀錄、加入時的 backfill、共享清單的 members 與 folderId 規則、永久刪除清單的通知。
 6. ✓ T6：Access 驗證、部署到 `daydo-api.audichuang.app`、對公開網址跑冒煙測試（`npm run smoke:prod`：Access 擋未帶 token 的請求、假 token 登入被拒）。完整登入與同步要真的 Apple／Google token，留到 T8 在手機上驗。
 7. T7 App：✓ T7a 同步引擎與兩台裝置收斂測試；✓ T7b 登入、登出與第一次登入；✓ T7c 共享清單。✓ T8 App：登入畫面、同步觸發、設定帳號區、邀請連結（分享、貼上加入、確認畫面）。
-8. WebSocket 通知、MCP。
+8. WebSocket 通知；MCP（OAuth、工具、ICS 訂閱同步，見 `spec/mcp.md`）。
