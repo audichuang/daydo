@@ -50,11 +50,13 @@
 
   member、folder、tag 只屬於自己，只能寫自己範圍裡的。
 
-- **op 的 `projectId` 只是找路的提示**：Worker 依它和 `projectHome` 決定送去哪個範圍，並把推送者在那個範圍的成員資格一起交給 DO。DO 以**資料列目前所在的清單**判斷權限（既有列看它自己的 `projectId`，子列看所屬任務目前的清單），不信 op 自報的值。改了 `projectId` 的 op（移動）要同時有來源清單和目的清單的寫入權。
+- **每個 id 只屬於一個範圍**：D1 的 `entityHome(entity, entityId → scope)` 在資料列第一次建立時寫入（衝突就以先寫入的為準），之後不變。Worker 找路先看 `entityHome`；已綁定到別的範圍的 id 再送新建，回 `rejected`，原因 `id-in-other-scope`。這樣同一個 id 不會在兩個範圍各有一筆，App 本機的主鍵也不會被兩個範圍搶寫。
+- **op 的 `projectId` 只是新建時找路的提示**：還沒綁定的 id，Worker 依它和 `projectHome` 決定送去哪個範圍，並把推送者在那個範圍的成員資格一起交給 DO。DO 以**資料列目前所在的清單**判斷權限（既有列看它自己的 `projectId`，子列看所屬任務目前的清單），不信 op 自報的值。改了 `projectId` 的 op（移動）要同時有來源清單和目的清單的寫入權。
+- **子列的 `taskId` 不能改**：checklistItem、附件、留言建立後不能改掛到別的任務，改 `taskId` 的 op 回 `rejected`（附目前的列）。
 - **新建與未知的列**：DO 找不到這一列時，只有 `fields` 涵蓋該 entity 所有必填欄位的 upsert 才算新建；只改部分欄位卻找不到列（例如跨範圍移動、或對方範圍不知道的 id）回 `rejected`，原因 `unknown-row`，不會憑空建出一筆。
-- **跨範圍移動**（任務移到別人建立的清單）：伺服器不支援。App 用 pull 回應的 `memberships` 得知每份清單在哪個範圍；來源和目的不同範圍時，App 在目的清單建一筆新 id 的複本（含子項目），再永久刪除原任務。代價：另一台裝置對原任務尚未送出的修改會被丟掉。`restoreTask` 要把任務改回收件匣時，只能改回同一範圍的清單；原清單在別人範圍且已刪除時不能還原。
+- **跨範圍移動**（任務移到別人建立的清單）：伺服器不支援。App 用 pull 回應的 `memberships` 得知每份清單在哪個範圍；來源和目的不同範圍時，App 在目的清單建一筆新 id 的複本（含子項目），**確認複本與所有子項目都被伺服器 applied 之後**，才送出永久刪除原任務的 op。新舊 id 的對應與進度存在本機（App 重開、重送都沿用同一組新 id）；複本被拒（例如目的清單權限已被降級），就保留原任務並告訴使用者。代價：另一台裝置對原任務尚未送出的修改會被丟掉。`restoreTask` 要把任務改回收件匣時，只能改回同一範圍的清單；原清單在別人範圍且已刪除時不能還原。
 - **任務在範圍內移動**：DO 在同一個交易裡把它的 checklist、附件、留言的清單標記一起改掉，全部給新的 serverSeq，並為離開的清單寫入離開紀錄（下一條）。
-- **離開紀錄（gone）**：DO 另存 `departure(entity, entityId, projectId, serverSeq)`：資料列離開某份清單（移動、清單被永久刪除）時寫一筆。pull 時，對那份清單的成員回 `{entity, entityId, gone: true, serverSeq}`。同一範圍內依 serverSeq 順序套用，所以「離開後又移回來」會先刪再建，最後是在的。App 收到 gone 就在本機硬刪除這一列與它的子列、丟掉它尚未送出的 op（不記 `purgedId`，id 之後還可能回來）。
+- **離開紀錄（gone）**：DO 另存 `departure(entity, entityId, projectId, serverSeq)`：資料列離開某份清單（移動、清單被永久刪除）時寫一筆。pull 時，只對**現在已經看不到這一列**的使用者（是原清單成員、但不是資料列目前所在清單的成員）回 `{entity, entityId, gone: true, serverSeq}`；仍看得到的人會在同一範圍拿到移動後的列（serverSeq 較新），本機未送出的修改照常保留，之後依 `entityHome` 送到正確的範圍。同一範圍內依 serverSeq 順序套用，所以「離開後又移回來」會先刪再建，最後是在的。App 收到 gone 就在本機硬刪除這一列與它的子列、丟掉它尚未送出的 op（不記 `purgedId`，id 之後還可能回來）。
 - **被拒絕時**：推送者仍讀得到這一列 → `rejected` 附目前的 `row` 與 `clocks`，App 照它覆蓋（例如被降成 viewer 後離線改的標題會被還原）；讀不到了 → `rejected` 附 `gone: true`，App 照上一條處理。
 - **成員與邀請不走一般同步**：projectMember 與 projectInvite 只能由 owner 透過專用 API 改（見 Endpoint），先寫 D1、再由伺服器投影到範圍 DO 的 projectMember 列（給 App 顯示）。投影是冪等的；寫完 D1 但投影失敗時，下一次 pull 該清單前 Worker 會比對 D1 與 DO 補齊。App 送來的 projectMember／projectInvite op 一律 `rejected`（附目前的列）。App 端「等待同步」的邀請在登入且連線後改成呼叫建立邀請的 API。
 - **共享清單需要的其他資料**：
@@ -160,7 +162,7 @@
 
 ## 儲存
 
-- **D1**：`user`（含 `meMemberId` 與名字、縮寫、顏色）、`identity(provider, sub, userId)`、`session`、`device`、`projectHome(projectId, homeUserId)`、`projectMembership(projectId, userId, role, createdAt, removedAt)`、`invite(codeHash, projectId, role, createdBy, expiresAt, revokedAt)`。資料表不放 D1。
+- **D1**：`user`（含 `meMemberId` 與名字、縮寫、顏色）、`identity(provider, sub, userId)`、`session`、`device`、`projectHome(projectId, homeUserId)`、`projectMembership(projectId, userId, role, createdAt, removedAt)`、`invite(codeHash, projectId, role, createdBy, expiresAt, revokedAt)`、`entityHome(entity, entityId, scope)`。資料表不放 D1。
 - **範圍 DO 的 SQLite**：各 entity 一張表（欄位同 App，加 `clocks`、`serverSeq`、`purgedAt`，子列另存所屬清單），`departure`（離開紀錄），`opApplied(opId, status, serverSeq)`，`counter`（範圍內的 serverSeq）。
 - 舊的單一寫入 DO（`writer`）與 D1 的資料表在 T5a 移除；從未部署過，不用搬資料。
 - 測試要能證明並發被正確處理：e2e 的 concurrency 情境保留；DO SQLite 本身就依序執行，所以改用只在開發建置有效的故障注入（例如在讀 `clocks` 和寫入之間故意 `await`），開啟時該情境必須失敗。
