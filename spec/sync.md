@@ -67,6 +67,13 @@
 - **加入或離開共享清單**：加入時 App 用 pull 的 `backfill: [projectId]` 拿那份清單在各範圍的全部資料（不受游標限制）；離開、被移除或清單被刪時，pull 回應的 `memberships` 不再有它，App 刪掉本機那份清單的資料與相關的待送 op。
 - **還原任務**：`restoreTask` 原清單已刪除時改回自己的收件匣；任務仍住在原本的範圍，只改 `projectId`，權限照移動的規則檢查。
 
+## 已知限制（正常使用不會碰到，先不處理）
+
+- 同一個子項目 id 同時指向兩個不同任務、兩個請求又同時送出時，路由可能被清掉（需異常 client）。
+- 共享清單的 editor 能把清單的 `isInbox` 改成 true（App 不會這樣送）。
+- 兩台舊版手機在同一瞬間第一次登入，可能各自上傳一個收件匣。
+- Worker 重啟後回傳的 `serverTime` 可能比之前回過的小；只影響時鐘不準的裝置。
+
 ## 線上格式（App 與 Worker 共用，兩邊各自實作前先以這裡為準）
 
 - **entity 名稱**與 App 的資料表同名：`member`、`folder`、`project`、`projectMember`、`task`、`checklistItem`、`tag`、`attachment`、`comment`。
@@ -149,7 +156,7 @@
 | POST | `/auth/refresh` | `{refreshToken}` → 新的一組 token |
 | POST | `/auth/link` | 已登入時連結另一種登入方式（之後做） |
 | DELETE | `/account` | 刪除帳號與所有資料（之後做，上架前必須有） |
-| POST | `/sync/push` | `{deviceId, ops: [{opId, hlc, entity, entityId, op, fields, row}]}`（最多 200）→ `{results: [{opId, status, reason?, row, clocks}], serverTime}`，`results` 與 `ops` 同順序 |
+| POST | `/sync/push` | `{deviceId, ops: [{opId, hlc, entity, entityId, op, fields, row}]}`（最多 200）→ `{results: [{opId, status, reason?, row, clocks}], serverTime}`，`results` 與 `ops` 同順序；`serverTime` 是 HLC 字串（`<ms>:<counter>:server`） |
 | POST | `/sync/pull` | `{cursors: {"u:<id>": seq}, backfill?: [projectId], limit?}` → `{scopes: [{scope, rows: [{entity, row, clocks, serverSeq} \| {entity, entityId, gone: true, serverSeq}], cursor, hasMore}], memberships: [{projectId, scope, role}], members: [member 列]}`；沒給游標的範圍從 0 開始 |
 | POST | `/invites` | `{projectId, role, email?}`（owner 才能建；email 只用來顯示）→ `{code, url: "daydo://invite/<code>", expiresAt}` |
 | GET | `/invites/<code>` | → `{projectName, inviterName, role, expiresAt}`（讓 App 顯示「誰邀你加入哪份清單」） |
