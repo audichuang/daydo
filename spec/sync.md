@@ -25,6 +25,19 @@
 
 送出時機：每次寫入後（延遲約 1 秒，把連續的寫入合成一批）、回到前景、網路恢復、開 App。不比對兩邊的 ID 清單：重送所有未收到 ack 的 op，伺服器靠 opId 去重。
 
+## 線上格式（App 與 Worker 共用，兩邊各自實作前先以這裡為準）
+
+- **entity 名稱**與 App 的資料表同名：`member`、`folder`、`project`、`projectMember`、`task`、`checklistItem`、`tag`、`attachment`、`comment`。
+- **entityId**：一般是該列的 `id`（UUIDv7，**小寫** hex，`ID.make()` 產生）。`projectMember` 是 `"<projectId>:<memberId>"`；`tag` 是標籤的 `name`。
+- **欄位名**用 App Record 的 Swift 屬性名（camelCase，例如 `startDay`、`deletedAt`），JSON 與 D1 欄位都用同一個名字，不轉 snake_case。
+- **`row`** 是 App `JSONEncoder`（`sortedKeys`）編出的整列。值為 nil 的 optional 欄位**不會出現在 `row` 裡**；所以「欄位在 `fields` 裡、卻不在 `row` 裡」代表把它設成 null。
+- **型別**：時間戳是 epoch ms 整數；`Bool` 在 JSON 是 `true`/`false`，D1 存 0/1，pull 回傳時轉回 `true`/`false`；`[String]`（`reminders`、`tags`）整個陣列視為一個值，D1 存 JSON 字串。
+- **`op`**：`upsert` 或 `delete`（硬刪除，`fields` 為空、`row` 為 `{}`）。
+- **合併的欄位群組**：task 的 `startDay`、`startMinute`、`endDay`、`endMinute`、`timeZone` 是同一個時間設定，合併時視為一組，共用 `clocks["schedule"]`：只要 `fields` 含其中任何一個，就整組一起比 HLC、一起寫入（缺的欄位依上一條視為 null）。否則一台改日期、另一台改時區，合併後會變成兩邊都沒設定過的時間。
+- **不同步的欄位**：`member.isMe`（每台裝置、每個使用者各自不同；Worker 不存，pull 時依請求的使用者算出來）、`attachment.localPath` 與 `attachment.originalPath`（裝置上的檔案路徑；附件檔案上傳之後再設計）。
+- **HLC 字串**：`<13 位數 epoch ms，前面補 0>:<4 位數計數，前面補 0>:<deviceId 小寫>`。計數到 9999 時，ms 加 1、計數歸 0。
+- **fixture**：App 端測試會產出一份真實編碼的 op 範例 `spec/fixtures/sync-ops.json`，Worker 端的測試直接讀這份檔案。格式有爭議時，以這份檔案和本節為準。
+
 ## App 端
 
 新增 migration `v2`（不改 `v1`）：
