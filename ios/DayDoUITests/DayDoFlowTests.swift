@@ -655,4 +655,110 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS '唯讀逾期任務'")).firstMatch.exists)
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS '回覆客戶報價信'")).firstMatch.exists)
     }
+
+    @MainActor
+    func testEditListHidesTransferOwnerInSyncMode() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDemo", "-DayDoDebugStub", "-DayDoScreen", "editlist"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        XCTAssertTrue(app.staticTexts["清單顏色"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH '成員數量'")).firstMatch.exists, app.debugDescription)
+        XCTAssertTrue(app.buttons["刪除清單"].exists, app.debugDescription)
+        XCTAssertFalse(
+            app.buttons.matching(NSPredicate(format: "label BEGINSWITH '轉移清單擁有者'")).firstMatch.exists,
+            "Sync mode should hide 轉移清單擁有者"
+        )
+    }
+
+    @MainActor
+    func testForcedSignOutSwitchAccountAlertCancelAndConfirm() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoDebugForcedSignOut"]
+        app.launch()
+
+        let googleButton = app.buttons["signIn.google"]
+        XCTAssertTrue(googleButton.waitForExistence(timeout: 5), app.debugDescription)
+        googleButton.tap()
+
+        let alertMsg = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS '這支手機上還有另一個帳號的資料。要清除這些資料並改用這個帳號登入嗎？'")
+        ).firstMatch
+        XCTAssertTrue(alertMsg.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS '其中 1 筆修改還沒同步，會一併刪除'")).firstMatch.exists,
+            app.debugDescription
+        )
+
+        app.buttons["取消"].tap()
+        XCTAssertTrue(alertMsg.waitForNonExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(googleButton.exists, "Cancel should keep user on sign-in screen")
+
+        googleButton.tap()
+        XCTAssertTrue(alertMsg.waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["清除並登入"].tap()
+
+        dismissNotificationPrompt()
+        XCTAssertTrue(app.buttons["開啟清單抽屜"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(
+            app.buttons.matching(NSPredicate(format: "label CONTAINS '舊帳號未同步任務'")).firstMatch.exists,
+            "Old account local data should be wiped after switching accounts"
+        )
+    }
+
+    @MainActor
+    func testTaskDetailPerFieldEditPreservesRemoteContentOnSave() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoDebugRemoteContentUpdate"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        let taskRow = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS '同步測試任務' AND NOT (label BEGINSWITH '完成：')")
+        ).firstMatch
+        XCTAssertTrue(taskRow.waitForExistence(timeout: 5), app.debugDescription)
+        taskRow.tap()
+
+        let titleField = app.descendants(matching: .any)["taskTitleField"]
+        let contentField = app.descendants(matching: .any)["taskContentField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(contentField.exists, app.debugDescription)
+        XCTAssertEqual(contentField.value as? String, "初始描述")
+
+        titleField.tap()
+        titleField.typeText("（已改）")
+
+        let checklistBtn = app.buttons["完成：觸發同步子任務"]
+        XCTAssertTrue(checklistBtn.waitForExistence(timeout: 3), app.debugDescription)
+        checklistBtn.tap()
+
+        let remoteContentArrived = NSPredicate { _, _ in
+            (contentField.value as? String) == "遠端更新後的描述"
+        }
+        let exp = XCTNSPredicateExpectation(predicate: remoteContentArrived, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [exp], timeout: 5), .completed, app.debugDescription)
+        XCTAssertTrue(((titleField.value as? String) ?? "").contains("（已改）"))
+
+        let saveBtn = app.buttons["儲存"]
+        XCTAssertTrue(saveBtn.isEnabled)
+        saveBtn.tap()
+        XCTAssertTrue(app.buttons["已儲存"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertEqual(contentField.value as? String, "遠端更新後的描述")
+
+        // Dismiss from the non-scrolling header and reopen to verify persisted state in SQLite.
+        let headerBtn = app.buttons["展開為全屏"]
+        let start = headerBtn.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 420)))
+        XCTAssertTrue(contentField.waitForNonExistence(timeout: 3), app.debugDescription)
+
+        let updatedRow = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS '（已改）' AND label CONTAINS '同步測試任務' AND NOT (label BEGINSWITH '完成：')")
+        ).firstMatch
+        XCTAssertTrue(updatedRow.waitForExistence(timeout: 5), app.debugDescription)
+        updatedRow.tap()
+        XCTAssertTrue(contentField.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertEqual(contentField.value as? String, "遠端更新後的描述")
+        XCTAssertTrue(((titleField.value as? String) ?? "").contains("（已改）"))
+    }
 }

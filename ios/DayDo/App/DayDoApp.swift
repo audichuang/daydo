@@ -217,6 +217,8 @@ enum DebugLaunch {
 #if DEBUG
 actor DebugStubTransport: SyncTransport {
     private var didPullSeed = false
+    private var sawChecklistPush = false
+    private var didPushRemoteContent = false
 
     func send(method: String, path: String, headers: [String: String], body: Data?) async throws -> SyncHTTPResponse {
         let nowMs = EpochMillis(Date().timeIntervalSince1970 * 1000)
@@ -234,12 +236,27 @@ actor DebugStubTransport: SyncTransport {
             ])
         }
 
+        if method == "POST" && path == "/auth/google" {
+            return try jsonResponse(200, [
+                "accessToken": "debug-access-2",
+                "refreshToken": "debug-refresh-2",
+                "user": ["id": "debug-user-2"],
+                "isNewAccount": true,
+                "hasData": false,
+                "meMemberId": NSNull(),
+                "inboxProjectId": NSNull(),
+            ])
+        }
+
         if method == "POST" && path == "/sync/push" {
             var results: [[String: Any]] = []
             if let body,
                let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
                let ops = payload["ops"] as? [[String: Any]] {
                 for op in ops {
+                    if let entity = op["entity"] as? String, entity == "checklistItem" {
+                        sawChecklistPush = true
+                    }
                     if let opId = op["opId"] as? String {
                         results.append(["opId": opId, "status": "applied"])
                     }
@@ -253,6 +270,112 @@ actor DebugStubTransport: SyncTransport {
 
         if method == "POST" && path == "/sync/pull" {
             let args = ProcessInfo.processInfo.arguments
+            let seedRemoteContent = args.contains("-DayDoDebugRemoteContentUpdate")
+            if seedRemoteContent && !didPullSeed {
+                didPullSeed = true
+                let today = Clock.system.today.description
+                let projectId = "debug-sync-proj-1"
+                let taskId = "debug-sync-task-1"
+                let itemId = "debug-sync-item-1"
+                return try jsonResponse(200, [
+                    "scopes": [[
+                        "scope": "u:debug-user",
+                        "rows": [
+                            [
+                                "entity": "project",
+                                "row": [
+                                    "id": projectId,
+                                    "name": "同步測試清單",
+                                    "color": "#4AA8E8",
+                                    "viewMode": "list",
+                                    "kind": "TASK",
+                                    "isInbox": false,
+                                    "ownerId": "debug-owner-1",
+                                    "sortKey": "z1",
+                                    "showInSmart": "all",
+                                    "notifyMode": "all",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["name": serverHLC],
+                                "serverSeq": 1,
+                            ],
+                            [
+                                "entity": "task",
+                                "row": [
+                                    "id": taskId,
+                                    "projectId": projectId,
+                                    "title": "同步測試任務",
+                                    "content": "初始描述",
+                                    "priority": 0,
+                                    "status": 0,
+                                    "startDay": today,
+                                    "reminders": [],
+                                    "tags": [],
+                                    "sortKey": "a0",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["title": serverHLC, "content": serverHLC, "schedule": serverHLC],
+                                "serverSeq": 2,
+                            ],
+                            [
+                                "entity": "checklistItem",
+                                "row": [
+                                    "id": itemId,
+                                    "taskId": taskId,
+                                    "title": "觸發同步子任務",
+                                    "status": 0,
+                                    "sortKey": "a0",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["title": serverHLC, "status": serverHLC],
+                                "serverSeq": 3,
+                            ],
+                        ],
+                        "cursor": 3,
+                        "hasMore": false,
+                    ]],
+                    "members": [],
+                ])
+            }
+            if seedRemoteContent && sawChecklistPush && !didPushRemoteContent {
+                didPushRemoteContent = true
+                let today = Clock.system.today.description
+                let futureHLC = HLC(ms: nowMs + 60_000, counter: 0, deviceId: "srv-other").description
+                return try jsonResponse(200, [
+                    "scopes": [[
+                        "scope": "u:debug-user",
+                        "rows": [[
+                            "entity": "task",
+                            "row": [
+                                "id": "debug-sync-task-1",
+                                "projectId": "debug-sync-proj-1",
+                                "title": "同步測試任務",
+                                "content": "遠端更新後的描述",
+                                "priority": 0,
+                                "status": 0,
+                                "startDay": today,
+                                "reminders": [],
+                                "tags": [],
+                                "sortKey": "a0",
+                                "createdAt": nowMs,
+                                "updatedAt": nowMs + 60_000,
+                            ],
+                            "clocks": [
+                                "title": serverHLC,
+                                "content": futureHLC,
+                                "schedule": serverHLC,
+                            ],
+                            "serverSeq": 4,
+                        ]],
+                        "cursor": 4,
+                        "hasMore": false,
+                    ]],
+                    "members": [],
+                ])
+            }
             let seedViewer = args.contains("-DayDoSeedViewerOverdue") || args.contains("-DayDoSeedViewerOverdueOnly")
             if seedViewer && !didPullSeed {
                 didPullSeed = true

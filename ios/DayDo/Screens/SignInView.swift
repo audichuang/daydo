@@ -15,6 +15,9 @@ struct SignInView: View {
 
     @State private var currentRawNonce: String?
     @State private var errorText: String?
+    @State private var pendingSwitchCredential: SyncAuthCredential?
+    @State private var pendingSwitchUnsyncedCount = 0
+    @State private var confirmSwitchAccount = false
 
     var body: some View {
         ZStack {
@@ -122,6 +125,24 @@ struct SignInView: View {
                 .card(18, color: Palette.card)
             }
         }
+        .alert("切換帳號？", isPresented: $confirmSwitchAccount) {
+            Button("取消", role: .cancel) {
+                pendingSwitchCredential = nil
+            }
+            Button("清除並登入", role: .destructive) {
+                guard let credential = pendingSwitchCredential else { return }
+                pendingSwitchCredential = nil
+                Task {
+                    await confirmAccountSwitch(with: credential)
+                }
+            }
+        } message: {
+            if pendingSwitchUnsyncedCount > 0 {
+                Text("這支手機上還有另一個帳號的資料。要清除這些資料並改用這個帳號登入嗎？\n其中 \(pendingSwitchUnsyncedCount) 筆修改還沒同步，會一併刪除")
+            } else {
+                Text("這支手機上還有另一個帳號的資料。要清除這些資料並改用這個帳號登入嗎？")
+            }
+        }
     }
 
     private func handleAppleResult(_ result: Result<ASAuthorization, Error>) {
@@ -150,6 +171,14 @@ struct SignInView: View {
 
     private func signInWithGoogle() {
         errorText = nil
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-DayDoDebugStub") {
+            Task {
+                await performSignIn(.google(idToken: "debug-google-token"))
+            }
+            return
+        }
+#endif
         guard let presenter = topViewController() else {
             errorText = "無法開啟 Google 登入視窗。"
             return
@@ -183,8 +212,28 @@ struct SignInView: View {
         do {
             try await model.signIn(with: credential)
         } catch {
+            if isDifferentUserError(error) {
+                pendingSwitchCredential = credential
+                pendingSwitchUnsyncedCount = await model.unsyncedChangeCount()
+                confirmSwitchAccount = true
+                return
+            }
             errorText = error.localizedDescription
         }
+    }
+
+    private func confirmAccountSwitch(with credential: SyncAuthCredential) async {
+        errorText = nil
+        do {
+            try await model.replaceAccountAndSignIn(with: credential)
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+
+    private func isDifferentUserError(_ error: Error) -> Bool {
+        guard case let SyncError.protocolError(message) = error else { return false }
+        return message.contains("Already signed in as a different user")
     }
 
     private func topViewController() -> UIViewController? {

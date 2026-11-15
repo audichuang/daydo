@@ -183,6 +183,12 @@ final class AppModel {
             if ProcessInfo.processInfo.arguments.contains("-DayDoDemo") {
                 try? await DemoData.load(into: api)
             }
+            if ProcessInfo.processInfo.arguments.contains("-DayDoDebugForcedSignOut") {
+                _ = try? await api.createTask(CreateTaskInput(title: "舊帳號未同步任務", start: today.description, allDay: true))
+                tokenStore.accessToken = nil
+                tokenStore.refreshToken = nil
+                await handleSyncError(.signedOut)
+            }
         }
 #endif
 
@@ -313,6 +319,22 @@ final class AppModel {
                 return
             }
         }
+        resetLocalUIState()
+    }
+
+    func replaceAccountAndSignIn(with credential: SyncAuthCredential) async throws {
+        isSigningIn = true
+        defer { isSigningIn = false }
+        stopSyncObservers()
+        GIDSignIn.sharedInstance.signOut()
+        if syncEnabled {
+            try await syncEngine.signOut()
+        }
+        resetLocalUIState()
+        try await signIn(with: credential)
+    }
+
+    private func resetLocalUIState() {
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
         projects = []
         folders = []

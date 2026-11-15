@@ -148,14 +148,15 @@ struct EditListSheet: View {
                             .buttonStyle(.plain)
                             .accessibilityLabel("管理清單成員")
 
+                            let canTransferOwner = isOwner && !model.syncEnabled
                             Menu {
                                 Button("有變更時通知") { notifyMode = "all" }
                                 Button("不通知") { notifyMode = "none" }
                             } label: {
-                                rowLabel("提醒與通知", value: notifyMode == "all" ? "有變更時通知" : "不通知", last: !isOwner)
+                                rowLabel("提醒與通知", value: notifyMode == "all" ? "有變更時通知" : "不通知", last: !canTransferOwner)
                             }
 
-                            if isOwner {
+                            if canTransferOwner {
                                 Button { showTransferOwner = true } label: {
                                     rowLabel("轉移清單擁有者", value: "", last: true)
                                 }

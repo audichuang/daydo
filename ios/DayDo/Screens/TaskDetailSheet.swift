@@ -16,7 +16,9 @@ struct TaskDetailSheet: View {
 
     @State private var task: TodoTask?
     @State private var title = ""
+    @State private var titleBaseline = ""
     @State private var content = ""
+    @State private var contentBaseline = ""
     @State private var detent: PresentationDetent = .fraction(0.56)
     @State private var page: Page = .detail
     @State private var draft = DateDraft()
@@ -27,12 +29,16 @@ struct TaskDetailSheet: View {
     @State private var importing = false
     @State private var preview: URL?
     @State private var savedFlash = false
+    @State private var isSavingText = false
     @FocusState private var focus: Field?
     enum Field { case title, content, item }
 
+    private var titleDirty: Bool { title != titleBaseline }
+    private var contentDirty: Bool { content != contentBaseline }
+
     var dirty: Bool {
         guard let task, !model.isViewer(projectId: task.projectId) else { return false }
-        return title != task.title || content != task.content
+        return titleDirty || contentDirty
     }
 
     var body: some View {
@@ -93,6 +99,7 @@ struct TaskDetailSheet: View {
                                 .lineLimit(2...30)
                                 .focused($focus, equals: .content)
                                 .disabled(readOnly)
+                                .accessibilityIdentifier("taskContentField")
                         }
                         checklist(task, readOnly: readOnly)
                         attachments(task, readOnly: readOnly)
@@ -402,7 +409,6 @@ struct TaskDetailSheet: View {
             return
         }
         guard !Task.isCancelled else { return }
-        let wasDirty = dirty
         let first = task == nil
         task = t
         if first, let p = UserDefaults.standard.string(forKey: "debugDetailPage") {
@@ -410,18 +416,36 @@ struct TaskDetailSheet: View {
             openDate(t)
             if p == "time" { page = .time }
         }
-        if !wasDirty {
+        if first || !titleDirty {
             title = t.title
+            titleBaseline = t.title
+        }
+        if first || !contentDirty {
             content = t.content
+            contentBaseline = t.content
         }
     }
 
     func saveText() {
-        guard let task, dirty else { return }
+        guard let task, !isSavingText else { return }
+        let saveTitle = titleDirty
+        let saveContent = contentDirty
+        guard saveTitle || saveContent, !model.isViewer(projectId: task.projectId) else { return }
         let t = title, c = content
+        var input = UpdateTaskInput(taskId: task.id)
+        if saveTitle { input.title = t }
+        if saveContent { input.content = c }
+        let finalInput = input
         focus = nil
-        model.updateTask(task.id) { $0.title = t; $0.content = c }
-        savedFlash = true
+        isSavingText = true
+        Task {
+            defer { isSavingText = false }
+            if await model.perform({ try await $0.updateTask(finalInput) }) != nil {
+                if saveTitle { titleBaseline = t }
+                if saveContent { contentBaseline = c }
+                savedFlash = true
+            }
+        }
     }
 
     func toggleDone(_ task: TodoTask) {
