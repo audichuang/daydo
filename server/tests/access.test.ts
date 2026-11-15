@@ -1,7 +1,11 @@
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import type { CloudContext } from 'void';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createAccessMiddleware, verifyAccessJwt } from '../src/auth/access';
+
+vi.mock('void/env', () => ({
+  env: { MCP_HOST: 'daydo-mcp.audichuang.app' },
+}));
 
 const TEAM_DOMAIN = 'daydo-test.cloudflareaccess.com';
 const AUD = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -316,6 +320,30 @@ describe('Cloudflare Access verification middleware', () => {
         nextCalled = true;
       },
     );
+    expect(nextCalled).toBe(false);
+    expect(apiRes?.status).toBe(403);
+  });
+
+  it('reads MCP_HOST from env when getMcpHost is not injected', async () => {
+    const middleware = createAccessMiddleware({
+      getConfig: () => ({ teamDomain: TEAM_DOMAIN, aud: AUD }),
+      jwksResolver: () => {
+        throw new Error('should not be called for the MCP host');
+      },
+      isDev: false,
+    });
+
+    let nextCalled = false;
+    const res = await middleware(makeMockContext({}, `https://${MCP_HOST}/`), async () => {
+      nextCalled = true;
+    });
+    expect(res).toBeUndefined();
+    expect(nextCalled).toBe(true);
+
+    nextCalled = false;
+    const apiRes = await middleware(makeMockContext({}), async () => {
+      nextCalled = true;
+    });
     expect(nextCalled).toBe(false);
     expect(apiRes?.status).toBe(403);
   });
