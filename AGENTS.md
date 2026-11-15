@@ -46,7 +46,7 @@ cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
   -destination 'platform=iOS Simulator,id=<DD 模擬器 UDID>' CODE_SIGNING_ALLOWED=NO   # UI 流程測試
 ```
 
-啟動參數（Debug 用）：`-DayDoReset` 清空資料與偏好、`-DayDoDemo` 載入設計稿範例資料、`-DayDoScreen <drawer|detail|date|calendar|events|week|editlist|compose|settings|search>` 直接開到某畫面。
+啟動參數（Debug 用）：`-DayDoSkipLogin` 跳過登入、只用本機資料（UI 測試都要帶）；`-DayDoReset` 清空資料與偏好、`-DayDoDemo` 載入設計稿範例資料、`-DayDoScreen <drawer|detail|date|calendar|events|week|editlist|compose|settings|search>` 直接開到某畫面。
 
 ## 模擬器
 
@@ -61,6 +61,7 @@ cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
 - App Store Connect app id `6834936769`，bundle id `com.audichuang.daydo`，team `37HFR5V2JJ`。
 - 群組：內部「自己」（使用者本人）；外部「家人」（使用者與家人，`tf distribute` 一律帶 `--group`）。新 build 只發給「自己」；要發給「家人」必須使用者明說這版已穩定。外部群組每個版本的第一個 build 要過 Apple 的 Beta App Review（審查聯絡資訊與測試說明已在 App Store Connect 設好）。`ios/ExportOptions.plist` 不能加回 `testFlightInternalTestingOnly`，加了上傳的 build 就不能送外部測試。
 - 家人用 Google 登入前，要把他的 Gmail 加進 Google Cloud 專案 `daydo-514804` 的 OAuth 測試使用者（測試模式）。
+- App 連正式環境用的 Access service token 在打包時由 `ios/scripts/gen-secrets.sh` 從 1Password 寫進 `ios/Secrets.xcconfig`（gitignored），`testflight.sh` 會自動跑；模擬器要連正式環境就先手動跑一次。
 - 沒有 Xcode Cloud，只有手動上傳：
 
 ```bash
