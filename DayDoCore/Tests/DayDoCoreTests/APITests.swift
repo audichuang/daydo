@@ -388,7 +388,7 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         let active = try await api.createTask(CreateTaskInput(projectId: work.id, title: "未完成任務"))
         _ = try await api.addChecklistItem(taskId: active.id, title: "步驟一")
         let payload = Data("contract-bytes".utf8)
-        let srcAtt = try await api.addAttachment(taskId: active.id, fileName: "spec.txt", data: payload, mimeType: "text/plain", originalPath: nil)
+        let srcAtt = try await api.uploadAttachment(taskId: active.id, fileName: "spec.txt", data: payload, mimeType: "text/plain", originalPath: nil)
         let done = try await api.createTask(CreateTaskInput(projectId: work.id, title: "已完成任務"))
         _ = try await api.completeTask(id: done.id, ifUpdatedAt: done.updatedAt)
 

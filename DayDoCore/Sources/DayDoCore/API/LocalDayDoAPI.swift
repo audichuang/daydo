@@ -1126,7 +1126,7 @@ extension LocalDayDoAPI {
         }
     }
 
-    public func addAttachment(taskId: String, fileName: String, data: Data, mimeType: String, originalPath: String?) async throws -> Attachment {
+    public func uploadAttachment(taskId: String, fileName: String, data: Data, mimeType: String, originalPath: String?) async throws -> Attachment {
         let id = ID.make()
         let safeName = fileName.replacingOccurrences(of: "/", with: "_")
         let rel = "\(id)/\(safeName)"
