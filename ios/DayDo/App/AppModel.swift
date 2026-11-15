@@ -36,11 +36,6 @@ struct PendingInvitePrompt: Identifiable, Equatable {
     fileprivate let requestId = UUID()
 }
 
-extension Project {
-    var isViewer: Bool { myRole == "viewer" }
-    var isOwner: Bool { myRole == "owner" }
-}
-
 /// App-wide state. Views read cached lookups (projects, tags, counts) from
 /// here and send every write through `api` (the same `DayDoAPI` contract the
 /// sync server and MCP will use).

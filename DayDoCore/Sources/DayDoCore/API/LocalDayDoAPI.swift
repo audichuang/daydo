@@ -152,6 +152,32 @@ public final class LocalDayDoAPI: DayDoAPI {
         return "owner"
     }
 
+    enum ProjectPermission {
+        case writeTasks
+        case owner
+    }
+
+    func canPerform(_ permission: ProjectPermission, in db: Database, project p: ProjectRecord) throws -> Bool {
+        let role = try resolveMyRole(db, project: p)
+        switch permission {
+        case .writeTasks:
+            return role == "owner" || role == "editor"
+        case .owner:
+            return role == "owner"
+        }
+    }
+
+    func requirePermission(_ permission: ProjectPermission, in db: Database, project p: ProjectRecord) throws {
+        guard try canPerform(permission, in: db, project: p) else {
+            switch permission {
+            case .writeTasks:
+                throw DayDoError.forbidden("沒有權限編輯此清單")
+            case .owner:
+                throw DayDoError.forbidden("只有清單擁有者可以執行此操作")
+            }
+        }
+    }
+
     func resolveUserId(_ db: Database, member: MemberRecord) throws -> String? {
         if let mapped = try String.fetchOne(db, sql: "SELECT userId FROM memberUser WHERE memberId = ?", arguments: [member.id]),
            !mapped.isEmpty {
@@ -378,6 +404,7 @@ extension LocalDayDoAPI {
         let now = now()
         return try await writer.write { db in
             var p = try self.projectRecord(db, input.projectId)
+            try self.requirePermission(input.archived != nil ? .owner : .writeTasks, in: db, project: p)
             if let name = input.name {
                 let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !n.isEmpty else { throw DayDoError.invalid("Project name is required") }
@@ -413,6 +440,7 @@ extension LocalDayDoAPI {
         let now = now()
         return try await writer.write { db in
             var p = try self.projectRecord(db, id)
+            try self.requirePermission(.writeTasks, in: db, project: p)
             if p.isInbox { throw DayDoError.invalid("The inbox cannot be reordered") }
             let siblings = try ProjectRecord
                 .filter(Column("deletedAt") == nil && Column("archivedAt") == nil && Column("isInbox") == false && Column("folderId") == p.folderId && Column("id") != p.id)
@@ -452,6 +480,7 @@ extension LocalDayDoAPI {
         let now = now()
         try await writer.write { db in
             var p = try self.projectRecord(db, id)
+            try self.requirePermission(.owner, in: db, project: p)
             if p.isInbox { throw DayDoError.invalid("The inbox cannot be deleted") }
             for var t in try TaskRecord.filter(Column("projectId") == id && Column("deletedAt") == nil).fetchAll(db) {
                 t.deletedAt = now
@@ -559,6 +588,7 @@ extension LocalDayDoAPI {
         let now = now()
         return try await writer.write { db in
             var p = try self.projectRecord(db, projectId)
+            try self.requirePermission(.owner, in: db, project: p)
             if p.isInbox { throw DayDoError.invalid("The inbox owner cannot be transferred") }
             guard var targetPM = try ProjectMemberRecord
                 .filter(Column("projectId") == projectId && Column("memberId") == toMemberId && Column("deletedAt") == nil)
@@ -617,6 +647,7 @@ extension LocalDayDoAPI {
         let now = now()
         try await writer.write { db in
             let p = try self.projectRecord(db, projectId)
+            try self.requirePermission(.owner, in: db, project: p)
             if p.isInbox { throw DayDoError.invalid("The inbox has no shared members") }
             if memberId == p.ownerId { throw DayDoError.invalid("Cannot change the project owner's role") }
             guard var pm = try ProjectMemberRecord
@@ -634,6 +665,10 @@ extension LocalDayDoAPI {
         let now = now()
         try await writer.write { db in
             let p = try self.projectRecord(db, projectId)
+            let meId = try self.me(db).id
+            if memberId != meId {
+                try self.requirePermission(.owner, in: db, project: p)
+            }
             if p.isInbox { throw DayDoError.invalid("The inbox has no shared members") }
             if memberId == p.ownerId { throw DayDoError.invalid("Cannot remove the project owner") }
             guard var pm = try ProjectMemberRecord
@@ -669,6 +704,7 @@ extension LocalDayDoAPI {
         let now = now()
         return try await writer.write { db in
             let p = try self.projectRecord(db, projectId)
+            try self.requirePermission(.owner, in: db, project: p)
             if p.isInbox { throw DayDoError.invalid("The inbox cannot be shared") }
             let dup = try ProjectInviteRecord
                 .filter(Column("projectId") == projectId && Column("email") == normalized && Column("status") == "pending" && Column("deletedAt") == nil)
@@ -697,6 +733,8 @@ extension LocalDayDoAPI {
             guard var rec = try ProjectInviteRecord.fetchOne(db, key: id), rec.deletedAt == nil else {
                 throw DayDoError.notFound("project_invite", id)
             }
+            let p = try self.projectRecord(db, rec.projectId)
+            try self.requirePermission(.owner, in: db, project: p)
             rec.deletedAt = now
             rec.updatedAt = now
             try Outbox.save(rec, entity: "projectInvite", id: rec.id, in: db, now: now)
@@ -712,6 +750,8 @@ extension LocalDayDoAPI {
             guard var rec = try ProjectInviteRecord.fetchOne(db, key: id), rec.deletedAt == nil else {
                 throw DayDoError.notFound("project_invite", id)
             }
+            let p = try self.projectRecord(db, rec.projectId)
+            try self.requirePermission(.owner, in: db, project: p)
             rec.role = role
             rec.updatedAt = now
             try Outbox.save(rec, entity: "projectInvite", id: rec.id, in: db, now: now)
@@ -913,7 +953,8 @@ extension LocalDayDoAPI {
         let now = now()
         return try await writer.write { db in
             let pid = try input.projectId ?? self.inbox(db).id
-            _ = try self.projectRecord(db, pid)
+            let p = try self.projectRecord(db, pid)
+            try self.requirePermission(.writeTasks, in: db, project: p)
             if let a = input.assigneeId, try MemberRecord.fetchOne(db, key: a) == nil { throw DayDoError.notFound("member", a) }
             let first = try String.fetchOne(db, sql: "SELECT MIN(sortKey) FROM task WHERE projectId = ?", arguments: [pid])
             let tags = try self.normalizeTags(db, input.tags ?? [], now: now)
@@ -939,7 +980,13 @@ extension LocalDayDoAPI {
         let now = now()
         return try await writer.write { db in
             var t = try self.taskRecord(db, input.taskId)
-            if let pid = input.projectId { _ = try self.projectRecord(db, pid); t.projectId = pid }
+            let srcProject = try self.projectRecord(db, t.projectId)
+            try self.requirePermission(.writeTasks, in: db, project: srcProject)
+            if let pid = input.projectId {
+                let dstProject = try self.projectRecord(db, pid)
+                try self.requirePermission(.writeTasks, in: db, project: dstProject)
+                t.projectId = pid
+            }
             if let title = input.title {
                 let s = title.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !s.isEmpty else { throw DayDoError.invalid("title cannot be empty") }
@@ -1022,6 +1069,8 @@ extension LocalDayDoAPI {
         let now = now()
         return try await writer.write { db in
             var t = try self.taskRecord(db, id)
+            let p = try self.projectRecord(db, t.projectId)
+            try self.requirePermission(.writeTasks, in: db, project: p)
             if t.status == 2 { return try self.task(db, t) }
             if let expected = ifUpdatedAt, t.updatedAt != expected {
                 return try self.task(db, t)
@@ -1088,6 +1137,8 @@ extension LocalDayDoAPI {
         let now = now()
         return try await writer.write { db in
             var t = try self.taskRecord(db, id)
+            let p = try self.projectRecord(db, t.projectId)
+            try self.requirePermission(.writeTasks, in: db, project: p)
             t.status = 0
             t.completedAt = nil
             t.updatedAt = now
@@ -1100,6 +1151,8 @@ extension LocalDayDoAPI {
         let now = now()
         try await writer.write { db in
             var t = try self.taskRecord(db, id)
+            let p = try self.projectRecord(db, t.projectId)
+            try self.requirePermission(.writeTasks, in: db, project: p)
             t.deletedAt = now
             t.updatedAt = now
             try self.saveTask(db, t)
@@ -1110,7 +1163,18 @@ extension LocalDayDoAPI {
         let now = now()
         return try await writer.write { db in
             var t = try self.taskRecord(db, id, includeDeleted: true)
-            if try ProjectRecord.fetchOne(db, key: t.projectId)?.deletedAt != nil { t.projectId = try self.inbox(db).id }
+            if let orig = try ProjectRecord.fetchOne(db, key: t.projectId) {
+                try self.requirePermission(.writeTasks, in: db, project: orig)
+                if orig.deletedAt != nil {
+                    let inbox = try self.inbox(db)
+                    try self.requirePermission(.writeTasks, in: db, project: inbox)
+                    t.projectId = inbox.id
+                }
+            } else {
+                let inbox = try self.inbox(db)
+                try self.requirePermission(.writeTasks, in: db, project: inbox)
+                t.projectId = inbox.id
+            }
             t.deletedAt = nil
             t.updatedAt = now
             try self.saveTask(db, t)
@@ -1122,6 +1186,9 @@ extension LocalDayDoAPI {
         let now = now()
         try await writer.write { db in
             let t = try self.taskRecord(db, id, includeDeleted: true)
+            if let p = try ProjectRecord.fetchOne(db, key: t.projectId) {
+                try self.requirePermission(.writeTasks, in: db, project: p)
+            }
             _ = try t.delete(db)
             try self.recordDelete(db, entity: "task", id: id)
             try PurgedId.record(entity: "task", id: id, purgedAt: now, in: db)
@@ -1141,7 +1208,22 @@ extension LocalDayDoAPI {
         let today = today
         return try await writer.write { db in
             var n = 0
+            var projectCache: [String: ProjectRecord] = [:]
+            var permissionCache: [String: Bool] = [:]
             for var t in try TaskRecord.filter(Column("deletedAt") == nil && Column("status") == 0 && idSet.contains(Column("id"))).fetchAll(db) {
+                let canWrite: Bool
+                if let cached = permissionCache[t.projectId] {
+                    canWrite = cached
+                } else {
+                    if let p = try projectCache[t.projectId] ?? ProjectRecord.fetchOne(db, key: t.projectId), p.deletedAt == nil {
+                        projectCache[t.projectId] = p
+                        canWrite = try self.canPerform(.writeTasks, in: db, project: p)
+                    } else {
+                        canWrite = false
+                    }
+                    permissionCache[t.projectId] = canWrite
+                }
+                guard canWrite else { continue }
                 guard let s = t.schedule?.localized(to: self.clock.timeZone()), s.lastDay < today else { continue }
                 // Keep the shape; land the last day on today.
                 t.schedule = s.moved(to: today.adding(days: -s.startDay.days(until: s.lastDay)))
@@ -1162,7 +1244,9 @@ extension LocalDayDoAPI {
         guard !title.isEmpty else { throw DayDoError.invalid("title is required") }
         let now = now()
         return try await writer.write { db in
-            _ = try self.taskRecord(db, taskId)
+            let t = try self.taskRecord(db, taskId)
+            let p = try self.projectRecord(db, t.projectId)
+            try self.requirePermission(.writeTasks, in: db, project: p)
             let last = try String.fetchOne(db, sql: "SELECT MAX(sortKey) FROM checklistItem WHERE taskId = ?", arguments: [taskId])
             let item = ChecklistItemRecord(id: ID.make(), taskId: taskId, title: title, status: 0, sortKey: SortKey.after(last), createdAt: now, updatedAt: now)
             try Outbox.save(item, entity: "checklistItem", id: item.id, in: db, now: now)
@@ -1174,6 +1258,9 @@ extension LocalDayDoAPI {
         let now = now()
         return try await writer.write { db in
             guard var item = try ChecklistItemRecord.fetchOne(db, key: id), item.deletedAt == nil else { throw DayDoError.notFound("checklist_item", id) }
+            let t = try self.taskRecord(db, item.taskId)
+            let p = try self.projectRecord(db, t.projectId)
+            try self.requirePermission(.writeTasks, in: db, project: p)
             if let title { item.title = title }
             if let done { item.status = done ? 1 : 0 }
             item.updatedAt = now
@@ -1186,6 +1273,9 @@ extension LocalDayDoAPI {
         let now = now()
         try await writer.write { db in
             guard var item = try ChecklistItemRecord.fetchOne(db, key: id), item.deletedAt == nil else { throw DayDoError.notFound("checklist_item", id) }
+            let t = try self.taskRecord(db, item.taskId)
+            let p = try self.projectRecord(db, t.projectId)
+            try self.requirePermission(.writeTasks, in: db, project: p)
             item.deletedAt = now
             item.updatedAt = now
             try Outbox.save(item, entity: "checklistItem", id: item.id, in: db, now: now)
@@ -1255,7 +1345,9 @@ extension LocalDayDoAPI {
         let now = now()
         do {
             return try await writer.write { db in
-                _ = try self.taskRecord(db, taskId)
+                let t = try self.taskRecord(db, taskId)
+                let p = try self.projectRecord(db, t.projectId)
+                try self.requirePermission(.writeTasks, in: db, project: p)
                 let a = AttachmentRecord(id: id, taskId: taskId, fileName: safeName, size: Int64(data.count), mimeType: mimeType,
                                          localPath: rel, originalPath: originalPath, createdAt: now, updatedAt: now)
                 try Outbox.save(a, entity: "attachment", id: id, in: db, now: now)
@@ -1271,6 +1363,9 @@ extension LocalDayDoAPI {
         let now = now()
         let rel: String? = try await writer.write { db in
             guard var a = try AttachmentRecord.fetchOne(db, key: id), a.deletedAt == nil else { throw DayDoError.notFound("attachment", id) }
+            let t = try self.taskRecord(db, a.taskId)
+            let p = try self.projectRecord(db, t.projectId)
+            try self.requirePermission(.writeTasks, in: db, project: p)
             a.deletedAt = now
             a.updatedAt = now
             try Outbox.save(a, entity: "attachment", id: id, in: db, now: now)

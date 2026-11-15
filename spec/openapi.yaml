@@ -95,10 +95,15 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/UpdateProjectInput" } } } }
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: delete_project
       description: Soft-deletes the list and moves its tasks to the trash. The inbox cannot be deleted.
-      responses: { "204": { description: Deleted } }
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /projects/{project_id}/data:
     parameters: [{ $ref: "#/components/parameters/ProjectId" }]
     get:
@@ -126,6 +131,7 @@ paths:
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
         "400": { $ref: "#/components/responses/Invalid" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
   /projects/{project_id}/duplicate:
     parameters: [{ $ref: "#/components/parameters/ProjectId" }]
@@ -152,6 +158,7 @@ paths:
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
         "400": { $ref: "#/components/responses/Invalid" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
   /projects/{project_id}/members:
     parameters: [{ $ref: "#/components/parameters/ProjectId" }]
@@ -179,12 +186,14 @@ paths:
       responses:
         "204": { description: Updated }
         "400": { $ref: "#/components/responses/Invalid" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: remove_member
       responses:
         "204": { description: Removed }
         "400": { $ref: "#/components/responses/Invalid" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
   /projects/{project_id}/invites:
     parameters: [{ $ref: "#/components/parameters/ProjectId" }]
@@ -209,6 +218,7 @@ paths:
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ProjectInvite" } } } }
         "400": { $ref: "#/components/responses/Invalid" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
   /invites/{invite_id}:
     parameters: [{ $ref: "#/components/parameters/InviteId" }]
@@ -226,11 +236,13 @@ paths:
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ProjectInvite" } } } }
         "400": { $ref: "#/components/responses/Invalid" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: cancel_invite
       responses:
         "204": { description: Cancelled }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
   /tasks:
     get:
@@ -250,6 +262,7 @@ paths:
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
         "400": { $ref: "#/components/responses/Invalid" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /tasks/sections:
     get:
       operationId: list_sections
@@ -313,10 +326,13 @@ paths:
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
         "400": { $ref: "#/components/responses/Invalid" }
+        "403": { $ref: "#/components/responses/Forbidden" }
     delete:
       operationId: delete_task
       description: Moves the task to the trash (soft delete).
-      responses: { "204": { description: Deleted } }
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /tasks/{task_id}/complete:
     parameters: [{ $ref: "#/components/parameters/TaskId" }]
     post:
@@ -332,24 +348,29 @@ paths:
                 if_updated_at: { type: integer, description: Optimistic-concurrency token; if the stored updated_at differs, returns the task unchanged. }
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /tasks/{task_id}/uncomplete:
     parameters: [{ $ref: "#/components/parameters/TaskId" }]
     post:
       operationId: uncomplete_task
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /tasks/{task_id}/restore:
     parameters: [{ $ref: "#/components/parameters/TaskId" }]
     post:
       operationId: restore_task
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /tasks/{task_id}/purge:
     parameters: [{ $ref: "#/components/parameters/TaskId" }]
     delete:
       operationId: purge_task
       description: Permanently deletes a task (normally from the trash).
-      responses: { "204": { description: Deleted } }
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /tasks/{task_id}/move:
     parameters: [{ $ref: "#/components/parameters/TaskId" }]
     post:
@@ -357,6 +378,7 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [to_project_id], properties: { to_project_id: { type: string }, from_project_id: { type: string, description: Optional; accepted for ticktick-mcp compatibility } } } } } }
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /tasks/{task_id}/items:
     parameters: [{ $ref: "#/components/parameters/TaskId" }]
     post:
@@ -364,6 +386,7 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [title], properties: { title: { type: string } } } } } }
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ChecklistItem" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /items/{item_id}:
     parameters: [{ name: item_id, in: path, required: true, schema: { type: string } }]
     patch:
@@ -371,9 +394,12 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { title: { type: string }, done: { type: boolean } } } } } }
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ChecklistItem" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
     delete:
       operationId: delete_checklist_item
-      responses: { "204": { description: Deleted } }
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /tasks/{task_id}/attachments:
     parameters: [{ $ref: "#/components/parameters/TaskId" }]
     post:
@@ -392,11 +418,14 @@ paths:
                 original_path: { type: string }
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Attachment" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /attachments/{attachment_id}:
     parameters: [{ name: attachment_id, in: path, required: true, schema: { type: string } }]
     delete:
       operationId: delete_attachment
-      responses: { "204": { description: Deleted } }
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /tags:
     get:
       operationId: list_tags
@@ -430,6 +459,9 @@ components:
   responses:
     NotFound:
       description: Entity not found
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Forbidden:
+      description: Caller lacks the required list role permission
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     Invalid:
       description: Validation failed (e.g. reminders without a date, unknown time zone, due before start)

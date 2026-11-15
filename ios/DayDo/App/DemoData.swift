@@ -11,7 +11,7 @@ enum DemoData {
 
         var projects = try await api.listProjects(includeArchived: false)
         func list(_ name: String, _ color: String, folder: String?) async throws -> String {
-            if var p = projects.first(where: { $0.name == name }) {
+            if var p = projects.first(where: { $0.name == name && $0.canEditTasks }) {
                 if p.folderId != folder {
                     var u = UpdateProjectInput(projectId: p.id)
                     u.folderId = folder.map { .set($0) } ?? .clear

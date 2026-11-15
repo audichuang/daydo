@@ -83,6 +83,9 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
     public var updatedAt: EpochMillis
 
     public var isShared: Bool { memberIds.count > 1 }
+    public var isViewer: Bool { myRole == "viewer" }
+    public var isOwner: Bool { myRole == "owner" }
+    public var canEditTasks: Bool { myRole == "owner" || myRole == "editor" }
 
     public init(
         id: String,
@@ -358,11 +361,13 @@ public struct ScheduledReminder: Hashable, Sendable {
 public enum DayDoError: Error, LocalizedError, Equatable {
     case notFound(String, String)
     case invalid(String)
+    case forbidden(String)
 
     public var errorDescription: String? {
         switch self {
         case let .notFound(entity, id): return "\(entity) not found: \(id)"
         case let .invalid(msg): return msg
+        case let .forbidden(msg): return msg
         }
     }
 }

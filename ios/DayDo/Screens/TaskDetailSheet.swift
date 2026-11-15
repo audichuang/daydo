@@ -611,20 +611,8 @@ struct TaskDetailContent: View {
     func commitDate() {
         guard let task else { return }
         let d = draft
-        let initial = DateDraft(task: task, today: model.today)
-        let scheduleUnchanged = d.day == initial.day && d.endDay == initial.endDay
-            && d.allDay == initial.allDay && d.start == initial.start
-            && d.end == initial.end && d.timeZone == initial.timeZone
         model.updateTask(task.id) { u in
-            if !scheduleUnchanged {
-                u.schedule = d.schedule.map { .set($0) } ?? .clear
-            }
-            if d.schedule != nil {
-                if d.reminders != initial.reminders { u.reminders = d.reminders }
-                if d.repeatRule != initial.repeatRule {
-                    u.repeat = d.repeatRule.map { .set($0) } ?? .clear
-                }
-            }
+            d.applyChanges(from: task, to: &u)
         }
         page = .detail
     }
@@ -665,44 +653,4 @@ struct TaskDetailContent: View {
         default: Color(hex: "#C9CFCC")
         }
     }
-}
-
-/// Editable copy of a task's date settings used by the date panel and the
-/// time block editor until 確定 commits it.
-struct DateDraft: Equatable {
-    var day: LocalDay?
-    var endDay: LocalDay?
-    var allDay = true
-    var start = 9 * 60
-    /// Minutes from `day` 00:00; may exceed 1440 (ends next day).
-    var end = 10 * 60
-    var timeZone: String?
-    var reminders: [String] = []
-    var repeatRule: String?
-
-    init() {}
-
-    init(task: TodoTask, today: LocalDay) {
-        reminders = task.reminders
-        repeatRule = task.repeat
-        guard let s = task.schedule else { return }
-        day = s.startDay
-        allDay = s.isAllDay
-        timeZone = s.timeZone
-        if s.isAllDay {
-            endDay = s.isMultiDay ? s.lastDay : nil
-        } else {
-            start = s.startMinute!
-            end = s.endOffsetMinutes ?? start
-        }
-    }
-
-    var schedule: Schedule? {
-        guard let day else { return nil }
-        if allDay { return .allDay(day, through: endDay) }
-        if end <= start { return Schedule(startDay: day, startMinute: start, timeZone: timeZone) }
-        return Schedule(startDay: day, startMinute: start, endDay: day.adding(days: end / 1440), endMinute: end % 1440, timeZone: timeZone)
-    }
-
-    var duration: Int { end - start }
 }
