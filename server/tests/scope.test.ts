@@ -906,3 +906,298 @@ describe('Scope DO T5a rules', () => {
     expect(pullA.scopes[0].rows.map((r) => r.entity)).toEqual(['tag']);
   });
 });
+
+function serializeDbBatch(db: Harness['db']): void {
+  const origBatch = db.batch.bind(db);
+  let batchQueue: Promise<unknown> = Promise.resolve();
+  db.batch = ((stmts: Parameters<typeof origBatch>[0]) => {
+    const next = batchQueue.then(() => origBatch(stmts));
+    batchQueue = next.catch(() => {});
+    return next;
+  }) as unknown as typeof db.batch;
+}
+
+describe('Scope DO T5a regression fixes', () => {
+  it('Finding 1: recovers/writes owner membership when Batch 3 fails transiently on project creation', async () => {
+    const h = createHarness();
+    const userId = 'u-f1';
+    await h.db.insert(schema.user).values({ id: userId, createdAt: 1_700_000_000_000 });
+
+    const origBatch = h.db.batch.bind(h.db);
+    let batchCount = 0;
+    h.db.batch = (async (stmts: Parameters<typeof origBatch>[0]) => {
+      batchCount += 1;
+      if (batchCount === 3) {
+        throw new Error('Simulated transient D1 batch 3 failure');
+      }
+      return origBatch(stmts);
+    }) as unknown as typeof h.db.batch;
+
+    const projOp = makeProjectOp({
+      opId: 'op-p-f1',
+      hlc: '1700000000001:0000:dev-a',
+      id: 'p-f1',
+      name: 'My List',
+    });
+
+    await expect(h.push(userId, 'dev-a', [projOp])).rejects.toThrow(
+      'Simulated transient D1 batch 3 failure',
+    );
+    h.db.batch = origBatch;
+
+    const homeRow = h.sqlite
+      .prepare('SELECT * FROM entityHome WHERE entity = ? AND entityId = ?')
+      .get('project', 'p-f1') as { scope: string } | undefined;
+    expect(homeRow?.scope).toBe(`u:${userId}`);
+
+    // Retry with same opId (twice) and then a new opId updating the list.
+    const retry1 = await h.push(userId, 'dev-a', [projOp]);
+    expect(retry1.results[0].status).toBe('applied');
+
+    const retry2 = await h.push(userId, 'dev-a', [projOp]);
+    expect(retry2.results[0].status).toBe('applied');
+
+    const updateRes = await h.push(userId, 'dev-a', [
+      {
+        opId: 'op-p-f1-rename',
+        hlc: '1700000000002:0000:dev-a',
+        entity: 'project',
+        entityId: 'p-f1',
+        op: 'upsert',
+        fields: ['name'],
+        row: { id: 'p-f1', name: 'My List Renamed' },
+      },
+    ]);
+    expect(updateRes.results[0].status).toBe('applied');
+
+    const memberships = h.sqlite
+      .prepare('SELECT role, removedAt FROM projectMembership WHERE projectId = ? AND userId = ?')
+      .all('p-f1', userId) as Array<{ role: string; removedAt: number | null }>;
+    expect(memberships).toEqual([{ role: 'owner', removedAt: null }]);
+
+    const listScopesRows = h.sqlite
+      .prepare('SELECT scope FROM listScopes WHERE projectId = ?')
+      .all('p-f1') as Array<{ scope: string }>;
+    expect(listScopesRows).toEqual([{ scope: `u:${userId}` }]);
+
+    const pulled = await h.pull(userId);
+    expect(pulled.scopes[0].rows.some((r) => 'row' in r && r.row.id === 'p-f1')).toBe(true);
+  });
+
+  it('Finding 2: concurrent first-send + resend does not delete live entityHome', async () => {
+    const h = createHarness();
+    const userId = 'u-f2';
+    await h.db.insert(schema.user).values({ id: userId, createdAt: 1_700_000_000_000 });
+
+    // Serialize db.batch calls with a mutex since sqliteD1 cannot nest BEGIN IMMEDIATE.
+    serializeDbBatch(h.db);
+
+    const initProj = await h.push(userId, 'dev-a', [
+      makeProjectOp({ opId: 'op-p-f2', hlc: '1700000000000:0000:dev-a', id: 'p-1' }),
+    ]);
+    expect(initProj.results[0].status).toBe('applied');
+
+    const taskOp = makeFullTaskOp({
+      opId: 'op-t-conc',
+      hlc: '1700000000001:0000:dev-a',
+      id: 'task-X',
+      projectId: 'p-1',
+      title: 'Concurrent Task',
+    });
+
+    const [res1, res2] = await Promise.all([
+      h.push(userId, 'dev-a', [taskOp]),
+      h.push(userId, 'dev-a', [taskOp]),
+    ]);
+    expect(res1.results[0].status).toBe('applied');
+    expect(res2.results[0].status).toBe('applied');
+
+    const homeRow = h.sqlite
+      .prepare('SELECT * FROM entityHome WHERE entity = ? AND entityId = ?')
+      .get('task', 'task-X') as { scope: string } | undefined;
+    expect(homeRow?.scope).toBe(`u:${userId}`);
+
+    // Subsequent partial update and child item creation must succeed.
+    const partialRes = await h.push(userId, 'dev-a', [
+      {
+        opId: 'op-t-conc-update',
+        hlc: '1700000000002:0000:dev-a',
+        entity: 'task',
+        entityId: 'task-X',
+        op: 'upsert',
+        fields: ['title'],
+        row: { id: 'task-X', title: 'Updated Title' },
+      },
+      {
+        opId: 'op-ci-conc',
+        hlc: '1700000000003:0000:dev-a',
+        entity: 'checklistItem',
+        entityId: 'ci-X',
+        op: 'upsert',
+        fields: ['id', 'taskId', 'title', 'status', 'sortKey', 'createdAt', 'updatedAt'],
+        row: {
+          id: 'ci-X',
+          taskId: 'task-X',
+          title: 'Subtask',
+          status: 0,
+          sortKey: 'i',
+          createdAt: 1100,
+          updatedAt: 1100,
+        },
+      },
+    ]);
+    expect(partialRes.results[0].status).toBe('applied');
+    expect(partialRes.results[0].row?.title).toBe('Updated Title');
+    expect(partialRes.results[1].status).toBe('applied');
+  });
+
+  it('Finding 1 (knownHome backfill & guard): backfills owner only when projectMembership has no rows', async () => {
+    const h = createHarness();
+    const userId = 'u-f1-backfill';
+    await h.db.insert(schema.user).values({ id: userId, createdAt: 1_700_000_000_000 });
+
+    // Simulate pre-existing partial state: entityHome bound without projectMembership.
+    await h.db.insert(schema.entityHome).values({
+      entity: 'project',
+      entityId: 'p-orphan',
+      scope: `u:${userId}`,
+    });
+
+    const backfillRes = await h.push(userId, 'dev-a', [
+      makeProjectOp({ opId: 'op-p-orphan', hlc: '1700000000001:0000:dev-a', id: 'p-orphan' }),
+    ]);
+    expect(backfillRes.results[0].status).toBe('applied');
+
+    const memberships = h.sqlite
+      .prepare('SELECT role, removedAt FROM projectMembership WHERE projectId = ? AND userId = ?')
+      .all('p-orphan', userId) as Array<{ role: string; removedAt: number | null }>;
+    expect(memberships).toEqual([{ role: 'owner', removedAt: null }]);
+
+    // Guard: if creator was removed (removedAt != null) or another owner exists, must NOT re-grant owner.
+    await h.db.insert(schema.entityHome).values({
+      entity: 'project',
+      entityId: 'p-removed',
+      scope: `u:${userId}`,
+    });
+    await h.db.insert(schema.projectMembership).values({
+      projectId: 'p-removed',
+      userId,
+      role: 'editor',
+      createdAt: 1000,
+      removedAt: 2000,
+    });
+
+    const removedRes = await h.push(userId, 'dev-a', [
+      makeProjectOp({ opId: 'op-p-removed', hlc: '1700000000002:0000:dev-a', id: 'p-removed' }),
+    ]);
+    expect(removedRes.results[0]).toMatchObject({ status: 'rejected', reason: 'Forbidden' });
+  });
+
+  it('Finding 2 (class fix): replay reports appliedKeys/existingKeys and rejected concurrent op preserves live entityHome', async () => {
+    const h = createHarness();
+    const userId = 'u-f2-class';
+    await h.db.insert(schema.user).values({ id: userId, createdAt: 1_700_000_000_000 });
+
+    await h.push(userId, 'dev-a', [
+      makeProjectOp({ opId: 'op-p-class', hlc: '1700000000000:0000:dev-a', id: 'p-class' }),
+    ]);
+
+    const taskOp = makeFullTaskOp({
+      opId: 'op-t-replay',
+      hlc: '1700000000001:0000:dev-a',
+      id: 'task-R',
+      projectId: 'p-class',
+    });
+    const stub = h.getScopeStub(`u:${userId}`);
+    const first = await stub.push({
+      scope: `u:${userId}`,
+      scopeUserId: userId,
+      pusherUserId: userId,
+      deviceId: 'dev-a',
+      memberships: { 'p-class': 'owner' },
+      purgedProjects: [],
+      meMemberId: null,
+      ops: [taskOp],
+    });
+    expect(first.appliedKeys).toEqual([{ entity: 'task', entityId: 'task-R' }]);
+
+    const replay = await stub.push({
+      scope: `u:${userId}`,
+      scopeUserId: userId,
+      pusherUserId: userId,
+      deviceId: 'dev-a',
+      memberships: { 'p-class': 'owner' },
+      purgedProjects: [],
+      meMemberId: null,
+      ops: [taskOp],
+    });
+    expect(replay.results[0].status).toBe('applied');
+    expect(replay.appliedKeys).toEqual([{ entity: 'task', entityId: 'task-R' }]);
+    expect(replay.existingKeys).toEqual([{ entity: 'task', entityId: 'task-R' }]);
+
+    // Even when gone:true (no longer a member), replay still reports appliedKeys/existingKeys.
+    const goneReplay = await stub.push({
+      scope: `u:${userId}`,
+      scopeUserId: userId,
+      pusherUserId: userId,
+      deviceId: 'dev-a',
+      memberships: {},
+      purgedProjects: [],
+      meMemberId: null,
+      ops: [taskOp],
+    });
+    expect(goneReplay.results[0]).toMatchObject({ status: 'applied', gone: true });
+    expect(goneReplay.appliedKeys).toEqual([{ entity: 'task', entityId: 'task-R' }]);
+    expect(goneReplay.existingKeys).toEqual([{ entity: 'task', entityId: 'task-R' }]);
+
+    // Concurrent valid create + rejected op for same task-Y: rejected op must not delete live entityHome.
+    // Seed a rejected opId in the DO first so the second concurrent request gets rejected in DO.
+    await stub.push({
+      scope: `u:${userId}`,
+      scopeUserId: userId,
+      pusherUserId: userId,
+      deviceId: 'dev-a',
+      memberships: { 'p-class': 'owner' },
+      purgedProjects: [],
+      meMemberId: null,
+      ops: [
+        {
+          opId: 'op-bad-reuse',
+          hlc: 'bad-hlc',
+          entity: 'task',
+          entityId: 'task-other',
+          op: 'upsert',
+          fields: ['id'],
+          row: { id: 'task-other' },
+        },
+      ],
+    });
+
+    serializeDbBatch(h.db);
+
+    const validTaskY = makeFullTaskOp({
+      opId: 'op-t-y-good',
+      hlc: '1700000000005:0000:dev-a',
+      id: 'task-Y',
+      projectId: 'p-class',
+    });
+    const rejectedTaskY = makeFullTaskOp({
+      opId: 'op-bad-reuse',
+      hlc: '1700000000006:0000:dev-a',
+      id: 'task-Y',
+      projectId: 'p-class',
+    });
+
+    const [goodRes, badRes] = await Promise.all([
+      h.push(userId, 'dev-a', [validTaskY]),
+      h.push(userId, 'dev-a', [rejectedTaskY]),
+    ]);
+    expect(goodRes.results[0].status).toBe('applied');
+    expect(badRes.results[0].status).toBe('rejected');
+
+    const homeY = h.sqlite
+      .prepare('SELECT scope FROM entityHome WHERE entity = ? AND entityId = ?')
+      .get('task', 'task-Y') as { scope: string } | undefined;
+    expect(homeY?.scope).toBe(`u:${userId}`);
+  });
+});

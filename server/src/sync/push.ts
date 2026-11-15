@@ -208,6 +208,7 @@ export async function executeSyncPush(
   >();
   const inBatchRejectedTasks = new Map<string, string>();
   const inBatchNewProjects = new Set<string>();
+  const projectOwnerBackfills = new Set<string>();
   const listScopeTargets: Array<{ opIndex: number; projectId: string; scope: string }> = [];
   const opTargetScope: Array<string | null> = new Array(ops.length).fill(null);
 
@@ -254,7 +255,14 @@ export async function executeSyncPush(
     if (knownHome.has(key)) {
       const targetScope = knownHome.get(key)!;
       opTargetScope[i] = targetScope;
-      if (
+      if (entity === 'project' && validated.ok && validated.op.op === 'upsert') {
+        if (targetScope === pusherScope && !memberships[entityId] && !purgedSet.has(entityId)) {
+          projectOwnerBackfills.add(entityId);
+          listScopeTargets.push({ opIndex: i, projectId: entityId, scope: targetScope });
+        } else if (hasAllRequiredFields('project', validated.op.fields)) {
+          listScopeTargets.push({ opIndex: i, projectId: entityId, scope: targetScope });
+        }
+      } else if (
         entity === 'task' &&
         validated.ok &&
         validated.op.op === 'upsert' &&
@@ -419,7 +427,8 @@ export async function executeSyncPush(
     }
   }
 
-  // D1 Batch 2: bind new ids in entityHome (INSERT ON CONFLICT DO NOTHING + SELECT).
+  // D1 Batch 2: bind new ids in entityHome (INSERT ON CONFLICT DO NOTHING RETURNING + SELECT)
+  // and atomically write owner memberships for newly created projects.
   const newlyWonKeys = new Set<string>();
   if (inBatchNewHome.size > 0) {
     const entries = Array.from(inBatchNewHome.values());
@@ -435,9 +444,11 @@ export async function executeSyncPush(
               scope: e.desiredScope,
             })),
           )
-          .onConflictDoNothing(),
+          .onConflictDoNothing()
+          .returning({ entity: entityHome.entity, entityId: entityHome.entityId }),
       );
     }
+    const selectStartIdx = batch2Stmts.length;
     const selectChunks = chunkArray(entries, PAIR_CHUNK_SIZE);
     for (const chunk of selectChunks) {
       batch2Stmts.push(
@@ -457,14 +468,30 @@ export async function executeSyncPush(
           ),
       );
     }
+    const selectEndIdx = batch2Stmts.length;
+    for (const pid of inBatchNewProjects) {
+      batch2Stmts.push(
+        db
+          .insert(projectMembership)
+          .select(
+            sql`SELECT ${pid}, ${userId}, 'owner', ${nowMs}, NULL WHERE EXISTS (SELECT 1 FROM entityHome WHERE entity = 'project' AND entityId = ${pid} AND scope = ${pusherScope}) AND NOT EXISTS (SELECT 1 FROM purgedProject WHERE projectId = ${pid}) AND NOT EXISTS (SELECT 1 FROM projectMembership WHERE projectId = ${pid})`,
+          )
+          .onConflictDoNothing(),
+      );
+    }
 
     const batch2Results = (await db.batch(
       batch2Stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]],
     )) as Array<Array<Record<string, unknown>>>;
 
+    for (let s = 0; s < selectStartIdx; s += 1) {
+      for (const row of batch2Results[s]) {
+        newlyWonKeys.add(`${String(row.entity)}:${String(row.entityId)}`);
+      }
+    }
+
     const boundMap = new Map<string, string>();
-    const insertStmtCount = Math.ceil(entries.length / 25);
-    for (let s = insertStmtCount; s < batch2Results.length; s += 1) {
+    for (let s = selectStartIdx; s < selectEndIdx; s += 1) {
       for (const row of batch2Results[s]) {
         boundMap.set(`${String(row.entity)}:${String(row.entityId)}`, String(row.scope));
       }
@@ -478,8 +505,6 @@ export async function executeSyncPush(
         if (entry.entity === 'task') {
           mismatchTaskIds.add(entry.entityId);
         }
-      } else {
-        newlyWonKeys.add(key);
       }
     }
 
@@ -536,17 +561,17 @@ export async function executeSyncPush(
     }
   }
 
-  // D1 Batch 3: owner memberships on project create, conditional listScopes inserts,
+  // D1 Batch 3: backfill missing owner memberships on knownHome resend, conditional listScopes inserts,
   // plus reading purgedProject & final memberships.
   const activeListTargets = listScopeTargets.filter((t) => opTargetScope[t.opIndex] !== null);
-  if (inBatchNewProjects.size > 0 || activeListTargets.length > 0) {
+  if (projectOwnerBackfills.size > 0 || activeListTargets.length > 0) {
     const batch3Stmts: BatchItem<'sqlite'>[] = [];
-    for (const pid of inBatchNewProjects) {
+    for (const pid of projectOwnerBackfills) {
       batch3Stmts.push(
         db
           .insert(projectMembership)
           .select(
-            sql`SELECT ${pid}, ${userId}, 'owner', ${nowMs}, NULL WHERE NOT EXISTS (SELECT 1 FROM purgedProject WHERE projectId = ${pid})`,
+            sql`SELECT ${pid}, ${userId}, 'owner', ${nowMs}, NULL WHERE EXISTS (SELECT 1 FROM entityHome WHERE entity = 'project' AND entityId = ${pid} AND scope = ${pusherScope}) AND NOT EXISTS (SELECT 1 FROM purgedProject WHERE projectId = ${pid}) AND NOT EXISTS (SELECT 1 FROM projectMembership WHERE projectId = ${pid})`,
           )
           .onConflictDoNothing(),
       );
@@ -644,14 +669,14 @@ export async function executeSyncPush(
     }),
   );
 
-  const appliedKeySet = new Set<string>();
+  const existingKeySet = new Set<string>();
   let boundMeMemberId: string | null = null;
   for (const { scope, group, response } of scopeResponses) {
     for (let j = 0; j < group.length; j += 1) {
       results[group[j].index] = response.results[j];
     }
-    for (const k of response.appliedKeys) {
-      appliedKeySet.add(entityHomeKey(k.entity, k.entityId));
+    for (const k of response.existingKeys) {
+      existingKeySet.add(entityHomeKey(k.entity, k.entityId));
     }
     if (scope === pusherScope && response.boundMeMemberId) {
       boundMeMemberId = response.boundMeMemberId;
@@ -668,10 +693,10 @@ export async function executeSyncPush(
     );
   }
 
-  // Clean up any newly-bound entityHome entries whose creates were all rejected by the DO.
+  // Clean up any newly-bound entityHome entries whose rows do not exist in the DO.
   const rejectedNewKeys: Array<{ entity: EntityName; entityId: string }> = [];
   for (const key of newlyWonKeys) {
-    if (!appliedKeySet.has(key)) {
+    if (!existingKeySet.has(key)) {
       const entry = inBatchNewHome.get(key);
       if (entry) {
         rejectedNewKeys.push({ entity: entry.entity, entityId: entry.entityId });
@@ -689,6 +714,16 @@ export async function executeSyncPush(
             ),
           ),
         ),
+    );
+  }
+  const rejectedProjectIds = rejectedNewKeys
+    .filter((k) => k.entity === 'project')
+    .map((k) => k.entityId);
+  for (const chunk of chunkArray(rejectedProjectIds, QUERY_CHUNK_SIZE)) {
+    postStmts.push(
+      db
+        .delete(projectMembership)
+        .where(and(inArray(projectMembership.projectId, chunk), eq(projectMembership.userId, userId))),
     );
   }
 

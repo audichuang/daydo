@@ -44,6 +44,7 @@ export interface ScopePushResponse {
   serverSeq: number;
   boundMeMemberId: string | null;
   appliedKeys: Array<{ entity: EntityName; entityId: string }>;
+  existingKeys: Array<{ entity: EntityName; entityId: string }>;
 }
 
 export interface ScopePullInput {
@@ -619,9 +620,16 @@ export class ScopeObject extends DurableObject<CloudBindings> {
 
     const results: PushOpResult[] = [];
     const appliedKeys: Array<{ entity: EntityName; entityId: string }> = [];
+    const touchedEntityKeys = new Map<string, { entity: EntityName; entityId: string }>();
 
     if (input.ops.length === 0) {
-      return { results: [], serverSeq: currentSeq, boundMeMemberId: null, appliedKeys: [] };
+      return {
+        results: [],
+        serverSeq: currentSeq,
+        boundMeMemberId: null,
+        appliedKeys: [],
+        existingKeys: [],
+      };
     }
 
     const canReadState = (
@@ -703,6 +711,12 @@ export class ScopeObject extends DurableObject<CloudBindings> {
           ? rec.entity
           : null;
       const rawEntityId = rawEntity && rec ? (rec.entityId as string) : null;
+      if (rawEntity && rawEntityId && rawEntity !== 'tag') {
+        touchedEntityKeys.set(`${rawEntity}:${rawEntityId}`, {
+          entity: rawEntity,
+          entityId: rawEntityId,
+        });
+      }
 
       // 1. opId dedupe
       if (rawOpId.length > 0) {
@@ -750,6 +764,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
                 store.upsertRow('member', rawEntityId, { ...state, serverSeq: currentSeq });
                 store.setCounter(currentSeq);
               }
+              appliedKeys.push({ entity: rawEntity, entityId: rawEntityId });
               results.push({
                 opId: rawOpId,
                 status: 'applied',
@@ -761,6 +776,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
               continue;
             }
             if (state) {
+              appliedKeys.push({ entity: rawEntity, entityId: rawEntityId });
               results.push({
                 opId: rawOpId,
                 status: 'applied',
@@ -1094,11 +1110,19 @@ export class ScopeObject extends DurableObject<CloudBindings> {
       store.setCounter(currentSeq);
     }
 
+    const existingKeys: Array<{ entity: EntityName; entityId: string }> = [];
+    for (const item of touchedEntityKeys.values()) {
+      if (store.getRow(item.entity, item.entityId) !== null) {
+        existingKeys.push(item);
+      }
+    }
+
     return {
       results,
       serverSeq: currentSeq,
       boundMeMemberId,
       appliedKeys,
+      existingKeys,
     };
   }
 
