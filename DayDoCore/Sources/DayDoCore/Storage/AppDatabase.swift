@@ -139,6 +139,32 @@ public final class AppDatabase: Sendable {
                 t.column("value", .text).notNull()
             }
         }
+        m.registerMigration("v2") { db in
+            try db.alter(table: "change") { t in
+                t.add(column: "opId", .text)
+                t.add(column: "hlc", .text)
+                t.add(column: "ackedAt", .integer)
+                t.add(column: "result", .text)
+            }
+            try db.create(index: "change_opId_unique", on: "change", columns: ["opId"], unique: true)
+
+            let deviceId = try HLC.ensureDeviceId(in: db)
+            var lastHLC = try HLC.loadLast(in: db)
+            let rows = try Row.fetchAll(db, sql: "SELECT seq, at FROM change ORDER BY seq ASC")
+            for row in rows {
+                let seq: Int64 = row["seq"]
+                let at: EpochMillis = row["at"]
+                let hlc = HLC.next(now: at, last: lastHLC, deviceId: deviceId)
+                lastHLC = hlc
+                try db.execute(
+                    sql: "UPDATE change SET opId = ?, hlc = ? WHERE seq = ?",
+                    arguments: [ID.make(), hlc.description, seq]
+                )
+            }
+            if let lastHLC {
+                try HLC.saveLast(lastHLC, in: db)
+            }
+        }
         return m
     }
 }
@@ -170,10 +196,12 @@ enum Outbox {
         } else {
             changed = newDict.keys.sorted()
         }
+        let hlc = try HLC.tick(in: db, now: now)
         var change = ChangeRecord(
             seq: nil, entity: entity, entityId: id,
             op: "upsert", fields: changed,
-            row: String(data: try encoder.encode(record), encoding: .utf8)!, at: now)
+            row: String(data: try encoder.encode(record), encoding: .utf8)!, at: now,
+            opId: ID.make(), hlc: hlc.description, ackedAt: nil, result: nil)
         try change.insert(db)
         return true
     }

@@ -172,6 +172,11 @@ public struct ChangeRecord: Codable, Hashable, Sendable, FetchableRecord, Mutabl
     /// Full row snapshot as JSON after the write.
     public var row: String
     public var at: EpochMillis
+    public var opId: String?
+    public var hlc: String?
+    public var ackedAt: EpochMillis?
+    /// null | applied | rejected
+    public var result: String?
 
     public mutating func didInsert(_ inserted: InsertionSuccess) { seq = inserted.rowID }
 }

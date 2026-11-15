@@ -1,8 +1,12 @@
+import CryptoKit
 import Foundation
 
 /// Client-generated identifiers. UUIDv7 keeps ids globally unique (so offline
 /// clients never collide when they later sync) and roughly time-ordered.
 public enum ID {
+    /// Fixed namespace for deterministic UUIDv5 generation (e.g. recurring occurrence clones).
+    public static let syncNamespace = UUID(uuidString: "b4f8c2a0-6e3d-4c1b-9a7f-1d5e8c3a9042")!
+
     public static func make(now: Date = Date()) -> String {
         var bytes = [UInt8](repeating: 0, count: 16)
         let ms = UInt64(max(0, now.timeIntervalSince1970 * 1000))
@@ -11,6 +15,22 @@ public enum ID {
         for i in 6..<16 { bytes[i] = UInt8.random(in: 0...255, using: &rng) }
         bytes[6] = (bytes[6] & 0x0F) | 0x70 // version 7
         bytes[8] = (bytes[8] & 0x3F) | 0x80 // RFC 4122 variant
+        return formatUUID(bytes)
+    }
+
+    /// Deterministic lowercase UUIDv5 (RFC 4122 SHA-1 name-based).
+    public static func v5(name: String, namespace: UUID = syncNamespace) -> String {
+        let nsBytes = withUnsafeBytes(of: namespace.uuid) { Array($0) }
+        var hasher = Insecure.SHA1()
+        hasher.update(data: nsBytes)
+        hasher.update(data: Array(name.utf8))
+        var bytes = Array(hasher.finalize().prefix(16))
+        bytes[6] = (bytes[6] & 0x0F) | 0x50 // version 5
+        bytes[8] = (bytes[8] & 0x3F) | 0x80 // RFC 4122 variant
+        return formatUUID(bytes)
+    }
+
+    private static func formatUUID(_ bytes: [UInt8]) -> String {
         let hex = bytes.map { String(format: "%02x", $0) }.joined()
         let p = Array(hex)
         return String(p[0..<8]) + "-" + String(p[8..<12]) + "-" + String(p[12..<16]) + "-" + String(p[16..<20]) + "-" + String(p[20..<32])
