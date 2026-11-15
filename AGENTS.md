@@ -17,7 +17,7 @@ DayDo 是待辦加日曆的 iPhone App，給自己和家人用，互動對標 Ti
 ```
 DayDoCore/   Swift Package：資料模型、SQLite（GRDB）、DayDoAPI 指令層、日期/重複/提醒邏輯
 ios/         SwiftUI App（iOS 26+，iOS 27.2 SDK），XcodeGen 產生專案（project.yml）
-spec/        openapi.yaml：DayDoAPI 的 HTTP 合約，第二階段 Worker 與 MCP 共用
+spec/        openapi.yaml：DayDoAPI 的 HTTP 合約，第二階段 Worker 與 MCP 共用；sync.md：同步協議
 design/      設計稿
 ```
 
@@ -65,4 +65,4 @@ cd ios && BUILD_NUMBER=$(~/Project/audi-skill/ios-release/scripts/tf next-build 
 
 ## 第二階段（未做）
 
-Cloudflare Worker + D1（資料）+ Durable Objects（每個清單或使用者一個，序列化寫入、推送變更），註冊登入、多人共享、成員指派。App 端把 `change` outbox 推上去、拉回遠端變更；MCP 掛在 Worker 上，工具名沿用 ticktick-mcp。
+同步協議寫在 `spec/sync.md`：Sign in with Apple＋Google；每個 op 帶 opId 與 HLC，未 ack 就重送、伺服器靠 opId 去重；逐欄位以 HLC 後寫者贏；D1 存資料與每列遞增的 `server_seq`，一個寫入 DO 依序合併並推送通知，不用 KV（使用者只定了登入方式與修改時間優先，其餘為提案）。改協議先改那份文件。MCP 掛在 Worker 上，工具名沿用 ticktick-mcp。
