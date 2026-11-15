@@ -16,6 +16,7 @@ struct SignInView: View {
     @State private var currentRawNonce: String?
     @State private var errorText: String?
     @State private var pendingSwitchCredential: SyncAuthCredential?
+    @State private var pendingSwitchDisplayName: String?
     @State private var pendingSwitchUnsyncedCount = 0
     @State private var confirmSwitchAccount = false
 
@@ -128,12 +129,15 @@ struct SignInView: View {
         .alert("切換帳號？", isPresented: $confirmSwitchAccount) {
             Button("取消", role: .cancel) {
                 pendingSwitchCredential = nil
+                pendingSwitchDisplayName = nil
             }
             Button("清除並登入", role: .destructive) {
                 guard let credential = pendingSwitchCredential else { return }
+                let displayName = pendingSwitchDisplayName
                 pendingSwitchCredential = nil
+                pendingSwitchDisplayName = nil
                 Task {
-                    await confirmAccountSwitch(with: credential)
+                    await confirmAccountSwitch(with: credential, displayName: displayName)
                 }
             }
         } message: {
@@ -157,8 +161,13 @@ struct SignInView: View {
                 return
             }
             currentRawNonce = nil
+            let fullName = credential.fullName.map {
+                PersonNameComponentsFormatter.localizedString(from: $0, style: .default)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let suggestedName = (fullName?.isEmpty == false) ? fullName : nil
             Task {
-                await performSignIn(.apple(identityToken: identityToken, nonce: rawNonce))
+                await performSignIn(.apple(identityToken: identityToken, nonce: rawNonce), displayName: suggestedName)
             }
         case .failure(let error):
             currentRawNonce = nil
@@ -173,8 +182,9 @@ struct SignInView: View {
         errorText = nil
 #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-DayDoDebugStub") {
+            let suggestedName = ProcessInfo.processInfo.arguments.contains("-DayDoDebugNoProviderName") ? nil : "測試者"
             Task {
-                await performSignIn(.google(idToken: "debug-google-token"))
+                await performSignIn(.google(idToken: "debug-google-token"), displayName: suggestedName)
             }
             return
         }
@@ -195,7 +205,9 @@ struct SignInView: View {
                     errorText = "無法取得 Google ID Token。"
                     return
                 }
-                await performSignIn(.google(idToken: idToken))
+                let profileName = result.user.profile?.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                let suggestedName = (profileName?.isEmpty == false) ? profileName : nil
+                await performSignIn(.google(idToken: idToken), displayName: suggestedName)
             } catch {
                 let nsError = error as NSError
                 if nsError.domain == kGIDSignInErrorDomain,
@@ -207,13 +219,14 @@ struct SignInView: View {
         }
     }
 
-    private func performSignIn(_ credential: SyncAuthCredential) async {
+    private func performSignIn(_ credential: SyncAuthCredential, displayName: String?) async {
         errorText = nil
         do {
-            try await model.signIn(with: credential)
+            try await model.signIn(with: credential, displayName: displayName)
         } catch {
             if isDifferentUserError(error) {
                 pendingSwitchCredential = credential
+                pendingSwitchDisplayName = displayName
                 pendingSwitchUnsyncedCount = await model.unsyncedChangeCount()
                 confirmSwitchAccount = true
                 return
@@ -222,10 +235,10 @@ struct SignInView: View {
         }
     }
 
-    private func confirmAccountSwitch(with credential: SyncAuthCredential) async {
+    private func confirmAccountSwitch(with credential: SyncAuthCredential, displayName: String?) async {
         errorText = nil
         do {
-            try await model.replaceAccountAndSignIn(with: credential)
+            try await model.replaceAccountAndSignIn(with: credential, displayName: displayName)
         } catch {
             errorText = error.localizedDescription
         }

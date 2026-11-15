@@ -22,6 +22,36 @@ public struct Member: Codable, Hashable, Sendable, Identifiable {
         self.isMe = isMe
         self.userId = userId
     }
+
+    public static let legacyDefaultColor = "#9BB8FF"
+
+    public static let avatarColors: [String] = [
+        "#6FA8FF",
+        "#4FC3A1",
+        "#E98A5B",
+        "#E8C14E",
+        "#C77DDB",
+        "#F27474",
+        "#4AA8E8",
+        "#8CD17D",
+    ]
+
+    /// Stable FNV-1a hash mapping a member id to one of `avatarColors`.
+    public static func defaultColor(for id: String) -> String {
+        var hash: UInt64 = 14695981039346656037
+        for byte in id.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1099511628211
+        }
+        return avatarColors[Int(hash % UInt64(avatarColors.count))]
+    }
+
+    /// First extended grapheme cluster of the trimmed name, uppercased for Latin.
+    public static func makeInitial(from name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first else { return "" }
+        return String(first).uppercased()
+    }
 }
 
 public struct Folder: Codable, Hashable, Sendable, Identifiable {

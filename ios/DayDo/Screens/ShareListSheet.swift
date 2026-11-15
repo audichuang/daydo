@@ -39,9 +39,10 @@ struct ShareListSheet: View {
                         let ownerMember = projectMembers.first { $0.memberId == project.ownerId }
                         let fallbackOwner = model.members.first { $0.id == project.ownerId } ?? model.me
                         let ownerIsMe = ownerMember?.isMe ?? fallbackOwner?.isMe ?? project.isOwner
-                        let ownerInitial = ownerMember?.initial ?? fallbackOwner?.initial ?? "我"
+                        let ownerInitial = ownerMember?.initial ?? fallbackOwner?.initial ?? ""
                         let ownerColor = ownerMember?.color ?? fallbackOwner?.color ?? accent.hex
-                        let ownerName = ownerIsMe ? "我" : (ownerMember?.name ?? fallbackOwner?.name ?? "擁有者")
+                        let rawOwnerName = ownerMember?.name ?? fallbackOwner?.name ?? "擁有者"
+                        let ownerName = ownerIsMe ? "\(rawOwnerName)（你）" : rawOwnerName
 
                         section("所有者") {
                             HStack(spacing: 12) {
@@ -50,6 +51,8 @@ struct ShareListSheet: View {
                                     fill: Color(hex: ownerColor),
                                     textColor: Palette.background
                                 )
+                                .accessibilityIdentifier("share.ownerAvatar")
+                                .accessibilityValue(ownerColor)
                                 Text(ownerName)
                                     .txt(15, .medium)
                                     .foregroundStyle(Palette.text)
@@ -75,7 +78,9 @@ struct ShareListSheet: View {
                                 ForEach(Array(realMembers.enumerated()), id: \.element.id) { idx, m in
                                     let rowContent = HStack(spacing: 12) {
                                         memberAvatar(initial: m.initial, fill: Color(hex: m.color), textColor: Palette.background)
-                                        Text(m.isMe ? "我" : m.name)
+                                            .accessibilityIdentifier("share.memberAvatar.\(m.memberId)")
+                                            .accessibilityValue(m.color)
+                                        Text(m.isMe ? "\(m.name)（你）" : m.name)
                                             .txt(15, .medium)
                                             .foregroundStyle(Palette.text)
                                         Spacer()
@@ -398,7 +403,7 @@ private struct MemberDetailSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                Text(member.name).txt(17, .bold).foregroundStyle(Palette.text)
+                Text(member.isMe ? "\(member.name)（你）" : member.name).txt(17, .bold).foregroundStyle(Palette.text)
                 HStack {
                     PillButton(title: "完成") { dismiss() }
                     Spacer()

@@ -129,7 +129,7 @@ struct EditListSheet: View {
 
                             Button { openSharing(original.id) } label: {
                                 HStack(spacing: 10) {
-                                    memberAvatar(initial: owner?.initial ?? "我", hex: owner?.color ?? accent.hex)
+                                    memberAvatar(initial: owner?.initial ?? "", hex: owner?.color ?? accent.hex)
                                     Rectangle().fill(Palette.separatorSoft).frame(width: 1, height: 20)
                                     ForEach(others) { m in
                                         memberAvatar(initial: m.initial, hex: m.color)

@@ -73,6 +73,7 @@ final class AppModel {
     var pendingManualInviteCode: String?
     var invitePrompt: PendingInvitePrompt?
     var showingJoinInvite = false
+    var showingMeNamePrompt = false
 
     // Navigation
     var tab: MainTab = .tasks
@@ -176,14 +177,21 @@ final class AppModel {
         }
 
 #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-DayDoDebugStub") {
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-DayDoDebugStub") {
             if !((try? await syncEngine.isSignedIn) ?? false) {
                 try? await syncEngine.signIn(with: .apple(identityToken: "debug", nonce: "debug"))
             }
-            if ProcessInfo.processInfo.arguments.contains("-DayDoDemo") {
+            if !args.contains("-DayDoDebugKeepDefaultName"),
+               let currentMe = (try? await api.listMembers())?.first(where: \.isMe),
+               currentMe.name == "我" {
+                _ = try? await api.updateMe(name: "測試者", color: nil)
+                try? await syncEngine.syncNow()
+            }
+            if args.contains("-DayDoDemo") {
                 try? await DemoData.load(into: api)
             }
-            if ProcessInfo.processInfo.arguments.contains("-DayDoDebugForcedSignOut") {
+            if args.contains("-DayDoDebugForcedSignOut") {
                 _ = try? await api.createTask(CreateTaskInput(title: "舊帳號未同步任務", start: today.description, allDay: true))
                 tokenStore.accessToken = nil
                 tokenStore.refreshToken = nil
@@ -196,6 +204,9 @@ final class AppModel {
         if signedIn {
             isSignedIn = true
             await reloadData()
+            if me?.name == "我" {
+                showingMeNamePrompt = true
+            }
             ready = true
             startSyncObservers()
             await DebugLaunch.apply(to: self)
@@ -265,6 +276,9 @@ final class AppModel {
     /// change notifications, scene foreground, and date boundary refreshes.
     func reloadData() async {
         await refreshLookups()
+        if showingMeNamePrompt, let currentMe = me, currentMe.name != "我" {
+            showingMeNamePrompt = false
+        }
         revision += 1
         // Never block the UI on the notification permission prompt.
         let scheduler = reminders, api = api
@@ -279,7 +293,7 @@ final class AppModel {
 
     // MARK: - Auth & Sync
 
-    func signIn(with credential: SyncAuthCredential) async throws {
+    func signIn(with credential: SyncAuthCredential, displayName: String? = nil) async throws {
         isSigningIn = true
         defer { isSigningIn = false }
         startSyncObservers()
@@ -287,6 +301,7 @@ final class AppModel {
             try await syncEngine.signIn(with: credential)
             isSignedIn = true
             await reloadData()
+            await resolveMeProfileAfterSignIn(suggestedName: displayName)
             await processPendingInviteIfNeeded()
         } catch {
             let stillSignedIn = (try? await syncEngine.isSignedIn) ?? false
@@ -295,11 +310,38 @@ final class AppModel {
             } else if let syncError = error as? SyncError, case .retryable = syncError {
                 isSignedIn = true
                 await reloadData()
+                await resolveMeProfileAfterSignIn(suggestedName: displayName)
                 await handleSyncError(syncError)
                 await processPendingInviteIfNeeded()
                 return
             }
             throw error
+        }
+    }
+
+    private func resolveMeProfileAfterSignIn(suggestedName: String?) async {
+        guard let currentMe = me else { return }
+        let legacyColorFix = currentMe.color == Member.legacyDefaultColor
+            ? Member.defaultColor(for: currentMe.id)
+            : nil
+
+        if currentMe.name == "我" {
+            let cleaned = suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let cleaned, !cleaned.isEmpty, cleaned != "我" {
+                if (try? await api.updateMe(name: cleaned, color: legacyColorFix)) != nil {
+                    await didWrite()
+                }
+                showingMeNamePrompt = false
+            } else {
+                showingMeNamePrompt = true
+            }
+        } else {
+            if let legacyColorFix {
+                if (try? await api.updateMe(name: currentMe.name, color: legacyColorFix)) != nil {
+                    await didWrite()
+                }
+            }
+            showingMeNamePrompt = false
         }
     }
 
@@ -322,7 +364,7 @@ final class AppModel {
         resetLocalUIState()
     }
 
-    func replaceAccountAndSignIn(with credential: SyncAuthCredential) async throws {
+    func replaceAccountAndSignIn(with credential: SyncAuthCredential, displayName: String? = nil) async throws {
         isSigningIn = true
         defer { isSigningIn = false }
         stopSyncObservers()
@@ -331,7 +373,7 @@ final class AppModel {
             try await syncEngine.signOut()
         }
         resetLocalUIState()
-        try await signIn(with: credential)
+        try await signIn(with: credential, displayName: displayName)
     }
 
     private func resetLocalUIState() {
@@ -353,6 +395,7 @@ final class AppModel {
         pendingInviteCode = nil
         pendingManualInviteCode = nil
         showingJoinInvite = false
+        showingMeNamePrompt = false
         isSignedIn = false
         revision += 1
     }

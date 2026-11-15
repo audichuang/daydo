@@ -171,12 +171,12 @@ struct DrawerView: View {
     var header: some View {
         HStack(spacing: 10) {
             let me = model.me
-            Text(me?.initial ?? "我")
+            Text(me?.initial ?? "")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(Palette.background)
                 .frame(width: 34, height: 34)
                 .background(Circle().fill(Color(hex: me?.color ?? accent.hex)))
-            Text(me?.name ?? "我")
+            Text(me?.name ?? "")
                 .txt(16, .semibold)
                 .foregroundStyle(Palette.text)
                 .lineLimit(1)

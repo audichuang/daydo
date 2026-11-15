@@ -471,4 +471,68 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         #expect(newChanges.contains { $0.entity == "project" && $0.entityId == work.id && $0.fields == ["ownerId"] })
         #expect(newChanges.contains { $0.entity == "projectMember" && $0.entityId == "\(work.id):\(me.id)" && $0.fields.contains("deletedAt") })
     }
+
+    @Test func updateMeValidatesComputesInitialAndRecordsOutbox() async throws {
+        let api = try await makeAPI()
+        let initialMe = try #require(try await api.listMembers().first(where: \.isMe))
+        #expect(Member.avatarColors.contains(initialMe.color))
+        #expect(initialMe.color == Member.defaultColor(for: initialMe.id))
+
+        await #expect(throws: DayDoError.self) { try await api.updateMe(name: "", color: nil) }
+        await #expect(throws: DayDoError.self) { try await api.updateMe(name: "   \n\t ", color: nil) }
+        await #expect(throws: DayDoError.self) { try await api.updateMe(name: "Audi", color: "   ") }
+
+        let before = try await api.pendingChanges().count
+        let updatedLatin = try await api.updateMe(name: "  audi chuang  ", color: "#4FC3A1")
+        #expect(updatedLatin.name == "audi chuang")
+        #expect(updatedLatin.initial == "A")
+        #expect(updatedLatin.color == "#4FC3A1")
+
+        // No-op update writes nothing to outbox.
+        let noop = try await api.updateMe(name: "audi chuang", color: "#4FC3A1")
+        #expect(noop == updatedLatin)
+        #expect(try await api.pendingChanges().count == before + 1)
+
+        // Updating name without color keeps the current color.
+        let updatedCJK = try await api.updateMe(name: "小安", color: nil)
+        #expect(updatedCJK.name == "小安")
+        #expect(updatedCJK.initial == "小")
+        #expect(updatedCJK.color == "#4FC3A1")
+
+        // Accented Latin & emoji grapheme clusters + 30-char cap.
+        let updatedAccented = try await api.updateMe(name: "élan", color: nil)
+        #expect(updatedAccented.initial == "É")
+
+        let updatedEmoji = try await api.updateMe(name: "👨‍👩‍👧‍👦 Family", color: nil)
+        #expect(updatedEmoji.initial == "👨‍👩‍👧‍👦")
+
+        let longName = String(repeating: "x", count: 40)
+        let capped = try await api.updateMe(name: "  \(longName)  ", color: nil)
+        #expect(capped.name.count == 30)
+        #expect(capped.initial == "X")
+
+        let newChanges = Array(try await api.pendingChanges().dropFirst(before))
+        #expect(newChanges.count == 5)
+        #expect(newChanges[0].entity == "member")
+        #expect(newChanges[0].entityId == initialMe.id)
+        #expect(newChanges[0].op == "upsert")
+        #expect(newChanges[0].fields == ["color", "initial", "name"])
+        #expect(newChanges[1].fields == ["initial", "name"])
+    }
+
+    @Test func memberPaletteHashingIsStableAndDistinct() {
+        #expect(Member.avatarColors.count == 8)
+        #expect(Set(Member.avatarColors).count == 8)
+        #expect(!Member.avatarColors.contains(Member.legacyDefaultColor))
+
+        for id in ["01930000-0000-7000-8000-000000000001", "user-a", "user-b", "member-123"] {
+            let c1 = Member.defaultColor(for: id)
+            let c2 = Member.defaultColor(for: id)
+            #expect(c1 == c2)
+            #expect(Member.avatarColors.contains(c1))
+        }
+
+        let colors = (0..<64).map { Member.defaultColor(for: "member-\($0)") }
+        #expect(Set(colors).count == Member.avatarColors.count)
+    }
 }

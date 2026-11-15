@@ -94,6 +94,7 @@ struct SettingsScreen: View {
     @State private var archivedProjects: [Project] = []
     @State private var confirmSignOut = false
     @State private var unsyncedCount = 0
+    @State private var editingMeProfile = false
 
     private var showAccountSection: Bool {
 #if DEBUG
@@ -120,21 +121,30 @@ struct SettingsScreen: View {
 
                         if showAccountSection {
                             VStack(spacing: 0) {
-                                HStack(spacing: 12) {
-                                    let me = model.me
-                                    Text(me?.initial ?? "我")
-                                        .font(.system(size: 13, weight: .bold))
-                                        .foregroundStyle(Palette.background)
-                                        .frame(width: 34, height: 34)
-                                        .background(Circle().fill(Color(hex: me?.color ?? accent.hex)))
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(me?.name ?? "我").txt(15, .semibold).foregroundStyle(Palette.text)
-                                        Text(model.isSyncing ? "正在同步…" : "已登入").txt(12).foregroundStyle(Palette.textSecondary)
+                                Button {
+                                    editingMeProfile = true
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        let me = model.me
+                                        Text(me?.initial ?? "")
+                                            .font(.system(size: 13, weight: .bold))
+                                            .foregroundStyle(Palette.background)
+                                            .frame(width: 34, height: 34)
+                                            .background(Circle().fill(Color(hex: me?.color ?? accent.hex)))
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(me?.name ?? "").txt(15, .semibold).foregroundStyle(Palette.text)
+                                            Text(model.isSyncing ? "正在同步…" : "已登入").txt(12).foregroundStyle(Palette.textSecondary)
+                                        }
+                                        Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundStyle(Palette.textTertiary)
                                     }
-                                    Spacer()
+                                    .padding(.horizontal, 14)
+                                    .frame(minHeight: 58)
+                                    .contentShape(Rectangle())
                                 }
-                                .padding(.horizontal, 14)
-                                .frame(minHeight: 58)
+                                .buttonStyle(.plain)
                                 .accessibilityIdentifier("settings.accountRow")
 
                                 divider
@@ -239,6 +249,9 @@ struct SettingsScreen: View {
             } else {
                 Text("登出會清除這台裝置上的所有本機資料，下次登入後可從雲端同步回來。")
             }
+        }
+        .sheet(isPresented: $editingMeProfile) {
+            MeProfileSheet(mode: .edit)
         }
     }
 

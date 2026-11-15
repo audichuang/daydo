@@ -24,6 +24,7 @@
 		712BE556E14C8FEB3EDA5C9F /* JoinInviteSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBDFCB6E2A94018F4F751310 /* JoinInviteSheet.swift */; };
 		728A01A5331B302B834B290A /* TaskDetailSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C790B6FFBAFDB9BADA3CE1FC /* TaskDetailSheet.swift */; };
 		7454858BA67E1C4407B53A26 /* OtherScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 586710AA91D1F8A386C4DA0F /* OtherScreens.swift */; };
+		7D0D980B5B52B78EF1CA32AF /* MeProfileSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87A6EE2C31E3EA193622C3D4 /* MeProfileSheet.swift */; };
 		8E2D7343DA9825517D9845EF /* InviteConfirmSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40ED13459CB865ADD6D54F4 /* InviteConfirmSheet.swift */; };
 		AE2BF5BFEF228940A02802F7 /* DemoData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DAF0DFE366B2DF89B894383 /* DemoData.swift */; };
 		BA526A6B810BD3379EC9BA14 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6984AFAE49745EDDDFF3BDB4 /* AppModel.swift */; };
@@ -57,6 +58,7 @@
 		723C6FDF68327E755BBBC400 /* EditListSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditListSheet.swift; sourceTree = "<group>"; };
 		75740C90A3D93DC752FAB1DE /* DayDoUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DayDoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		85E2F4237AF4F16976307DCE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		87A6EE2C31E3EA193622C3D4 /* MeProfileSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeProfileSheet.swift; sourceTree = "<group>"; };
 		93AF820DEE1E49529E90A0E0 /* DayDoFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoFlowTests.swift; sourceTree = "<group>"; };
 		A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainSyncTokenStore.swift; sourceTree = "<group>"; };
 		A3ADCB55D80C898953405EA4 /* DatePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatePanel.swift; sourceTree = "<group>"; };
@@ -163,6 +165,7 @@
 				723C6FDF68327E755BBBC400 /* EditListSheet.swift */,
 				B40ED13459CB865ADD6D54F4 /* InviteConfirmSheet.swift */,
 				BBDFCB6E2A94018F4F751310 /* JoinInviteSheet.swift */,
+				87A6EE2C31E3EA193622C3D4 /* MeProfileSheet.swift */,
 				586710AA91D1F8A386C4DA0F /* OtherScreens.swift */,
 				B2E3411D9BD47A773354B9EE /* RootView.swift */,
 				DD944E1EAEB502E47717D303 /* ShareListSheet.swift */,
@@ -322,6 +325,7 @@
 				8E2D7343DA9825517D9845EF /* InviteConfirmSheet.swift in Sources */,
 				712BE556E14C8FEB3EDA5C9F /* JoinInviteSheet.swift in Sources */,
 				2B68D0A20FBE89F153D00562 /* KeychainSyncTokenStore.swift in Sources */,
+				7D0D980B5B52B78EF1CA32AF /* MeProfileSheet.swift in Sources */,
 				7454858BA67E1C4407B53A26 /* OtherScreens.swift in Sources */,
 				23FCC3E72501BB4E763CA638 /* RootView.swift in Sources */,
 				291183E9EBCB11282851A4F3 /* ShareListSheet.swift in Sources */,

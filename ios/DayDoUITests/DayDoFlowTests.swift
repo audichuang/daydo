@@ -462,7 +462,7 @@ final class DayDoFlowTests: XCTestCase {
         shareBtn.tap()
         XCTAssertTrue(app.staticTexts["共享清單"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["所有者"].exists)
-        XCTAssertTrue(app.staticTexts["我"].exists)
+        XCTAssertTrue(app.staticTexts["我（你）"].exists)
         XCTAssertTrue(app.staticTexts["邀請連結"].exists)
         XCTAssertTrue(app.buttons["share.createInviteLink"].waitForExistence(timeout: 3), app.debugDescription)
         shot("29-share-sheet")
@@ -760,5 +760,89 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(contentField.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertEqual(contentField.value as? String, "遠端更新後的描述")
         XCTAssertTrue(((titleField.value as? String) ?? "").contains("（已改）"))
+    }
+
+    @MainActor
+    func testMeNamePromptAndSettingsEdit() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoDebugKeepDefaultName", "-DayDoScreen", "settings"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        // 1. Name prompt appears when my name is still 「我」 and 完成 is disabled until non-empty.
+        XCTAssertTrue(app.staticTexts["你的名字"].waitForExistence(timeout: 5), app.debugDescription)
+        let nameField = app.textFields["meProfile.nameField"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertEqual((nameField.value as? String) ?? "", "輸入你的名字")
+        let submitBtn = app.buttons["meProfile.submit"]
+        XCTAssertTrue(submitBtn.exists, app.debugDescription)
+        XCTAssertFalse(submitBtn.isEnabled, "完成 should be disabled until name is non-empty")
+        shot("39-name-prompt")
+
+        nameField.tap()
+        nameField.typeText("阿迪")
+        let tealColorBtn = app.buttons["meProfile.color.#4FC3A1"]
+        XCTAssertTrue(tealColorBtn.exists, app.debugDescription)
+        tealColorBtn.tap()
+        XCTAssertTrue(submitBtn.isEnabled)
+        submitBtn.tap()
+
+        XCTAssertTrue(app.staticTexts["你的名字"].waitForNonExistence(timeout: 3), app.debugDescription)
+
+        // 2. Settings account row reflects saved name & initial, and opens edit sheet on tap.
+        let accountRow = app.buttons["settings.accountRow"]
+        XCTAssertTrue(accountRow.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(accountRow.label.contains("阿迪"), accountRow.label)
+        XCTAssertTrue(accountRow.label.contains("阿"), accountRow.label)
+
+        accountRow.tap()
+        XCTAssertTrue(app.staticTexts["個人資料"].waitForExistence(timeout: 3), app.debugDescription)
+        let editField = app.textFields["meProfile.nameField"]
+        XCTAssertTrue(editField.waitForExistence(timeout: 3))
+        XCTAssertEqual(editField.value as? String, "阿迪")
+        shot("40-settings-edit-profile")
+
+        let clearBtn = app.buttons["清除名字"]
+        XCTAssertTrue(clearBtn.exists)
+        clearBtn.tap()
+        editField.tap()
+        editField.typeText("Audi")
+        let orangeColorBtn = app.buttons["meProfile.color.#E98A5B"]
+        XCTAssertTrue(orangeColorBtn.exists)
+        orangeColorBtn.tap()
+        app.buttons["meProfile.submit"].tap()
+
+        XCTAssertTrue(app.staticTexts["個人資料"].waitForNonExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(accountRow.label.contains("Audi"), accountRow.label)
+        XCTAssertTrue(accountRow.label.contains("A"), accountRow.label)
+    }
+
+    @MainActor
+    func testShareSheetTwoMembersShowsNamesColorsAndYouBadge() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoSeedSharedList"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        app.buttons["開啟清單抽屜"].tap()
+        let sharedList = app.buttons["drawer.list.家庭採買"]
+        XCTAssertTrue(sharedList.waitForExistence(timeout: 5), app.debugDescription)
+        sharedList.tap()
+
+        let shareBtn = app.buttons["共享"]
+        XCTAssertTrue(shareBtn.waitForExistence(timeout: 3), app.debugDescription)
+        shareBtn.tap()
+
+        XCTAssertTrue(app.staticTexts["共享清單"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["測試者（你）"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["小安"].exists, app.debugDescription)
+
+        let ownerAvatar = app.staticTexts["share.ownerAvatar"]
+        let memberAvatar = app.staticTexts["share.memberAvatar.debug-other-member-1"]
+        XCTAssertTrue(ownerAvatar.exists, app.debugDescription)
+        XCTAssertTrue(memberAvatar.exists, app.debugDescription)
+        XCTAssertNotEqual(ownerAvatar.label, memberAvatar.label)
+        XCTAssertNotEqual(ownerAvatar.value as? String, memberAvatar.value as? String)
+        shot("41-share-sheet-two-members")
     }
 }

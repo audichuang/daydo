@@ -105,6 +105,9 @@ struct RootView: View {
         }) {
             JoinInviteSheet()
         }
+        .sheet(isPresented: $model.showingMeNamePrompt) {
+            MeProfileSheet(mode: .requiredPrompt)
+        }
         .alert("出了點問題", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("好", role: .cancel) {}
         } message: {
