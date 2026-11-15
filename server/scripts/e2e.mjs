@@ -266,14 +266,22 @@ async function main() {
     assert.equal(refreshed.data.meMemberId, null);
     assert.equal(refreshed.data.inboxProjectId, null);
 
-    // 6. Reusing an old refresh token returns 401 and revokes that session chain
-    const replayOld = await postJson(baseUrl, '/auth/refresh', {
+    // 6. Grace retry within 10 minutes revokes the unused successor; reusing a revoked token returns 401 and revokes that session chain
+    const graceRefreshed = await postJson(baseUrl, '/auth/refresh', {
       refreshToken: appleLogin1.data.refreshToken,
     });
-    assert.equal(replayOld.status, 401);
+    assert.equal(graceRefreshed.status, 200);
+    assert.equal(typeof graceRefreshed.data.accessToken, 'string');
+    assert.equal(typeof graceRefreshed.data.refreshToken, 'string');
+    assert.notEqual(graceRefreshed.data.refreshToken, refreshed.data.refreshToken);
+
+    const replayUnusedSuccessor = await postJson(baseUrl, '/auth/refresh', {
+      refreshToken: refreshed.data.refreshToken,
+    });
+    assert.equal(replayUnusedSuccessor.status, 401);
 
     const useRevokedChain = await postJson(baseUrl, '/auth/refresh', {
-      refreshToken: refreshed.data.refreshToken,
+      refreshToken: graceRefreshed.data.refreshToken,
     });
     assert.equal(useRevokedChain.status, 401);
 

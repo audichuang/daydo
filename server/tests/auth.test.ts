@@ -395,6 +395,278 @@ describe('refresh token rotation & reuse race (Finding 3)', () => {
   });
 });
 
+describe('refresh token grace window for lost-response retries', () => {
+  const jwtSecret = 'unit-test-jwt-secret-32-bytes-minimum';
+  const TEN_MINUTES_MS = 10 * 60 * 1000;
+
+  it('lostResponseRetryWithinGraceGetsNewTokens', async () => {
+    const { db } = createTestD1();
+    const database = db as unknown as DatabaseClient;
+
+    const initial = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'grace-user-1',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1000,
+    });
+
+    const rotated = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2000,
+    });
+    expect(rotated).not.toBeNull();
+
+    const grace = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2000 + 9 * 60 * 1000,
+    });
+    expect(grace).not.toBeNull();
+    expect(grace!.refreshToken).not.toBe(initial.refreshToken);
+    expect(grace!.refreshToken).not.toBe(rotated!.refreshToken);
+    expect(typeof grace!.accessToken).toBe('string');
+
+    const followUp = await rotateRefreshToken(database, {
+      refreshToken: grace!.refreshToken,
+      jwtSecret,
+      now: 2000 + 9 * 60 * 1000 + 1000,
+    });
+    expect(followUp).not.toBeNull();
+  });
+
+  it('graceRetryRevokesUnusedSuccessor', async () => {
+    const { db } = createTestD1();
+    const database = db as unknown as DatabaseClient;
+
+    const initial = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'grace-user-2',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1000,
+    });
+
+    const rotated = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2000,
+    });
+    expect(rotated).not.toBeNull();
+
+    const grace = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2000 + 60_000,
+    });
+    expect(grace).not.toBeNull();
+
+    // The unused successor from the first rotation was revoked by the grace retry and no longer works.
+    const successorAttempt = await rotateRefreshToken(database, {
+      refreshToken: rotated!.refreshToken,
+      jwtSecret,
+      now: 2000 + 61_000,
+    });
+    expect(successorAttempt).toBeNull();
+
+    // Presenting the revoked successor also revokes the chain (including the grace-issued token).
+    const afterSuccessorReuse = await rotateRefreshToken(database, {
+      refreshToken: grace!.refreshToken,
+      jwtSecret,
+      now: 2000 + 62_000,
+    });
+    expect(afterSuccessorReuse).toBeNull();
+  });
+
+  it('retryAfterSuccessorWasUsedRevokesChain', async () => {
+    const { db } = createTestD1();
+    const database = db as unknown as DatabaseClient;
+
+    const initial = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'grace-user-3',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1000,
+    });
+    const otherChain = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'grace-user-3',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1001,
+    });
+
+    const s1 = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2000,
+    });
+    expect(s1).not.toBeNull();
+
+    const s2 = await rotateRefreshToken(database, {
+      refreshToken: s1!.refreshToken,
+      jwtSecret,
+      now: 3000,
+    });
+    expect(s2).not.toBeNull();
+
+    // Presenting initial token within 10 minutes after s1 was already used must revoke the chain.
+    const replay = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 4000,
+    });
+    expect(replay).toBeNull();
+
+    const s2After = await rotateRefreshToken(database, {
+      refreshToken: s2!.refreshToken,
+      jwtSecret,
+      now: 5000,
+    });
+    expect(s2After).toBeNull();
+
+    // Unrelated chain for the same user/device remains valid.
+    const otherAfter = await rotateRefreshToken(database, {
+      refreshToken: otherChain.refreshToken,
+      jwtSecret,
+      now: 5001,
+    });
+    expect(otherAfter).not.toBeNull();
+  });
+
+  it('retryAfterGraceWindowRevokesChain', async () => {
+    const { db } = createTestD1();
+    const database = db as unknown as DatabaseClient;
+
+    const initial = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'grace-user-4',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1000,
+    });
+
+    const s1 = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2000,
+    });
+    expect(s1).not.toBeNull();
+
+    const replay = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2000 + TEN_MINUTES_MS + 1,
+    });
+    expect(replay).toBeNull();
+
+    const s1After = await rotateRefreshToken(database, {
+      refreshToken: s1!.refreshToken,
+      jwtSecret,
+      now: 2000 + TEN_MINUTES_MS + 2,
+    });
+    expect(s1After).toBeNull();
+  });
+
+  it('concurrentGraceRetriesOnlyOneSucceeds', async () => {
+    const { db } = createTestD1();
+    const database = db as unknown as DatabaseClient;
+
+    const initial = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'grace-user-5',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1000,
+    });
+    const s1 = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2000,
+    });
+    expect(s1).not.toBeNull();
+
+    // Interleave B right before its batch while A completes its grace retry.
+    let releaseB!: () => void;
+    const bWait = new Promise<void>((resolve) => {
+      releaseB = resolve;
+    });
+    let bReachedBatch!: () => void;
+    const bAtBatch = new Promise<void>((resolve) => {
+      bReachedBatch = resolve;
+    });
+
+    const bProxiedDb = new Proxy(database, {
+      get(target, prop, receiver) {
+        if (prop === 'batch') {
+          return async (...args: Parameters<DatabaseClient['batch']>) => {
+            bReachedBatch();
+            await bWait;
+            return target.batch(...args);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const bPromise = rotateRefreshToken(bProxiedDb, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 3001,
+    });
+    await bAtBatch;
+
+    const aResult = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 3000,
+    });
+    expect(aResult).not.toBeNull();
+
+    releaseB();
+    const bResult = await bPromise;
+    expect(bResult).toBeNull();
+
+    // Also verify parallel Promise.all grace retries on a fresh chain: only one can succeed.
+    const initial2 = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'grace-user-5b',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1000,
+    });
+    await rotateRefreshToken(database, {
+      refreshToken: initial2.refreshToken,
+      jwtSecret,
+      now: 2000,
+    });
+
+    const parallelResults = await Promise.all([
+      rotateRefreshToken(database, {
+        refreshToken: initial2.refreshToken,
+        jwtSecret,
+        now: 3000,
+      }),
+      rotateRefreshToken(database, {
+        refreshToken: initial2.refreshToken,
+        jwtSecret,
+        now: 3001,
+      }),
+    ]);
+    expect(parallelResults.filter((r) => r !== null)).toHaveLength(1);
+    expect(parallelResults.filter((r) => r === null)).toHaveLength(1);
+  });
+});
+
 describe('login and refresh state fields (hasData, meMemberId, inboxProjectId)', () => {
   const jwtSecret = 'unit-test-jwt-secret-32-bytes-minimum';
 

@@ -39,6 +39,7 @@ export const session = sqliteTable(
     expiresAt: integer('expiresAt').notNull(),
     createdAt: integer('createdAt').notNull(),
     revokedAt: integer('revokedAt'),
+    replacedBy: text('replacedBy'),
   },
   (t) => [
     index('session_userId_idx').on(t.userId),
