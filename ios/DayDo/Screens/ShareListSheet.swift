@@ -1,8 +1,9 @@
 import SwiftUI
+import UIKit
 import DayDoCore
 
-/// TickTick-style sharing sheet for a non-inbox list: owner, current members /
-/// pending invites (stored locally + queued in outbox), and add-member form.
+/// TickTick-style sharing sheet for a non-inbox list: owner, members with roles,
+/// invite link creation/sharing for owners, and leave-list for non-owners.
 struct ShareListSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
@@ -11,9 +12,14 @@ struct ShareListSheet: View {
 
     @State private var project: Project?
     @State private var projectMembers: [ProjectMemberInfo] = []
-    @State private var invites: [ProjectInvite] = []
-    @State private var showInviteSheet = false
+    @State private var inviteRole = "editor"
+    @State private var createdInvite: CreatedInvite?
+    @State private var creatingInvite = false
+    @State private var revokingInvite = false
+    @State private var copiedLink = false
     @State private var editingMember: ProjectMemberInfo?
+    @State private var confirmLeave = false
+    @State private var leaving = false
     @State private var actionError: String?
 
     var body: some View {
@@ -32,10 +38,11 @@ struct ShareListSheet: View {
                     if let project {
                         let ownerMember = projectMembers.first { $0.memberId == project.ownerId }
                         let fallbackOwner = model.members.first { $0.id == project.ownerId } ?? model.me
-                        let ownerIsMe = ownerMember?.isMe ?? fallbackOwner?.isMe ?? true
+                        let ownerIsMe = ownerMember?.isMe ?? fallbackOwner?.isMe ?? project.isOwner
                         let ownerInitial = ownerMember?.initial ?? fallbackOwner?.initial ?? "我"
                         let ownerColor = ownerMember?.color ?? fallbackOwner?.color ?? accent.hex
-                        let ownerName = ownerIsMe ? "我" : (ownerMember?.name ?? fallbackOwner?.name ?? "我")
+                        let ownerName = ownerIsMe ? "我" : (ownerMember?.name ?? fallbackOwner?.name ?? "擁有者")
+
                         section("所有者") {
                             HStack(spacing: 12) {
                                 memberAvatar(
@@ -56,104 +63,170 @@ struct ShareListSheet: View {
 
                         let realMembers = projectMembers.filter { $0.memberId != project.ownerId }
                         section("成員") {
-                            ForEach(realMembers) { m in
-                                Button { editingMember = m } label: {
-                                    HStack(spacing: 12) {
+                            if realMembers.isEmpty {
+                                HStack {
+                                    Text("目前沒有其他成員")
+                                        .txt(14)
+                                        .foregroundStyle(Palette.textSecondary)
+                                    Spacer()
+                                }
+                                .frame(minHeight: 50)
+                            } else {
+                                ForEach(Array(realMembers.enumerated()), id: \.element.id) { idx, m in
+                                    let rowContent = HStack(spacing: 12) {
                                         memberAvatar(initial: m.initial, fill: Color(hex: m.color), textColor: Palette.background)
-                                        Text(m.name).txt(15, .medium).foregroundStyle(Palette.text)
+                                        Text(m.isMe ? "我" : m.name)
+                                            .txt(15, .medium)
+                                            .foregroundStyle(Palette.text)
                                         Spacer()
-                                        Text(m.role == "viewer" ? "唯讀" : "可編輯")
+                                        Text(roleLabel(m.role))
                                             .txt(14)
                                             .foregroundStyle(Palette.textSecondary)
-                                        ZStack(alignment: .bottomTrailing) {
-                                            Image(systemName: "person").font(.system(size: 14, weight: .medium))
-                                            Image(systemName: "pencil").font(.system(size: 8, weight: .bold)).offset(x: 4, y: 2)
+                                        if project.isOwner {
+                                            Image(systemName: "chevron.right")
+                                                .font(.system(size: 11, weight: .semibold))
+                                                .foregroundStyle(Palette.textTertiary)
                                         }
-                                        .foregroundStyle(Palette.textSecondary)
-                                        Image(systemName: "chevron.right")
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .foregroundStyle(Palette.textTertiary)
                                     }
                                     .frame(minHeight: 54)
                                     .overlay(alignment: .bottom) {
-                                        Rectangle().fill(Palette.separatorSoft).frame(height: 1)
+                                        if idx < realMembers.count - 1 {
+                                            Rectangle().fill(Palette.separatorSoft).frame(height: 1)
+                                        }
                                     }
                                     .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                            }
 
-                            ForEach(invites) { inv in
-                                Menu {
-                                    Button {
-                                        updateRole(inv, to: "editor")
-                                    } label: {
-                                        if inv.role == "editor" {
-                                            Label("可編輯", systemImage: "checkmark")
-                                        } else {
-                                            Text("可編輯")
-                                        }
+                                    if project.isOwner {
+                                        Button { editingMember = m } label: { rowContent }
+                                            .buttonStyle(.plain)
+                                            .accessibilityIdentifier("share.member.\(m.memberId)")
+                                    } else {
+                                        rowContent
                                     }
-                                    Button {
-                                        updateRole(inv, to: "viewer")
-                                    } label: {
-                                        if inv.role == "viewer" {
-                                            Label("唯讀", systemImage: "checkmark")
-                                        } else {
-                                            Text("唯讀")
-                                        }
-                                    }
-                                    Divider()
-                                    Button("取消邀請", role: .destructive) {
-                                        cancel(inv)
-                                    }
-                                } label: {
-                                    HStack(spacing: 12) {
-                                        memberAvatar(
-                                            initial: String(inv.email.prefix(1)).uppercased(),
-                                            fill: Palette.chip,
-                                            textColor: Palette.textSecondary
-                                        )
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(inv.email)
-                                                .txt(15)
-                                                .foregroundStyle(Palette.text)
-                                                .lineLimit(1)
-                                            Text("等待同步")
-                                                .txt(12)
-                                                .foregroundStyle(Palette.textTertiary)
-                                        }
-                                        Spacer()
-                                        Text(inv.role == "viewer" ? "唯讀" : "可編輯")
-                                            .txt(14)
-                                            .foregroundStyle(Palette.textSecondary)
-                                        Image(systemName: "chevron.up.chevron.down")
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .foregroundStyle(Palette.textTertiary)
-                                    }
-                                    .frame(minHeight: 58)
-                                    .overlay(alignment: .bottom) {
-                                        Rectangle().fill(Palette.separatorSoft).frame(height: 1)
-                                    }
-                                    .contentShape(Rectangle())
                                 }
-                                .buttonStyle(.plain)
-                                .accessibilityIdentifier("shareInvite.\(inv.email)")
                             }
+                        }
 
-                            Button { showInviteSheet = true } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "plus")
-                                        .font(.system(size: 15, weight: .semibold))
-                                    Text("新增新成員")
-                                        .txt(15, .medium)
+                        if project.isOwner {
+                            section("邀請連結") {
+                                HStack {
+                                    Text("加入權限").txt(15).foregroundStyle(Palette.text)
                                     Spacer()
+                                    Picker("加入權限", selection: $inviteRole) {
+                                        Text("可編輯").tag("editor")
+                                        Text("唯讀").tag("viewer")
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .frame(width: 170)
+                                    .onChange(of: inviteRole) { _, _ in
+                                        createdInvite = nil
+                                        copiedLink = false
+                                    }
                                 }
-                                .foregroundStyle(accent.text)
-                                .frame(minHeight: 50)
-                                .contentShape(Rectangle())
+                                .frame(minHeight: 54)
+                                .overlay(alignment: .bottom) {
+                                    Rectangle().fill(Palette.separatorSoft).frame(height: 1)
+                                }
+
+                                if let invite = createdInvite, let inviteURL = URL(string: invite.url) {
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        Text(invite.url)
+                                            .font(.system(size: 13, design: .monospaced))
+                                            .foregroundStyle(Palette.textBody)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+
+                                        Text("7 天內有效・加入者將取得「\(roleLabel(inviteRole))」權限")
+                                            .txt(12)
+                                            .foregroundStyle(Palette.textSecondary)
+
+                                        HStack(spacing: 10) {
+                                            ShareLink(item: inviteURL) {
+                                                Label("分享邀請連結", systemImage: "square.and.arrow.up")
+                                                    .txt(14, .semibold)
+                                                    .foregroundStyle(accent.onAccent)
+                                                    .frame(maxWidth: .infinity)
+                                                    .frame(height: 42)
+                                                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(accent.color))
+                                            }
+                                            .buttonStyle(.plain)
+                                            .accessibilityIdentifier("share.shareLink")
+
+                                            Button {
+                                                UIPasteboard.general.string = invite.url
+                                                copiedLink = true
+                                            } label: {
+                                                Label(copiedLink ? "已複製" : "複製", systemImage: copiedLink ? "checkmark" : "doc.on.doc")
+                                                    .txt(14, .semibold)
+                                                    .foregroundStyle(Palette.text)
+                                                    .padding(.horizontal, 14)
+                                                    .frame(height: 42)
+                                                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.chip))
+                                            }
+                                            .buttonStyle(.plain)
+                                            .accessibilityIdentifier("share.copyLink")
+                                        }
+
+                                        Button {
+                                            revokeInvite(code: invite.code)
+                                        } label: {
+                                            HStack {
+                                                if revokingInvite {
+                                                    ProgressView().tint(Palette.danger)
+                                                }
+                                                Text(revokingInvite ? "撤銷中…" : "撤銷此邀請連結")
+                                                    .txt(13, .medium)
+                                                    .foregroundStyle(Palette.danger)
+                                            }
+                                            .frame(maxWidth: .infinity, minHeight: 34)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .disabled(revokingInvite)
+                                        .accessibilityIdentifier("share.revokeLink")
+                                    }
+                                    .padding(.vertical, 12)
+                                } else {
+                                    Button {
+                                        createInviteLink()
+                                    } label: {
+                                        HStack(spacing: 10) {
+                                            if creatingInvite {
+                                                ProgressView().tint(accent.text)
+                                            } else {
+                                                Image(systemName: "link.badge.plus")
+                                                    .font(.system(size: 16, weight: .semibold))
+                                            }
+                                            Text(creatingInvite ? "正在建立邀請連結…" : "建立邀請連結")
+                                                .txt(15, .medium)
+                                            Spacer()
+                                        }
+                                        .foregroundStyle(accent.text)
+                                        .frame(minHeight: 52)
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(creatingInvite)
+                                    .accessibilityIdentifier("share.createInviteLink")
+                                }
+                            }
+                        } else {
+                            Button {
+                                confirmLeave = true
+                            } label: {
+                                HStack {
+                                    if leaving {
+                                        ProgressView().tint(Palette.danger)
+                                    }
+                                    Text(leaving ? "離開中…" : "離開清單")
+                                        .txt(16, .medium)
+                                        .foregroundStyle(Palette.danger)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 52)
+                                .card(16, color: Palette.raised)
                             }
                             .buttonStyle(.plain)
+                            .disabled(leaving)
+                            .accessibilityIdentifier("share.leaveProject")
                         }
                     }
                 }
@@ -165,17 +238,21 @@ struct ShareListSheet: View {
         .presentationDetents([.large])
         .presentationBackground(Palette.card)
         .presentationCornerRadius(28)
-        .sheet(isPresented: $showInviteSheet) {
-            InviteMemberSheet(projectId: projectId) { created in
-                invites.append(created)
-            }
-        }
         .sheet(item: $editingMember) { member in
             MemberDetailSheet(projectId: projectId, member: member) {
                 Task {
-                    await model.refreshLookups()
+                    await model.reloadData()
                     await load()
                 }
+            }
+        }
+        .confirmationDialog(
+            "確定要離開「\(project?.name ?? "此清單")」？離開後將無法再存取其中的任務。",
+            isPresented: $confirmLeave,
+            titleVisibility: .visible
+        ) {
+            Button("離開清單", role: .destructive) {
+                leaveProject()
             }
         }
         .alert("出了點問題", isPresented: Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } })) {
@@ -183,7 +260,7 @@ struct ShareListSheet: View {
         } message: {
             Text(actionError ?? "")
         }
-        .task {
+        .task(id: model.revision) {
             await load()
         }
     }
@@ -191,30 +268,88 @@ struct ShareListSheet: View {
     private func load() async {
         project = (try? await model.api.getProject(id: projectId)) ?? model.project(projectId)
         projectMembers = (try? await model.api.listProjectMembers(projectId: projectId)) ?? []
-        invites = (try? await model.api.listInvites(projectId: projectId)) ?? []
     }
 
-    private func updateRole(_ invite: ProjectInvite, to role: String) {
-        guard invite.role != role else { return }
+    private func roleLabel(_ role: String) -> String {
+        switch role {
+        case "owner": "所有者"
+        case "viewer": "唯讀"
+        default: "可編輯"
+        }
+    }
+
+    private func createInviteLink() {
+        guard !creatingInvite else { return }
+        creatingInvite = true
+        copiedLink = false
+        let role = inviteRole
         Task {
+            defer { creatingInvite = false }
+            if !model.syncEnabled {
+                createdInvite = CreatedInvite(
+                    code: "preview",
+                    url: "daydo://invite/preview",
+                    expiresAt: EpochMillis(Date().addingTimeInterval(7 * 86400).timeIntervalSince1970 * 1000)
+                )
+                return
+            }
             do {
-                let updated = try await model.api.updateInviteRole(id: invite.id, role: role)
-                if let idx = invites.firstIndex(where: { $0.id == invite.id }) {
-                    invites[idx] = updated
-                }
+                createdInvite = try await model.syncEngine.createInvite(projectId: projectId, role: role)
             } catch {
-                actionError = error.localizedDescription
+                if await model.handleErrorIfSignedOut(error) {
+                    dismiss()
+                } else {
+                    actionError = error.localizedDescription
+                }
             }
         }
     }
 
-    private func cancel(_ invite: ProjectInvite) {
+    private func revokeInvite(code: String) {
+        guard !revokingInvite else { return }
+        revokingInvite = true
         Task {
+            defer { revokingInvite = false }
+            if !model.syncEnabled {
+                createdInvite = nil
+                copiedLink = false
+                return
+            }
             do {
-                try await model.api.cancelInvite(id: invite.id)
-                invites.removeAll { $0.id == invite.id }
+                try await model.syncEngine.revokeInvite(code: code)
+                createdInvite = nil
+                copiedLink = false
             } catch {
-                actionError = error.localizedDescription
+                if await model.handleErrorIfSignedOut(error) {
+                    dismiss()
+                } else {
+                    actionError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func leaveProject() {
+        guard !leaving else { return }
+        leaving = true
+        Task {
+            defer { leaving = false }
+            do {
+                if model.syncEnabled {
+                    try await model.syncEngine.leaveProject(projectId: projectId)
+                    await model.runSyncNow()
+                }
+                await model.reloadData()
+                if model.scope == .project(projectId) {
+                    model.scope = .smart(.today)
+                }
+                dismiss()
+            } catch {
+                if await model.handleErrorIfSignedOut(error) {
+                    dismiss()
+                } else {
+                    actionError = error.localizedDescription
+                }
             }
         }
     }
@@ -237,101 +372,6 @@ struct ShareListSheet: View {
     }
 }
 
-private struct InviteMemberSheet: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    var projectId: String
-    var onInvited: (ProjectInvite) -> Void
-
-    @State private var email = ""
-    @State private var role = "editor"
-    @State private var errorText: String?
-    @State private var submitting = false
-    @FocusState private var emailFocused: Bool
-
-    private var canSubmit: Bool {
-        !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !submitting
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                PillButton(title: "取消") { dismiss() }
-                Spacer()
-                Text("新增新成員").txt(17, .bold).foregroundStyle(Palette.text)
-                Spacer()
-                PillButton(title: "邀請", kind: canSubmit ? .primary : .disabled) { submit() }
-            }
-            .padding(.horizontal, 14).padding(.top, 16).frame(height: 68)
-
-            VStack(alignment: .leading, spacing: 12) {
-                TextField("電子郵件", text: $email)
-                    .txt(16)
-                    .foregroundStyle(Palette.text)
-                    .keyboardType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .focused($emailFocused)
-                    .submitLabel(.done)
-                    .onSubmit { submit() }
-                    .padding(.horizontal, 14)
-                    .frame(height: 50)
-                    .card(16, color: Palette.raised)
-
-                HStack {
-                    Text("權限").txt(15).foregroundStyle(Palette.text)
-                    Spacer()
-                    Picker("權限", selection: $role) {
-                        Text("可編輯").tag("editor")
-                        Text("唯讀").tag("viewer")
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 170)
-                }
-                .padding(.horizontal, 14)
-                .frame(minHeight: 52)
-                .card(16, color: Palette.raised)
-
-                if let errorText {
-                    Text(errorText)
-                        .txt(13)
-                        .foregroundStyle(Palette.danger)
-                        .padding(.horizontal, 4)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-        }
-        .onAppear { emailFocused = true }
-        .background(Palette.card)
-        .presentationDetents([.height(290), .medium])
-        .presentationBackground(Palette.card)
-        .presentationCornerRadius(28)
-    }
-
-    private func submit() {
-        guard canSubmit else { return }
-        errorText = nil
-        submitting = true
-        let targetEmail = email
-        let selectedRole = role
-        Task {
-            defer { submitting = false }
-            do {
-                let created = try await model.api.inviteMember(
-                    projectId: projectId,
-                    email: targetEmail,
-                    role: selectedRole
-                )
-                onInvited(created)
-                dismiss()
-            } catch {
-                errorText = error.localizedDescription
-            }
-        }
-    }
-}
-
 private struct MemberDetailSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -341,6 +381,7 @@ private struct MemberDetailSheet: View {
 
     @State private var role: String
     @State private var errorText: String?
+    @State private var busy = false
 
     init(projectId: String, member: ProjectMemberInfo, onChanged: @escaping () -> Void) {
         self.projectId = projectId
@@ -383,25 +424,19 @@ private struct MemberDetailSheet: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .disabled(busy)
                 .padding(.horizontal, 14)
                 .card(16, color: Palette.raised)
 
                 Button("移除成員") {
-                    Task {
-                        do {
-                            try await model.api.removeMember(projectId: projectId, memberId: member.memberId)
-                            onChanged()
-                            dismiss()
-                        } catch {
-                            errorText = error.localizedDescription
-                        }
-                    }
+                    removeMember()
                 }
                 .txt(16, .medium)
                 .foregroundStyle(Palette.danger)
                 .frame(maxWidth: .infinity, minHeight: 50)
                 .card(16, color: Palette.raised)
                 .buttonStyle(.plain)
+                .disabled(busy)
 
                 if let errorText {
                     Text(errorText).txt(13).foregroundStyle(Palette.danger).padding(.horizontal, 4)
@@ -417,13 +452,59 @@ private struct MemberDetailSheet: View {
     }
 
     private func setRole(_ newRole: String) {
+        guard !busy, role != newRole else { return }
+        let previousRole = role
         role = newRole
+        errorText = nil
+        busy = true
         Task {
+            defer { busy = false }
             do {
-                try await model.api.updateMemberRole(projectId: projectId, memberId: member.memberId, role: newRole)
+                if model.syncEnabled {
+                    guard let userId = member.userId, !userId.isEmpty else {
+                        throw DayDoError.invalid("無法取得此成員的帳號識別碼")
+                    }
+                    try await model.syncEngine.changeMemberRole(projectId: projectId, userId: userId, role: newRole)
+                    await model.runSyncNow()
+                } else {
+                    try await model.api.updateMemberRole(projectId: projectId, memberId: member.memberId, role: newRole)
+                }
                 onChanged()
             } catch {
-                errorText = error.localizedDescription
+                role = previousRole
+                if await model.handleErrorIfSignedOut(error) {
+                    dismiss()
+                } else {
+                    errorText = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func removeMember() {
+        guard !busy else { return }
+        errorText = nil
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                if model.syncEnabled {
+                    guard let userId = member.userId, !userId.isEmpty else {
+                        throw DayDoError.invalid("無法取得此成員的帳號識別碼")
+                    }
+                    try await model.syncEngine.removeMember(projectId: projectId, userId: userId)
+                    await model.runSyncNow()
+                } else {
+                    try await model.api.removeMember(projectId: projectId, memberId: member.memberId)
+                }
+                onChanged()
+                dismiss()
+            } catch {
+                if await model.handleErrorIfSignedOut(error) {
+                    dismiss()
+                } else {
+                    errorText = error.localizedDescription
+                }
             }
         }
     }

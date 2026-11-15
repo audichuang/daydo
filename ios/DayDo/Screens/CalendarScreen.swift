@@ -47,16 +47,18 @@ struct CalendarScreen: View {
                 if model.members.count > 1 || projectFilter != nil { filters.padding(.horizontal, 16).padding(.bottom, 6) }
                 content
             }
-            Button { compose(day: sel, minute: nil) } label: {
-                Image(systemName: "plus").font(.system(size: 24, weight: .semibold)).foregroundStyle(accent.onAccent)
-                    .frame(width: 60, height: 60)
-                    .background(Circle().fill(accent.color))
-                    .shadow(color: .black.opacity(0.35), radius: 10, y: 6)
+            if !model.isViewer(projectId: projectFilter) {
+                Button { compose(day: sel, minute: nil) } label: {
+                    Image(systemName: "plus").font(.system(size: 24, weight: .semibold)).foregroundStyle(accent.onAccent)
+                        .frame(width: 60, height: 60)
+                        .background(Circle().fill(accent.color))
+                        .shadow(color: .black.opacity(0.35), radius: 10, y: 6)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 18)
+                .padding(.bottom, 92)
+                .accessibilityLabel("新增任務")
             }
-            .buttonStyle(.plain)
-            .padding(.trailing, 18)
-            .padding(.bottom, 92)
-            .accessibilityLabel("新增任務")
         }
         .task(id: CalReload(range: range, member: memberFilter, completed: showCompleted, revision: model.revision)) { await load() }
     }
@@ -235,6 +237,7 @@ struct CalendarScreen: View {
     }
 
     func compose(day: LocalDay, minute: Int?) {
+        guard !model.isViewer(projectId: projectFilter) else { return }
         model.composing = ComposeRequest(projectId: projectFilter, day: day, minute: minute)
     }
 
@@ -360,11 +363,15 @@ struct CalendarScreen: View {
 
     var dayTitle: String { DateText.monthDay(sel).replacingOccurrences(of: " ", with: "") + (sel == model.today ? "・今天" : "") }
 
-    var emptyDay: some View {
-        Button { compose(day: sel, minute: nil) } label: {
-            Text("這天沒有項目，點這裡新增").txt(14).foregroundStyle(Palette.textSecondary).frame(maxWidth: .infinity, minHeight: 64)
+    @ViewBuilder var emptyDay: some View {
+        if model.isViewer(projectId: projectFilter) {
+            Text("這天沒有項目").txt(14).foregroundStyle(Palette.textSecondary).frame(maxWidth: .infinity, minHeight: 64)
+        } else {
+            Button { compose(day: sel, minute: nil) } label: {
+                Text("這天沒有項目，點這裡新增").txt(14).foregroundStyle(Palette.textSecondary).frame(maxWidth: .infinity, minHeight: 64)
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
     }
 
     var cardAgenda: some View {
@@ -425,6 +432,7 @@ struct AgendaRow: View {
                 TaskCheckbox(done: task.isCompleted, priority: task.priority, size: 22).frame(width: 32, height: 34)
             }
             .buttonStyle(.plain)
+            .disabled(model.isViewer(projectId: task.projectId))
             .accessibilityLabel((task.isCompleted ? "取消完成：" : "完成：") + task.title)
             Button { model.detailTaskId = task.id } label: {
                 VStack(alignment: .leading, spacing: 4) {

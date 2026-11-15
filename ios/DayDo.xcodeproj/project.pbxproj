@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0CCFCE88645325C2F9E9DDE0 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */; };
 		0E897BC85DA0ED546D97EB62 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3AC93921B8246DF3D1A2F32B /* Assets.xcassets */; };
 		0F335A407D2DCE82DC52398D /* ComposerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36BA7575D416B540F3E5F021 /* ComposerSheet.swift */; };
 		1B5B5057036A95B851A8C16F /* TimeBlockEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CC0B1CED20281F2431A79ED /* TimeBlockEditor.swift */; };
@@ -14,12 +15,15 @@
 		23FCC3E72501BB4E763CA638 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2E3411D9BD47A773354B9EE /* RootView.swift */; };
 		2586B4711A3F7B5A08BFC598 /* EditListSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 723C6FDF68327E755BBBC400 /* EditListSheet.swift */; };
 		291183E9EBCB11282851A4F3 /* ShareListSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD944E1EAEB502E47717D303 /* ShareListSheet.swift */; };
+		2B68D0A20FBE89F153D00562 /* KeychainSyncTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */; };
 		36C06F0D17D9C8A91549B2E6 /* TaskListScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBE69B8A39D6026F6C72A644 /* TaskListScreen.swift */; };
+		4461E85D6F754C9A7FCD0A48 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 7E101714C88520768756EA09 /* GoogleSignIn */; };
 		5C95C3DAF6AA8AF7C303DEEA /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36A61F18DDDC6C2FC166DDDB /* Theme.swift */; };
 		6241455AB6BDC69BCF835DB0 /* DayDoFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93AF820DEE1E49529E90A0E0 /* DayDoFlowTests.swift */; };
 		635BEE00F58D95D66615961E /* DatePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3ADCB55D80C898953405EA4 /* DatePanel.swift */; };
 		728A01A5331B302B834B290A /* TaskDetailSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C790B6FFBAFDB9BADA3CE1FC /* TaskDetailSheet.swift */; };
 		7454858BA67E1C4407B53A26 /* OtherScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 586710AA91D1F8A386C4DA0F /* OtherScreens.swift */; };
+		8E2D7343DA9825517D9845EF /* InviteConfirmSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40ED13459CB865ADD6D54F4 /* InviteConfirmSheet.swift */; };
 		AE2BF5BFEF228940A02802F7 /* DemoData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DAF0DFE366B2DF89B894383 /* DemoData.swift */; };
 		BA526A6B810BD3379EC9BA14 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6984AFAE49745EDDDFF3BDB4 /* AppModel.swift */; };
 		EAB896BF06D1DA77E283DF5E /* DayDoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4677FEEE4764DF9B66BB6C5A /* DayDoCore */; };
@@ -53,15 +57,19 @@
 		75740C90A3D93DC752FAB1DE /* DayDoUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DayDoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		85E2F4237AF4F16976307DCE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		93AF820DEE1E49529E90A0E0 /* DayDoFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoFlowTests.swift; sourceTree = "<group>"; };
+		A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainSyncTokenStore.swift; sourceTree = "<group>"; };
 		A3ADCB55D80C898953405EA4 /* DatePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatePanel.swift; sourceTree = "<group>"; };
 		B2E3411D9BD47A773354B9EE /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		B385BD7500B9C55FC5E7A64A /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		B40ED13459CB865ADD6D54F4 /* InviteConfirmSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteConfirmSheet.swift; sourceTree = "<group>"; };
 		C790B6FFBAFDB9BADA3CE1FC /* TaskDetailSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskDetailSheet.swift; sourceTree = "<group>"; };
 		CBE69B8A39D6026F6C72A644 /* TaskListScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskListScreen.swift; sourceTree = "<group>"; };
 		DD944E1EAEB502E47717D303 /* ShareListSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareListSheet.swift; sourceTree = "<group>"; };
 		DFFE20E498B56F159D6BDC5C /* DayDo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DayDo.entitlements; sourceTree = "<group>"; };
 		E45AF04A64333352B5667B17 /* DrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerView.swift; sourceTree = "<group>"; };
+		F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		F68BFC5798449FCFE7B82212 /* DayDoCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DayDoCore; path = ../DayDoCore; sourceTree = SOURCE_ROOT; };
+		"TEMP_25F66AD3-9F1C-4779-BA12-F55193927C68" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,6 +78,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				EAB896BF06D1DA77E283DF5E /* DayDoCore in Frameworks */,
+				4461E85D6F754C9A7FCD0A48 /* GoogleSignIn in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -82,6 +91,7 @@
 				6984AFAE49745EDDDFF3BDB4 /* AppModel.swift */,
 				615E31EA2D033F846C07B08E /* DayDoApp.swift */,
 				6DAF0DFE366B2DF89B894383 /* DemoData.swift */,
+				A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -149,9 +159,11 @@
 				A3ADCB55D80C898953405EA4 /* DatePanel.swift */,
 				E45AF04A64333352B5667B17 /* DrawerView.swift */,
 				723C6FDF68327E755BBBC400 /* EditListSheet.swift */,
+				B40ED13459CB865ADD6D54F4 /* InviteConfirmSheet.swift */,
 				586710AA91D1F8A386C4DA0F /* OtherScreens.swift */,
 				B2E3411D9BD47A773354B9EE /* RootView.swift */,
 				DD944E1EAEB502E47717D303 /* ShareListSheet.swift */,
+				F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */,
 				C790B6FFBAFDB9BADA3CE1FC /* TaskDetailSheet.swift */,
 				CBE69B8A39D6026F6C72A644 /* TaskListScreen.swift */,
 				3CC0B1CED20281F2431A79ED /* TimeBlockEditor.swift */,
@@ -177,6 +189,14 @@
 			path = DayDoUITests;
 			sourceTree = "<group>";
 		};
+		"TEMP_0E6A7D74-29B5-4A5F-86D7-104382C8B978" /* ios */ = {
+			isa = PBXGroup;
+			children = (
+				"TEMP_25F66AD3-9F1C-4779-BA12-F55193927C68" /* Config.xcconfig */,
+			);
+			path = ios;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -195,6 +215,7 @@
 			name = DayDo;
 			packageProductDependencies = (
 				4677FEEE4764DF9B66BB6C5A /* DayDoCore */,
+				7E101714C88520768756EA09 /* GoogleSignIn */,
 			);
 			productName = DayDo;
 			productReference = 14E86541BA71F626A6811C13 /* DayDo.app */;
@@ -248,6 +269,7 @@
 			mainGroup = CF057070284060C2FC0B6C0D;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				534D1D5CE87C240039F193FE /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 				8DB329A20A2A2FB70A44ED01 /* XCLocalSwiftPackageReference "../DayDoCore" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -294,9 +316,12 @@
 				AE2BF5BFEF228940A02802F7 /* DemoData.swift in Sources */,
 				FE3382C49FF0F62208E3B7C7 /* DrawerView.swift in Sources */,
 				2586B4711A3F7B5A08BFC598 /* EditListSheet.swift in Sources */,
+				8E2D7343DA9825517D9845EF /* InviteConfirmSheet.swift in Sources */,
+				2B68D0A20FBE89F153D00562 /* KeychainSyncTokenStore.swift in Sources */,
 				7454858BA67E1C4407B53A26 /* OtherScreens.swift in Sources */,
 				23FCC3E72501BB4E763CA638 /* RootView.swift in Sources */,
 				291183E9EBCB11282851A4F3 /* ShareListSheet.swift in Sources */,
+				0CCFCE88645325C2F9E9DDE0 /* SignInView.swift in Sources */,
 				728A01A5331B302B834B290A /* TaskDetailSheet.swift in Sources */,
 				36C06F0D17D9C8A91549B2E6 /* TaskListScreen.swift in Sources */,
 				5C95C3DAF6AA8AF7C303DEEA /* Theme.swift in Sources */,
@@ -351,6 +376,7 @@
 		};
 		739B74DBC48851785BC9AAA2 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = "TEMP_25F66AD3-9F1C-4779-BA12-F55193927C68" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
@@ -429,6 +455,7 @@
 		};
 		B97B517B54A6D8DCCD7DFE92 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = "TEMP_25F66AD3-9F1C-4779-BA12-F55193927C68" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
@@ -551,10 +578,26 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		534D1D5CE87C240039F193FE /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = exactVersion;
+				version = 9.2.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		4677FEEE4764DF9B66BB6C5A /* DayDoCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = DayDoCore;
+		};
+		7E101714C88520768756EA09 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 534D1D5CE87C240039F193FE /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

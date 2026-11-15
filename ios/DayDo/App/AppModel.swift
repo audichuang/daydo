@@ -1,7 +1,44 @@
 import Foundation
+import GoogleSignIn
+import Network
 import Observation
 import SwiftUI
+import UserNotifications
 import DayDoCore
+
+enum SyncConfig {
+    static let baseURL = URL(string: "https://daydo-api.audichuang.app")!
+
+    static func accessHeaders(bundle: Bundle = .main) -> [String: String] {
+        var headers: [String: String] = [:]
+        if let id = bundle.object(forInfoDictionaryKey: "DayDoAccessClientId") as? String {
+            let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                headers["CF-Access-Client-Id"] = trimmed
+            }
+        }
+        if let secret = bundle.object(forInfoDictionaryKey: "DayDoAccessClientSecret") as? String {
+            let trimmed = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                headers["CF-Access-Client-Secret"] = trimmed
+            }
+        }
+        return headers
+    }
+}
+
+struct PendingInvitePrompt: Identifiable, Equatable {
+    let id = UUID()
+    let code: String
+    var info: InviteInfo?
+    var isLoading: Bool
+    var error: String?
+}
+
+extension Project {
+    var isViewer: Bool { myRole == "viewer" }
+    var isOwner: Bool { myRole == "owner" }
+}
 
 /// App-wide state. Views read cached lookups (projects, tags, counts) from
 /// here and send every write through `api` (the same `DayDoAPI` contract the
@@ -10,6 +47,9 @@ import DayDoCore
 @Observable
 final class AppModel {
     let api: LocalDayDoAPI
+    let syncEngine: SyncEngine
+    let tokenStore: KeychainSyncTokenStore
+    let syncEnabled: Bool
 
     // Lookups shared by many screens
     var projects: [Project] = []
@@ -18,11 +58,18 @@ final class AppModel {
     var members: [Member] = []
     var counts = SmartCounts(today: 0, tomorrow: 0, next7Days: 0, inbox: 0, assignedToMe: 0, completed: 0, trash: 0)
 
-    /// Bumped after every write; screens reload with `.task(id: revision)`.
+    /// Bumped after every write or sync change; screens reload with `.task(id: revision)`.
     private(set) var revision = 0
-    /// False until the database is bootstrapped (local user + inbox exist).
+    /// False until initial launch state is resolved.
     var ready = false
+    var isSignedIn = false
+    var isSigningIn = false
+    var isSyncing = false
     var errorMessage: String?
+
+    // Invites
+    var pendingInviteCode: String?
+    var invitePrompt: PendingInvitePrompt?
 
     // Navigation
     var tab: MainTab = .tasks
@@ -57,8 +104,33 @@ final class AppModel {
     let reminders = ReminderScheduler()
     let notificationDelegate = NotificationDelegate()
 
-    init(api: LocalDayDoAPI) {
+#if DEBUG
+    var debugAccountPreview = false
+#endif
+
+    private var debounceSyncTask: Task<Void, Never>?
+    private var retrySyncTask: Task<Void, Never>?
+    private var notificationObserverTask: Task<Void, Never>?
+    private var pathMonitor: NWPathMonitor?
+    private var pathSatisfied: Bool?
+
+    init(
+        api: LocalDayDoAPI,
+        tokenStore: KeychainSyncTokenStore = KeychainSyncTokenStore(),
+        syncEnabled: Bool = !ProcessInfo.processInfo.arguments.contains("-DayDoSkipLogin")
+    ) {
         self.api = api
+        self.tokenStore = tokenStore
+        self.syncEnabled = syncEnabled
+        let transport = HTTPSyncTransport(
+            baseURL: SyncConfig.baseURL,
+            extraHeaders: SyncConfig.accessHeaders()
+        )
+        self.syncEngine = SyncEngine(
+            database: api.database,
+            transport: transport,
+            tokenStore: tokenStore
+        )
         let d = UserDefaults.standard
         accentHex = d.string(forKey: "accent") ?? "#FF8A1E"
         compact = d.bool(forKey: "compact")
@@ -70,9 +142,40 @@ final class AppModel {
     var accent: AccentTheme { AccentTheme(hex: accentHex) }
     var me: Member? { members.first(where: \.isMe) }
     var today: LocalDay { api.clock.today }
+    var editableProjects: [Project] { projects.filter { !$0.isViewer } }
 
     func project(_ id: String?) -> Project? { projects.first { $0.id == id } }
+    func isViewer(projectId: String?) -> Bool { project(projectId)?.isViewer ?? false }
     var inbox: Project? { projects.first(where: \.isInbox) }
+
+    func launch() async {
+        if !syncEnabled {
+            try? await api.bootstrap()
+            if ProcessInfo.processInfo.arguments.contains("-DayDoDemo") {
+                try? await DemoData.load(into: api)
+            }
+            await reloadData()
+            isSignedIn = true
+            ready = true
+            await DebugLaunch.apply(to: self)
+            return
+        }
+
+        let signedIn = (try? await syncEngine.isSignedIn) ?? false
+        if signedIn {
+            isSignedIn = true
+            await reloadData()
+            ready = true
+            startSyncObservers()
+            await DebugLaunch.apply(to: self)
+            await processPendingInviteIfNeeded()
+            triggerSyncNow()
+        } else {
+            isSignedIn = false
+            ready = true
+            await DebugLaunch.apply(to: self)
+        }
+    }
 
     func refreshLookups() async {
         do {
@@ -111,6 +214,7 @@ final class AppModel {
 
     /// Completes or uncompletes a task while preventing double-tap re-entry.
     func toggleComplete(_ task: TodoTask) {
+        guard !isViewer(projectId: task.projectId) else { return }
         let id = task.id
         if task.isCompleted {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -126,12 +230,242 @@ final class AppModel {
         }
     }
 
-    func didWrite() async {
+    /// Reloads UI state and reminders without triggering sync. Used for remote
+    /// change notifications, scene foreground, and date boundary refreshes.
+    func reloadData() async {
         await refreshLookups()
         revision += 1
         // Never block the UI on the notification permission prompt.
         let scheduler = reminders, api = api
         Task.detached { await scheduler.reschedule(api: api) }
+    }
+
+    /// Called after local writes: reloads UI and schedules a ~1s debounced sync.
+    func didWrite() async {
+        await reloadData()
+        scheduleDebouncedSync()
+    }
+
+    // MARK: - Auth & Sync
+
+    func signIn(with credential: SyncAuthCredential) async throws {
+        isSigningIn = true
+        defer { isSigningIn = false }
+        startSyncObservers()
+        do {
+            try await syncEngine.signIn(with: credential)
+            isSignedIn = true
+            await reloadData()
+            await processPendingInviteIfNeeded()
+        } catch {
+            let stillSignedIn = (try? await syncEngine.isSignedIn) ?? false
+            if !stillSignedIn {
+                stopSyncObservers()
+            } else if let syncError = error as? SyncError, case .retryable = syncError {
+                isSignedIn = true
+                await reloadData()
+                await handleSyncError(syncError)
+                await processPendingInviteIfNeeded()
+                return
+            }
+            throw error
+        }
+    }
+
+    func unsyncedChangeCount() async -> Int {
+        let pending = (try? await api.pendingChanges(limit: 10000)) ?? []
+        return pending.filter { $0.entity != "projectInvite" }.count
+    }
+
+    func signOut() async {
+        stopSyncObservers()
+        GIDSignIn.sharedInstance.signOut()
+        if syncEnabled {
+            do {
+                try await syncEngine.signOut()
+            } catch {
+                errorMessage = error.localizedDescription
+                return
+            }
+        }
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        projects = []
+        folders = []
+        tags = []
+        members = []
+        counts = SmartCounts(today: 0, tomorrow: 0, next7Days: 0, inbox: 0, assignedToMe: 0, completed: 0, trash: 0)
+        scope = .smart(.today)
+        tab = .tasks
+        drawerOpen = false
+        detailTaskId = nil
+        pendingDetailTaskId = nil
+        composing = nil
+        editingProjectId = nil
+        sharingProjectId = nil
+        invitePrompt = nil
+        pendingInviteCode = nil
+        isSignedIn = false
+        revision += 1
+    }
+
+    func scheduleDebouncedSync() {
+        guard syncEnabled, isSignedIn else { return }
+        debounceSyncTask?.cancel()
+        debounceSyncTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(1))
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            await self.runSyncNow()
+        }
+    }
+
+    func triggerSyncNow() {
+        guard syncEnabled, isSignedIn else { return }
+        Task { [weak self] in
+            await self?.runSyncNow()
+        }
+    }
+
+    func runSyncNow() async {
+        guard syncEnabled, isSignedIn else { return }
+        retrySyncTask?.cancel()
+        retrySyncTask = nil
+        isSyncing = true
+        defer { isSyncing = false }
+        do {
+            try await syncEngine.syncNow()
+        } catch is CancellationError {
+            return
+        } catch let error as SyncError {
+            await handleSyncError(error)
+        } catch {
+            // Unexpected error; keep local state intact.
+        }
+    }
+
+    func handleErrorIfSignedOut(_ error: Error) async -> Bool {
+        if case SyncError.signedOut = error {
+            await handleSyncError(.signedOut)
+            return true
+        }
+        return false
+    }
+
+    private func handleSyncError(_ error: SyncError) async {
+        switch error {
+        case .signedOut:
+            stopSyncObservers()
+            isSignedIn = false
+        case let .retryable(retryAfter, _, _):
+            retrySyncTask?.cancel()
+            let delay = max(0.5, retryAfter)
+            retrySyncTask = Task { [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(delay))
+                } catch {
+                    return
+                }
+                guard let self, !Task.isCancelled else { return }
+                await self.runSyncNow()
+            }
+        case .protocolError:
+            break
+        }
+    }
+
+    private func startSyncObservers() {
+        guard syncEnabled else { return }
+        if notificationObserverTask == nil {
+            notificationObserverTask = Task { [weak self] in
+                guard let self else { return }
+                let stream = await self.syncEngine.changeNotifications()
+                for await _ in stream {
+                    if Task.isCancelled { break }
+                    await self.reloadData()
+                }
+            }
+        }
+        if pathMonitor == nil {
+            let monitor = NWPathMonitor()
+            monitor.pathUpdateHandler = { [weak self] path in
+                let satisfied = path.status == .satisfied
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let previous = self.pathSatisfied
+                    self.pathSatisfied = satisfied
+                    if previous == false && satisfied && self.syncEnabled && self.isSignedIn {
+                        self.triggerSyncNow()
+                    }
+                }
+            }
+            monitor.start(queue: DispatchQueue(label: "com.audichuang.daydo.network"))
+            pathMonitor = monitor
+        }
+    }
+
+    private func stopSyncObservers() {
+        debounceSyncTask?.cancel()
+        debounceSyncTask = nil
+        retrySyncTask?.cancel()
+        retrySyncTask = nil
+        notificationObserverTask?.cancel()
+        notificationObserverTask = nil
+        pathMonitor?.cancel()
+        pathMonitor = nil
+        pathSatisfied = nil
+    }
+
+    // MARK: - Invites
+
+    func handleIncomingInvite(code: String) {
+        pendingInviteCode = code
+        guard ready, isSignedIn, syncEnabled else { return }
+        Task { [weak self] in
+            await self?.processPendingInviteIfNeeded()
+        }
+    }
+
+    func processPendingInviteIfNeeded() async {
+        guard syncEnabled, isSignedIn, let code = pendingInviteCode else { return }
+        pendingInviteCode = nil
+        invitePrompt = PendingInvitePrompt(code: code, info: nil, isLoading: true, error: nil)
+        do {
+            let info = try await syncEngine.inviteInfo(code: code)
+            guard invitePrompt?.code == code else { return }
+            invitePrompt = PendingInvitePrompt(code: code, info: info, isLoading: false, error: nil)
+        } catch let error as SyncError {
+            if case .signedOut = error {
+                invitePrompt = nil
+                pendingInviteCode = code
+                await handleSyncError(.signedOut)
+            } else {
+                invitePrompt = PendingInvitePrompt(code: code, info: nil, isLoading: false, error: error.localizedDescription)
+            }
+        } catch {
+            invitePrompt = PendingInvitePrompt(code: code, info: nil, isLoading: false, error: error.localizedDescription)
+        }
+    }
+
+    func acceptPendingInvite(code: String) async throws {
+        do {
+            let accepted = try await syncEngine.acceptInvite(code: code)
+            await reloadData()
+            scope = .project(accepted.projectId)
+            tab = .tasks
+            drawerOpen = false
+            detailTaskId = nil
+            invitePrompt = nil
+        } catch let error as SyncError {
+            if case .signedOut = error {
+                invitePrompt = nil
+                pendingInviteCode = code
+                await handleSyncError(.signedOut)
+            }
+            throw error
+        }
     }
 
     func scopeTitle(_ scope: TaskScope) -> String {

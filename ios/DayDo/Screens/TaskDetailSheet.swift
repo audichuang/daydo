@@ -31,7 +31,7 @@ struct TaskDetailSheet: View {
     enum Field { case title, content, item }
 
     var dirty: Bool {
-        guard let task else { return false }
+        guard let task, !model.isViewer(projectId: task.projectId) else { return false }
         return title != task.title || content != task.content
     }
 
@@ -69,19 +69,21 @@ struct TaskDetailSheet: View {
 
     @ViewBuilder var detail: some View {
         if let task {
+            let readOnly = model.isViewer(projectId: task.projectId)
             VStack(spacing: 0) {
-                header(task)
+                header(task, readOnly: readOnly)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        statusRow(task)
+                        statusRow(task, readOnly: readOnly)
                         TextField("任務標題", text: $title, axis: .vertical)
                             .txt(22, .bold)
                             .foregroundStyle(task.isCompleted ? Palette.done : Palette.text)
                             .strikethrough(task.isCompleted, color: Palette.done)
                             .lineLimit(1...6)
                             .focused($focus, equals: .title)
+                            .disabled(readOnly)
                             .accessibilityIdentifier("taskTitleField")
-                        tagsRow(task)
+                        tagsRow(task, readOnly: readOnly)
                         VStack(alignment: .leading, spacing: 6) {
                             Text("描述").txt(12, .semibold).foregroundStyle(Palette.textTertiary)
                             TextField("新增描述", text: $content, axis: .vertical)
@@ -90,9 +92,10 @@ struct TaskDetailSheet: View {
                                 .foregroundStyle(Palette.textBody)
                                 .lineLimit(2...30)
                                 .focused($focus, equals: .content)
+                                .disabled(readOnly)
                         }
-                        checklist(task)
-                        attachments(task)
+                        checklist(task, readOnly: readOnly)
+                        attachments(task, readOnly: readOnly)
                         if task.importNote != nil || task.sourceRaw != nil { importCard(task) }
                         Text(footer(task)).txt(12).foregroundStyle(Color(hex: "#737B78"))
                     }
@@ -107,7 +110,7 @@ struct TaskDetailSheet: View {
         }
     }
 
-    func header(_ task: TodoTask) -> some View {
+    func header(_ task: TodoTask, readOnly: Bool) -> some View {
         HStack(spacing: 8) {
             Button {
                 withAnimation(.snappy) { detent = detent == .large ? .fraction(0.56) : .large }
@@ -122,7 +125,7 @@ struct TaskDetailSheet: View {
             .accessibilityLabel(detent == .large ? "收合為半屏" : "展開為全屏")
 
             Menu {
-                ForEach(model.projects) { p in
+                ForEach(model.editableProjects) { p in
                     Button(p.name) {
                         let id = task.id
                         Task { await model.perform { try await $0.moveTask(id: id, toProjectId: p.id) } }
@@ -132,50 +135,56 @@ struct TaskDetailSheet: View {
                 HStack(spacing: 7) {
                     ListDot(color: model.project(task.projectId)?.color, size: 9)
                     Text(model.project(task.projectId)?.name ?? "清單").txt(15, .semibold).lineLimit(1)
-                    Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold))
+                    if !readOnly {
+                        Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold))
+                    }
                 }
                 .foregroundStyle(Color(hex: "#E6E9E8"))
                 .frame(height: 40)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .accessibilityLabel("所屬清單：\(model.project(task.projectId)?.name ?? "")，點擊更換")
+            .disabled(readOnly)
+            .accessibilityLabel("所屬清單：\(model.project(task.projectId)?.name ?? "")" + (readOnly ? "" : "，點擊更換"))
 
-            PillButton(title: !dirty && savedFlash ? "已儲存" : "儲存", kind: dirty ? .primary : .disabled) { saveText() }
+            if !readOnly {
+                PillButton(title: !dirty && savedFlash ? "已儲存" : "儲存", kind: dirty ? .primary : .disabled) { saveText() }
 
-            Menu {
-                Menu("優先級", systemImage: "flag") {
-                    ForEach([Priority.high, .medium, .low, .none], id: \.self) { p in
-                        Button(p.label) { model.updateTask(task.id) { $0.priority = p } }
+                Menu {
+                    Menu("優先級", systemImage: "flag") {
+                        ForEach([Priority.high, .medium, .low, .none], id: \.self) { p in
+                            Button(p.label) { model.updateTask(task.id) { $0.priority = p } }
+                        }
                     }
-                }
-                Button("複製任務", systemImage: "plus.square.on.square") { duplicate(task) }
-                Button("刪除", systemImage: "trash", role: .destructive) {
-                    let id = task.id
-                    Task {
-                        await model.perform { try await $0.deleteTask(id: id) }
-                        dismiss()
+                    Button("複製任務", systemImage: "plus.square.on.square") { duplicate(task) }
+                    Button("刪除", systemImage: "trash", role: .destructive) {
+                        let id = task.id
+                        Task {
+                            await model.perform { try await $0.deleteTask(id: id) }
+                            dismiss()
+                        }
                     }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color(hex: "#E6E9E8"))
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Palette.control))
                 }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Color(hex: "#E6E9E8"))
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Palette.control))
+                .accessibilityLabel("更多選項")
             }
-            .accessibilityLabel("更多選項")
         }
         .padding(.horizontal, 14)
         .padding(.top, 16)
         .frame(height: 68)
     }
 
-    func statusRow(_ task: TodoTask) -> some View {
+    func statusRow(_ task: TodoTask, readOnly: Bool) -> some View {
         HStack(spacing: 4) {
             Button { toggleDone(task) } label: {
                 TaskCheckbox(done: task.isCompleted, priority: task.priority, size: 22).frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
+            .disabled(readOnly)
             .accessibilityLabel(task.isCompleted ? "取消完成" : "完成任務")
 
             Button { openDate(task) } label: {
@@ -189,6 +198,7 @@ struct TaskDetailSheet: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(readOnly)
             .accessibilityLabel("設定日期與時間：\(dateSummary(task))")
 
             Menu {
@@ -201,19 +211,22 @@ struct TaskDetailSheet: View {
                     .foregroundStyle(Palette.priority(task.priority))
                     .frame(width: 36, height: 36)
             }
+            .disabled(readOnly)
             .accessibilityLabel("優先級：\(task.priority.label)")
         }
         .padding(.leading, -12)
     }
 
-    func tagsRow(_ task: TodoTask) -> some View {
+    func tagsRow(_ task: TodoTask, readOnly: Bool) -> some View {
         FlowLayout(spacing: 6) {
             ForEach(task.tags, id: \.self) { name in
                 let tag = model.tags.first { $0.name == name }
                 Menu {
-                    Button("移除標籤", systemImage: "xmark", role: .destructive) {
-                        let rest = task.tags.filter { $0 != name }
-                        model.updateTask(task.id) { $0.tags = rest }
+                    if !readOnly {
+                        Button("移除標籤", systemImage: "xmark", role: .destructive) {
+                            let rest = task.tags.filter { $0 != name }
+                            model.updateTask(task.id) { $0.tags = rest }
+                        }
                     }
                     Button("查看此標籤的任務", systemImage: "number") {
                         model.scope = .tag(name); model.tab = .tasks; dismiss()
@@ -222,23 +235,25 @@ struct TaskDetailSheet: View {
                     TagChip(name: name, label: tag?.label ?? name, color: tag?.color)
                 }
             }
-            Menu {
-                Button("新標籤…", systemImage: "plus") { tagText = ""; addingTag = true }
-                let others = model.tags.filter { !task.tags.contains($0.name) }
-                if !others.isEmpty {
-                    Section("既有標籤") {
-                        ForEach(others) { t in Button("# " + t.label) { addTag(t.label) } }
+            if !readOnly {
+                Menu {
+                    Button("新標籤…", systemImage: "plus") { tagText = ""; addingTag = true }
+                    let others = model.tags.filter { !task.tags.contains($0.name) }
+                    if !others.isEmpty {
+                        Section("既有標籤") {
+                            ForEach(others) { t in Button("# " + t.label) { addTag(t.label) } }
+                        }
                     }
+                } label: {
+                    Text("＋ 標籤").txt(12).foregroundStyle(Palette.textSecondary)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .overlay(Capsule().strokeBorder(Palette.handle, style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
                 }
-            } label: {
-                Text("＋ 標籤").txt(12).foregroundStyle(Palette.textSecondary)
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .overlay(Capsule().strokeBorder(Palette.handle, style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
             }
         }
     }
 
-    func checklist(_ task: TodoTask) -> some View {
+    func checklist(_ task: TodoTask, readOnly: Bool) -> some View {
         VStack(spacing: 0) {
             HStack {
                 Text("子任務").txt(12, .semibold)
@@ -261,6 +276,7 @@ struct TaskDetailSheet: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .disabled(readOnly)
                     .accessibilityLabel((item.isDone ? "取消完成：" : "完成：") + item.title)
                     Text(item.title).txt(15).foregroundStyle(item.isDone ? Palette.done : Palette.text)
                         .strikethrough(item.isDone, color: Palette.done)
@@ -269,38 +285,44 @@ struct TaskDetailSheet: View {
                 .frame(minHeight: 44)
                 .overlay(alignment: .top) { if i > 0 { Rectangle().fill(Palette.separatorSoft).frame(height: 1) } }
                 .contextMenu {
-                    Button("刪除子任務", systemImage: "trash", role: .destructive) {
-                        let id = item.id
-                        Task { await model.perform { try await $0.deleteChecklistItem(id: id) } }
+                    if !readOnly {
+                        Button("刪除子任務", systemImage: "trash", role: .destructive) {
+                            let id = item.id
+                            Task { await model.perform { try await $0.deleteChecklistItem(id: id) } }
+                        }
                     }
                 }
             }
-            HStack(spacing: 12) {
-                Image(systemName: "plus").font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.textTertiary).frame(width: 30)
-                TextField("新增子任務", text: $newItem)
-                    .txt(15)
-                    .foregroundStyle(Palette.text)
-                    .focused($focus, equals: .item)
-                    .submitLabel(.next)
-                    .onSubmit { addItem(task) }
+            if !readOnly {
+                HStack(spacing: 12) {
+                    Image(systemName: "plus").font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.textTertiary).frame(width: 30)
+                    TextField("新增子任務", text: $newItem)
+                        .txt(15)
+                        .foregroundStyle(Palette.text)
+                        .focused($focus, equals: .item)
+                        .submitLabel(.next)
+                        .onSubmit { addItem(task) }
+                }
+                .frame(minHeight: 44)
+                .overlay(alignment: .top) { if !task.items.isEmpty { Rectangle().fill(Palette.separatorSoft).frame(height: 1) } }
             }
-            .frame(minHeight: 44)
-            .overlay(alignment: .top) { if !task.items.isEmpty { Rectangle().fill(Palette.separatorSoft).frame(height: 1) } }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
         .card(14, color: Palette.raised)
     }
 
-    func attachments(_ task: TodoTask) -> some View {
+    func attachments(_ task: TodoTask, readOnly: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(task.attachments.isEmpty ? "附件" : "附件 \(task.attachments.count)").txt(12, .semibold).foregroundStyle(Palette.textTertiary)
                 Spacer()
-                Button { importing = true } label: {
-                    Label("加入", systemImage: "paperclip").txt(12, .semibold).foregroundStyle(accent.text)
+                if !readOnly {
+                    Button { importing = true } label: {
+                        Label("加入", systemImage: "paperclip").txt(12, .semibold).foregroundStyle(accent.text)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
             ForEach(task.attachments) { a in
                 Button { preview = model.api.attachmentURL(a) } label: {
@@ -326,9 +348,11 @@ struct TaskDetailSheet: View {
                 }
                 .buttonStyle(.plain)
                 .contextMenu {
-                    Button("移除附件", systemImage: "trash", role: .destructive) {
-                        let id = a.id
-                        Task { await model.perform { try await $0.deleteAttachment(id: id) } }
+                    if !readOnly {
+                        Button("移除附件", systemImage: "trash", role: .destructive) {
+                            let id = a.id
+                            Task { await model.perform { try await $0.deleteAttachment(id: id) } }
+                        }
                     }
                 }
             }

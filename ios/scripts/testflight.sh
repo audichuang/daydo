@@ -15,6 +15,13 @@ OUT="build/testflight-${BUILD_NUMBER}"
 AUTH=(-allowProvisioningUpdates)
 
 mkdir -p "$OUT"
+./scripts/gen-secrets.sh
+if [[ ! -f Secrets.xcconfig ]] \
+  || ! grep -Eq '^DAYDO_ACCESS_CLIENT_ID[[:space:]]*=[[:space:]]*[^[:space:]]+' Secrets.xcconfig \
+  || ! grep -Eq '^DAYDO_ACCESS_CLIENT_SECRET[[:space:]]*=[[:space:]]*[^[:space:]]+' Secrets.xcconfig; then
+  echo "Secrets.xcconfig 缺少 DAYDO_ACCESS_CLIENT_ID 或 DAYDO_ACCESS_CLIENT_SECRET" >&2
+  exit 1
+fi
 /opt/homebrew/bin/xcodegen generate --quiet
 if ! xcodebuild -project DayDo.xcodeproj -scheme DayDo -configuration Release \
   -destination 'generic/platform=iOS' -archivePath "${OUT}/DayDo.xcarchive" \

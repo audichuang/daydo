@@ -10,21 +10,25 @@ struct RootView: View {
         ZStack(alignment: .bottom) {
             Palette.background.ignoresSafeArea()
             if model.ready {
-            Group {
-                switch model.tab {
-                case .tasks: TaskListScreen(scope: model.scope)
-                case .calendar: CalendarScreen()
-                case .search: SearchScreen()
-                case .settings: SettingsScreen()
+                if model.isSignedIn {
+                    Group {
+                        switch model.tab {
+                        case .tasks: TaskListScreen(scope: model.scope)
+                        case .calendar: CalendarScreen()
+                        case .search: SearchScreen()
+                        case .settings: SettingsScreen()
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    BottomNav(tab: $model.tab, todayDay: model.today.day)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 4)
+
+                    DrawerOverlay(open: $model.drawerOpen)
+                } else {
+                    SignInView()
                 }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            BottomNav(tab: $model.tab, todayDay: model.today.day)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 4)
-
-            DrawerOverlay(open: $model.drawerOpen)
             }
         }
         .sheet(item: Binding(get: { model.detailTaskId.map(TaskRef.init) }, set: { model.detailTaskId = $0?.id }), onDismiss: {
@@ -43,6 +47,9 @@ struct RootView: View {
         }
         .sheet(item: Binding(get: { model.sharingProjectId.map(TaskRef.init) }, set: { model.sharingProjectId = $0?.id })) { ref in
             ShareListSheet(projectId: ref.id)
+        }
+        .sheet(item: $model.invitePrompt) { prompt in
+            InviteConfirmSheet(prompt: prompt)
         }
         .alert("出了點問題", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("好", role: .cancel) {}

@@ -270,28 +270,44 @@ struct DrawerView: View {
         Task { await model.perform { try await $0.moveProject(id: p.id, beforeProjectId: first.id) } }
     }
 
+    @ViewBuilder
     func listRow(_ p: Project, indent: Bool) -> some View {
-        SwipeableListRow(
-            project: p,
-            swipedId: $swipedId,
-            activeDrag: $rowDragging,
-            onPin: { pinToTop(p) },
-            onEdit: { close(); model.editingProjectId = p.id },
-            onDelete: { deletingProject = p }
-        ) { isSwiped in
-            row(icon: ListDot(color: p.color, size: 9), title: p.name, count: p.activeCount, current: isCurrent(.project(p.id)), indent: indent, highlighted: isSwiped,
-                trailing: p.isShared ? AnyView(Image(systemName: "person.2").font(.system(size: 11)).foregroundStyle(Palette.textTertiary).accessibilityLabel("共享清單")) : nil) {
-                if swipedId != nil { closeSwipe(); return }
-                pick(.project(p.id))
-            }
-            .accessibilityIdentifier("drawer.list.\(p.name)")
-            .accessibilityAction(named: "置頂") { pinToTop(p) }
-            .accessibilityAction(named: "編輯") { close(); model.editingProjectId = p.id }
-            .accessibilityAction(named: "刪除") { deletingProject = p }
-            .contextMenu {
-                Button("置頂", systemImage: "arrow.up.to.line") { pinToTop(p) }
-                Button("編輯清單", systemImage: "slider.horizontal.3") { close(); model.editingProjectId = p.id }
-                Button("刪除", systemImage: "trash", role: .destructive) { deletingProject = p }
+        let rowBody = row(icon: ListDot(color: p.color, size: 9), title: p.name, count: p.activeCount, current: isCurrent(.project(p.id)), indent: indent, highlighted: false,
+            trailing: p.isShared ? AnyView(Image(systemName: "person.2").font(.system(size: 11)).foregroundStyle(Palette.textTertiary).accessibilityLabel("共享清單")) : nil) {
+            if swipedId != nil { closeSwipe(); return }
+            pick(.project(p.id))
+        }
+        .accessibilityIdentifier("drawer.list.\(p.name)")
+
+        if p.isViewer {
+            rowBody
+                .contextMenu {
+                    Button("共享協作", systemImage: "person.2") { close(); model.sharingProjectId = p.id }
+                }
+        } else {
+            SwipeableListRow(
+                project: p,
+                swipedId: $swipedId,
+                activeDrag: $rowDragging,
+                onPin: { pinToTop(p) },
+                onEdit: { close(); model.editingProjectId = p.id },
+                onDelete: p.isOwner ? { deletingProject = p } : nil
+            ) { isSwiped in
+                row(icon: ListDot(color: p.color, size: 9), title: p.name, count: p.activeCount, current: isCurrent(.project(p.id)), indent: indent, highlighted: isSwiped,
+                    trailing: p.isShared ? AnyView(Image(systemName: "person.2").font(.system(size: 11)).foregroundStyle(Palette.textTertiary).accessibilityLabel("共享清單")) : nil) {
+                    if swipedId != nil { closeSwipe(); return }
+                    pick(.project(p.id))
+                }
+                .accessibilityIdentifier("drawer.list.\(p.name)")
+                .accessibilityAction(named: "置頂") { pinToTop(p) }
+                .accessibilityAction(named: "編輯") { close(); model.editingProjectId = p.id }
+                .contextMenu {
+                    Button("置頂", systemImage: "arrow.up.to.line") { pinToTop(p) }
+                    Button("編輯清單", systemImage: "slider.horizontal.3") { close(); model.editingProjectId = p.id }
+                    if p.isOwner {
+                        Button("刪除", systemImage: "trash", role: .destructive) { deletingProject = p }
+                    }
+                }
             }
         }
     }
@@ -314,7 +330,7 @@ private struct SwipeableListRow<Content: View>: View {
     @Binding var activeDrag: Bool
     var onPin: () -> Void
     var onEdit: () -> Void
-    var onDelete: () -> Void
+    var onDelete: (() -> Void)?
     @ViewBuilder var content: (_ isSwiped: Bool) -> Content
 
     @State private var baseOffset: CGFloat = 0
@@ -336,7 +352,7 @@ private struct SwipeableListRow<Content: View>: View {
     }
 
     private var reveal: CGFloat { max(0, -offset) }
-    private var showDelete: Bool { reveal > 24 }
+    private var showDelete: Bool { onDelete != nil && reveal > 24 }
     private var showEdit: Bool { reveal > 76 }
     private var showPin: Bool { reveal > 126 }
 
@@ -351,9 +367,11 @@ private struct SwipeableListRow<Content: View>: View {
                     close()
                     onEdit()
                 }
-                actionButton("刪除", systemName: "trash", bg: Color(hex: "#F2555A"), fg: .white, visible: showDelete) {
-                    close()
-                    onDelete()
+                if let onDelete {
+                    actionButton("刪除", systemName: "trash", bg: Color(hex: "#F2555A"), fg: .white, visible: showDelete) {
+                        close()
+                        onDelete()
+                    }
                 }
             }
             .padding(.trailing, trailingPad)

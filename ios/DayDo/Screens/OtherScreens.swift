@@ -92,6 +92,16 @@ struct SettingsScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
     @State private var archivedProjects: [Project] = []
+    @State private var confirmSignOut = false
+    @State private var unsyncedCount = 0
+
+    private var showAccountSection: Bool {
+#if DEBUG
+        return (model.syncEnabled && model.isSignedIn) || model.debugAccountPreview
+#else
+        return model.syncEnabled && model.isSignedIn
+#endif
+    }
 
     private var versionText: String {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
@@ -107,6 +117,51 @@ struct SettingsScreen: View {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("設定").txt(30, .bold).foregroundStyle(Palette.text)
                             .padding(.horizontal, 4)
+
+                        if showAccountSection {
+                            VStack(spacing: 0) {
+                                HStack(spacing: 12) {
+                                    let me = model.me
+                                    Text(me?.initial ?? "我")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(Palette.background)
+                                        .frame(width: 34, height: 34)
+                                        .background(Circle().fill(Color(hex: me?.color ?? accent.hex)))
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(me?.name ?? "我").txt(15, .semibold).foregroundStyle(Palette.text)
+                                        Text(model.isSyncing ? "正在同步…" : "已登入").txt(12).foregroundStyle(Palette.textSecondary)
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 14)
+                                .frame(minHeight: 58)
+                                .accessibilityIdentifier("settings.accountRow")
+
+                                divider
+
+                                Button {
+                                    Task {
+                                        unsyncedCount = await model.unsyncedChangeCount()
+                                        confirmSignOut = true
+                                    }
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                                            .font(.system(size: 17, weight: .medium))
+                                            .foregroundStyle(Palette.danger)
+                                            .frame(width: 24)
+                                        Text("登出").txt(15, .medium).foregroundStyle(Palette.danger)
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 14)
+                                    .frame(minHeight: 52)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("settings.signOut")
+                            }
+                            .card()
+                        }
 
                         VStack(spacing: 0) {
                             NavigationLink {
@@ -161,6 +216,18 @@ struct SettingsScreen: View {
                 return
             } catch {
                 if !Task.isCancelled { model.errorMessage = error.localizedDescription }
+            }
+        }
+        .alert("確定要登出？", isPresented: $confirmSignOut) {
+            Button("取消", role: .cancel) {}
+            Button("登出", role: .destructive) {
+                Task { await model.signOut() }
+            }
+        } message: {
+            if unsyncedCount > 0 {
+                Text("登出會清除這台裝置上的所有本機資料。目前還有 \(unsyncedCount) 筆尚未同步的變更，登出後將會遺失。")
+            } else {
+                Text("登出會清除這台裝置上的所有本機資料，下次登入後可從雲端同步回來。")
             }
         }
     }

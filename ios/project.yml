@@ -15,25 +15,44 @@ settings:
 packages:
   DayDoCore:
     path: ../DayDoCore
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    exactVersion: 9.2.0
 targets:
   DayDo:
     type: application
     platform: iOS
     sources:
       - path: DayDo
+    configFiles:
+      Debug: Config.xcconfig
+      Release: Config.xcconfig
     dependencies:
       - package: DayDoCore
+      - package: GoogleSignIn
+        product: GoogleSignIn
     entitlements:
       path: DayDo/DayDo.entitlements
       properties:
         com.apple.security.application-groups:
           - group.com.audichuang.daydo
+        com.apple.developer.applesignin:
+          - Default
     info:
       path: DayDo/Info.plist
       properties:
         CFBundleDisplayName: DayDo
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        DayDoAccessClientId: $(DAYDO_ACCESS_CLIENT_ID)
+        DayDoAccessClientSecret: $(DAYDO_ACCESS_CLIENT_SECRET)
+        GIDClientID: 710830841029-g836eiphrs51fm45f9fgtleg95foohv0.apps.googleusercontent.com
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - com.googleusercontent.apps.710830841029-g836eiphrs51fm45f9fgtleg95foohv0
+          - CFBundleURLName: com.audichuang.daydo.invite
+            CFBundleURLSchemes:
+              - daydo
         UILaunchScreen:
           UIColorName: LaunchBackground
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]

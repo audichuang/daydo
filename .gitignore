@@ -5,6 +5,7 @@ build/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
 ios/Doneday.xcodeproj/
+ios/Secrets.xcconfig
 .swiftpm/
 .orca/
 .agy-staff/

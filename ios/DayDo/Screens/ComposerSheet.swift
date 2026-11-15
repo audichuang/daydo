@@ -93,7 +93,11 @@ struct ComposerSheet: View {
             }
         }
         .onAppear {
-            projectId = request.projectId ?? model.inbox?.id
+            if let reqId = request.projectId, !model.isViewer(projectId: reqId) {
+                projectId = reqId
+            } else {
+                projectId = model.inbox?.id ?? model.editableProjects.first?.id
+            }
             if let t = request.tag { tags = [model.tags.first { $0.name == t }?.label ?? t] }
             if let d = request.day {
                 draft.day = d
@@ -161,7 +165,7 @@ struct ComposerSheet: View {
             .accessibilityLabel("標籤")
 
             Menu {
-                ForEach(model.projects) { p in
+                ForEach(model.editableProjects) { p in
                     Button {
                         projectId = p.id
                     } label: {

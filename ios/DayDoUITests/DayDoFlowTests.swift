@@ -9,7 +9,7 @@ final class DayDoFlowTests: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["-DayDoReset", "-DayDoDemo"]
+        app.launchArguments = ["-DayDoReset", "-DayDoDemo", "-DayDoSkipLogin"]
         addUIInterruptionMonitor(withDescription: "notifications") { alert in
             let allow = alert.buttons["允許"].exists ? alert.buttons["允許"] : alert.buttons["Allow"]
             if allow.exists { allow.tap(); return true }
@@ -309,7 +309,7 @@ final class DayDoFlowTests: XCTestCase {
 
     func testDayAllDayManyScrolls() {
         app.terminate()
-        app.launchArguments = ["-DayDoReset", "-DayDoDemo", "-DayDoSeedManyAllDay", "-DayDoScreen", "day"]
+        app.launchArguments = ["-DayDoReset", "-DayDoDemo", "-DayDoSkipLogin", "-DayDoSeedManyAllDay", "-DayDoScreen", "day"]
         app.launch()
         dismissNotificationPrompt()
 
@@ -463,37 +463,20 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["共享清單"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["所有者"].exists)
         XCTAssertTrue(app.staticTexts["我"].exists)
+        XCTAssertTrue(app.staticTexts["邀請連結"].exists)
+        XCTAssertTrue(app.buttons["share.createInviteLink"].waitForExistence(timeout: 3), app.debugDescription)
         shot("29-share-sheet")
 
-        // Invite family@example.com with 可編輯 role.
-        app.buttons["新增新成員"].tap()
-        let emailField = app.textFields["電子郵件"]
-        XCTAssertTrue(emailField.waitForExistence(timeout: 3), app.debugDescription)
-        emailField.tap()
-        emailField.typeText("family@example.com")
-        app.buttons["可編輯"].tap()
-        app.buttons["邀請"].tap()
-
-        let inviteRow = app.buttons["shareInvite.family@example.com"].firstMatch
-        XCTAssertTrue(inviteRow.waitForExistence(timeout: 3), app.debugDescription)
-        XCTAssertTrue(inviteRow.label.contains("family@example.com"))
-        XCTAssertTrue(inviteRow.label.contains("等待同步"))
+        // Create preview invite link under skip-login and verify ShareLink / copy / revoke render.
+        app.buttons["share.createInviteLink"].tap()
+        XCTAssertTrue(app.staticTexts["daydo://invite/preview"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.buttons["share.shareLink"].exists)
+        XCTAssertTrue(app.buttons["share.copyLink"].exists)
+        XCTAssertTrue(app.buttons["share.revokeLink"].exists)
         shot("30-share-invite")
 
-        // Change role to 唯讀 via row menu.
-        inviteRow.tap()
-        let readOnly = app.buttons["唯讀"]
-        XCTAssertTrue(readOnly.waitForExistence(timeout: 3), app.debugDescription)
-        readOnly.tap()
-        let updatedToRead = NSPredicate { _, _ in inviteRow.exists && inviteRow.label.contains("唯讀") }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: updatedToRead, object: nil)], timeout: 3), .completed)
-
-        // Cancel invite via row menu and verify removal.
-        inviteRow.tap()
-        let cancelBtn = app.buttons["取消邀請"]
-        XCTAssertTrue(cancelBtn.waitForExistence(timeout: 3), app.debugDescription)
-        cancelBtn.tap()
-        XCTAssertTrue(inviteRow.waitForNonExistence(timeout: 3), app.debugDescription)
+        app.buttons["share.revokeLink"].tap()
+        XCTAssertTrue(app.buttons["share.createInviteLink"].waitForExistence(timeout: 3))
 
         // Close ShareListSheet, verify 視圖 submenu updates viewMode, then Drawer gear -> Settings tab.
         app.buttons["完成"].tap()
@@ -520,5 +503,45 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(settingsBtn.waitForExistence(timeout: 3))
         settingsBtn.tap()
         XCTAssertTrue(app.buttons["外觀"].waitForExistence(timeout: 3), app.debugDescription)
+    }
+
+    @MainActor
+    func testSignInScreenShownWhenSignedOut() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset"]
+        app.launch()
+
+        let appleButton = app.buttons["signIn.apple"]
+        XCTAssertTrue(appleButton.waitForExistence(timeout: 5), app.debugDescription)
+        let googleButton = app.buttons["signIn.google"]
+        XCTAssertTrue(googleButton.waitForExistence(timeout: 3), app.debugDescription)
+        shot("35-sign-in")
+    }
+
+    @MainActor
+    func testSettingsAccountAndInviteConfirmSheets() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDemo", "-DayDoSkipLogin", "-DayDoDebugAccount", "-DayDoScreen", "settings"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        let signOutButton = app.buttons["settings.signOut"]
+        XCTAssertTrue(signOutButton.waitForExistence(timeout: 5), app.debugDescription)
+        shot("36-settings-account")
+
+        signOutButton.tap()
+        let confirmTitle = app.staticTexts["確定要登出？"]
+        XCTAssertTrue(confirmTitle.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '尚未同步的變更'")).firstMatch.exists)
+        app.buttons["取消"].tap()
+
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDemo", "-DayDoSkipLogin", "-DayDoScreen", "invite"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        XCTAssertTrue(app.staticTexts["小安 邀請你加入「家庭採買」"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons["invite.accept"].exists)
+        shot("37-invite-confirm")
     }
 }

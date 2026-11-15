@@ -18,8 +18,31 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.710830841029-g836eiphrs51fm45f9fgtleg95foohv0</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.audichuang.daydo.invite</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>daydo</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>DayDoAccessClientId</key>
+	<string>$(DAYDO_ACCESS_CLIENT_ID)</string>
+	<key>DayDoAccessClientSecret</key>
+	<string>$(DAYDO_ACCESS_CLIENT_SECRET)</string>
+	<key>GIDClientID</key>
+	<string>710830841029-g836eiphrs51fm45f9fgtleg95foohv0.apps.googleusercontent.com</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSApplicationCategoryType</key>

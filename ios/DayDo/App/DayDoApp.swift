@@ -1,3 +1,4 @@
+import GoogleSignIn
 import SwiftUI
 import UserNotifications
 import DayDoCore
@@ -8,10 +9,14 @@ struct DayDoApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        let api = Self.makeAPI()
-        let m = AppModel(api: api)
+        let (api, tokenStore) = Self.makeStorage()
+        let m = AppModel(api: api, tokenStore: tokenStore)
         _model = State(initialValue: m)
         UNUserNotificationCenter.current().delegate = m.notificationDelegate
+        if let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String,
+           !clientID.isEmpty {
+            GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
+        }
     }
 
     static let appGroup = "group.com.audichuang.daydo"
@@ -26,15 +31,18 @@ struct DayDoApp: App {
         return URL.applicationSupportDirectory.appendingPathComponent("DayDo", isDirectory: true)
     }
 
-    static func makeAPI() -> LocalDayDoAPI {
+    static func makeStorage() -> (LocalDayDoAPI, KeychainSyncTokenStore) {
         let dir = storageDirectory()
+        let tokenStore = KeychainSyncTokenStore()
         if ProcessInfo.processInfo.arguments.contains("-DayDoReset") {
             try? FileManager.default.removeItem(at: dir)
             if let bundle = Bundle.main.bundleIdentifier { UserDefaults.standard.removePersistentDomain(forName: bundle) }
+            tokenStore.clearAll()
         }
         do {
             let db = try AppDatabase.open(at: dir.appendingPathComponent("daydo.sqlite"))
-            return LocalDayDoAPI(database: db, attachmentsDirectory: dir.appendingPathComponent("Attachments", isDirectory: true))
+            let api = LocalDayDoAPI(database: db, attachmentsDirectory: dir.appendingPathComponent("Attachments", isDirectory: true))
+            return (api, tokenStore)
         } catch {
             fatalError("Cannot open database: \(error)")
         }
@@ -49,21 +57,23 @@ struct DayDoApp: App {
                 .tint(model.accent.color)
                 .preferredColorScheme(.dark)
                 .task {
-                    try? await model.api.bootstrap()
-                    if ProcessInfo.processInfo.arguments.contains("-DayDoDemo") {
-                        try? await DemoData.load(into: model.api)
-                    }
-                    await model.didWrite()
-                    model.ready = true
-                    await DebugLaunch.apply(to: model)
+                    await model.launch()
                 }
-                // Day boundaries: re-read when returning to the app or when the
-                // date changes, so 今天／逾期 never show yesterday's view.
+                .onOpenURL { url in
+                    if GIDSignIn.sharedInstance.handle(url) { return }
+                    if let code = SyncEngine.parseInviteCode(from: url) {
+                        model.handleIncomingInvite(code: code)
+                    }
+                }
+                // Day boundaries & sync: re-read and sync when returning to foreground.
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .active && model.ready { Task { await model.didWrite() } }
+                    if phase == .active && model.ready && model.isSignedIn {
+                        Task { await model.reloadData() }
+                        model.triggerSyncNow()
+                    }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
-                    if model.ready { Task { await model.didWrite() } }
+                    if model.ready && model.isSignedIn { Task { await model.reloadData() } }
                 }
         }
     }
@@ -147,12 +157,15 @@ enum DebugLaunch {
     static func apply(to model: AppModel) async {
         let args = ProcessInfo.processInfo.arguments
 #if DEBUG
+        if args.contains("-DayDoDebugAccount") {
+            model.debugAccountPreview = true
+        }
         if args.contains("-DayDoSeedManyAllDay") {
             let start = model.today.description
             for n in 1...8 {
                 _ = try? await model.api.createTask(CreateTaskInput(title: "全天壓測 \(n)", start: start, allDay: true))
             }
-            await model.didWrite()
+            await model.reloadData()
         }
 #endif
         guard let i = args.firstIndex(of: "-DayDoScreen"), i + 1 < args.count else { return }
@@ -172,6 +185,20 @@ enum DebugLaunch {
         case "editlist": model.editingProjectId = model.projects.first { !$0.isInbox }?.id
         case "compose": model.composing = ComposeRequest(day: model.today)
         case "settings": model.tab = .settings
+#if DEBUG
+        case "invite":
+            model.invitePrompt = PendingInvitePrompt(
+                code: "preview",
+                info: InviteInfo(
+                    projectName: "家庭採買",
+                    inviterName: "小安",
+                    role: "editor",
+                    expiresAt: EpochMillis(Date().addingTimeInterval(7 * 86400).timeIntervalSince1970 * 1000)
+                ),
+                isLoading: false,
+                error: nil
+            )
+#endif
         default: break
         }
     }

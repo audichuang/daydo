@@ -23,8 +23,11 @@ struct EditListSheet: View {
     @FocusState private var nameFocused: Bool
 
     var isNew: Bool { projectId == nil }
+    var isViewer: Bool { original?.isViewer ?? false }
+    var isOwner: Bool { original?.isOwner ?? true }
 
     var dirty: Bool {
+        guard !isViewer else { return false }
         guard let o = original else { return !name.trimmingCharacters(in: .whitespaces).isEmpty }
         return o.name != name || o.color != color || o.viewMode != viewMode || o.folderId != folderId
             || o.kind != kind || o.showInSmart != showInSmart || o.notifyMode != notifyMode
@@ -149,13 +152,15 @@ struct EditListSheet: View {
                                 Button("有變更時通知") { notifyMode = "all" }
                                 Button("不通知") { notifyMode = "none" }
                             } label: {
-                                rowLabel("提醒與通知", value: notifyMode == "all" ? "有變更時通知" : "不通知")
+                                rowLabel("提醒與通知", value: notifyMode == "all" ? "有變更時通知" : "不通知", last: !isOwner)
                             }
 
-                            Button { showTransferOwner = true } label: {
-                                rowLabel("轉移清單擁有者", value: "", last: true)
+                            if isOwner {
+                                Button { showTransferOwner = true } label: {
+                                    rowLabel("轉移清單擁有者", value: "", last: true)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
                         .padding(.horizontal, 14)
                         .card(16, color: Palette.raised)
@@ -176,7 +181,7 @@ struct EditListSheet: View {
                         } label: { rowLabel("在智慧清單中顯示", value: showInSmart == "all" ? "所有任務" : "不顯示", last: true) }
                     }
 
-                    if let original, !original.isInbox {
+                    if let original, !original.isInbox, isOwner {
                         VStack(spacing: 4) {
                             Button("歸檔清單") {
                                 var u = UpdateProjectInput(projectId: original.id)
