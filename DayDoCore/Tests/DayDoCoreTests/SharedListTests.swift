@@ -112,7 +112,8 @@ private let sharedTokenB = ProcessInfo.processInfo.environment["DAYDO_SYNC_SHARE
         #expect(snapB1 == srvB1)
 
         // 4. A changes B to viewer and updates the egg task; B edits offline then syncs -> rejected & reverted to A's value.
-        let userBId = try #require(try await syncB.signedInUserId)
+        let bOnA = try #require(try await apiA.listMembers().first { !$0.isMe })
+        let userBId = try #require(bOnA.userId)
         try await syncA.changeMemberRole(projectId: sharedList.id, userId: userBId, role: "viewer")
         clockA.set(try await maxFloor(dbA, dbB, clockA, clockB) + 100)
         var editEggA = UpdateTaskInput(taskId: eggTask.id)

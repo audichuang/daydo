@@ -551,6 +551,7 @@ describe('T5c sharing — invites, membership, permissions, backfill, and purge'
     expect(p1Page1.members).toEqual([
       expect.objectContaining({
         id: 'mem-a',
+        userId: uA,
         name: 'Alice Chen',
         initial: 'AC',
         color: '#AA1122',
@@ -578,8 +579,20 @@ describe('T5c sharing — invites, membership, permissions, backfill, and purge'
     expect(Object.hasOwn(pulledProjB.row, 'folderId')).toBe(false);
     expect(pulledProjB.row.name).toBe('Shared Trips');
 
-    // Creator pull still includes project.folderId.
+    // Creator pull still includes project.folderId, includes co-member userId in members,
+    // and keeps userId off ordinary scope member rows.
     const pullA = await h.pull(uA);
+    expect(pullA.members).toEqual([
+      expect.objectContaining({
+        id: resolveMemberId(uB, null),
+        userId: uB,
+        isMe: false,
+      }),
+    ]);
+    const pulledMemberA = pullA.scopes
+      .find((s) => s.scope === `u:${uA}`)!
+      .rows.find((r) => r.entity === 'member') as { row: Record<string, unknown> };
+    expect(Object.hasOwn(pulledMemberA.row, 'userId')).toBe(false);
     const pulledProjA = pullA.scopes
       .find((s) => s.scope === `u:${uA}`)!
       .rows.find((r) => r.entity === 'project') as { row: Record<string, unknown> };

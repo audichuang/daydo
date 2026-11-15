@@ -148,9 +148,6 @@ public final class LocalDayDoAPI: DayDoAPI {
         if member.isMe, let uid = try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [SyncEngine.signedInUserIdMetaKey]) {
             return uid
         }
-        if member.id.hasPrefix("u-") {
-            return String(member.id.dropFirst(2))
-        }
         return nil
     }
 

@@ -12,6 +12,7 @@ export interface PullMembershipItem {
 
 export interface PullMemberRow {
   id: string;
+  userId: string;
   name: string;
   initial: string;
   color: string;
@@ -194,6 +195,7 @@ export async function executeSyncPull(
     if (r.memberUserId !== userId && !membersByUserId.has(r.memberUserId)) {
       membersByUserId.set(r.memberUserId, {
         id: memberId,
+        userId: r.memberUserId,
         name: r.name ?? '',
         initial: r.initial ?? '',
         color: r.color ?? '',
