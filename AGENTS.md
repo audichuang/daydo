@@ -17,7 +17,8 @@ DayDo 是待辦加日曆的 iPhone App，給自己和家人用，互動對標 Ti
 ```
 DayDoCore/   Swift Package：資料模型、SQLite（GRDB）、DayDoAPI 指令層、日期/重複/提醒邏輯
 ios/         SwiftUI App（iOS 26+，iOS 27.2 SDK），XcodeGen 產生專案（project.yml）
-spec/        openapi.yaml：DayDoAPI 的 HTTP 合約，第二階段 Worker 與 MCP 共用；sync.md：同步協議
+server/      第二階段同步後端：Void（Cloudflare Workers，底層 Hono）＋ D1 ＋ 寫入 Durable Object
+spec/        openapi.yaml：DayDoAPI 的 HTTP 合約，第二階段 Worker 與 MCP 共用；sync.md：同步協議；fixtures/sync-ops.json：App 實際編出的 op，server 測試直接讀
 design/      設計稿
 ```
 
@@ -44,6 +45,7 @@ design/      設計稿
 
 ```bash
 cd DayDoCore && swift test                       # 核心單元測試
+cd server && npm ci && npm run check              # 同步後端：型別檢查＋單元測試＋本機 dev server 上的登入與同步 e2e
 cd ios && xcodegen generate                      # 改了 project.yml 或增刪檔案後
 cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
   -destination 'platform=iOS Simulator,id=<DD 模擬器 UDID>' CODE_SIGNING_ALLOWED=NO   # UI 流程測試
@@ -73,6 +75,12 @@ cd ios && BUILD_NUMBER=$(~/Project/audi-skill/ios-release/scripts/tf next-build 
 - build 號用 `tf next-build` 的流水號，不用時間戳。
 - 上傳後 build 不會自動進「自己」，照 `tf verify` 的 `next=` 跑 `tf distribute`，到 `RESULT READY` 才算發出去。
 
-## 第二階段（未做）
+## 第二階段（進行中）
 
-同步協議寫在 `spec/sync.md`：Sign in with Apple＋Google；每個 op 帶 opId 與 HLC，未 ack 就重送、伺服器靠 opId 去重；逐欄位以 HLC 後寫者贏；D1 存資料與每列遞增的 `server_seq`，一個寫入 DO 依序合併並推送通知，不用 KV（使用者只定了登入方式與修改時間優先，其餘為提案）。改協議先改那份文件。MCP 掛在 Worker 上，工具名沿用 ticktick-mcp。
+同步協議寫在 `spec/sync.md`，改協議先改那份文件：Sign in with Apple＋Google；每個 op 帶 opId 與 HLC，未 ack 就重送、伺服器靠 opId 去重；逐欄位以 HLC 後寫者贏；D1 存資料與每列遞增的 `serverSeq`，所有 push 交給同一個寫入 DO 依序處理。MCP 掛在 Worker 上，工具名沿用 ticktick-mcp。
+
+- 已做：App 端 migration `v3`（outbox 的 opId／hlc／ackedAt／result）與 HLC；`server/` 的登入（Apple、Google、refresh 輪替）、`/sync/push`、`/sync/pull`。未做：App 的 SyncEngine 與登入畫面、WebSocket 通知、共享清單的權限、第一次登入的 id 對應、部署。
+- `server/` 只在本機跑，還沒有部署設定；不跑 `void deploy`、`void connect` 或 Cloudflare 登入，除非使用者明說。
+- void 固定 1.8.0：npm 設定只裝發布滿 3 天的版本，新版會被拒，不要改 npm 設定繞過。
+- 寫入 DO 一定要自己排隊：DO 等 D1 回應時會接下一個請求，沒有佇列時同時送出的讀改寫全部讀到同一個舊值（本機實測）。`WRITER_QUEUE=off` 只在開發建置有效，用來證明並發測試抓得到競態。
+- 改了 App 的 Record 或 outbox 編碼，要用 `DAYDO_WRITE_FIXTURE=1 swift test` 重新產生 `spec/fixtures/sync-ops.json`，再跑 server 的測試。
