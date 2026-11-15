@@ -212,7 +212,7 @@ struct SignInView: View {
                 let profileName = result.user.profile?.name.trimmingCharacters(in: .whitespacesAndNewlines)
                 let suggestedName = (profileName?.isEmpty == false) ? profileName : nil
                 let rawAvatarURL = (result.user.profile?.hasImage == true)
-                    ? result.user.profile?.imageURL(withDimension: 200)
+                    ? result.user.profile?.imageURL(withDimension: 256)
                     : nil
                 let suggestedAvatarUrl = (rawAvatarURL?.scheme?.lowercased() == "https") ? rawAvatarURL?.absoluteString : nil
                 await performSignIn(.google(idToken: idToken), displayName: suggestedName, avatarUrl: suggestedAvatarUrl)

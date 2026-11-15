@@ -148,6 +148,7 @@ final class AppModel {
     private var notificationObserverTask: Task<Void, Never>?
     private var pathMonitor: NWPathMonitor?
     private var pathSatisfied: Bool?
+    private var didAttemptGoogleAvatarSyncOnLaunch = false
 
     init(
         api: LocalDayDoAPI,
@@ -242,6 +243,7 @@ final class AppModel {
             await DebugLaunch.apply(to: self)
             await processPendingInviteIfNeeded()
             triggerSyncNow()
+            syncGoogleAvatarOnLaunchIfNeeded()
         } else {
             isSignedIn = false
             ready = true
@@ -329,26 +331,80 @@ final class AppModel {
         startSyncObservers()
         do {
             try await syncEngine.signIn(with: credential)
-            try? await syncEngine.setMeAvatarUrlIfMissing(avatarUrl)
             isSignedIn = true
             await reloadData()
             await resolveMeProfileAfterSignIn(suggestedName: displayName)
             await processPendingInviteIfNeeded()
+            syncGoogleAvatarAfterSignIn(credential: credential, explicitAvatarUrl: avatarUrl)
         } catch {
             let stillSignedIn = (try? await syncEngine.isSignedIn) ?? false
             if !stillSignedIn {
                 stopSyncObservers()
             } else if let syncError = error as? SyncError, case .retryable = syncError {
-                try? await syncEngine.setMeAvatarUrlIfMissing(avatarUrl)
                 isSignedIn = true
                 await reloadData()
                 await resolveMeProfileAfterSignIn(suggestedName: displayName)
                 await handleSyncError(syncError)
                 await processPendingInviteIfNeeded()
+                syncGoogleAvatarAfterSignIn(credential: credential, explicitAvatarUrl: avatarUrl)
                 return
             }
             throw error
         }
+    }
+
+    private func syncGoogleAvatarOnLaunchIfNeeded() {
+        guard syncEnabled, isSignedIn, !didAttemptGoogleAvatarSyncOnLaunch else { return }
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-DayDoDebugStub") {
+            return
+        }
+#endif
+        didAttemptGoogleAvatarSyncOnLaunch = true
+        Task { [weak self] in
+            guard let self else { return }
+            let googleUser: GIDGoogleUser?
+            if let current = GIDSignIn.sharedInstance.currentUser {
+                googleUser = current
+            } else if GIDSignIn.sharedInstance.hasPreviousSignIn() {
+                googleUser = try? await GIDSignIn.sharedInstance.restorePreviousSignIn()
+            } else {
+                googleUser = nil
+            }
+            guard let avatarUrl = self.googleProfileAvatarURL(from: googleUser) else { return }
+            await self.syncGoogleAvatarIfNeeded(avatarUrl)
+        }
+    }
+
+    private func syncGoogleAvatarAfterSignIn(credential: SyncAuthCredential, explicitAvatarUrl: String?) {
+        guard case .google = credential else { return }
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-DayDoDebugStub") {
+            return
+        }
+#endif
+        let resolvedAvatarUrl = explicitAvatarUrl ?? googleProfileAvatarURL(from: GIDSignIn.sharedInstance.currentUser)
+        guard let resolvedAvatarUrl else { return }
+        Task { [weak self] in
+            await self?.syncGoogleAvatarIfNeeded(resolvedAvatarUrl)
+        }
+    }
+
+    private func googleProfileAvatarURL(from user: GIDGoogleUser?) -> String? {
+        guard let profile = user?.profile,
+              profile.hasImage,
+              let url = profile.imageURL(withDimension: 256),
+              url.scheme?.lowercased() == "https" else {
+            return nil
+        }
+        return url.absoluteString
+    }
+
+    private func syncGoogleAvatarIfNeeded(_ avatarUrl: String) async {
+        guard syncEnabled, isSignedIn else { return }
+        guard let storedAvatarUrl = try? await syncEngine.meAvatarUrl else { return }
+        guard storedAvatarUrl != avatarUrl else { return }
+        _ = try? await syncEngine.updateMeAvatar(avatarUrl)
     }
 
     private func resolveMeProfileAfterSignIn(suggestedName: String?) async {

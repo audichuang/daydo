@@ -54,6 +54,8 @@ Void starts Vite with `workerd` and a local D1 database.
 - `POST /auth/refresh` (`{ refreshToken }`)
   - Response: `{ accessToken, refreshToken, hasData, meMemberId, inboxProjectId, avatarUrl }`
   - Grace rule: retrying a token rotated within 10 minutes whose successor is still unrevoked revokes that unused successor and issues a new token pair; any other reuse revokes the session chain (`401`).
+- `PUT /me/avatar` (`{ avatarUrl }`, requires `Authorization: Bearer <accessToken>`)
+  - Validates `avatarUrl` is an `https:` URL whose host ends with `googleusercontent.com` (max 2048 chars; `400` otherwise), stores it in D1 `user.avatarUrl`, and returns `{ avatarUrl }`.
 - `inboxProjectId` is queried from the user's `Scope` Durable Object (`getInboxProjectId`, filtered by active `projectMembership`), `meMemberId` comes from `user.meMemberId`, and `hasData` is `inboxProjectId !== null`.
 
 ## Sync Endpoints

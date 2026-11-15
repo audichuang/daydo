@@ -148,6 +148,14 @@ struct AuthRefreshResponse: Decodable, Sendable {
     let avatarUrl: String?
 }
 
+struct UpdateMeAvatarRequest: Encodable, Sendable {
+    let avatarUrl: String
+}
+
+struct UpdateMeAvatarResponse: Decodable, Sendable {
+    let avatarUrl: String
+}
+
 public enum SyncAuthCredential: Sendable, Equatable {
     case google(idToken: String)
     case apple(identityToken: String, nonce: String)

@@ -367,3 +367,18 @@ export async function rotateRefreshToken(
 
   return { accessToken, refreshToken: newRefreshToken, ...syncState };
 }
+
+export async function updateUserAvatar(
+  database: DatabaseClient,
+  params: { userId: string; avatarUrl: string },
+): Promise<{ avatarUrl: string } | null> {
+  const updated = await database
+    .update(user)
+    .set({ avatarUrl: params.avatarUrl })
+    .where(eq(user.id, params.userId))
+    .returning({ avatarUrl: user.avatarUrl });
+  if (updated.length === 0) {
+    return null;
+  }
+  return { avatarUrl: params.avatarUrl };
+}

@@ -158,6 +158,7 @@
 | POST | `/auth/apple` | `{identityToken, nonce, deviceId}` → `{accessToken, refreshToken, user, isNewAccount, hasData, meMemberId, inboxProjectId, avatarUrl}` |
 | POST | `/auth/google` | `{idToken, deviceId}` → 同上 |
 | POST | `/auth/refresh` | `{refreshToken}` → `{accessToken, refreshToken, hasData, meMemberId, inboxProjectId, avatarUrl}` |
+| PUT | `/me/avatar` | `{avatarUrl}`（限 `https:` 且 host 為 `googleusercontent.com`、最多 2048 字元）→ `{avatarUrl}`，更新 D1 `user.avatarUrl` |
 | POST | `/auth/link` | 已登入時連結另一種登入方式（之後做） |
 | DELETE | `/account` | 刪除帳號與所有資料（之後做，上架前必須有） |
 | POST | `/sync/push` | `{deviceId, ops: [{opId, hlc, entity, entityId, op, fields, row}]}`（最多 200）→ `{results: [{opId, status, reason?, row, clocks}], serverTime}`，`results` 與 `ops` 同順序；`serverTime` 是 HLC 字串（`<ms>:<counter>:server`） |
