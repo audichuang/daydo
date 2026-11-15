@@ -19,7 +19,7 @@ import {
   type EntityName,
   type StoredEntityState,
 } from '../src/sync/entities';
-import { clampHlc, type Hlc } from '../src/sync/hlc';
+import { clampHlc, compareHlc, type Hlc } from '../src/sync/hlc';
 import { mergeOp } from '../src/sync/merge';
 
 export interface PushOpResult {
@@ -292,24 +292,29 @@ class WriterObject extends DurableObject<CloudBindings> {
         }
 
         let parentPurged = false;
-        if (op.op === 'upsert' && isTaskChildEntity(op.entity)) {
-          const candidateTaskIds = new Set<string>();
-          if (existing && typeof existing.row.taskId === 'string' && existing.row.taskId.length > 0) {
-            candidateTaskIds.add(existing.row.taskId);
+        if (
+          op.op === 'upsert' &&
+          isTaskChildEntity(op.entity) &&
+          (!existing || existing.purgedAt === null)
+        ) {
+          let effectiveTaskId: unknown;
+          if (!existing) {
+            effectiveTaskId = Object.hasOwn(op.row, 'taskId') ? op.row.taskId : null;
+          } else {
+            effectiveTaskId = existing.row.taskId;
+            if (op.fields.includes('taskId')) {
+              const prevClock = Object.hasOwn(existing.clocks, 'taskId')
+                ? existing.clocks.taskId
+                : undefined;
+              if (!prevClock || compareHlc(clamped.formatted, prevClock) > 0) {
+                effectiveTaskId = Object.hasOwn(op.row, 'taskId') ? op.row.taskId : null;
+              }
+            }
           }
-          if (
-            (!existing || op.fields.includes('taskId')) &&
-            Object.hasOwn(op.row, 'taskId') &&
-            typeof op.row.taskId === 'string' &&
-            op.row.taskId.length > 0
-          ) {
-            candidateTaskIds.add(op.row.taskId);
-          }
-          for (const tid of candidateTaskIds) {
-            const parentTask = workingRows.get(stateKey('task', tid, userId));
+          if (typeof effectiveTaskId === 'string' && effectiveTaskId.length > 0) {
+            const parentTask = workingRows.get(stateKey('task', effectiveTaskId, userId));
             if (parentTask && parentTask.ownerUserId === userId && parentTask.purgedAt !== null) {
               parentPurged = true;
-              break;
             }
           }
         }
@@ -405,6 +410,17 @@ class WriterObject extends DurableObject<CloudBindings> {
           .set({ meMemberId: bindMeMemberId })
           .where(and(eq(user.id, userId), isNull(user.meMemberId))),
       );
+      const meKey = stateKey('member', bindMeMemberId, userId);
+      const meState = workingRows.get(meKey);
+      if (meState && meState.ownerUserId === userId && !dirtyRows.has(meKey)) {
+        currentSeq += 1;
+        const bumpedState: StoredEntityState = {
+          ...meState,
+          serverSeq: currentSeq,
+        };
+        workingRows.set(meKey, bumpedState);
+        dirtyRows.set(meKey, { entity: 'member', state: bumpedState });
+      }
     }
 
     if (currentSeq !== initialSeq) {

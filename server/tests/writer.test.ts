@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '../db/schema';
@@ -214,6 +215,105 @@ describe('Writer child-after-task-purge (Finding 1)', () => {
     expect(res.results[1].status).toBe('applied');
     expect(typeof res.results[1].row?.purgedAt).toBe('number');
   });
+
+  it('old taskId losing the merge must not tombstone', async () => {
+    const writer = makeWriter(d1);
+
+    const batch1 = await writer.push({
+      userId,
+      deviceId: 'dev-a',
+      ops: [
+        {
+          opId: 'op-t-a',
+          hlc: '1700000000001:0000:dev-a',
+          entity: 'task',
+          entityId: 'task-A',
+          op: 'upsert',
+          fields: ['id', 'projectId', 'title', 'sortKey', 'createdAt', 'updatedAt'],
+          row: {
+            id: 'task-A',
+            projectId: 'p-1',
+            title: 'Task A (live)',
+            sortKey: 'i',
+            createdAt: 1000,
+            updatedAt: 1000,
+          },
+        },
+        {
+          opId: 'op-t-b',
+          hlc: '1700000000002:0000:dev-a',
+          entity: 'task',
+          entityId: 'task-B',
+          op: 'upsert',
+          fields: ['id', 'projectId', 'title', 'sortKey', 'createdAt', 'updatedAt'],
+          row: {
+            id: 'task-B',
+            projectId: 'p-1',
+            title: 'Task B (to purge)',
+            sortKey: 'j',
+            createdAt: 1000,
+            updatedAt: 1000,
+          },
+        },
+        {
+          opId: 'op-ci-1',
+          hlc: '1700000000010:0000:dev-a',
+          entity: 'checklistItem',
+          entityId: 'ci-1',
+          op: 'upsert',
+          fields: ['id', 'taskId', 'title', 'status', 'sortKey', 'createdAt', 'updatedAt'],
+          row: {
+            id: 'ci-1',
+            taskId: 'task-A',
+            title: 'Live item',
+            status: 0,
+            sortKey: 'i',
+            createdAt: 1000,
+            updatedAt: 1000,
+          },
+        },
+        {
+          opId: 'op-t-b-del',
+          hlc: '1700000000011:0000:dev-a',
+          entity: 'task',
+          entityId: 'task-B',
+          op: 'delete',
+          fields: [],
+          row: {},
+        },
+      ],
+    });
+    expect(batch1.results.every((r) => r.status === 'applied')).toBe(true);
+
+    // Stale upsert referencing purged task-B loses LWW on taskId (005 < 010).
+    const batch2 = await writer.push({
+      userId,
+      deviceId: 'dev-b',
+      ops: [
+        {
+          opId: 'op-ci-1-stale',
+          hlc: '1700000000005:0000:dev-b',
+          entity: 'checklistItem',
+          entityId: 'ci-1',
+          op: 'upsert',
+          fields: ['taskId'],
+          row: {
+            taskId: 'task-B',
+          },
+        },
+      ],
+    });
+
+    expect(batch2.results[0].status).toBe('applied');
+    expect(batch2.results[0].row?.taskId).toBe('task-A');
+    expect(batch2.results[0].clocks.taskId).toBe('1700000000010:0000:dev-a');
+    expect(batch2.results[0].row?.purgedAt ?? null).toBeNull();
+
+    const pulled = await pullUserRows(db, { userId, since: 0, limit: 100 });
+    const ci = pulled.rows.find((r) => r.entity === 'checklistItem' && r.row.id === 'ci-1');
+    expect(ci?.row.taskId).toBe('task-A');
+    expect(ci?.row.purgedAt ?? null).toBeNull();
+  });
 });
 
 describe('Writer member isMe computation (Finding 2)', () => {
@@ -329,6 +429,157 @@ describe('Writer member isMe computation (Finding 2)', () => {
       ],
     });
     expect(pushB.results[0].row?.isMe).toBe(true);
+  });
+
+  it('advances serverSeq on replay binding after meMemberId reset to NULL so incremental pull sees isMe:true', async () => {
+    const setup = createTestD1();
+    const userId = 'user-replay-me';
+    await setup.db.insert(schema.user).values({ id: userId, createdAt: 1000 });
+    const writer = makeWriter(setup.d1);
+
+    const push1 = await writer.push({
+      userId,
+      deviceId: 'dev-a',
+      ops: [
+        {
+          opId: 'op-me-replay',
+          hlc: '1700000000001:0000:dev-a',
+          entity: 'member',
+          entityId: 'mem-a',
+          op: 'upsert',
+          fields: ['id', 'name', 'initial', 'color', 'isMe', 'createdAt', 'updatedAt'],
+          row: {
+            id: 'mem-a',
+            name: 'Alice',
+            initial: 'A',
+            color: '#9BB8FF',
+            isMe: true,
+            createdAt: 1000,
+            updatedAt: 1000,
+          },
+        },
+      ],
+    });
+    expect(push1.results[0].row?.isMe).toBe(true);
+
+    // Simulate legacy/unbound account state where user.meMemberId is NULL.
+    await setup.db
+      .update(schema.user)
+      .set({ meMemberId: null })
+      .where(eq(schema.user.id, userId));
+
+    // Device B pulls while unbound -> receives isMe:false and advances cursor.
+    const pullBefore = await pullUserRows(setup.db, { userId, since: 0, limit: 100 });
+    expect(pullBefore.rows).toHaveLength(1);
+    expect(pullBefore.rows[0].row.isMe).toBe(false);
+    const cursor = pullBefore.cursor;
+
+    // Device A replays the same member op -> binds meMemberId and must bump member serverSeq.
+    const replay = await writer.push({
+      userId,
+      deviceId: 'dev-a',
+      ops: [
+        {
+          opId: 'op-me-replay',
+          hlc: '1700000000001:0000:dev-a',
+          entity: 'member',
+          entityId: 'mem-a',
+          op: 'upsert',
+          fields: ['id', 'name', 'initial', 'color', 'isMe', 'createdAt', 'updatedAt'],
+          row: {
+            id: 'mem-a',
+            name: 'Alice',
+            initial: 'A',
+            color: '#9BB8FF',
+            isMe: true,
+            createdAt: 1000,
+            updatedAt: 1000,
+          },
+        },
+      ],
+    });
+    expect(replay.results[0].row?.isMe).toBe(true);
+    expect(replay.serverSeq).toBeGreaterThan(cursor);
+
+    // Device B incremental pull since=cursor must receive mem-a with isMe:true.
+    const pullAfter = await pullUserRows(setup.db, { userId, since: cursor, limit: 100 });
+    const updatedMember = pullAfter.rows.find((r) => r.entity === 'member' && r.row.id === 'mem-a');
+    expect(updatedMember).toBeDefined();
+    expect(updatedMember?.row.isMe).toBe(true);
+  });
+
+  it('advances serverSeq on stale-HLC isMe:true binding so incremental pull sees isMe:true', async () => {
+    const setup = createTestD1();
+    const userId = 'user-stale-me';
+    await setup.db.insert(schema.user).values({ id: userId, createdAt: 1000 });
+    const writer = makeWriter(setup.d1);
+
+    // Create member without binding meMemberId (e.g. isMe: false).
+    const push1 = await writer.push({
+      userId,
+      deviceId: 'dev-b',
+      ops: [
+        {
+          opId: 'op-me-init',
+          hlc: '1700000000010:0000:dev-b',
+          entity: 'member',
+          entityId: 'mem-a',
+          op: 'upsert',
+          fields: ['id', 'name', 'initial', 'color', 'isMe', 'createdAt', 'updatedAt'],
+          row: {
+            id: 'mem-a',
+            name: 'Alice',
+            initial: 'A',
+            color: '#9BB8FF',
+            isMe: false,
+            createdAt: 1000,
+            updatedAt: 1000,
+          },
+        },
+      ],
+    });
+    expect(push1.results[0].row?.isMe).toBe(false);
+
+    const pullBefore = await pullUserRows(setup.db, { userId, since: 0, limit: 100 });
+    expect(pullBefore.rows).toHaveLength(1);
+    expect(pullBefore.rows[0].row.isMe).toBe(false);
+    const cursor = pullBefore.cursor;
+
+    // Device A pushes a stale-HLC upsert carrying isMe:true (loses all synced fields -> merged.changed is false).
+    const stalePush = await writer.push({
+      userId,
+      deviceId: 'dev-a',
+      ops: [
+        {
+          opId: 'op-me-stale',
+          hlc: '1700000000005:0000:dev-a',
+          entity: 'member',
+          entityId: 'mem-a',
+          op: 'upsert',
+          fields: ['id', 'name', 'initial', 'color', 'isMe', 'createdAt', 'updatedAt'],
+          row: {
+            id: 'mem-a',
+            name: 'Old Name',
+            initial: 'O',
+            color: '#000000',
+            isMe: true,
+            createdAt: 900,
+            updatedAt: 900,
+          },
+        },
+      ],
+    });
+    expect(stalePush.results[0].status).toBe('applied');
+    expect(stalePush.results[0].row?.name).toBe('Alice');
+    expect(stalePush.results[0].row?.isMe).toBe(true);
+    expect(stalePush.serverSeq).toBeGreaterThan(cursor);
+
+    // Device B incremental pull since=cursor must receive mem-a with isMe:true.
+    const pullAfter = await pullUserRows(setup.db, { userId, since: cursor, limit: 100 });
+    const updatedMember = pullAfter.rows.find((r) => r.entity === 'member' && r.row.id === 'mem-a');
+    expect(updatedMember).toBeDefined();
+    expect(updatedMember?.row.isMe).toBe(true);
+    expect(updatedMember?.row.name).toBe('Alice');
   });
 });
 
