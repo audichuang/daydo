@@ -140,6 +140,16 @@ struct SettingsScreen: View {
                                 divider
 
                                 Button {
+                                    model.showingJoinInvite = true
+                                } label: {
+                                    row(icon: "person.badge.plus", title: "加入共享清單")
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("settings.joinInvite")
+
+                                divider
+
+                                Button {
                                     Task {
                                         unsyncedCount = await model.unsyncedChangeCount()
                                         confirmSignOut = true

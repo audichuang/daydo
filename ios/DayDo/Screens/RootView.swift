@@ -51,6 +51,11 @@ struct RootView: View {
         .sheet(item: $model.invitePrompt) { prompt in
             InviteConfirmSheet(prompt: prompt)
         }
+        .sheet(isPresented: $model.showingJoinInvite, onDismiss: {
+            model.flushManualInviteIfNeeded()
+        }) {
+            JoinInviteSheet()
+        }
         .alert("出了點問題", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("好", role: .cancel) {}
         } message: {

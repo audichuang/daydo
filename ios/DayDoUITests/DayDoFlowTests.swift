@@ -527,6 +527,8 @@ final class DayDoFlowTests: XCTestCase {
 
         let signOutButton = app.buttons["settings.signOut"]
         XCTAssertTrue(signOutButton.waitForExistence(timeout: 5), app.debugDescription)
+        let joinInviteButton = app.buttons["settings.joinInvite"]
+        XCTAssertTrue(joinInviteButton.exists, app.debugDescription)
         shot("36-settings-account")
 
         signOutButton.tap()
@@ -534,6 +536,20 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(confirmTitle.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '尚未同步的變更'")).firstMatch.exists)
         app.buttons["取消"].tap()
+
+        joinInviteButton.tap()
+        let joinInput = app.textFields["joinInvite.input"]
+        XCTAssertTrue(joinInput.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.buttons["joinInvite.submit"].exists, app.debugDescription)
+        shot("38-join-invite")
+
+        joinInput.tap()
+        joinInput.typeText("daydo://invite/preview")
+        app.buttons["joinInvite.submit"].tap()
+        XCTAssertTrue(app.staticTexts["小安 邀請你加入「家庭採買」"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons["invite.accept"].exists)
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(app.staticTexts["清單邀請"].waitForNonExistence(timeout: 3))
 
         app.terminate()
         app.launchArguments = ["-DayDoReset", "-DayDoDemo", "-DayDoSkipLogin", "-DayDoScreen", "invite"]

@@ -69,7 +69,9 @@ final class AppModel {
 
     // Invites
     var pendingInviteCode: String?
+    var pendingManualInviteCode: String?
     var invitePrompt: PendingInvitePrompt?
+    var showingJoinInvite = false
 
     // Navigation
     var tab: MainTab = .tasks
@@ -304,6 +306,8 @@ final class AppModel {
         sharingProjectId = nil
         invitePrompt = nil
         pendingInviteCode = nil
+        pendingManualInviteCode = nil
+        showingJoinInvite = false
         isSignedIn = false
         revision += 1
     }
@@ -425,6 +429,28 @@ final class AppModel {
         guard ready, isSignedIn, syncEnabled else { return }
         Task { [weak self] in
             await self?.processPendingInviteIfNeeded()
+        }
+    }
+
+    func flushManualInviteIfNeeded() {
+        guard let code = pendingManualInviteCode else { return }
+        pendingManualInviteCode = nil
+        if syncEnabled {
+            handleIncomingInvite(code: code)
+        } else {
+#if DEBUG
+            invitePrompt = PendingInvitePrompt(
+                code: code,
+                info: InviteInfo(
+                    projectName: "家庭採買",
+                    inviterName: "小安",
+                    role: "editor",
+                    expiresAt: EpochMillis(Date().addingTimeInterval(7 * 86400).timeIntervalSince1970 * 1000)
+                ),
+                isLoading: false,
+                error: nil
+            )
+#endif
         }
     }
 

@@ -128,7 +128,8 @@ struct ShareListSheet: View {
                                     Rectangle().fill(Palette.separatorSoft).frame(height: 1)
                                 }
 
-                                if let invite = createdInvite, let inviteURL = URL(string: invite.url) {
+                                if let invite = createdInvite {
+                                    let shareText = inviteShareText(for: invite.url)
                                     VStack(alignment: .leading, spacing: 10) {
                                         Text(invite.url)
                                             .font(.system(size: 13, design: .monospaced))
@@ -141,7 +142,7 @@ struct ShareListSheet: View {
                                             .foregroundStyle(Palette.textSecondary)
 
                                         HStack(spacing: 10) {
-                                            ShareLink(item: inviteURL) {
+                                            ShareLink(item: shareText) {
                                                 Label("分享邀請連結", systemImage: "square.and.arrow.up")
                                                     .txt(14, .semibold)
                                                     .foregroundStyle(accent.onAccent)
@@ -153,7 +154,7 @@ struct ShareListSheet: View {
                                             .accessibilityIdentifier("share.shareLink")
 
                                             Button {
-                                                UIPasteboard.general.string = invite.url
+                                                UIPasteboard.general.string = shareText
                                                 copiedLink = true
                                             } label: {
                                                 Label(copiedLink ? "已複製" : "複製", systemImage: copiedLink ? "checkmark" : "doc.on.doc")
@@ -268,6 +269,10 @@ struct ShareListSheet: View {
     private func load() async {
         project = (try? await model.api.getProject(id: projectId)) ?? model.project(projectId)
         projectMembers = (try? await model.api.listProjectMembers(projectId: projectId)) ?? []
+    }
+
+    private func inviteShareText(for url: String) -> String {
+        "在 DayDo 設定 → 加入共享清單 貼上這個連結\n\(url)"
     }
 
     private func roleLabel(_ role: String) -> String {

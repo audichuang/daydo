@@ -24,18 +24,21 @@ struct InviteConfirmSheet: View {
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.top, 16)
-            .frame(height: 68)
+            .padding(.top, 22)
+            .padding(.bottom, 10)
 
-            VStack(spacing: 16) {
-                if prompt.isLoading {
-                    Spacer()
+            if prompt.isLoading {
+                Spacer()
+                VStack(spacing: 16) {
                     ProgressView().tint(Palette.textSecondary)
                     Text("正在讀取邀請資訊…")
                         .txt(14)
                         .foregroundStyle(Palette.textSecondary)
-                    Spacer()
-                } else if let info = prompt.info {
+                }
+                .padding(.horizontal, 20)
+                Spacer()
+            } else if let info = prompt.info {
+                ScrollView {
                     VStack(spacing: 14) {
                         ZStack {
                             Circle()
@@ -66,41 +69,47 @@ struct InviteConfirmSheet: View {
                         }
                     }
                     .padding(.top, 8)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 12)
+                }
+                .scrollBounceBehavior(.basedOnSize)
 
-                    Spacer()
-
-                    VStack(spacing: 10) {
-                        Button {
-                            accept()
-                        } label: {
-                            HStack(spacing: 8) {
-                                if accepting {
-                                    ProgressView().tint(accent.onAccent)
-                                }
-                                Text(accepting ? "加入中…" : "加入清單")
-                                    .txt(16, .bold)
-                                    .foregroundStyle(accent.onAccent)
+                VStack(spacing: 10) {
+                    Button {
+                        accept()
+                    } label: {
+                        HStack(spacing: 8) {
+                            if accepting {
+                                ProgressView().tint(accent.onAccent)
                             }
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 50)
-                            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(accent.color))
+                            Text(accepting ? "加入中…" : "加入清單")
+                                .txt(16, .bold)
+                                .foregroundStyle(accent.onAccent)
                         }
-                        .buttonStyle(.plain)
-                        .disabled(accepting)
-                        .accessibilityIdentifier("invite.accept")
-
-                        Button("略過") {
-                            model.invitePrompt = nil
-                            dismiss()
-                        }
-                        .txt(15, .medium)
-                        .foregroundStyle(Palette.textSecondary)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .buttonStyle(.plain)
-                        .disabled(accepting)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(accent.color))
                     }
-                } else {
-                    Spacer()
+                    .buttonStyle(.plain)
+                    .disabled(accepting)
+                    .accessibilityIdentifier("invite.accept")
+
+                    Button("略過") {
+                        model.invitePrompt = nil
+                        dismiss()
+                    }
+                    .txt(15, .medium)
+                    .foregroundStyle(Palette.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .buttonStyle(.plain)
+                    .disabled(accepting)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
+            } else {
+                Spacer()
+                VStack(spacing: 16) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.system(size: 32, weight: .medium))
                         .foregroundStyle(Palette.danger)
@@ -108,18 +117,19 @@ struct InviteConfirmSheet: View {
                         .txt(15)
                         .foregroundStyle(Palette.textBody)
                         .multilineTextAlignment(.center)
-                    Spacer()
-                    PillButton(title: "好") {
-                        model.invitePrompt = nil
-                        dismiss()
-                    }
                 }
+                .padding(.horizontal, 20)
+                Spacer()
+                PillButton(title: "好") {
+                    model.invitePrompt = nil
+                    dismiss()
+                }
+                .padding(.bottom, 20)
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 24)
         }
         .background(Palette.card)
-        .presentationDetents([.height(390), .medium])
+        .presentationDetents([.height(480), .large])
+        .presentationDragIndicator(.visible)
         .presentationBackground(Palette.card)
         .presentationCornerRadius(28)
     }
