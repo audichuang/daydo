@@ -8,7 +8,7 @@ DayDo 是待辦加日曆的 iPhone App，給自己和家人用，互動對標 Ti
 2. **同步與多人**（下一步）：Cloudflare Worker + D1 + Durable Objects，註冊登入、多裝置同步、共享清單、成員指派。
 3. **MCP**：掛在 Worker 上，讓 AI 讀寫任務，工具沿用 ticktick-mcp 的名稱與欄位。
 
-另外待做：桌面小工具（設計稿 6a/6b）、macOS 版。
+另外待做：桌面小工具（設計稿 6a/6b）、macOS 版；提醒超過 60 筆的背景補排、跟隨系統 Dynamic Type、寫入後縮小刷新範圍（目前每次寫入都重讀全部 lookup 並重排提醒）。
 
 設計稿在 `design/`（`design/source/*.html` 是原始設計元件，`design/shots/` 是截圖），畫面編號 1a–6b 對應設計板標題；設計稿用的是舊名 Doneday。
 
@@ -28,6 +28,8 @@ design/      設計稿
 - Schema 為同步預留：id 由 client 產生（UUIDv7），時間戳是 epoch ms，刪除用 `deletedAt` 軟刪除，每次寫入在同一 transaction 寫一筆 `change`（outbox，含變更欄位名）。改 schema 用新的 migration，不改 `v1`。
 - 排序鍵用 `SortKey`（fractional index），不要重新編號。
 - 單機階段沒有帳號與成員：UI 不得顯示假的「已同步」、成員或留言數。
+- API 回傳的 `schedule` 已換成裝置時區。更新任務時，只有日期或時間真的改了才送 `schedule`，否則會把任務原本的時區改掉（只改提醒也會中招）。
+- 牆鐘時間用該時區的年月日時分組件建立，不用「當天午夜＋分鐘數」：夏令時間切換日會差一小時。第二階段的 Worker 也照這條。
 
 ## 指令
 
