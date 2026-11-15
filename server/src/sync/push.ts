@@ -1,0 +1,703 @@
+import { entityHome, listScopes, projectMembership, purgedProject, user } from '@schema';
+import { and, eq, inArray, isNull, or, sql, type BatchItem } from 'void/db';
+import type * as schema from '@schema';
+import type { DrizzleD1Database } from 'void/db';
+import type {
+  PushOpResult,
+  ScopePullInput,
+  ScopePullResponse,
+  ScopePushInput,
+  ScopePushResponse,
+} from '../../durable-objects/scope';
+import {
+  hasAllRequiredFields,
+  isEntityName,
+  isTaskChildEntity,
+  parseEntityId,
+  validateSyncOp,
+  type EntityName,
+  type MembershipRole,
+} from './entities';
+
+export type AppDb = DrizzleD1Database<typeof schema>;
+
+export interface ScopeStub {
+  push(input: ScopePushInput): Promise<ScopePushResponse>;
+  pull(input: ScopePullInput): Promise<ScopePullResponse>;
+}
+
+const QUERY_CHUNK_SIZE = 50;
+const PAIR_CHUNK_SIZE = 25;
+
+export function chunkArray<T>(items: readonly T[], size = QUERY_CHUNK_SIZE): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+function entityHomeKey(entity: EntityName, entityId: string): string {
+  return `${entity}:${entityId}`;
+}
+
+export async function executeSyncPush(
+  db: AppDb,
+  params: {
+    userId: string;
+    deviceId: string;
+    ops: unknown[];
+    getScopeStub: (scope: string) => ScopeStub;
+  },
+): Promise<{ results: PushOpResult[]; serverTime: number }> {
+  const { userId, deviceId, ops, getScopeStub } = params;
+  const nowMs = Date.now();
+  const pusherScope = `u:${userId}`;
+
+  if (ops.length === 0) {
+    return { results: [], serverTime: nowMs };
+  }
+
+  const results: Array<PushOpResult | null> = new Array(ops.length).fill(null);
+
+  // Pre-scan ops to collect D1 lookup keys.
+  const lookupPairsMap = new Map<string, { entity: EntityName; entityId: string }>();
+  const projectIdsToCheck = new Set<string>();
+
+  const parsedOps = ops.map((raw) => {
+    const rec =
+      raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>)
+        : null;
+    const rawOpId = rec && typeof rec.opId === 'string' ? rec.opId : '';
+    const entity = rec && isEntityName(rec.entity) ? rec.entity : null;
+    const entityId =
+      entity && rec && typeof rec.entityId === 'string' && parseEntityId(entity, rec.entityId)
+        ? rec.entityId
+        : null;
+    const validated = validateSyncOp(raw);
+
+    if (entity && entityId && entity !== 'tag') {
+      lookupPairsMap.set(entityHomeKey(entity, entityId), { entity, entityId });
+      if (
+        isTaskChildEntity(entity) &&
+        rec?.row &&
+        typeof rec.row === 'object' &&
+        !Array.isArray(rec.row) &&
+        Object.hasOwn(rec.row, 'taskId')
+      ) {
+        const taskId = (rec.row as Record<string, unknown>).taskId;
+        if (typeof taskId === 'string' && taskId.length > 0) {
+          lookupPairsMap.set(entityHomeKey('task', taskId), { entity: 'task', entityId: taskId });
+        }
+      }
+      if (entity === 'projectMember') {
+        const pm = parseEntityId('projectMember', entityId);
+        if (pm) {
+          lookupPairsMap.set(entityHomeKey('project', pm.projectId), {
+            entity: 'project',
+            entityId: pm.projectId,
+          });
+        }
+      } else if (
+        entity === 'projectInvite' &&
+        rec?.row &&
+        typeof rec.row === 'object' &&
+        !Array.isArray(rec.row) &&
+        Object.hasOwn(rec.row, 'projectId')
+      ) {
+        const pid = (rec.row as Record<string, unknown>).projectId;
+        if (typeof pid === 'string' && pid.length > 0) {
+          lookupPairsMap.set(entityHomeKey('project', pid), { entity: 'project', entityId: pid });
+        }
+      }
+    }
+
+    if (validated.ok && validated.op.op === 'upsert') {
+      if (validated.op.entity === 'project') {
+        projectIdsToCheck.add(validated.op.entityId);
+      } else if (
+        validated.op.entity === 'task' &&
+        validated.op.fields.includes('projectId') &&
+        Object.hasOwn(validated.op.row, 'projectId') &&
+        typeof validated.op.row.projectId === 'string' &&
+        validated.op.row.projectId.length > 0
+      ) {
+        projectIdsToCheck.add(validated.op.row.projectId);
+      }
+    }
+
+    return { raw, rec, rawOpId, entity, entityId, validated };
+  });
+
+  // D1 Batch 1: read existing entityHome rows, purgedProject, user.meMemberId, and memberships.
+  const batch1Queries: BatchItem<'sqlite'>[] = [];
+  const homeChunks = chunkArray(Array.from(lookupPairsMap.values()), PAIR_CHUNK_SIZE);
+  for (const chunk of homeChunks) {
+    batch1Queries.push(
+      db
+        .select({
+          entity: entityHome.entity,
+          entityId: entityHome.entityId,
+          scope: entityHome.scope,
+        })
+        .from(entityHome)
+        .where(
+          or(
+            ...chunk.map((p) =>
+              and(eq(entityHome.entity, p.entity), eq(entityHome.entityId, p.entityId)),
+            ),
+          ),
+        ),
+    );
+  }
+  const purgedChunks = chunkArray(Array.from(projectIdsToCheck), QUERY_CHUNK_SIZE);
+  for (const chunk of purgedChunks) {
+    batch1Queries.push(
+      db
+        .select({ projectId: purgedProject.projectId })
+        .from(purgedProject)
+        .where(inArray(purgedProject.projectId, chunk)),
+    );
+  }
+  const userQueryIdx = batch1Queries.length;
+  batch1Queries.push(
+    db.select({ meMemberId: user.meMemberId }).from(user).where(eq(user.id, userId)),
+  );
+  const membershipQueryIdx = batch1Queries.length;
+  batch1Queries.push(
+    db
+      .select({ projectId: projectMembership.projectId, role: projectMembership.role })
+      .from(projectMembership)
+      .where(and(eq(projectMembership.userId, userId), isNull(projectMembership.removedAt))),
+  );
+
+  const batch1Results = (await db.batch(
+    batch1Queries as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]],
+  )) as Array<Array<Record<string, unknown>>>;
+
+  const knownHome = new Map<string, string>();
+  let cursorIdx = 0;
+  for (let i = 0; i < homeChunks.length; i += 1) {
+    for (const row of batch1Results[cursorIdx++]) {
+      knownHome.set(`${String(row.entity)}:${String(row.entityId)}`, String(row.scope));
+    }
+  }
+  const purgedSet = new Set<string>();
+  for (let i = 0; i < purgedChunks.length; i += 1) {
+    for (const row of batch1Results[cursorIdx++]) {
+      purgedSet.add(String(row.projectId));
+    }
+  }
+  const userRow = batch1Results[userQueryIdx]?.[0];
+  const meMemberId =
+    userRow && typeof userRow.meMemberId === 'string' ? userRow.meMemberId : null;
+
+  let memberships: Record<string, MembershipRole> = {};
+  for (const row of batch1Results[membershipQueryIdx] ?? []) {
+    const role = row.role;
+    if (role === 'owner' || role === 'editor' || role === 'viewer') {
+      memberships[String(row.projectId)] = role;
+    }
+  }
+
+  // Planning pass in op order.
+  const inBatchNewHome = new Map<
+    string,
+    { entity: EntityName; entityId: string; desiredScope: string; parentTaskId?: string }
+  >();
+  const inBatchRejectedTasks = new Map<string, string>();
+  const inBatchNewProjects = new Set<string>();
+  const listScopeTargets: Array<{ opIndex: number; projectId: string; scope: string }> = [];
+  const opTargetScope: Array<string | null> = new Array(ops.length).fill(null);
+
+  for (let i = 0; i < parsedOps.length; i += 1) {
+    const { rec, rawOpId, entity, entityId, validated } = parsedOps[i];
+    if (!entity || !entityId) {
+      results[i] = {
+        opId: rawOpId,
+        status: 'rejected',
+        reason: validated.ok ? 'Malformed op' : validated.reason,
+        row: null,
+        clocks: {},
+      };
+      continue;
+    }
+
+    const key = entityHomeKey(entity, entityId);
+
+    if (entity === 'tag') {
+      opTargetScope[i] = pusherScope;
+      continue;
+    }
+
+    if (entity === 'projectMember' || entity === 'projectInvite') {
+      if (knownHome.has(key)) {
+        opTargetScope[i] = knownHome.get(key)!;
+      } else if (entity === 'projectMember') {
+        const pm = parseEntityId('projectMember', entityId)!;
+        opTargetScope[i] = knownHome.get(entityHomeKey('project', pm.projectId)) ?? pusherScope;
+      } else {
+        const pid =
+          rec?.row &&
+          typeof rec.row === 'object' &&
+          !Array.isArray(rec.row) &&
+          typeof (rec.row as Record<string, unknown>).projectId === 'string'
+            ? ((rec.row as Record<string, unknown>).projectId as string)
+            : '';
+        opTargetScope[i] =
+          (pid && knownHome.get(entityHomeKey('project', pid))) || pusherScope;
+      }
+      continue;
+    }
+
+    if (knownHome.has(key)) {
+      const targetScope = knownHome.get(key)!;
+      opTargetScope[i] = targetScope;
+      if (
+        entity === 'task' &&
+        validated.ok &&
+        validated.op.op === 'upsert' &&
+        validated.op.fields.includes('projectId') &&
+        Object.hasOwn(validated.op.row, 'projectId') &&
+        typeof validated.op.row.projectId === 'string' &&
+        validated.op.row.projectId.length > 0
+      ) {
+        listScopeTargets.push({
+          opIndex: i,
+          projectId: validated.op.row.projectId,
+          scope: targetScope,
+        });
+      }
+      continue;
+    }
+
+    // New entity id (not yet in entityHome)
+    if (!validated.ok) {
+      results[i] = {
+        opId: validated.opId,
+        status: 'rejected',
+        reason: validated.reason,
+        row: null,
+        clocks: {},
+      };
+      continue;
+    }
+
+    const op = validated.op;
+    if (op.entity === 'project' && op.op === 'delete') {
+      results[i] = {
+        opId: op.opId,
+        status: 'rejected',
+        reason: 'Project deletion is not allowed via sync',
+        row: null,
+        clocks: {},
+      };
+      continue;
+    }
+
+    if (op.op === 'upsert' && !hasAllRequiredFields(op.entity, op.fields)) {
+      results[i] = {
+        opId: op.opId,
+        status: 'rejected',
+        reason: 'unknown-row',
+        row: null,
+        clocks: {},
+      };
+      continue;
+    }
+
+    if (isTaskChildEntity(op.entity)) {
+      if (op.op === 'delete') {
+        results[i] = {
+          opId: op.opId,
+          status: 'rejected',
+          reason: 'unknown-row',
+          row: null,
+          clocks: {},
+        };
+        continue;
+      }
+      const taskId =
+        Object.hasOwn(op.row, 'taskId') && typeof op.row.taskId === 'string' ? op.row.taskId : '';
+      const parentScope = taskId ? knownHome.get(entityHomeKey('task', taskId)) : undefined;
+      if (!parentScope) {
+        const parentRejectReason = taskId ? inBatchRejectedTasks.get(taskId) : undefined;
+        results[i] = {
+          opId: op.opId,
+          status: 'rejected',
+          reason: parentRejectReason ?? 'unknown-row',
+          row: null,
+          clocks: {},
+        };
+        continue;
+      }
+      knownHome.set(key, parentScope);
+      inBatchNewHome.set(key, {
+        entity: op.entity,
+        entityId: op.entityId,
+        desiredScope: parentScope,
+        parentTaskId: taskId,
+      });
+      opTargetScope[i] = parentScope;
+      continue;
+    }
+
+    // New top-level entity: project, task, member, folder
+    if (op.entity === 'project' && purgedSet.has(op.entityId)) {
+      results[i] = {
+        opId: op.opId,
+        status: 'rejected',
+        reason: 'Project is purged',
+        row: null,
+        clocks: {},
+      };
+      continue;
+    }
+    if (
+      op.entity === 'task' &&
+      op.op === 'upsert' &&
+      Object.hasOwn(op.row, 'projectId') &&
+      typeof op.row.projectId === 'string' &&
+      purgedSet.has(op.row.projectId)
+    ) {
+      inBatchRejectedTasks.set(op.entityId, 'Project is purged');
+      results[i] = {
+        opId: op.opId,
+        status: 'rejected',
+        reason: 'Project is purged',
+        row: null,
+        clocks: {},
+      };
+      continue;
+    }
+    if (
+      op.entity === 'project' &&
+      op.op === 'upsert' &&
+      ((op.fields.includes('deletedAt') &&
+        Object.hasOwn(op.row, 'deletedAt') &&
+        op.row.deletedAt !== null &&
+        op.row.deletedAt !== undefined) ||
+        (op.fields.includes('archivedAt') &&
+          Object.hasOwn(op.row, 'archivedAt') &&
+          op.row.archivedAt !== null &&
+          op.row.archivedAt !== undefined))
+    ) {
+      results[i] = {
+        opId: op.opId,
+        status: 'rejected',
+        reason: 'Project deletion/archiving is not allowed via sync',
+        row: null,
+        clocks: {},
+      };
+      continue;
+    }
+
+    knownHome.set(key, pusherScope);
+    inBatchNewHome.set(key, {
+      entity: op.entity,
+      entityId: op.entityId,
+      desiredScope: pusherScope,
+    });
+    opTargetScope[i] = pusherScope;
+
+    if (op.entity === 'project' && op.op === 'upsert') {
+      inBatchNewProjects.add(op.entityId);
+      listScopeTargets.push({ opIndex: i, projectId: op.entityId, scope: pusherScope });
+    } else if (
+      op.entity === 'task' &&
+      op.op === 'upsert' &&
+      Object.hasOwn(op.row, 'projectId') &&
+      typeof op.row.projectId === 'string' &&
+      op.row.projectId.length > 0
+    ) {
+      listScopeTargets.push({
+        opIndex: i,
+        projectId: op.row.projectId,
+        scope: pusherScope,
+      });
+    }
+  }
+
+  // D1 Batch 2: bind new ids in entityHome (INSERT ON CONFLICT DO NOTHING + SELECT).
+  const newlyWonKeys = new Set<string>();
+  if (inBatchNewHome.size > 0) {
+    const entries = Array.from(inBatchNewHome.values());
+    const batch2Stmts: BatchItem<'sqlite'>[] = [];
+    for (const chunk of chunkArray(entries, 25)) {
+      batch2Stmts.push(
+        db
+          .insert(entityHome)
+          .values(
+            chunk.map((e) => ({
+              entity: e.entity,
+              entityId: e.entityId,
+              scope: e.desiredScope,
+            })),
+          )
+          .onConflictDoNothing(),
+      );
+    }
+    const selectChunks = chunkArray(entries, PAIR_CHUNK_SIZE);
+    for (const chunk of selectChunks) {
+      batch2Stmts.push(
+        db
+          .select({
+            entity: entityHome.entity,
+            entityId: entityHome.entityId,
+            scope: entityHome.scope,
+          })
+          .from(entityHome)
+          .where(
+            or(
+              ...chunk.map((e) =>
+                and(eq(entityHome.entity, e.entity), eq(entityHome.entityId, e.entityId)),
+              ),
+            ),
+          ),
+      );
+    }
+
+    const batch2Results = (await db.batch(
+      batch2Stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]],
+    )) as Array<Array<Record<string, unknown>>>;
+
+    const boundMap = new Map<string, string>();
+    const insertStmtCount = Math.ceil(entries.length / 25);
+    for (let s = insertStmtCount; s < batch2Results.length; s += 1) {
+      for (const row of batch2Results[s]) {
+        boundMap.set(`${String(row.entity)}:${String(row.entityId)}`, String(row.scope));
+      }
+    }
+
+    const mismatchKeys = new Set<string>();
+    const mismatchTaskIds = new Set<string>();
+    for (const [key, entry] of inBatchNewHome) {
+      if (boundMap.get(key) !== entry.desiredScope) {
+        mismatchKeys.add(key);
+        if (entry.entity === 'task') {
+          mismatchTaskIds.add(entry.entityId);
+        }
+      } else {
+        newlyWonKeys.add(key);
+      }
+    }
+
+    const orphanCleanupKeys: Array<{ entity: EntityName; entityId: string }> = [];
+    for (let i = 0; i < parsedOps.length; i += 1) {
+      const { rawOpId, entity, entityId } = parsedOps[i];
+      if (!entity || !entityId || opTargetScope[i] === null) continue;
+      const key = entityHomeKey(entity, entityId);
+      const newEntry = inBatchNewHome.get(key);
+      if (mismatchKeys.has(key)) {
+        results[i] = {
+          opId: rawOpId,
+          status: 'rejected',
+          reason: 'id-in-other-scope',
+          row: null,
+          clocks: {},
+        };
+        opTargetScope[i] = null;
+        if (entity === 'project') {
+          inBatchNewProjects.delete(entityId);
+        }
+      } else if (newEntry?.parentTaskId && mismatchTaskIds.has(newEntry.parentTaskId)) {
+        results[i] = {
+          opId: rawOpId,
+          status: 'rejected',
+          reason: 'id-in-other-scope',
+          row: null,
+          clocks: {},
+        };
+        opTargetScope[i] = null;
+        if (newlyWonKeys.has(key)) {
+          newlyWonKeys.delete(key);
+          orphanCleanupKeys.push({ entity, entityId });
+        }
+      }
+    }
+
+    if (orphanCleanupKeys.length > 0) {
+      const cleanupStmts: BatchItem<'sqlite'>[] = [];
+      for (const chunk of chunkArray(orphanCleanupKeys, PAIR_CHUNK_SIZE)) {
+        cleanupStmts.push(
+          db
+            .delete(entityHome)
+            .where(
+              or(
+                ...chunk.map((k) =>
+                  and(eq(entityHome.entity, k.entity), eq(entityHome.entityId, k.entityId)),
+                ),
+              ),
+            ),
+        );
+      }
+      await db.batch(cleanupStmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+    }
+  }
+
+  // D1 Batch 3: owner memberships on project create, conditional listScopes inserts,
+  // plus reading purgedProject & final memberships.
+  const activeListTargets = listScopeTargets.filter((t) => opTargetScope[t.opIndex] !== null);
+  if (inBatchNewProjects.size > 0 || activeListTargets.length > 0) {
+    const batch3Stmts: BatchItem<'sqlite'>[] = [];
+    for (const pid of inBatchNewProjects) {
+      batch3Stmts.push(
+        db
+          .insert(projectMembership)
+          .select(
+            sql`SELECT ${pid}, ${userId}, 'owner', ${nowMs}, NULL WHERE NOT EXISTS (SELECT 1 FROM purgedProject WHERE projectId = ${pid})`,
+          )
+          .onConflictDoNothing(),
+      );
+    }
+
+    const seenListScope = new Set<string>();
+    const listProjectsToRead = new Set<string>();
+    for (const target of activeListTargets) {
+      listProjectsToRead.add(target.projectId);
+      const lsKey = `${target.projectId}:${target.scope}`;
+      if (seenListScope.has(lsKey)) continue;
+      seenListScope.add(lsKey);
+      batch3Stmts.push(
+        db
+          .insert(listScopes)
+          .select(
+            sql`SELECT ${target.projectId}, ${target.scope} WHERE NOT EXISTS (SELECT 1 FROM purgedProject WHERE projectId = ${target.projectId}) AND EXISTS (SELECT 1 FROM projectMembership WHERE projectId = ${target.projectId} AND userId = ${userId} AND removedAt IS NULL AND role IN ('owner', 'editor'))`,
+          )
+          .onConflictDoNothing(),
+      );
+    }
+
+    const purgedReadChunks = chunkArray(Array.from(listProjectsToRead), QUERY_CHUNK_SIZE);
+    const purgedStartIdx = batch3Stmts.length;
+    for (const chunk of purgedReadChunks) {
+      batch3Stmts.push(
+        db
+          .select({ projectId: purgedProject.projectId })
+          .from(purgedProject)
+          .where(inArray(purgedProject.projectId, chunk)),
+      );
+    }
+
+    const membershipReadIdx = batch3Stmts.length;
+    batch3Stmts.push(
+      db
+        .select({ projectId: projectMembership.projectId, role: projectMembership.role })
+        .from(projectMembership)
+        .where(and(eq(projectMembership.userId, userId), isNull(projectMembership.removedAt))),
+    );
+
+    const batch3Results = (await db.batch(
+      batch3Stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]],
+    )) as Array<Array<Record<string, unknown>>>;
+
+    for (let s = purgedStartIdx; s < membershipReadIdx; s += 1) {
+      for (const row of batch3Results[s]) {
+        purgedSet.add(String(row.projectId));
+      }
+    }
+
+    memberships = {};
+    for (const row of batch3Results[membershipReadIdx] ?? []) {
+      const role = row.role;
+      if (role === 'owner' || role === 'editor' || role === 'viewer') {
+        memberships[String(row.projectId)] = role;
+      }
+    }
+  }
+
+  // Group remaining ops by target scope preserving relative order.
+  const scopeGroups = new Map<string, Array<{ index: number; op: unknown }>>();
+  for (let i = 0; i < ops.length; i += 1) {
+    const scope = opTargetScope[i];
+    if (!scope) continue;
+    let group = scopeGroups.get(scope);
+    if (!group) {
+      group = [];
+      scopeGroups.set(scope, group);
+    }
+    group.push({ index: i, op: ops[i] });
+  }
+
+  const purgedList = Array.from(purgedSet);
+  const groupEntries = Array.from(scopeGroups.entries());
+  const scopeResponses: Array<{
+    scope: string;
+    group: Array<{ index: number; op: unknown }>;
+    response: ScopePushResponse;
+  }> = await Promise.all(
+    groupEntries.map(async ([scope, group]) => {
+      const scopeUserId = scope.startsWith('u:') ? scope.slice(2) : scope;
+      const stub = getScopeStub(scope);
+      const response = await stub.push({
+        scope,
+        scopeUserId,
+        pusherUserId: userId,
+        deviceId,
+        memberships,
+        purgedProjects: purgedList,
+        meMemberId: scope === pusherScope ? meMemberId : null,
+        ops: group.map((g) => g.op),
+      });
+      return { scope, group, response };
+    }),
+  );
+
+  const appliedKeySet = new Set<string>();
+  let boundMeMemberId: string | null = null;
+  for (const { scope, group, response } of scopeResponses) {
+    for (let j = 0; j < group.length; j += 1) {
+      results[group[j].index] = response.results[j];
+    }
+    for (const k of response.appliedKeys) {
+      appliedKeySet.add(entityHomeKey(k.entity, k.entityId));
+    }
+    if (scope === pusherScope && response.boundMeMemberId) {
+      boundMeMemberId = response.boundMeMemberId;
+    }
+  }
+
+  const postStmts: BatchItem<'sqlite'>[] = [];
+  if (boundMeMemberId !== null) {
+    postStmts.push(
+      db
+        .update(user)
+        .set({ meMemberId: boundMeMemberId })
+        .where(and(eq(user.id, userId), isNull(user.meMemberId))),
+    );
+  }
+
+  // Clean up any newly-bound entityHome entries whose creates were all rejected by the DO.
+  const rejectedNewKeys: Array<{ entity: EntityName; entityId: string }> = [];
+  for (const key of newlyWonKeys) {
+    if (!appliedKeySet.has(key)) {
+      const entry = inBatchNewHome.get(key);
+      if (entry) {
+        rejectedNewKeys.push({ entity: entry.entity, entityId: entry.entityId });
+      }
+    }
+  }
+  for (const chunk of chunkArray(rejectedNewKeys, PAIR_CHUNK_SIZE)) {
+    postStmts.push(
+      db
+        .delete(entityHome)
+        .where(
+          or(
+            ...chunk.map((k) =>
+              and(eq(entityHome.entity, k.entity), eq(entityHome.entityId, k.entityId)),
+            ),
+          ),
+        ),
+    );
+  }
+
+  if (postStmts.length > 0) {
+    await db.batch(postStmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+  }
+
+  return {
+    results: results as PushOpResult[],
+    serverTime: Date.now(),
+  };
+}

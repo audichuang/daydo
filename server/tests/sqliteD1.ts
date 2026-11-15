@@ -4,7 +4,7 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../db/schema';
-import type { AppDb } from '../src/sync/db';
+import type { AppDb } from '../src/sync/push';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.resolve(__dirname, '../db/migrations');
@@ -107,4 +107,67 @@ export function createTestD1(): { sqlite: DatabaseSync; d1: D1Database; db: AppD
 
   const db = drizzle(d1, { schema }) as unknown as AppDb;
   return { sqlite, d1, db };
+}
+
+export function createTestDoState(): { sqlite: DatabaseSync; ctx: DurableObjectState } {
+  const sqlite = new DatabaseSync(':memory:');
+  let txnDepth = 0;
+
+  const sql = {
+    exec(query: string, ...params: SQLInputValue[]) {
+      const trimmed = query.trim();
+      if (!trimmed.includes('?') && params.length === 0 && trimmed.includes(';')) {
+        sqlite.exec(trimmed);
+        return {
+          toArray: () => [],
+          one: () => {
+            throw new Error('Expected 1 row, got 0');
+          },
+          [Symbol.iterator]: () => [][Symbol.iterator](),
+        };
+      }
+      const stmt = sqlite.prepare(trimmed);
+      const rows = stmt.all(...params) as Array<Record<string, unknown>>;
+      return {
+        toArray: () => rows,
+        one: () => {
+          if (rows.length !== 1) {
+            throw new Error(`Expected 1 row, got ${rows.length}`);
+          }
+          return rows[0];
+        },
+        [Symbol.iterator]: () => rows[Symbol.iterator](),
+      };
+    },
+  };
+
+  const storage = {
+    sql,
+    transactionSync<T>(fn: () => T): T {
+      const isOuter = txnDepth === 0;
+      txnDepth += 1;
+      if (isOuter) {
+        sqlite.exec('BEGIN IMMEDIATE');
+      }
+      try {
+        const res = fn();
+        if (isOuter) {
+          sqlite.exec('COMMIT');
+        }
+        return res;
+      } catch (err) {
+        if (isOuter) {
+          sqlite.exec('ROLLBACK');
+        }
+        throw err;
+      } finally {
+        txnDepth -= 1;
+      }
+    },
+  };
+
+  return {
+    sqlite,
+    ctx: { storage } as unknown as DurableObjectState,
+  };
 }

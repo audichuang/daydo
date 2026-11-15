@@ -1,42 +1,77 @@
 import { defineHandler } from 'void';
 import { createDb } from 'void/db';
+import { Scope } from '../../durable-objects/scope';
 import { requireUser } from '../../src/auth/middleware';
-import { pullUserRows } from '../../src/sync/db';
+import { readJsonObject } from '../../src/http';
+import { executeSyncPull } from '../../src/sync/pull';
 
 const DEFAULT_PULL_LIMIT = 500;
 const MAX_PULL_LIMIT = 1000;
 
-function parseNonNegativeInt(raw: string | undefined, fallback: number): number | null {
-  if (raw === undefined || raw === '') return fallback;
-  if (!/^\d+$/.test(raw)) return null;
-  const parsed = Number(raw);
-  return Number.isSafeInteger(parsed) ? parsed : null;
+function parseCursors(raw: unknown): Record<string, number> | null {
+  if (raw === undefined) return {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out: Record<string, number> = {};
+  for (const [scope, val] of Object.entries(raw)) {
+    if (scope === '__proto__' || scope.length === 0) return null;
+    if (typeof val !== 'number' || !Number.isInteger(val) || !Number.isSafeInteger(val) || val < 0) {
+      return null;
+    }
+    out[scope] = val;
+  }
+  return out;
 }
 
-export const GET = defineHandler(async (c) => {
+function parseBackfill(raw: unknown): string[] | undefined | null {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return null;
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'string' || item.length === 0) return null;
+    out.push(item);
+  }
+  return out;
+}
+
+export const POST = defineHandler(async (c) => {
   const userId = await requireUser(c);
   if (userId instanceof Response) return userId;
 
-  const since = parseNonNegativeInt(c.req.query('since'), 0);
-  if (since === null) {
-    return c.json({ error: 'since must be a non-negative integer' }, 400);
+  const body = await readJsonObject(c);
+  if (!body) {
+    return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const parsedLimit = parseNonNegativeInt(c.req.query('limit'), DEFAULT_PULL_LIMIT);
-  if (parsedLimit === null || parsedLimit < 1) {
-    return c.json({ error: 'limit must be a positive integer' }, 400);
+  const cursors = parseCursors(body.cursors);
+  if (!cursors) {
+    return c.json({ error: 'cursors must map scope names to non-negative integers' }, 400);
   }
-  const limit = Math.min(parsedLimit, MAX_PULL_LIMIT);
 
-  const projectParam = c.req.query('project');
-  const projectId = projectParam && projectParam.length > 0 ? projectParam : undefined;
+  const backfill = parseBackfill(body.backfill);
+  if (backfill === null) {
+    return c.json({ error: 'backfill must be an array of non-empty projectIds' }, 400);
+  }
+
+  let limit = DEFAULT_PULL_LIMIT;
+  if (body.limit !== undefined) {
+    if (
+      typeof body.limit !== 'number' ||
+      !Number.isInteger(body.limit) ||
+      !Number.isSafeInteger(body.limit) ||
+      body.limit < 1
+    ) {
+      return c.json({ error: 'limit must be a positive integer' }, 400);
+    }
+    limit = Math.min(body.limit, MAX_PULL_LIMIT);
+  }
 
   const db = createDb(c.env.DB, { session: 'first-primary' });
-  const result = await pullUserRows(db, {
+  const result = await executeSyncPull(db, {
     userId,
-    since,
+    cursors,
+    backfill,
     limit,
-    projectId,
+    getScopeStub: (scope) => Scope.get(scope),
   });
 
   return c.json(result, 200);

@@ -500,7 +500,6 @@ describe('sync merge', () => {
     const inbox = entries.find((e) => e.entity === 'project' && e.state.row.isInbox === true)!;
     const dbVals = stateToDbValues('project', {
       ...inbox.state,
-      ownerUserId: 'u1',
       serverSeq: 2,
     });
     expect(dbVals.isInbox).toBe(1);
@@ -511,7 +510,6 @@ describe('sync merge', () => {
     expect(inviteEntry).toBeDefined();
     const inviteDbVals = stateToDbValues('projectInvite', {
       ...inviteEntry.state,
-      ownerUserId: 'u1',
       serverSeq: 3,
     });
     const restoredInvite = dbRecordToState('projectInvite', inviteDbVals);

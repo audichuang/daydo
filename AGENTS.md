@@ -76,5 +76,5 @@ cd ios && BUILD_NUMBER=$(~/Project/audi-skill/ios-release/scripts/tf next-build 
 
 - `server/` 只在本機跑，還沒有部署設定；不跑 `void deploy`、`void connect` 或 Cloudflare 登入，除非使用者明說。
 - void 固定 1.8.0：npm 設定只裝發布滿 3 天的版本，新版會被拒，不要改 npm 設定繞過。
-- 寫入 DO 一定要自己排隊：DO 等 D1 回應時會接下一個請求，沒有佇列時同時送出的讀改寫全部讀到同一個舊值（本機實測）。`WRITER_QUEUE=off` 只在開發建置有效，用來證明並發測試抓得到競態。
+- 每位使用者的 `Scope` DO（`u:<userId>`）用自己的 SQLite 存列資料，寫入包在 `transactionSync` 內同步完成；`SYNC_FAULT=split-txn` 是僅開發建置有效的故障開關，並發測試開啟時必須失敗。
 - 改了 App 的 Record 或 outbox 編碼，要用 `DAYDO_WRITE_FIXTURE=1 swift test` 重新產生 `spec/fixtures/sync-ops.json`，再跑 server 的測試。

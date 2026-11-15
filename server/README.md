@@ -25,7 +25,7 @@ Optional overrides (defaults point to Apple and Google JWKS endpoints):
 
 - `APPLE_JWKS_URL` (default: `https://appleid.apple.com/auth/keys`)
 - `GOOGLE_JWKS_URL` (default: `https://www.googleapis.com/oauth2/v3/certs`)
-- `WRITER_QUEUE` (`on` | `off`, default: `on`; dev-only toggle to bypass the Durable Object writer queue for concurrency race testing)
+- `SYNC_FAULT` (`none` | `split-txn`, default: `none`; dev-only fault switch that splits read/write outside `transactionSync` for concurrency race testing)
 
 ## Database
 
@@ -55,11 +55,11 @@ All sync endpoints require `Authorization: Bearer <accessToken>`.
 
 - `POST /sync/push`
   - Body: `{ deviceId, ops: [{ opId, hlc, entity, entityId, op, fields, row }] }` (max 200 ops)
-  - Serialized through the `Writer` Durable Object (`Writer.get('global')`) with per-op `opId` deduplication, HLC 5-minute future clamp, field-level LWW merge (with `schedule` grouped clock), and D1 `batch()` writes.
-  - Response: `{ results: [{ opId, status: 'applied' | 'rejected', reason?, row, clocks }], serverSeq }`
-- `GET /sync/pull?since=<seq>&limit=<n>&project=<id>`
-  - Query: `since` (default `0`), `limit` (default `500`, max `1000`), optional `project` filter.
-  - Response: `{ rows: [{ entity, row, clocks, serverSeq }], cursor, hasMore }`
+  - Binds new IDs and checks list/membership routing in D1, then routes each scope's ops to its `Scope` Durable Object (`Scope.get('u:<userId>')`), where each batch runs inside `transactionSync` with per-op `opId` deduplication, HLC 5-minute future clamp, and field-level LWW merge (including `schedule` grouped clock).
+  - Response: `{ results: [{ opId, status: 'applied' | 'rejected', reason?, row, clocks, gone? }], serverTime }`
+- `POST /sync/pull`
+  - Body: `{ cursors: { "u:<userId>": seq }, backfill?: [projectId], limit? }` (`limit` default `500`, max `1000`).
+  - Response: `{ scopes: [{ scope, rows: [{ entity, row, clocks, serverSeq } | { entity, entityId, gone: true, serverSeq }], cursor, hasMore }], memberships: [{ projectId, scope, role }], members: [] }`
 
 ## Run Checks
 
@@ -69,7 +69,7 @@ Runs `void prepare && tsc --noEmit`, unit tests (`vitest run`), auth e2e (`scrip
 npm run check
 ```
 
-To run only the sync e2e suite or a single scenario (`fixture`, `lww`, `concurrency`, `replay`, `paging`, `auth`):
+To run only the sync e2e suite or a single scenario (`fixture`, `lww`, `concurrency`, `replay`, `paging`, `auth`, `id_race`, `unknown_row`, `move_task`, `child_task_id`):
 
 ```bash
 npm run e2e:sync

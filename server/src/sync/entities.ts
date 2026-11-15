@@ -159,6 +159,28 @@ export const ENTITY_FIELDS: Record<EntityName, Record<string, FieldSpec>> = {
   },
 };
 
+export type MembershipRole = 'owner' | 'editor' | 'viewer';
+
+export const TASK_CHILD_ENTITIES = new Set<EntityName>(['checklistItem', 'attachment', 'comment']);
+
+export function isTaskChildEntity(entity: EntityName): entity is 'checklistItem' | 'attachment' | 'comment' {
+  return TASK_CHILD_ENTITIES.has(entity);
+}
+
+const REQUIRED_FIELDS_BY_ENTITY: Record<EntityName, string[]> = Object.fromEntries(
+  ENTITY_NAMES.map((entity) => [
+    entity,
+    Object.entries(ENTITY_FIELDS[entity])
+      .filter(([, spec]) => !spec.nullable)
+      .map(([field]) => field),
+  ]),
+) as Record<EntityName, string[]>;
+
+export function hasAllRequiredFields(entity: EntityName, fields: readonly string[]): boolean {
+  const fieldSet = new Set(fields);
+  return REQUIRED_FIELDS_BY_ENTITY[entity].every((req) => fieldSet.has(req));
+}
+
 export interface ValidatedOp {
   opId: string;
   hlc: string;
@@ -173,8 +195,8 @@ export interface StoredEntityState {
   row: Record<string, unknown>;
   clocks: Record<string, string>;
   purgedAt: number | null;
-  ownerUserId: string;
   serverSeq: number;
+  projectId?: string;
 }
 
 export function isEntityName(value: unknown): value is EntityName {
@@ -460,13 +482,16 @@ export function dbRecordToState(
     }
   }
 
-  return {
+  const state: StoredEntityState = {
     row,
     clocks: parseClocksJson(record.clocks),
     purgedAt: typeof record.purgedAt === 'number' ? record.purgedAt : null,
-    ownerUserId: String(record.ownerUserId),
     serverSeq: Number(record.serverSeq),
   };
+  if (isTaskChildEntity(entity) && typeof record.projectId === 'string') {
+    state.projectId = record.projectId;
+  }
+  return state;
 }
 
 export function stateToDbValues(
@@ -489,7 +514,9 @@ export function stateToDbValues(
     }
   }
 
-  values.ownerUserId = state.ownerUserId;
+  if (isTaskChildEntity(entity) && typeof state.projectId === 'string') {
+    values.projectId = state.projectId;
+  }
   values.clocks = JSON.stringify(state.clocks);
   values.serverSeq = state.serverSeq;
   values.purgedAt = state.purgedAt;

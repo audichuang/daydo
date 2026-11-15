@@ -1,7 +1,9 @@
 import { defineHandler } from 'void';
-import { Writer } from '../../durable-objects/writer';
+import { createDb } from 'void/db';
+import { Scope } from '../../durable-objects/scope';
 import { requireUser } from '../../src/auth/middleware';
 import { nonEmptyString, readJsonObject } from '../../src/http';
+import { executeSyncPush } from '../../src/sync/push';
 
 const MAX_OPS_PER_PUSH = 200;
 
@@ -27,11 +29,12 @@ export const POST = defineHandler(async (c) => {
     return c.json({ error: `ops exceeds maximum batch size of ${MAX_OPS_PER_PUSH}` }, 400);
   }
 
-  const writer = Writer.get('global');
-  const result = await writer.push({
+  const db = createDb(c.env.DB, { session: 'first-primary' });
+  const result = await executeSyncPush(db, {
     userId,
     deviceId,
     ops: body.ops,
+    getScopeStub: (scope) => Scope.get(scope),
   });
 
   return c.json(result, 200);

@@ -1,15 +1,5 @@
 import { index, integer, primaryKey, sqliteTable, text } from 'void/schema-d1';
 
-const syncMetadataColumns = () => ({
-  createdAt: integer('createdAt').notNull(),
-  updatedAt: integer('updatedAt').notNull(),
-  deletedAt: integer('deletedAt'),
-  ownerUserId: text('ownerUserId').notNull(),
-  clocks: text('clocks').notNull().default('{}'),
-  serverSeq: integer('serverSeq').notNull(),
-  purgedAt: integer('purgedAt'),
-});
-
 export const user = sqliteTable('user', {
   id: text('id').primaryKey(),
   createdAt: integer('createdAt').notNull(),
@@ -65,200 +55,44 @@ export const device = sqliteTable(
   (t) => [index('device_userId_idx').on(t.userId)],
 );
 
-export const opApplied = sqliteTable(
-  'op_applied',
+export const entityHome = sqliteTable(
+  'entityHome',
   {
-    opId: text('opId').primaryKey(),
+    entity: text('entity').notNull(),
+    entityId: text('entityId').notNull(),
+    scope: text('scope').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.entity, t.entityId] })],
+);
+
+export const listScopes = sqliteTable(
+  'listScopes',
+  {
+    projectId: text('projectId').notNull(),
+    scope: text('scope').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.projectId, t.scope] }),
+    index('listScopes_scope_idx').on(t.scope),
+  ],
+);
+
+export const projectMembership = sqliteTable(
+  'projectMembership',
+  {
+    projectId: text('projectId').notNull(),
     userId: text('userId').notNull(),
-    status: text('status').notNull(),
-    serverSeq: integer('serverSeq').notNull(),
+    role: text('role').notNull(),
     createdAt: integer('createdAt').notNull(),
+    removedAt: integer('removedAt'),
   },
-  (t) => [index('op_applied_userId_idx').on(t.userId)],
+  (t) => [
+    primaryKey({ columns: [t.projectId, t.userId] }),
+    index('projectMembership_userId_idx').on(t.userId),
+  ],
 );
 
-export const seq = sqliteTable('seq', {
-  id: integer('id').primaryKey(),
-  value: integer('value').notNull().default(0),
+export const purgedProject = sqliteTable('purgedProject', {
+  projectId: text('projectId').primaryKey(),
+  purgedAt: integer('purgedAt').notNull(),
 });
-
-export const member = sqliteTable(
-  'member',
-  {
-    id: text('id').primaryKey(),
-    name: text('name').notNull(),
-    initial: text('initial').notNull(),
-    color: text('color').notNull(),
-    ...syncMetadataColumns(),
-  },
-  (t) => [
-    index('member_serverSeq_idx').on(t.serverSeq),
-    index('member_ownerUserId_idx').on(t.ownerUserId),
-  ],
-);
-
-export const folder = sqliteTable(
-  'folder',
-  {
-    id: text('id').primaryKey(),
-    name: text('name').notNull(),
-    sortKey: text('sortKey').notNull(),
-    ...syncMetadataColumns(),
-  },
-  (t) => [
-    index('folder_serverSeq_idx').on(t.serverSeq),
-    index('folder_ownerUserId_idx').on(t.ownerUserId),
-  ],
-);
-
-export const project = sqliteTable(
-  'project',
-  {
-    id: text('id').primaryKey(),
-    name: text('name').notNull(),
-    color: text('color'),
-    icon: text('icon'),
-    folderId: text('folderId'),
-    viewMode: text('viewMode').notNull().default('list'),
-    kind: text('kind').notNull().default('TASK'),
-    isInbox: integer('isInbox').notNull().default(0),
-    ownerId: text('ownerId').notNull(),
-    sortKey: text('sortKey').notNull(),
-    showInSmart: text('showInSmart').notNull().default('all'),
-    notifyMode: text('notifyMode').notNull().default('all'),
-    archivedAt: integer('archivedAt'),
-    ...syncMetadataColumns(),
-  },
-  (t) => [
-    index('project_serverSeq_idx').on(t.serverSeq),
-    index('project_ownerUserId_idx').on(t.ownerUserId),
-  ],
-);
-
-export const projectMember = sqliteTable(
-  'projectMember',
-  {
-    projectId: text('projectId').notNull(),
-    memberId: text('memberId').notNull(),
-    role: text('role').notNull(),
-    ...syncMetadataColumns(),
-  },
-  (t) => [
-    primaryKey({ columns: [t.projectId, t.memberId] }),
-    index('projectMember_serverSeq_idx').on(t.serverSeq),
-    index('projectMember_ownerUserId_idx').on(t.ownerUserId),
-  ],
-);
-
-export const projectInvite = sqliteTable(
-  'projectInvite',
-  {
-    id: text('id').primaryKey(),
-    projectId: text('projectId').notNull(),
-    email: text('email').notNull(),
-    role: text('role').notNull(),
-    status: text('status').notNull().default('pending'),
-    ...syncMetadataColumns(),
-  },
-  (t) => [
-    index('projectInvite_serverSeq_idx').on(t.serverSeq),
-    index('projectInvite_ownerUserId_idx').on(t.ownerUserId),
-    index('projectInvite_projectId_idx').on(t.projectId),
-  ],
-);
-
-export const task = sqliteTable(
-  'task',
-  {
-    id: text('id').primaryKey(),
-    projectId: text('projectId').notNull(),
-    title: text('title').notNull(),
-    content: text('content').notNull().default(''),
-    priority: integer('priority').notNull().default(0),
-    status: integer('status').notNull().default(0),
-    startDay: text('startDay'),
-    startMinute: integer('startMinute'),
-    endDay: text('endDay'),
-    endMinute: integer('endMinute'),
-    timeZone: text('timeZone'),
-    reminders: text('reminders').notNull().default('[]'),
-    repeatRule: text('repeatRule'),
-    tags: text('tags').notNull().default('[]'),
-    assigneeId: text('assigneeId'),
-    sortKey: text('sortKey').notNull(),
-    completedAt: integer('completedAt'),
-    sourceRaw: text('sourceRaw'),
-    importNote: text('importNote'),
-    ...syncMetadataColumns(),
-  },
-  (t) => [
-    index('task_serverSeq_idx').on(t.serverSeq),
-    index('task_ownerUserId_idx').on(t.ownerUserId),
-    index('task_projectId_idx').on(t.projectId),
-  ],
-);
-
-export const checklistItem = sqliteTable(
-  'checklistItem',
-  {
-    id: text('id').primaryKey(),
-    taskId: text('taskId').notNull(),
-    title: text('title').notNull(),
-    status: integer('status').notNull().default(0),
-    sortKey: text('sortKey').notNull(),
-    ...syncMetadataColumns(),
-  },
-  (t) => [
-    index('checklistItem_serverSeq_idx').on(t.serverSeq),
-    index('checklistItem_ownerUserId_idx').on(t.ownerUserId),
-    index('checklistItem_taskId_idx').on(t.taskId),
-  ],
-);
-
-export const tag = sqliteTable(
-  'tag',
-  {
-    name: text('name').notNull(),
-    label: text('label').notNull(),
-    color: text('color'),
-    sortKey: text('sortKey').notNull(),
-    ...syncMetadataColumns(),
-  },
-  (t) => [
-    primaryKey({ columns: [t.ownerUserId, t.name] }),
-    index('tag_serverSeq_idx').on(t.serverSeq),
-  ],
-);
-
-export const attachment = sqliteTable(
-  'attachment',
-  {
-    id: text('id').primaryKey(),
-    taskId: text('taskId').notNull(),
-    fileName: text('fileName').notNull(),
-    size: integer('size').notNull(),
-    mimeType: text('mimeType').notNull(),
-    ...syncMetadataColumns(),
-  },
-  (t) => [
-    index('attachment_serverSeq_idx').on(t.serverSeq),
-    index('attachment_ownerUserId_idx').on(t.ownerUserId),
-    index('attachment_taskId_idx').on(t.taskId),
-  ],
-);
-
-export const comment = sqliteTable(
-  'comment',
-  {
-    id: text('id').primaryKey(),
-    taskId: text('taskId').notNull(),
-    authorId: text('authorId').notNull(),
-    body: text('body').notNull(),
-    ...syncMetadataColumns(),
-  },
-  (t) => [
-    index('comment_serverSeq_idx').on(t.serverSeq),
-    index('comment_ownerUserId_idx').on(t.ownerUserId),
-    index('comment_taskId_idx').on(t.taskId),
-  ],
-);

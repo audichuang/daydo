@@ -1,0 +1,1234 @@
+import { DurableObject } from 'cloudflare:workers';
+import type { CloudBindings } from 'void';
+import { defineDurableObject } from 'void/durable';
+import {
+  dbRecordToState,
+  ENTITY_FIELDS,
+  ENTITY_NAMES,
+  hasAllRequiredFields,
+  isEntityName,
+  isTaskChildEntity,
+  parseEntityId,
+  serializePublicRow,
+  stateToDbValues,
+  validateSyncOp,
+  type EntityName,
+  type MembershipRole,
+  type StoredEntityState,
+} from '../src/sync/entities';
+import { clampHlc, type Hlc } from '../src/sync/hlc';
+import { mergeOp } from '../src/sync/merge';
+
+export interface PushOpResult {
+  opId: string;
+  status: 'applied' | 'rejected';
+  reason?: string;
+  row: Record<string, unknown> | null;
+  clocks: Record<string, string>;
+  gone?: boolean;
+}
+
+export interface ScopePushInput {
+  scope: string;
+  scopeUserId: string;
+  pusherUserId: string;
+  deviceId: string;
+  memberships: Record<string, MembershipRole>;
+  purgedProjects: string[];
+  meMemberId: string | null;
+  ops: unknown[];
+}
+
+export interface ScopePushResponse {
+  results: PushOpResult[];
+  serverSeq: number;
+  boundMeMemberId: string | null;
+  appliedKeys: Array<{ entity: EntityName; entityId: string }>;
+}
+
+export interface ScopePullInput {
+  scope: string;
+  scopeUserId: string;
+  requesterUserId: string;
+  since: number;
+  limit: number;
+  memberships: Record<string, MembershipRole>;
+  backfillProjectIds?: string[];
+  meMemberId: string | null;
+}
+
+export type PullScopeRow =
+  | {
+      entity: EntityName;
+      row: Record<string, unknown>;
+      clocks: Record<string, string>;
+      serverSeq: number;
+    }
+  | {
+      entity: EntityName;
+      entityId: string;
+      gone: true;
+      serverSeq: number;
+    };
+
+export interface ScopePullResponse {
+  scope: string;
+  rows: PullScopeRow[];
+  cursor: number;
+  hasMore: boolean;
+}
+
+interface OpAppliedRow {
+  opId: string;
+  userId: string;
+  status: 'applied' | 'rejected';
+  reason: string | null;
+  serverSeq: number;
+}
+
+type TaskChildEntity = 'checklistItem' | 'attachment' | 'comment';
+const CHILD_ENTITIES: readonly TaskChildEntity[] = ['checklistItem', 'attachment', 'comment'];
+const CREATOR_ONLY_ENTITIES: readonly EntityName[] = ['member', 'folder', 'tag'];
+const LIST_SCOPED_ENTITIES: ReadonlyArray<{
+  entity: Exclude<EntityName, 'member' | 'folder' | 'tag'>;
+  listCol: 'id' | 'projectId';
+}> = [
+  { entity: 'project', listCol: 'id' },
+  { entity: 'projectMember', listCol: 'projectId' },
+  { entity: 'projectInvite', listCol: 'projectId' },
+  { entity: 'task', listCol: 'projectId' },
+  { entity: 'checklistItem', listCol: 'projectId' },
+  { entity: 'attachment', listCol: 'projectId' },
+  { entity: 'comment', listCol: 'projectId' },
+];
+
+export function shouldSplitTransaction(
+  syncFault: string | undefined,
+  isDev: boolean = import.meta.env.DEV,
+): boolean {
+  return isDev && syncFault === 'split-txn';
+}
+
+function tableColumnsFor(entity: EntityName): string[] {
+  const cols = [...Object.keys(ENTITY_FIELDS[entity])];
+  if (isTaskChildEntity(entity)) {
+    cols.push('projectId');
+  }
+  cols.push('clocks', 'serverSeq', 'purgedAt');
+  return cols;
+}
+
+const TABLE_COLUMNS: Record<EntityName, string[]> = Object.fromEntries(
+  ENTITY_NAMES.map((entity) => [entity, tableColumnsFor(entity)]),
+) as Record<EntityName, string[]>;
+
+function primaryKeyColumnsFor(entity: EntityName): string[] {
+  if (entity === 'projectMember') return ['projectId', 'memberId'];
+  if (entity === 'tag') return ['name'];
+  return ['id'];
+}
+
+interface ScopeStore {
+  getCounter(): number;
+  setCounter(value: number): void;
+  getPurgedProjects(): string[];
+  getOpApplied(opId: string): OpAppliedRow | null;
+  insertOpApplied(entry: OpAppliedRow): void;
+  getRow(entity: EntityName, entityId: string): StoredEntityState | null;
+  upsertRow(entity: EntityName, entityId: string, state: StoredEntityState): void;
+  findActiveTaskChildren(
+    taskId: string,
+  ): Array<{ entity: TaskChildEntity; entityId: string; state: StoredEntityState }>;
+  upsertDeparture(entry: {
+    entity: EntityName;
+    entityId: string;
+    projectId: string;
+    serverSeq: number;
+  }): void;
+}
+
+class SqliteScopeStore implements ScopeStore {
+  constructor(private readonly sql: SqlStorage) {}
+
+  getCounter(): number {
+    const rows = this.sql.exec('SELECT value FROM counter WHERE id = 1').toArray();
+    if (rows.length === 0) return 0;
+    return Number(rows[0].value);
+  }
+
+  setCounter(value: number): void {
+    this.sql.exec(
+      'INSERT INTO counter (id, value) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET value = excluded.value',
+      value,
+    );
+  }
+
+  getPurgedProjects(): string[] {
+    return this.sql
+      .exec('SELECT projectId FROM purgedProject')
+      .toArray()
+      .map((r) => String(r.projectId));
+  }
+
+  getOpApplied(opId: string): OpAppliedRow | null {
+    const rows = this.sql
+      .exec('SELECT opId, userId, status, reason, serverSeq FROM opApplied WHERE opId = ?', opId)
+      .toArray();
+    if (rows.length === 0) return null;
+    const r = rows[0];
+    return {
+      opId: String(r.opId),
+      userId: String(r.userId),
+      status: r.status === 'rejected' ? 'rejected' : 'applied',
+      reason: typeof r.reason === 'string' ? r.reason : null,
+      serverSeq: Number(r.serverSeq),
+    };
+  }
+
+  insertOpApplied(entry: OpAppliedRow): void {
+    this.sql.exec(
+      'INSERT INTO opApplied (opId, userId, status, reason, serverSeq) VALUES (?, ?, ?, ?, ?) ON CONFLICT (opId) DO NOTHING',
+      entry.opId,
+      entry.userId,
+      entry.status,
+      entry.reason,
+      entry.serverSeq,
+    );
+  }
+
+  getRow(entity: EntityName, entityId: string): StoredEntityState | null {
+    const parsed = parseEntityId(entity, entityId);
+    if (!parsed) return null;
+    let rows: Array<Record<string, SqlStorageValue>>;
+    if (entity === 'projectMember') {
+      rows = this.sql
+        .exec(
+          'SELECT * FROM projectMember WHERE projectId = ? AND memberId = ?',
+          parsed.projectId,
+          parsed.memberId,
+        )
+        .toArray();
+    } else if (entity === 'tag') {
+      rows = this.sql.exec('SELECT * FROM tag WHERE name = ?', parsed.name).toArray();
+    } else {
+      rows = this.sql.exec(`SELECT * FROM "${entity}" WHERE id = ?`, parsed.id).toArray();
+    }
+    if (rows.length === 0) return null;
+    return dbRecordToState(entity, rows[0] as Record<string, unknown>);
+  }
+
+  upsertRow(entity: EntityName, _entityId: string, state: StoredEntityState): void {
+    const cols = TABLE_COLUMNS[entity];
+    const pkCols = primaryKeyColumnsFor(entity);
+    const pkSet = new Set(pkCols);
+    const vals = stateToDbValues(entity, state);
+    const params = cols.map((col) => (vals[col] === undefined ? null : vals[col]) as SqlStorageValue);
+    const placeholders = cols.map(() => '?').join(', ');
+    const updateCols = cols
+      .filter((col) => !pkSet.has(col))
+      .map((col) => `"${col}" = excluded."${col}"`)
+      .join(', ');
+    const sqlText = `INSERT INTO "${entity}" (${cols.map((c) => `"${c}"`).join(', ')}) VALUES (${placeholders}) ON CONFLICT (${pkCols.join(', ')}) DO UPDATE SET ${updateCols}`;
+    this.sql.exec(sqlText, ...params);
+  }
+
+  findActiveTaskChildren(
+    taskId: string,
+  ): Array<{ entity: TaskChildEntity; entityId: string; state: StoredEntityState }> {
+    const out: Array<{ entity: TaskChildEntity; entityId: string; state: StoredEntityState }> = [];
+    for (const childEntity of CHILD_ENTITIES) {
+      const rows = this.sql
+        .exec(`SELECT * FROM "${childEntity}" WHERE taskId = ? AND purgedAt IS NULL`, taskId)
+        .toArray();
+      for (const r of rows) {
+        out.push({
+          entity: childEntity,
+          entityId: String(r.id),
+          state: dbRecordToState(childEntity, r as Record<string, unknown>),
+        });
+      }
+    }
+    return out;
+  }
+
+  upsertDeparture(entry: {
+    entity: EntityName;
+    entityId: string;
+    projectId: string;
+    serverSeq: number;
+  }): void {
+    this.sql.exec(
+      'INSERT INTO departure (entity, entityId, projectId, serverSeq) VALUES (?, ?, ?, ?) ON CONFLICT (entity, entityId, projectId) DO UPDATE SET serverSeq = excluded.serverSeq',
+      entry.entity,
+      entry.entityId,
+      entry.projectId,
+      entry.serverSeq,
+    );
+  }
+}
+
+/**
+ * Dev-only fault-injection store that snapshots counter, opApplied, and existing rows
+ * before yielding at an `await`, simulating the race condition of a split read/write transaction.
+ */
+class SplitTxnSnapshotStore implements ScopeStore {
+  private counterValue: number;
+  private readonly purgedProjectsSnapshot: string[];
+  private readonly opAppliedMap = new Map<string, OpAppliedRow>();
+  private readonly rowMap = new Map<string, StoredEntityState | null>();
+  private readonly childrenMap = new Map<
+    string,
+    Array<{ entity: TaskChildEntity; entityId: string; state: StoredEntityState }>
+  >();
+
+  constructor(
+    private readonly backing: SqliteScopeStore,
+    ops: unknown[],
+  ) {
+    this.counterValue = backing.getCounter();
+    this.purgedProjectsSnapshot = backing.getPurgedProjects();
+    for (const raw of ops) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+      const rec = raw as Record<string, unknown>;
+      if (typeof rec.opId === 'string' && rec.opId.length > 0 && !this.opAppliedMap.has(rec.opId)) {
+        const existingOp = backing.getOpApplied(rec.opId);
+        if (existingOp) this.opAppliedMap.set(rec.opId, existingOp);
+      }
+      if (isEntityName(rec.entity) && typeof rec.entityId === 'string') {
+        const key = `${rec.entity}:${rec.entityId}`;
+        if (!this.rowMap.has(key)) {
+          this.rowMap.set(key, backing.getRow(rec.entity, rec.entityId));
+        }
+        if (rec.entity === 'task' && !this.childrenMap.has(rec.entityId)) {
+          this.childrenMap.set(rec.entityId, backing.findActiveTaskChildren(rec.entityId));
+        }
+        if (
+          isTaskChildEntity(rec.entity) &&
+          rec.row &&
+          typeof rec.row === 'object' &&
+          !Array.isArray(rec.row) &&
+          Object.hasOwn(rec.row, 'taskId')
+        ) {
+          const tid = (rec.row as Record<string, unknown>).taskId;
+          if (typeof tid === 'string' && !this.rowMap.has(`task:${tid}`)) {
+            this.rowMap.set(`task:${tid}`, backing.getRow('task', tid));
+          }
+        }
+      }
+    }
+  }
+
+  getCounter(): number {
+    return this.counterValue;
+  }
+
+  setCounter(value: number): void {
+    this.counterValue = value;
+    this.backing.setCounter(value);
+  }
+
+  getPurgedProjects(): string[] {
+    return this.purgedProjectsSnapshot;
+  }
+
+  getOpApplied(opId: string): OpAppliedRow | null {
+    return this.opAppliedMap.get(opId) ?? null;
+  }
+
+  insertOpApplied(entry: OpAppliedRow): void {
+    this.opAppliedMap.set(entry.opId, entry);
+    this.backing.insertOpApplied(entry);
+  }
+
+  getRow(entity: EntityName, entityId: string): StoredEntityState | null {
+    const key = `${entity}:${entityId}`;
+    if (this.rowMap.has(key)) return this.rowMap.get(key) ?? null;
+    const loaded = this.backing.getRow(entity, entityId);
+    this.rowMap.set(key, loaded);
+    return loaded;
+  }
+
+  upsertRow(entity: EntityName, entityId: string, state: StoredEntityState): void {
+    this.rowMap.set(`${entity}:${entityId}`, state);
+    this.backing.upsertRow(entity, entityId, state);
+  }
+
+  findActiveTaskChildren(
+    taskId: string,
+  ): Array<{ entity: TaskChildEntity; entityId: string; state: StoredEntityState }> {
+    return this.childrenMap.get(taskId) ?? this.backing.findActiveTaskChildren(taskId);
+  }
+
+  upsertDeparture(entry: {
+    entity: EntityName;
+    entityId: string;
+    projectId: string;
+    serverSeq: number;
+  }): void {
+    this.backing.upsertDeparture(entry);
+  }
+}
+
+export class ScopeObject extends DurableObject<CloudBindings> {
+  private lastClamped: Hlc | null = null;
+  private readonly allowFaultInjection: boolean;
+
+  constructor(
+    ctx: DurableObjectState,
+    env: CloudBindings,
+    allowFaultInjection: boolean = import.meta.env.DEV,
+  ) {
+    super(ctx, env);
+    this.allowFaultInjection = allowFaultInjection;
+    this.ensureSchema();
+  }
+
+  private ensureSchema(): void {
+    const sql = this.ctx.storage.sql;
+    sql.exec(`
+      CREATE TABLE IF NOT EXISTS member (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        initial TEXT NOT NULL,
+        color TEXT NOT NULL,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        deletedAt INTEGER,
+        clocks TEXT NOT NULL DEFAULT '{}',
+        serverSeq INTEGER NOT NULL,
+        purgedAt INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS member_serverSeq_idx ON member (serverSeq);
+
+      CREATE TABLE IF NOT EXISTS folder (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        sortKey TEXT NOT NULL,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        deletedAt INTEGER,
+        clocks TEXT NOT NULL DEFAULT '{}',
+        serverSeq INTEGER NOT NULL,
+        purgedAt INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS folder_serverSeq_idx ON folder (serverSeq);
+
+      CREATE TABLE IF NOT EXISTS project (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        color TEXT,
+        icon TEXT,
+        folderId TEXT,
+        viewMode TEXT NOT NULL DEFAULT 'list',
+        kind TEXT NOT NULL DEFAULT 'TASK',
+        isInbox INTEGER NOT NULL DEFAULT 0,
+        ownerId TEXT NOT NULL,
+        sortKey TEXT NOT NULL,
+        showInSmart TEXT NOT NULL DEFAULT 'all',
+        notifyMode TEXT NOT NULL DEFAULT 'all',
+        archivedAt INTEGER,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        deletedAt INTEGER,
+        clocks TEXT NOT NULL DEFAULT '{}',
+        serverSeq INTEGER NOT NULL,
+        purgedAt INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS project_serverSeq_idx ON project (serverSeq);
+
+      CREATE TABLE IF NOT EXISTS projectMember (
+        projectId TEXT NOT NULL,
+        memberId TEXT NOT NULL,
+        role TEXT NOT NULL,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        deletedAt INTEGER,
+        clocks TEXT NOT NULL DEFAULT '{}',
+        serverSeq INTEGER NOT NULL,
+        purgedAt INTEGER,
+        PRIMARY KEY (projectId, memberId)
+      );
+      CREATE INDEX IF NOT EXISTS projectMember_serverSeq_idx ON projectMember (serverSeq);
+
+      CREATE TABLE IF NOT EXISTS projectInvite (
+        id TEXT PRIMARY KEY NOT NULL,
+        projectId TEXT NOT NULL,
+        email TEXT NOT NULL,
+        role TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        deletedAt INTEGER,
+        clocks TEXT NOT NULL DEFAULT '{}',
+        serverSeq INTEGER NOT NULL,
+        purgedAt INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS projectInvite_serverSeq_idx ON projectInvite (serverSeq);
+
+      CREATE TABLE IF NOT EXISTS task (
+        id TEXT PRIMARY KEY NOT NULL,
+        projectId TEXT NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        priority INTEGER NOT NULL DEFAULT 0,
+        status INTEGER NOT NULL DEFAULT 0,
+        startDay TEXT,
+        startMinute INTEGER,
+        endDay TEXT,
+        endMinute INTEGER,
+        timeZone TEXT,
+        reminders TEXT NOT NULL DEFAULT '[]',
+        repeatRule TEXT,
+        tags TEXT NOT NULL DEFAULT '[]',
+        assigneeId TEXT,
+        sortKey TEXT NOT NULL,
+        completedAt INTEGER,
+        sourceRaw TEXT,
+        importNote TEXT,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        deletedAt INTEGER,
+        clocks TEXT NOT NULL DEFAULT '{}',
+        serverSeq INTEGER NOT NULL,
+        purgedAt INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS task_serverSeq_idx ON task (serverSeq);
+      CREATE INDEX IF NOT EXISTS task_projectId_idx ON task (projectId);
+
+      CREATE TABLE IF NOT EXISTS checklistItem (
+        id TEXT PRIMARY KEY NOT NULL,
+        taskId TEXT NOT NULL,
+        projectId TEXT NOT NULL,
+        title TEXT NOT NULL,
+        status INTEGER NOT NULL DEFAULT 0,
+        sortKey TEXT NOT NULL,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        deletedAt INTEGER,
+        clocks TEXT NOT NULL DEFAULT '{}',
+        serverSeq INTEGER NOT NULL,
+        purgedAt INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS checklistItem_serverSeq_idx ON checklistItem (serverSeq);
+      CREATE INDEX IF NOT EXISTS checklistItem_taskId_idx ON checklistItem (taskId);
+      CREATE INDEX IF NOT EXISTS checklistItem_projectId_idx ON checklistItem (projectId);
+
+      CREATE TABLE IF NOT EXISTS tag (
+        name TEXT PRIMARY KEY NOT NULL,
+        label TEXT NOT NULL,
+        color TEXT,
+        sortKey TEXT NOT NULL,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        deletedAt INTEGER,
+        clocks TEXT NOT NULL DEFAULT '{}',
+        serverSeq INTEGER NOT NULL,
+        purgedAt INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS tag_serverSeq_idx ON tag (serverSeq);
+
+      CREATE TABLE IF NOT EXISTS attachment (
+        id TEXT PRIMARY KEY NOT NULL,
+        taskId TEXT NOT NULL,
+        projectId TEXT NOT NULL,
+        fileName TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        mimeType TEXT NOT NULL,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        deletedAt INTEGER,
+        clocks TEXT NOT NULL DEFAULT '{}',
+        serverSeq INTEGER NOT NULL,
+        purgedAt INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS attachment_serverSeq_idx ON attachment (serverSeq);
+      CREATE INDEX IF NOT EXISTS attachment_taskId_idx ON attachment (taskId);
+      CREATE INDEX IF NOT EXISTS attachment_projectId_idx ON attachment (projectId);
+
+      CREATE TABLE IF NOT EXISTS comment (
+        id TEXT PRIMARY KEY NOT NULL,
+        taskId TEXT NOT NULL,
+        projectId TEXT NOT NULL,
+        authorId TEXT NOT NULL,
+        body TEXT NOT NULL,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        deletedAt INTEGER,
+        clocks TEXT NOT NULL DEFAULT '{}',
+        serverSeq INTEGER NOT NULL,
+        purgedAt INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS comment_serverSeq_idx ON comment (serverSeq);
+      CREATE INDEX IF NOT EXISTS comment_taskId_idx ON comment (taskId);
+      CREATE INDEX IF NOT EXISTS comment_projectId_idx ON comment (projectId);
+
+      CREATE TABLE IF NOT EXISTS departure (
+        entity TEXT NOT NULL,
+        entityId TEXT NOT NULL,
+        projectId TEXT NOT NULL,
+        serverSeq INTEGER NOT NULL,
+        PRIMARY KEY (entity, entityId, projectId)
+      );
+      CREATE INDEX IF NOT EXISTS departure_serverSeq_idx ON departure (serverSeq);
+
+      CREATE TABLE IF NOT EXISTS opApplied (
+        opId TEXT PRIMARY KEY NOT NULL,
+        userId TEXT NOT NULL,
+        status TEXT NOT NULL,
+        reason TEXT,
+        serverSeq INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS counter (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        value INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS purgedProject (
+        projectId TEXT PRIMARY KEY NOT NULL,
+        purgedAt INTEGER NOT NULL
+      );
+    `);
+  }
+
+  async push(input: ScopePushInput): Promise<ScopePushResponse> {
+    if (
+      import.meta.env.DEV &&
+      shouldSplitTransaction(this.env.SYNC_FAULT, this.allowFaultInjection)
+    ) {
+      const backing = new SqliteScopeStore(this.ctx.storage.sql);
+      const snapshotStore = new SplitTxnSnapshotStore(backing, input.ops);
+      await new Promise((r) => setTimeout(r, 15));
+      return this.processPushBatch(snapshotStore, input);
+    }
+
+    return this.ctx.storage.transactionSync(() => {
+      const store = new SqliteScopeStore(this.ctx.storage.sql);
+      return this.processPushBatch(store, input);
+    });
+  }
+
+  private processPushBatch(store: ScopeStore, input: ScopePushInput): ScopePushResponse {
+    const nowMs = Date.now();
+    const initialSeq = store.getCounter();
+    let currentSeq = initialSeq;
+    let meMemberId = input.meMemberId;
+    let boundMeMemberId: string | null = null;
+    const isScopeOwner = input.pusherUserId === input.scopeUserId;
+    const purgedSet = new Set<string>([...input.purgedProjects, ...store.getPurgedProjects()]);
+
+    const results: PushOpResult[] = [];
+    const appliedKeys: Array<{ entity: EntityName; entityId: string }> = [];
+
+    if (input.ops.length === 0) {
+      return { results: [], serverSeq: currentSeq, boundMeMemberId: null, appliedKeys: [] };
+    }
+
+    const canReadState = (
+      entity: EntityName,
+      entityId: string,
+      state: StoredEntityState,
+    ): boolean => {
+      if (entity === 'member' || entity === 'folder' || entity === 'tag') {
+        return isScopeOwner;
+      }
+      if (entity === 'project') {
+        return Boolean(input.memberships[entityId]);
+      }
+      if (entity === 'projectMember' || entity === 'projectInvite' || entity === 'task') {
+        return Boolean(input.memberships[String(state.row.projectId)]);
+      }
+      // Child row: check parent task's current list (or stored projectId tag).
+      const parentTask = store.getRow('task', String(state.row.taskId));
+      const projectId = parentTask ? String(parentTask.row.projectId) : (state.projectId ?? '');
+      return Boolean(input.memberships[projectId]);
+    };
+
+    const resolveCurrentRow = (
+      entity: EntityName | null,
+      entityId: string | null,
+    ): { row: Record<string, unknown> | null; clocks: Record<string, string>; gone?: boolean } => {
+      if (!entity || !entityId) {
+        return { row: null, clocks: {} };
+      }
+      const state = store.getRow(entity, entityId);
+      if (!state) {
+        return { row: null, clocks: {} };
+      }
+      if (!canReadState(entity, entityId, state)) {
+        return { row: null, clocks: {}, gone: true };
+      }
+      return {
+        row: serializePublicRow(entity, state.row, state.purgedAt, {
+          meMemberId: isScopeOwner ? meMemberId : null,
+        }),
+        clocks: { ...state.clocks },
+      };
+    };
+
+    const rejectOp = (
+      opId: string,
+      reason: string,
+      entity: EntityName | null,
+      entityId: string | null,
+    ) => {
+      if (opId.length > 0) {
+        store.insertOpApplied({
+          opId,
+          userId: input.pusherUserId,
+          status: 'rejected',
+          reason,
+          serverSeq: currentSeq,
+        });
+      }
+      const current = resolveCurrentRow(entity, entityId);
+      results.push({
+        opId,
+        status: 'rejected',
+        reason,
+        row: current.row,
+        clocks: current.clocks,
+        ...(current.gone ? { gone: true } : {}),
+      });
+    };
+
+    for (const raw of input.ops) {
+      const rec =
+        raw && typeof raw === 'object' && !Array.isArray(raw)
+          ? (raw as Record<string, unknown>)
+          : null;
+      const rawOpId = rec && typeof rec.opId === 'string' ? rec.opId : '';
+      const rawEntity =
+        rec && isEntityName(rec.entity) && typeof rec.entityId === 'string' && parseEntityId(rec.entity, rec.entityId)
+          ? rec.entity
+          : null;
+      const rawEntityId = rawEntity && rec ? (rec.entityId as string) : null;
+
+      // 1. opId dedupe
+      if (rawOpId.length > 0) {
+        const seen = store.getOpApplied(rawOpId);
+        if (seen) {
+          if (seen.userId !== input.pusherUserId) {
+            results.push({
+              opId: rawOpId,
+              status: 'rejected',
+              reason: 'opId already used by another user',
+              row: null,
+              clocks: {},
+            });
+            continue;
+          }
+          if (seen.status === 'rejected') {
+            const current = resolveCurrentRow(rawEntity, rawEntityId);
+            results.push({
+              opId: rawOpId,
+              status: 'rejected',
+              reason: seen.reason ?? 'Previously rejected',
+              row: current.row,
+              clocks: current.clocks,
+              ...(current.gone ? { gone: true } : {}),
+            });
+            continue;
+          }
+          // Previously applied replay
+          if (rawEntity && rawEntityId) {
+            const state = store.getRow(rawEntity, rawEntityId);
+            if (state && canReadState(rawEntity, rawEntityId, state)) {
+              if (
+                rawEntity === 'member' &&
+                isScopeOwner &&
+                meMemberId === null &&
+                rec?.row &&
+                typeof rec.row === 'object' &&
+                !Array.isArray(rec.row) &&
+                Object.hasOwn(rec.row, 'isMe') &&
+                (rec.row as Record<string, unknown>).isMe === true
+              ) {
+                meMemberId = rawEntityId;
+                boundMeMemberId = rawEntityId;
+                currentSeq += 1;
+                store.upsertRow('member', rawEntityId, { ...state, serverSeq: currentSeq });
+                store.setCounter(currentSeq);
+              }
+              results.push({
+                opId: rawOpId,
+                status: 'applied',
+                row: serializePublicRow(rawEntity, state.row, state.purgedAt, {
+                  meMemberId: isScopeOwner ? meMemberId : null,
+                }),
+                clocks: { ...state.clocks },
+              });
+              continue;
+            }
+            if (state) {
+              results.push({
+                opId: rawOpId,
+                status: 'applied',
+                row: null,
+                clocks: {},
+                gone: true,
+              });
+              continue;
+            }
+          }
+          results.push({
+            opId: rawOpId,
+            status: 'applied',
+            row: null,
+            clocks: {},
+          });
+          continue;
+        }
+      }
+
+      // 2. Validation
+      const validated = validateSyncOp(raw);
+      if (!validated.ok) {
+        rejectOp(validated.opId, validated.reason, rawEntity, rawEntityId);
+        continue;
+      }
+      const op = validated.op;
+
+      // 3. Disallowed sync entities
+      if (op.entity === 'projectMember' || op.entity === 'projectInvite') {
+        rejectOp(op.opId, `${op.entity} cannot be modified via sync`, op.entity, op.entityId);
+        continue;
+      }
+
+      const existing = store.getRow(op.entity, op.entityId);
+
+      // 4. Missing row + partial upsert check
+      if (!existing) {
+        if (op.op === 'upsert' && !hasAllRequiredFields(op.entity, op.fields)) {
+          rejectOp(op.opId, 'unknown-row', op.entity, op.entityId);
+          continue;
+        }
+        if (op.op === 'delete' && isTaskChildEntity(op.entity)) {
+          rejectOp(op.opId, 'unknown-row', op.entity, op.entityId);
+          continue;
+        }
+      }
+
+      // 5. Authorization & domain rules by row's CURRENT list
+      let parentTask: StoredEntityState | null = null;
+      let childProjectId: string | undefined;
+
+      if (op.entity === 'member' || op.entity === 'folder' || op.entity === 'tag') {
+        if (!isScopeOwner) {
+          rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
+          continue;
+        }
+      } else if (op.entity === 'project') {
+        if (op.op === 'delete') {
+          rejectOp(op.opId, 'Project deletion is not allowed via sync', op.entity, op.entityId);
+          continue;
+        }
+        const touchesDeletedAt =
+          op.fields.includes('deletedAt') &&
+          (existing
+            ? (Object.hasOwn(op.row, 'deletedAt') ? (op.row.deletedAt ?? null) : null) !==
+              (existing.row.deletedAt ?? null)
+            : Object.hasOwn(op.row, 'deletedAt') &&
+              op.row.deletedAt !== null &&
+              op.row.deletedAt !== undefined);
+        const touchesArchivedAt =
+          op.fields.includes('archivedAt') &&
+          (existing
+            ? (Object.hasOwn(op.row, 'archivedAt') ? (op.row.archivedAt ?? null) : null) !==
+              (existing.row.archivedAt ?? null)
+            : Object.hasOwn(op.row, 'archivedAt') &&
+              op.row.archivedAt !== null &&
+              op.row.archivedAt !== undefined);
+        if (touchesDeletedAt || touchesArchivedAt) {
+          rejectOp(
+            op.opId,
+            'Project deletion/archiving is not allowed via sync',
+            op.entity,
+            op.entityId,
+          );
+          continue;
+        }
+        if (purgedSet.has(op.entityId)) {
+          rejectOp(op.opId, 'Project is purged', op.entity, op.entityId);
+          continue;
+        }
+        const role = input.memberships[op.entityId];
+        if (role !== 'owner' && role !== 'editor') {
+          rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
+          continue;
+        }
+      } else if (op.entity === 'task') {
+        if (!existing) {
+          if (op.op === 'upsert') {
+            const targetProjectId = String(op.row.projectId);
+            if (purgedSet.has(targetProjectId)) {
+              rejectOp(op.opId, 'Project is purged', op.entity, op.entityId);
+              continue;
+            }
+            const role = input.memberships[targetProjectId];
+            if (role !== 'owner' && role !== 'editor') {
+              rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
+              continue;
+            }
+          } else if (!isScopeOwner) {
+            rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
+            continue;
+          }
+        } else {
+          const currentProjectId = String(existing.row.projectId);
+          const allowEmptyTombstoneReplay =
+            existing.purgedAt !== null && currentProjectId === '' && isScopeOwner;
+          if (!allowEmptyTombstoneReplay) {
+            const currentRole = input.memberships[currentProjectId];
+            if (currentRole !== 'owner' && currentRole !== 'editor') {
+              rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
+              continue;
+            }
+          }
+          if (existing.purgedAt === null && op.op === 'upsert' && op.fields.includes('projectId')) {
+            const nextProjectId =
+              Object.hasOwn(op.row, 'projectId') && typeof op.row.projectId === 'string'
+                ? op.row.projectId
+                : '';
+            if (nextProjectId !== currentProjectId) {
+              if (purgedSet.has(nextProjectId)) {
+                rejectOp(op.opId, 'Project is purged', op.entity, op.entityId);
+                continue;
+              }
+              const targetRole = input.memberships[nextProjectId];
+              if (targetRole !== 'owner' && targetRole !== 'editor') {
+                rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
+                continue;
+              }
+            }
+          }
+        }
+      } else {
+        // Child row: checklistItem, attachment, comment
+        if (existing) {
+          if (op.op === 'upsert' && op.fields.includes('taskId')) {
+            const nextTaskId = Object.hasOwn(op.row, 'taskId') ? op.row.taskId : null;
+            if (nextTaskId !== existing.row.taskId) {
+              rejectOp(op.opId, 'Child taskId cannot be changed', op.entity, op.entityId);
+              continue;
+            }
+          }
+          parentTask = store.getRow('task', String(existing.row.taskId));
+          const currentProjectId = parentTask
+            ? String(parentTask.row.projectId)
+            : (existing.projectId ?? '');
+          childProjectId = currentProjectId;
+          const allowEmptyTombstoneReplay =
+            existing.purgedAt !== null && currentProjectId === '' && isScopeOwner;
+          if (!allowEmptyTombstoneReplay) {
+            const role = input.memberships[currentProjectId];
+            if (role !== 'owner' && role !== 'editor') {
+              rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
+              continue;
+            }
+          }
+        } else {
+          const parentTaskId =
+            Object.hasOwn(op.row, 'taskId') && typeof op.row.taskId === 'string'
+              ? op.row.taskId
+              : '';
+          parentTask = parentTaskId ? store.getRow('task', parentTaskId) : null;
+          if (!parentTask) {
+            rejectOp(op.opId, 'unknown-row', op.entity, op.entityId);
+            continue;
+          }
+          const currentProjectId = String(parentTask.row.projectId);
+          childProjectId = currentProjectId;
+          const allowEmptyTaskTombstone =
+            parentTask.purgedAt !== null && currentProjectId === '' && isScopeOwner;
+          if (!allowEmptyTaskTombstone) {
+            const role = input.memberships[currentProjectId];
+            if (role !== 'owner' && role !== 'editor') {
+              rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
+              continue;
+            }
+          }
+        }
+      }
+
+      // 6. HLC 5-minute clamp & merge
+      let clamped: ReturnType<typeof clampHlc>;
+      let merged: ReturnType<typeof mergeOp>;
+      try {
+        clamped = clampHlc(op.hlc, nowMs, this.lastClamped);
+        if (clamped.clamped) {
+          this.lastClamped = clamped.hlc;
+        }
+        const parentPurged =
+          isTaskChildEntity(op.entity) &&
+          (!existing || existing.purgedAt === null) &&
+          parentTask !== null &&
+          parentTask.purgedAt !== null;
+
+        merged = mergeOp(
+          existing
+            ? { row: existing.row, clocks: existing.clocks, purgedAt: existing.purgedAt }
+            : null,
+          {
+            entity: op.entity,
+            entityId: op.entityId,
+            op: op.op,
+            hlc: clamped.formatted,
+            fields: op.fields,
+            row: op.row,
+          },
+          nowMs,
+          { parentPurged },
+        );
+      } catch (err) {
+        rejectOp(
+          op.opId,
+          err instanceof Error ? `Invalid op: ${err.message}` : 'Invalid sync op',
+          op.entity,
+          op.entityId,
+        );
+        continue;
+      }
+
+      // 7. Persist state & handle task move / cascade purge
+      let opServerSeq = existing?.serverSeq ?? currentSeq;
+      if (merged.changed) {
+        currentSeq += 1;
+        opServerSeq = currentSeq;
+        const nextState: StoredEntityState = {
+          row: merged.row,
+          clocks: merged.clocks,
+          purgedAt: merged.purgedAt,
+          serverSeq: opServerSeq,
+          ...(isTaskChildEntity(op.entity) ? { projectId: childProjectId ?? '' } : {}),
+        };
+        store.upsertRow(op.entity, op.entityId, nextState);
+
+        if (
+          op.entity === 'task' &&
+          existing &&
+          existing.purgedAt === null &&
+          op.op === 'upsert'
+        ) {
+          const oldProjectId = String(existing.row.projectId);
+          const newProjectId = String(merged.row.projectId);
+          if (newProjectId !== oldProjectId) {
+            store.upsertDeparture({
+              entity: 'task',
+              entityId: op.entityId,
+              projectId: oldProjectId,
+              serverSeq: opServerSeq,
+            });
+            const children = store.findActiveTaskChildren(op.entityId);
+            for (const child of children) {
+              currentSeq += 1;
+              const childSeq = currentSeq;
+              store.upsertRow(child.entity, child.entityId, {
+                ...child.state,
+                projectId: newProjectId,
+                serverSeq: childSeq,
+              });
+              store.upsertDeparture({
+                entity: child.entity,
+                entityId: child.entityId,
+                projectId: oldProjectId,
+                serverSeq: childSeq,
+              });
+            }
+          }
+        }
+
+        if (op.entity === 'task' && op.op === 'delete') {
+          const children = store.findActiveTaskChildren(op.entityId);
+          for (const child of children) {
+            currentSeq += 1;
+            store.upsertRow(child.entity, child.entityId, {
+              ...child.state,
+              purgedAt: nowMs,
+              serverSeq: currentSeq,
+            });
+          }
+        }
+      }
+
+      if (
+        op.entity === 'member' &&
+        op.op === 'upsert' &&
+        isScopeOwner &&
+        meMemberId === null &&
+        Object.hasOwn(op.row, 'isMe') &&
+        op.row.isMe === true
+      ) {
+        meMemberId = op.entityId;
+        boundMeMemberId = op.entityId;
+        if (!merged.changed && existing) {
+          currentSeq += 1;
+          opServerSeq = currentSeq;
+          store.upsertRow('member', op.entityId, {
+            ...existing,
+            serverSeq: opServerSeq,
+          });
+        }
+      }
+
+      store.insertOpApplied({
+        opId: op.opId,
+        userId: input.pusherUserId,
+        status: 'applied',
+        reason: null,
+        serverSeq: opServerSeq,
+      });
+
+      appliedKeys.push({ entity: op.entity, entityId: op.entityId });
+      results.push({
+        opId: op.opId,
+        status: 'applied',
+        row: serializePublicRow(op.entity, merged.row, merged.purgedAt, {
+          meMemberId: isScopeOwner ? meMemberId : null,
+        }),
+        clocks: merged.clocks,
+      });
+    }
+
+    if (currentSeq !== initialSeq) {
+      store.setCounter(currentSeq);
+    }
+
+    return {
+      results,
+      serverSeq: currentSeq,
+      boundMeMemberId,
+      appliedKeys,
+    };
+  }
+
+  pull(input: ScopePullInput): ScopePullResponse {
+    const sql = this.ctx.storage.sql;
+    const isBackfill =
+      Array.isArray(input.backfillProjectIds) && input.backfillProjectIds.length > 0;
+    const visibleProjectIds = isBackfill
+      ? input.backfillProjectIds!.filter((pid) => Boolean(input.memberships[pid]))
+      : Object.keys(input.memberships);
+    const fetchLimit = input.limit + 1;
+    const isCreator = input.requesterUserId === input.scopeUserId;
+    const combined: PullScopeRow[] = [];
+
+    if (!isBackfill && isCreator) {
+      for (const entity of CREATOR_ONLY_ENTITIES) {
+        const rows = sql
+          .exec(
+            `SELECT * FROM "${entity}" WHERE serverSeq > ? ORDER BY serverSeq ASC LIMIT ?`,
+            input.since,
+            fetchLimit,
+          )
+          .toArray();
+        for (const r of rows) {
+          const state = dbRecordToState(entity, r as Record<string, unknown>);
+          combined.push({
+            entity,
+            row: serializePublicRow(entity, state.row, state.purgedAt, {
+              meMemberId: input.meMemberId,
+            }),
+            clocks: state.clocks,
+            serverSeq: state.serverSeq,
+          });
+        }
+      }
+    }
+
+    if (visibleProjectIds.length > 0) {
+      const visibleJson = JSON.stringify(visibleProjectIds);
+      for (const { entity, listCol } of LIST_SCOPED_ENTITIES) {
+        const rows = sql
+          .exec(
+            `SELECT * FROM "${entity}" WHERE serverSeq > ? AND "${listCol}" IN (SELECT value FROM json_each(?)) ORDER BY serverSeq ASC LIMIT ?`,
+            input.since,
+            visibleJson,
+            fetchLimit,
+          )
+          .toArray();
+        for (const r of rows) {
+          const state = dbRecordToState(entity, r as Record<string, unknown>);
+          combined.push({
+            entity,
+            row: serializePublicRow(entity, state.row, state.purgedAt, {
+              meMemberId: isCreator ? input.meMemberId : null,
+            }),
+            clocks: state.clocks,
+            serverSeq: state.serverSeq,
+          });
+        }
+      }
+
+      if (!isBackfill) {
+        const departures = sql
+          .exec(
+            `SELECT d.entity, d.entityId, MAX(d.serverSeq) AS serverSeq
+             FROM departure d
+             WHERE d.serverSeq > ?
+               AND d.projectId IN (SELECT value FROM json_each(?))
+               AND NOT EXISTS (
+                 SELECT 1 FROM task t
+                 WHERE d.entity = 'task' AND t.id = d.entityId
+                   AND t.projectId IN (SELECT value FROM json_each(?))
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM checklistItem c
+                 WHERE d.entity = 'checklistItem' AND c.id = d.entityId
+                   AND c.projectId IN (SELECT value FROM json_each(?))
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM attachment a
+                 WHERE d.entity = 'attachment' AND a.id = d.entityId
+                   AND a.projectId IN (SELECT value FROM json_each(?))
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM comment m
+                 WHERE d.entity = 'comment' AND m.id = d.entityId
+                   AND m.projectId IN (SELECT value FROM json_each(?))
+               )
+             GROUP BY d.entity, d.entityId
+             ORDER BY serverSeq ASC
+             LIMIT ?`,
+            input.since,
+            visibleJson,
+            visibleJson,
+            visibleJson,
+            visibleJson,
+            visibleJson,
+            fetchLimit,
+          )
+          .toArray();
+        for (const d of departures) {
+          if (isEntityName(d.entity)) {
+            combined.push({
+              entity: d.entity,
+              entityId: String(d.entityId),
+              gone: true,
+              serverSeq: Number(d.serverSeq),
+            });
+          }
+        }
+      }
+    }
+
+    combined.sort((a, b) => a.serverSeq - b.serverSeq);
+    const hasMore = combined.length > input.limit;
+    const rows = hasMore ? combined.slice(0, input.limit) : combined;
+    const cursor = rows.length > 0 ? rows[rows.length - 1].serverSeq : input.since;
+
+    return {
+      scope: input.scope,
+      rows,
+      cursor,
+      hasMore,
+    };
+  }
+}
+
+export const Scope = defineDurableObject({
+  name: 'scope',
+  class: ScopeObject,
+});
+
+export default Scope;
