@@ -1213,7 +1213,7 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
             #expect(r.pushedCount == 9)
         }
         #expect(await gate.pushCount == 1)
-        #expect(await gate.pullCount == 1)
+        #expect(await gate.pullCount == 2)
     }
 
     @Test func changeStreamEmitsOnlyWhenLocalDataChanges() async throws {
@@ -1561,5 +1561,338 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
             pulledCount: 0,
             didChangeLocalData: true
         ))
+    }
+
+    @Test func writeDuringInFlightCycleIsPushedBeforeJoinedCallReturns() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs, counter: 0, deviceId: "server").description
+
+        actor PullGate {
+            private var pullEnteredContinuation: CheckedContinuation<Void, Never>?
+            private var releaseContinuation: CheckedContinuation<Void, Never>?
+            private var hasEnteredPull = false
+            private var isReleased = false
+            var pushOpEntityIds: [[String]] = []
+            var pullCount = 0
+            var events: [String] = []
+
+            func recordPush(entityIds: [String]) {
+                pushOpEntityIds.append(entityIds)
+                events.append("push-\(pushOpEntityIds.count)")
+            }
+
+            func enterPullAndWaitOnFirst() async {
+                pullCount += 1
+                events.append("pull-\(pullCount)")
+                if pullCount == 1 {
+                    hasEnteredPull = true
+                    pullEnteredContinuation?.resume()
+                    pullEnteredContinuation = nil
+                    if !isReleased {
+                        await withCheckedContinuation { cont in
+                            releaseContinuation = cont
+                        }
+                    }
+                }
+            }
+
+            func waitForFirstPullEntry() async {
+                if hasEnteredPull { return }
+                await withCheckedContinuation { cont in
+                    pullEnteredContinuation = cont
+                }
+            }
+
+            func releasePull() {
+                isReleased = true
+                releaseContinuation?.resume()
+                releaseContinuation = nil
+            }
+
+            func recordEvent(_ event: String) {
+                events.append(event)
+            }
+        }
+        let gate = PullGate()
+
+        let (api, db, _, _, _) = try await makeSyncSetup { _, _ in
+            try jsonResponse(200, [:])
+        }
+        try await ackAllChanges(in: db)
+        let initialTask = try await api.createTask(CreateTaskInput(title: "週期前任務"))
+
+        let engine = SyncEngine(
+            database: db,
+            transport: FakeSyncTransport { req, _ in
+                if req.path == "/sync/push" {
+                    let body = try decodeJSONObject(req.body)
+                    let ops = (body["ops"] as? [[String: Any]]) ?? []
+                    let entityIds = ops.compactMap { $0["entityId"] as? String }
+                    await gate.recordPush(entityIds: entityIds)
+                    return try jsonResponse(200, [
+                        "results": ops.map { ["opId": $0["opId"]!, "status": "applied", "row": NSNull(), "clocks": [:]] },
+                        "serverTime": serverTime,
+                    ])
+                }
+                await gate.enterPullAndWaitOnFirst()
+                return try jsonResponse(200, ["scopes": [], "memberships": [], "members": []])
+            },
+            tokenStore: InMemorySyncTokenStore(accessToken: "a", refreshToken: "r"),
+            clock: .fixed(noon, timeZone: taipei)
+        )
+
+        let cycleA = Task { try await engine.syncNow() }
+        await gate.waitForFirstPullEntry()
+
+        let newTask = try await api.createTask(CreateTaskInput(title: "進行中新寫入"))
+        let joined = Task {
+            let summary = try await engine.syncNow()
+            await gate.recordEvent("joined-returned")
+            return summary
+        }
+
+        try await Task.sleep(nanoseconds: 20_000_000)
+        #expect(await !gate.events.contains("joined-returned"))
+        #expect(await gate.pushOpEntityIds.count == 1)
+
+        await gate.releasePull()
+
+        let summaryA = try await cycleA.value
+        let joinedSummary = try await joined.value
+
+        let pushBatches = await gate.pushOpEntityIds
+        try #require(pushBatches.count == 2)
+        #expect(pushBatches[0] == [initialTask.id])
+        #expect(pushBatches[1] == [newTask.id])
+        #expect(await gate.pullCount == 2)
+
+        let events = await gate.events
+        let push2Index = events.firstIndex(of: "push-2")
+        let joinedIndex = events.firstIndex(of: "joined-returned")
+        #expect(push2Index != nil)
+        #expect(joinedIndex != nil)
+        if let push2Index, let joinedIndex {
+            #expect(push2Index < joinedIndex)
+        }
+
+        #expect(summaryA.pushedCount == 2)
+        #expect(joinedSummary.pushedCount == 2)
+
+        let unackedCount = try await db.writer.read { db in
+            try ChangeRecord.filter(Column("ackedAt") == nil).fetchCount(db)
+        }
+        #expect(unackedCount == 0)
+    }
+
+    @Test func manyJoinsCoalesceIntoOneExtraCycle() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs, counter: 0, deviceId: "server").description
+
+        actor PullGate {
+            private var pullEnteredContinuation: CheckedContinuation<Void, Never>?
+            private var releaseContinuation: CheckedContinuation<Void, Never>?
+            private var hasEnteredPull = false
+            private var isReleased = false
+            var pushOpEntityIds: [[String]] = []
+            var pullCount = 0
+
+            func recordPush(entityIds: [String]) {
+                pushOpEntityIds.append(entityIds)
+            }
+
+            func enterPullAndWaitOnFirst() async {
+                pullCount += 1
+                if pullCount == 1 {
+                    hasEnteredPull = true
+                    pullEnteredContinuation?.resume()
+                    pullEnteredContinuation = nil
+                    if !isReleased {
+                        await withCheckedContinuation { cont in
+                            releaseContinuation = cont
+                        }
+                    }
+                }
+            }
+
+            func waitForFirstPullEntry() async {
+                if hasEnteredPull { return }
+                await withCheckedContinuation { cont in
+                    pullEnteredContinuation = cont
+                }
+            }
+
+            func releasePull() {
+                isReleased = true
+                releaseContinuation?.resume()
+                releaseContinuation = nil
+            }
+        }
+        let gate = PullGate()
+
+        let (api, db, _, _, _) = try await makeSyncSetup { _, _ in
+            try jsonResponse(200, [:])
+        }
+        try await ackAllChanges(in: db)
+        let initialTask = try await api.createTask(CreateTaskInput(title: "初始任務"))
+
+        let engine = SyncEngine(
+            database: db,
+            transport: FakeSyncTransport { req, _ in
+                if req.path == "/sync/push" {
+                    let body = try decodeJSONObject(req.body)
+                    let ops = (body["ops"] as? [[String: Any]]) ?? []
+                    await gate.recordPush(entityIds: ops.compactMap { $0["entityId"] as? String })
+                    return try jsonResponse(200, [
+                        "results": ops.map { ["opId": $0["opId"]!, "status": "applied", "row": NSNull(), "clocks": [:]] },
+                        "serverTime": serverTime,
+                    ])
+                }
+                await gate.enterPullAndWaitOnFirst()
+                return try jsonResponse(200, ["scopes": [], "memberships": [], "members": []])
+            },
+            tokenStore: InMemorySyncTokenStore(accessToken: "a", refreshToken: "r"),
+            clock: .fixed(noon, timeZone: taipei)
+        )
+
+        let cycleA = Task { try await engine.syncNow() }
+        await gate.waitForFirstPullEntry()
+
+        let w1 = try await api.createTask(CreateTaskInput(title: "寫入一"))
+        let w2 = try await api.createTask(CreateTaskInput(title: "寫入二"))
+
+        let joiners = (0..<8).map { _ in
+            Task { try await engine.syncNow() }
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        await gate.releasePull()
+
+        let primarySummary = try await cycleA.value
+        var joinerSummaries: [SyncSummary] = []
+        for joiner in joiners {
+            try await joinerSummaries.append(joiner.value)
+        }
+
+        let pushBatches = await gate.pushOpEntityIds
+        try #require(pushBatches.count == 2)
+        #expect(pushBatches[0] == [initialTask.id])
+        #expect(pushBatches[1] == [w1.id, w2.id])
+        #expect(await gate.pullCount == 2)
+        #expect(primarySummary.pushedCount == 3)
+        for s in joinerSummaries {
+            #expect(s.pushedCount == 3)
+        }
+    }
+
+    @Test func inFlightFailureDoesNotRerunAndPropagatesToJoinedCallers() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs, counter: 0, deviceId: "server").description
+
+        actor PullGate {
+            private var pullEnteredContinuation: CheckedContinuation<Void, Never>?
+            private var releaseContinuation: CheckedContinuation<Void, Never>?
+            private var hasEnteredPull = false
+            private var isReleased = false
+            var pushCount = 0
+            var pullCount = 0
+            var failFirstPull = true
+
+            func recordPush() {
+                pushCount += 1
+            }
+
+            func enterPull() async -> Bool {
+                pullCount += 1
+                if pullCount == 1 {
+                    hasEnteredPull = true
+                    pullEnteredContinuation?.resume()
+                    pullEnteredContinuation = nil
+                    if !isReleased {
+                        await withCheckedContinuation { cont in
+                            releaseContinuation = cont
+                        }
+                    }
+                    return failFirstPull
+                }
+                return false
+            }
+
+            func waitForFirstPullEntry() async {
+                if hasEnteredPull { return }
+                await withCheckedContinuation { cont in
+                    pullEnteredContinuation = cont
+                }
+            }
+
+            func releasePull() {
+                isReleased = true
+                releaseContinuation?.resume()
+                releaseContinuation = nil
+            }
+        }
+        let gate = PullGate()
+
+        let (api, db, _, _, _) = try await makeSyncSetup { _, _ in
+            try jsonResponse(200, [:])
+        }
+        try await ackAllChanges(in: db)
+        _ = try await api.createTask(CreateTaskInput(title: "失敗前任務"))
+
+        let engine = SyncEngine(
+            database: db,
+            transport: FakeSyncTransport { req, _ in
+                if req.path == "/sync/push" {
+                    await gate.recordPush()
+                    let body = try decodeJSONObject(req.body)
+                    let ops = (body["ops"] as? [[String: Any]]) ?? []
+                    return try jsonResponse(200, [
+                        "results": ops.map { ["opId": $0["opId"]!, "status": "applied", "row": NSNull(), "clocks": [:]] },
+                        "serverTime": serverTime,
+                    ])
+                }
+                if await gate.enterPull() {
+                    return SyncHTTPResponse(status: 500, body: Data("pull boom".utf8))
+                }
+                return try jsonResponse(200, ["scopes": [], "memberships": [], "members": []])
+            },
+            tokenStore: InMemorySyncTokenStore(accessToken: "a", refreshToken: "r"),
+            clock: .fixed(noon, timeZone: taipei)
+        )
+
+        let cycleA = Task { try await engine.syncNow() }
+        await gate.waitForFirstPullEntry()
+
+        _ = try await api.createTask(CreateTaskInput(title: "失敗期間寫入"))
+        let joined = Task { try await engine.syncNow() }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        await gate.releasePull()
+
+        for task in [cycleA, joined] {
+            var caught: SyncError?
+            do {
+                _ = try await task.value
+                Issue.record("Expected syncNow() to throw on pull 500")
+            } catch let error as SyncError {
+                caught = error
+            }
+            guard case .retryable(_, let statusCode, _) = caught else {
+                Issue.record("Expected retryable error, got \(String(describing: caught))")
+                return
+            }
+            #expect(statusCode == 500)
+        }
+
+        #expect(await gate.pushCount == 1)
+        #expect(await gate.pullCount == 1)
+
+        let unackedBeforeRetry = try await db.writer.read { db in
+            try ChangeRecord.filter(Column("ackedAt") == nil).fetchCount(db)
+        }
+        #expect(unackedBeforeRetry == 1)
+
+        // Subsequent syncNow() starts fresh and pushes the pending op.
+        let recovery = try await engine.syncNow()
+        #expect(recovery.pushedCount == 1)
+        #expect(await gate.pushCount == 2)
+        #expect(await gate.pullCount == 2)
     }
 }

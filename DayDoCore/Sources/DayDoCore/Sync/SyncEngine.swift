@@ -38,6 +38,7 @@ public actor SyncEngine {
     private let maxBackoffSeconds: TimeInterval
 
     private var inFlightSync: Task<SyncSummary, Error>?
+    private var rerunRequested: Bool = false
     private var inFlightRefresh: Task<String, Error>?
     private var consecutiveRetryableFailures: Int = 0
     private var continuations: [UUID: AsyncStream<SyncSummary>.Continuation] = [:]
@@ -86,18 +87,41 @@ public actor SyncEngine {
         }
     }
 
-    /// Runs push followed by pull. Concurrent callers join the in-flight sync cycle.
+    /// Runs push followed by pull. Concurrent callers join the in-flight run and request one coalesced rerun.
     @discardableResult
     public func syncNow() async throws -> SyncSummary {
         if let existing = inFlightSync {
+            rerunRequested = true
             return try await existing.value
         }
         let task = Task {
-            try await self.performSyncCycle()
+            try await self.runSyncLoop()
         }
         inFlightSync = task
-        defer { inFlightSync = nil }
         return try await task.value
+    }
+
+    private func runSyncLoop() async throws -> SyncSummary {
+        defer {
+            inFlightSync = nil
+            rerunRequested = false
+        }
+
+        var total = SyncSummary()
+        while true {
+            rerunRequested = false
+            let cycle = try await performSyncCycle()
+            total = SyncSummary(
+                pushedCount: total.pushedCount + cycle.pushedCount,
+                appliedCount: total.appliedCount + cycle.appliedCount,
+                rejectedCount: total.rejectedCount + cycle.rejectedCount,
+                pulledCount: total.pulledCount + cycle.pulledCount,
+                didChangeLocalData: total.didChangeLocalData || cycle.didChangeLocalData
+            )
+            if !rerunRequested {
+                return total
+            }
+        }
     }
 
     private func performSyncCycle() async throws -> SyncSummary {
