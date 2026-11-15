@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SQLite3
 
 /// Owns the SQLite file and its schema.
 public final class AppDatabase: Sendable {
@@ -10,14 +11,74 @@ public final class AppDatabase: Sendable {
         try Self.migrator.migrate(writer)
     }
 
-    /// File-backed database. Pass the App Group container so the widget
-    /// extension can read the same file.
+    private init(unchecked writer: any DatabaseWriter) {
+        self.writer = writer
+    }
+
+    /// File-backed read-write database with persistent WAL mode and file
+    /// coordination so extension processes can safely open read-only readers.
     public static func open(at url: URL) throws -> AppDatabase {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        var config = Configuration()
-        config.foreignKeysEnabled = true
-        let pool = try DatabasePool(path: url.path, configuration: config)
-        return try AppDatabase(pool)
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordinatorError: NSError?
+        var result: Result<AppDatabase, Error>?
+        coordinator.coordinate(writingItemAt: url, options: .forMerging, error: &coordinatorError) { coordinatedURL in
+            result = Result {
+                var config = Configuration()
+                config.foreignKeysEnabled = true
+                config.busyMode = .timeout(5)
+                config.prepareDatabase { db in
+                    // Keep -wal and -shm files around on close so read-only
+                    // extension processes can always attach to the WAL database.
+                    if db.configuration.readonly == false {
+                        var flag: CInt = 1
+                        let code = withUnsafeMutablePointer(to: &flag) { flagP in
+                            sqlite3_file_control(db.sqliteConnection, nil, SQLITE_FCNTL_PERSIST_WAL, flagP)
+                        }
+                        guard code == SQLITE_OK else {
+                            throw DatabaseError(resultCode: ResultCode(rawValue: code))
+                        }
+                    }
+                }
+                let pool = try DatabasePool(path: coordinatedURL.path, configuration: config)
+                return try AppDatabase(pool)
+            }
+        }
+        if let coordinatorError { throw coordinatorError }
+        return try result!.get()
+    }
+
+    /// Opens an existing, fully migrated database in read-only mode without
+    /// creating files or running migrations.
+    public static func openReadOnly(at url: URL) throws -> AppDatabase {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw StorageError.databaseNotFound(url)
+        }
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordinatorError: NSError?
+        var result: Result<AppDatabase, Error>?
+        coordinator.coordinate(readingItemAt: url, options: .withoutChanges, error: &coordinatorError) { coordinatedURL in
+            result = Result {
+                guard FileManager.default.fileExists(atPath: coordinatedURL.path) else {
+                    throw StorageError.databaseNotFound(coordinatedURL)
+                }
+                var config = Configuration()
+                config.readonly = true
+                config.foreignKeysEnabled = true
+                let pool = try DatabasePool(path: coordinatedURL.path, configuration: config)
+                try pool.read { db in
+                    if try Self.migrator.hasBeenSuperseded(db) {
+                        throw StorageError.databaseSuperseded(coordinatedURL)
+                    }
+                    guard try Self.migrator.hasCompletedMigrations(db) else {
+                        throw StorageError.migrationsIncomplete(coordinatedURL)
+                    }
+                }
+                return AppDatabase(unchecked: pool)
+            }
+        }
+        if let coordinatorError { throw coordinatorError }
+        return try result!.get()
     }
 
     public static func inMemory() throws -> AppDatabase {

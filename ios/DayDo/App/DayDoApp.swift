@@ -30,20 +30,8 @@ struct DayDoApp: App {
         }
     }
 
-    static let appGroup = "group.com.audichuang.daydo"
-
-    /// The database lives in the App Group container so the widget extension
-    /// can read it. Falls back to Application Support when the group is not
-    /// provisioned (e.g. unsigned simulator builds).
-    static func storageDirectory() -> URL {
-        if let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) {
-            return group.appendingPathComponent("DayDo", isDirectory: true)
-        }
-        return URL.applicationSupportDirectory.appendingPathComponent("DayDo", isDirectory: true)
-    }
-
     static func makeStorage() -> (LocalDayDoAPI, KeychainSyncTokenStore) {
-        let dir = storageDirectory()
+        let dir = DayDoStorage.defaultDirectory()
         let tokenStore = KeychainSyncTokenStore()
         if ProcessInfo.processInfo.arguments.contains("-DayDoReset") {
             try? FileManager.default.removeItem(at: dir)
@@ -51,8 +39,7 @@ struct DayDoApp: App {
             tokenStore.clearAll()
         }
         do {
-            let db = try AppDatabase.open(at: dir.appendingPathComponent("daydo.sqlite"))
-            let api = LocalDayDoAPI(database: db, attachmentsDirectory: dir.appendingPathComponent("Attachments", isDirectory: true))
+            let api = try DayDoStorage.openForApp(in: dir)
             return (api, tokenStore)
         } catch {
             fatalError("Cannot open database: \(error)")
