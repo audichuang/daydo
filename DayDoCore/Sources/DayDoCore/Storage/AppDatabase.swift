@@ -192,6 +192,17 @@ public final class AppDatabase: Sendable {
                 GROUP BY entity, entityId
                 """)
         }
+        m.registerMigration("v5") { db in
+            try db.create(table: "syncStaging") { t in
+                t.column("entity", .text).notNull()
+                t.column("entityId", .text).notNull()
+                t.column("row", .jsonText).notNull()
+                t.column("clocks", .jsonText).notNull()
+                t.column("serverSeq", .integer).notNull()
+                t.column("updatedAt", .integer).notNull()
+                t.primaryKey(["entity", "entityId"])
+            }
+        }
         return m
     }
 }
