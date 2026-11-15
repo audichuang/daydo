@@ -1,6 +1,16 @@
 {
   "version": 1,
-  "source": {},
+  "source": {
+    "name": "daydo-api",
+    "workers_dev": false,
+    "preview_urls": false,
+    "routes": [
+      {
+        "pattern": "daydo-api.audichuang.app",
+        "custom_domain": true
+      }
+    ]
+  },
   "resolved": {
     "durable_objects": {
       "bindings": [
@@ -17,7 +27,16 @@
           "ScopeDurableObject"
         ]
       }
+    ],
+    "name": "daydo-api",
+    "workers_dev": false,
+    "preview_urls": false,
+    "routes": [
+      {
+        "pattern": "daydo-api.audichuang.app",
+        "custom_domain": true
+      }
     ]
   },
-  "text": "{\n  \"durable_objects\": {\n    \"bindings\": [\n      {\n        \"name\": \"SCOPE\",\n        \"class_name\": \"ScopeDurableObject\"\n      }\n    ]\n  },\n  \"migrations\": [\n    {\n      \"tag\": \"void-durable-scope-v1\",\n      \"new_sqlite_classes\": [\n        \"ScopeDurableObject\"\n      ]\n    }\n  ]\n}\n"
+  "text": "{\n  \"durable_objects\": {\n    \"bindings\": [\n      {\n        \"name\": \"SCOPE\",\n        \"class_name\": \"ScopeDurableObject\"\n      }\n    ]\n  },\n  \"migrations\": [\n    {\n      \"tag\": \"void-durable-scope-v1\",\n      \"new_sqlite_classes\": [\n        \"ScopeDurableObject\"\n      ]\n    }\n  ],\n  \"name\": \"daydo-api\",\n  \"workers_dev\": false,\n  \"preview_urls\": false,\n  \"routes\": [\n    {\n      \"pattern\": \"daydo-api.audichuang.app\",\n      \"custom_domain\": true\n    }\n  ]\n}\n"
 }

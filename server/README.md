@@ -2,8 +2,6 @@
 
 Cloudflare Worker backend for DayDo, built with [Void](https://void.cloud) (Hono + Vite), Drizzle ORM (D1), and `jose`.
 
-> **Note:** Deployment is not set up yet. This package is currently configured for local development and testing only.
-
 ## Install
 
 ```bash
@@ -104,4 +102,27 @@ To run only the sync e2e suite or a single scenario (`fixture`, `lww`, `concurre
 ```bash
 npm run e2e:sync
 node scripts/e2e-sync.mjs --only concurrency
+```
+
+## Deploy
+
+Set the required production secrets with `void secret put`:
+
+```bash
+npx void secret put JWT_SECRET
+npx void secret put GOOGLE_AUDIENCE
+npx void secret put ACCESS_TEAM_DOMAIN
+npx void secret put ACCESS_AUD
+```
+
+Deploy to Cloudflare Workers (behind Cloudflare Access at `https://daydo-api.audichuang.app`):
+
+```bash
+CF_ACCESS_CLIENT_ID=... CF_ACCESS_CLIENT_SECRET=... CF_ACCESS_READINESS_ORIGIN=https://daydo-api.audichuang.app npx void deploy --platform cloudflare
+```
+
+Verify the deployed Worker with the smoke test:
+
+```bash
+CF_ACCESS_CLIENT_ID=... CF_ACCESS_CLIENT_SECRET=... npm run smoke:prod
 ```
