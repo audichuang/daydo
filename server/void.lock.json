@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "source": {},
+  "resolved": {
+    "durable_objects": {
+      "bindings": [
+        {
+          "name": "WRITER",
+          "class_name": "WriterDurableObject"
+        }
+      ]
+    },
+    "migrations": [
+      {
+        "tag": "void-durable-writer-v1",
+        "new_sqlite_classes": [
+          "WriterDurableObject"
+        ]
+      }
+    ]
+  },
+  "text": "{\n  \"durable_objects\": {\n    \"bindings\": [\n      {\n        \"name\": \"WRITER\",\n        \"class_name\": \"WriterDurableObject\"\n      }\n    ]\n  },\n  \"migrations\": [\n    {\n      \"tag\": \"void-durable-writer-v1\",\n      \"new_sqlite_classes\": [\n        \"WriterDurableObject\"\n      ]\n    }\n  ]\n}\n"
+}
