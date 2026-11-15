@@ -226,7 +226,7 @@ function makeChecklistOp(params: {
 
 async function seedUsers(
   h: ReturnType<typeof createHarness>,
-  users: Array<{ id: string; name?: string; initial?: string; color?: string }>,
+  users: Array<{ id: string; name?: string; initial?: string; color?: string; avatarUrl?: string | null }>,
 ) {
   await h.db.insert(schema.user).values(
     users.map((u) => ({
@@ -234,6 +234,7 @@ async function seedUsers(
       name: u.name ?? null,
       initial: u.initial ?? null,
       color: u.color ?? null,
+      avatarUrl: u.avatarUrl ?? null,
       createdAt: 1_700_000_000_000,
     })),
   );
@@ -380,7 +381,10 @@ describe('T5c sharing — invites, membership, permissions, backfill, and purge'
     const h = createHarness();
     const uA = 'user-a';
     const uB = 'user-b';
-    await seedUsers(h, [{ id: uA }, { id: uB }]);
+    await seedUsers(h, [
+      { id: uA, avatarUrl: 'https://lh3.googleusercontent.com/a/alice' },
+      { id: uB },
+    ]);
     await h.push(uA, 'dev-a', [
       makeProjectOp({ opId: 'op-p1', hlc: '1700000000000:0000:dev-a', id: 'p-1', name: 'Groceries' }),
     ]);
@@ -505,7 +509,10 @@ describe('T5c sharing — invites, membership, permissions, backfill, and purge'
     const h = createHarness();
     const uA = 'user-a';
     const uB = 'user-b';
-    await seedUsers(h, [{ id: uA }, { id: uB }]);
+    await seedUsers(h, [
+      { id: uA, avatarUrl: 'https://lh3.googleusercontent.com/a/alice' },
+      { id: uB },
+    ]);
 
     // A pushes meMemberId + name/initial/color, folder-a, project p-1, and 2 tasks.
     await h.push(uA, 'dev-a', [
@@ -555,6 +562,7 @@ describe('T5c sharing — invites, membership, permissions, backfill, and purge'
         name: 'Alice Chen',
         initial: 'AC',
         color: '#AA1122',
+        avatarUrl: 'https://lh3.googleusercontent.com/a/alice',
         isMe: false,
       }),
     ]);
@@ -586,6 +594,7 @@ describe('T5c sharing — invites, membership, permissions, backfill, and purge'
       expect.objectContaining({
         id: resolveMemberId(uB, null),
         userId: uB,
+        avatarUrl: null,
         isMe: false,
       }),
     ]);
@@ -666,7 +675,10 @@ describe('T5c sharing — invites, membership, permissions, backfill, and purge'
     const h = createHarness();
     const uA = 'user-a';
     const uB = 'user-b';
-    await seedUsers(h, [{ id: uA }, { id: uB }]);
+    await seedUsers(h, [
+      { id: uA, avatarUrl: 'https://lh3.googleusercontent.com/a/alice' },
+      { id: uB },
+    ]);
 
     await h.push(uA, 'dev-a', [
       makeProjectOp({ opId: 'op-p1', hlc: '1700000000000:0000:dev-a', id: 'p-1', name: 'To Purge' }),
@@ -1080,7 +1092,10 @@ describe('T5c sharing — invites, membership, permissions, backfill, and purge'
     const h = createHarness();
     const uA = 'user-a';
     const uB = 'user-b';
-    await seedUsers(h, [{ id: uA }, { id: uB }]);
+    await seedUsers(h, [
+      { id: uA, avatarUrl: 'https://lh3.googleusercontent.com/a/alice' },
+      { id: uB },
+    ]);
 
     // A pushes meMemberId, shared project p-1, private project p-2, and an App-sent projectMember (rejected).
     const pushA = await h.push(uA, 'dev-a', [

@@ -133,10 +133,7 @@ struct InviteConfirmSheet: View {
             }
         }
         .background(Palette.card)
-        .presentationDetents([.height(480), .large])
-        .presentationDragIndicator(.visible)
-        .presentationBackground(Palette.card)
-        .presentationCornerRadius(28)
+        .adaptiveSheet(detents: [.height(480), .large], dragIndicator: .visible)
 #if DEBUG
         .onAppear {
             model.debugInviteAppearCount += 1

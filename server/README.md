@@ -50,10 +50,12 @@ Void starts Vite with `workerd` and a local D1 database.
 ## Auth Endpoints
 
 - `POST /auth/apple` (`{ identityToken, nonce, deviceId }`) and `POST /auth/google` (`{ idToken, deviceId }`)
-  - Response: `{ accessToken, refreshToken, user: { id }, isNewAccount, hasData, meMemberId, inboxProjectId }`
+  - Response: `{ accessToken, refreshToken, user: { id }, isNewAccount, hasData, meMemberId, inboxProjectId, avatarUrl }` (where `avatarUrl` is nullable; Google login stores/refreshes verified `https:` `picture` URL on `user.avatarUrl`, Apple login leaves `user.avatarUrl` untouched)
 - `POST /auth/refresh` (`{ refreshToken }`)
-  - Response: `{ accessToken, refreshToken, hasData, meMemberId, inboxProjectId }`
+  - Response: `{ accessToken, refreshToken, hasData, meMemberId, inboxProjectId, avatarUrl }`
   - Grace rule: retrying a token rotated within 10 minutes whose successor is still unrevoked revokes that unused successor and issues a new token pair; any other reuse revokes the session chain (`401`).
+- `PUT /me/avatar` (`{ avatarUrl }`, requires `Authorization: Bearer <accessToken>`)
+  - Validates `avatarUrl` is an `https:` URL whose host ends with `googleusercontent.com` (max 2048 chars; `400` otherwise), stores it in D1 `user.avatarUrl`, and returns `{ avatarUrl }`.
 - `inboxProjectId` is queried from the user's `Scope` Durable Object (`getInboxProjectId`, filtered by active `projectMembership`), `meMemberId` comes from `user.meMemberId`, and `hasData` is `inboxProjectId !== null`.
 
 ## Sync Endpoints
@@ -69,7 +71,7 @@ All sync endpoints require `Authorization: Bearer <accessToken>`.
   - Body: `{ cursors?: { "u:<userId>": seq }, backfill?: [projectId], limit? }` (`limit` default `500`, max `1000`).
   - Pulls the requester's own scope plus every scope in `listScopes` for active memberships (or `backfill` scopes for those projects), omitting `project.folderId` for non-creators and returning `{ entity, entityId, gone: true, serverSeq }` departures when a row leaves a list and is no longer readable.
   - Reconciles any missed `projectMember` projections and retries any pending `purgedProject` scope purges before reading rows.
-  - Response: `{ scopes: [{ scope, rows: [{ entity, row, clocks, serverSeq } | { entity, entityId, gone: true, serverSeq }], cursor, hasMore }], memberships: [{ projectId, scope, role }], members: [{ id, userId, name, initial, color, isMe, createdAt, updatedAt }] }`
+  - Response: `{ scopes: [{ scope, rows: [{ entity, row, clocks, serverSeq } | { entity, entityId, gone: true, serverSeq }], cursor, hasMore }], memberships: [{ projectId, scope, role }], members: [{ id, userId, name, initial, color, avatarUrl, isMe, createdAt, updatedAt }] }`
 
 ## Sharing & Invite Endpoints
 

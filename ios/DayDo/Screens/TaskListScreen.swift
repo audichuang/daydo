@@ -6,11 +6,13 @@ import DayDoCore
 struct TaskListScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
+    @Environment(\.isRegularWindow) private var isRegular
     var scope: TaskScope
 
     @State private var sections: [TaskSection] = []
     @State private var loaded = false
     @State private var limits: [TaskScope: Int] = [:]
+    @State private var shareText: String?
     @AppStorage("closedSections") private var closedRaw = "completed"
 
     var closed: Set<String> { Set(closedRaw.split(separator: ",").map(String.init)) }
@@ -23,6 +25,9 @@ struct TaskListScreen: View {
     var body: some View {
         @Bindable var model = model
         ZStack(alignment: .top) {
+            if isRegular {
+                Palette.background.ignoresSafeArea()
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -43,65 +48,81 @@ struct TaskListScreen: View {
                                 .frame(maxWidth: .infinity, minHeight: 36)
                         }
                         .buttonStyle(.plain)
+                        .hoverEffect(.highlight)
                     } else if !sections.isEmpty {
                         Text("已顯示全部").txt(12).foregroundStyle(Palette.textFaint).frame(maxWidth: .infinity).padding(.vertical, 4)
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 60)
-                .padding(.bottom, 140)
+                .padding(.top, isRegular ? 12 : 60)
+                .padding(.bottom, isRegular ? 32 : 140)
             }
             .scrollIndicators(.hidden)
 
-            ScreenHeader {
-                EmptyView()
-            } trailing: {
-                if scope != .smart(.trash) && scope != .smart(.completed) && !isViewerScope {
-                    HeaderAction(systemName: "plus", label: "新增任務", tint: accent.text) { compose() }
+            if !isRegular {
+                ScreenHeader {
+                    EmptyView()
+                } trailing: {
+                    trailingActions
                 }
-                if case .project(let id) = scope, !(model.project(id)?.isInbox ?? false) {
-                    HeaderAction(systemName: "person.crop.circle.badge.plus", label: "共享") { model.sharingProjectId = id }
+            }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if isRegular {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    trailingActions
                 }
-                Menu {
-                    if case .project(let id) = scope {
-                        let proj = model.project(id)
-                        let currentView = proj?.viewMode ?? "list"
-                        if !(proj?.isViewer ?? false) {
-                            Button("編輯", systemImage: "slider.horizontal.3") { model.editingProjectId = id }
-                            Menu("視圖", systemImage: "rectangle.grid.1x2") {
-                                viewMenuItem("列表", mode: "list", current: currentView, projectId: id)
-                                viewMenuItem("看板", mode: "kanban", current: currentView, projectId: id)
-                                viewMenuItem("時間軸", mode: "timeline", current: currentView, projectId: id)
-                            }
-                        }
-                    }
-                    Button(model.compact ? "顯示詳情" : "隱藏詳情", systemImage: model.compact ? "eye" : "eye.slash") {
-                        withAnimation(.snappy) { model.compact.toggle() }
-                    }
-                    Button(closed.contains("completed") ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle("completed") }
-                    if let overdue = sections.first(where: { $0.id == "overdue" }),
-                       !isViewerScope,
-                       !model.editableTaskIds(in: overdue.tasks).isEmpty {
-                        Divider()
-                        Button("全部延到今天", systemImage: "arrow.uturn.forward") { model.postponeOverdue(tasks: overdue.tasks) }
-                    }
-                    if case .project(let id) = scope, let proj = model.project(id), !proj.isInbox {
-                        Divider()
-                        Menu("更多", systemImage: "ellipsis.circle") {
-                            Button("共享協作", systemImage: "person.2") { model.sharingProjectId = id }
-                            ShareLink(item: projectShareText(proj)) {
-                                Label("分享", systemImage: "square.and.arrow.up")
-                            }
-                            Button("複製清單", systemImage: "doc.on.doc") { duplicate(id) }
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
-                }
-                .accessibilityLabel("更多選項")
             }
         }
         .task(id: TaskReload(scope: scope, revision: model.revision, limit: limits[scope])) { await load() }
+    }
+
+    @ViewBuilder
+    private var trailingActions: some View {
+        if scope != .smart(.trash) && scope != .smart(.completed) && !isViewerScope {
+            HeaderAction(systemName: "plus", label: "新增任務", tint: accent.text) { compose() }
+        }
+        if case .project(let id) = scope, !(model.project(id)?.isInbox ?? false) {
+            HeaderAction(systemName: "person.crop.circle.badge.plus", label: "共享") { model.sharingProjectId = id }
+        }
+        Menu {
+            if case .project(let id) = scope {
+                let proj = model.project(id)
+                let currentView = proj?.viewMode ?? "list"
+                if !(proj?.isViewer ?? false) {
+                    Button("編輯", systemImage: "slider.horizontal.3") { model.editingProjectId = id }
+                    Menu("視圖", systemImage: "rectangle.grid.1x2") {
+                        viewMenuItem("列表", mode: "list", current: currentView, projectId: id)
+                        viewMenuItem("看板", mode: "kanban", current: currentView, projectId: id)
+                        viewMenuItem("時間軸", mode: "timeline", current: currentView, projectId: id)
+                    }
+                }
+            }
+            Button(model.compact ? "顯示詳情" : "隱藏詳情", systemImage: model.compact ? "eye" : "eye.slash") {
+                withAnimation(.snappy) { model.compact.toggle() }
+            }
+            Button(closed.contains("completed") ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle("completed") }
+            if let overdue = sections.first(where: { $0.id == "overdue" }),
+               !isViewerScope,
+               !model.editableTaskIds(in: overdue.tasks).isEmpty {
+                Divider()
+                Button("全部延到今天", systemImage: "arrow.uturn.forward") { model.postponeOverdue(tasks: overdue.tasks) }
+            }
+            if case .project(let id) = scope, let proj = model.project(id), !proj.isInbox {
+                Divider()
+                Menu("更多", systemImage: "ellipsis.circle") {
+                    Button("共享協作", systemImage: "person.2") { model.sharingProjectId = id }
+                    Button("分享", systemImage: "square.and.arrow.up") { shareText = projectShareText(proj) }
+                    Button("複製清單", systemImage: "doc.on.doc") { duplicate(id) }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
+        }
+        .hoverEffect(.highlight)
+        .background(ActivityAnchor(text: $shareText))
+        .accessibilityLabel("更多選項")
     }
 
     var subtitle: String {
@@ -176,15 +197,7 @@ struct TaskListScreen: View {
     }
 
     func compose() {
-        var req = ComposeRequest()
-        switch scope {
-        case .project(let id): req.projectId = id
-        case .tag(let t): req.tag = t
-        case .smart(.today): req.day = model.today
-        case .smart(.tomorrow): req.day = model.today.adding(days: 1)
-        default: break
-        }
-        model.composing = req
+        model.openComposerForCurrentScope()
     }
 }
 
@@ -224,6 +237,7 @@ struct SectionCard: View {
                             model.postponeOverdue(tasks: section.tasks)
                         }
                         .txt(13, .semibold).foregroundStyle(accent.text).padding(.trailing, 6).buttonStyle(.plain)
+                        .hoverEffect(.highlight)
                     }
                     Text("\(section.tasks.count)").txt(13).foregroundStyle(Palette.textTertiary)
                     Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textTertiary)
@@ -234,11 +248,12 @@ struct SectionCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .hoverEffect(.highlight)
             .accessibilityValue(closed ? "已收合" : "已展開")
 
             if !closed {
                 ForEach(Array(section.tasks.enumerated()), id: \.element.id) { i, t in
-                    TaskRow(task: t, separator: i > 0, sectionId: section.id, inTrash: scope == .smart(.trash))
+                    TaskRow(task: t, separator: i > 0, sectionId: section.id, inTrash: scope == .smart(.trash), selectsInline: true)
                 }
             }
         }
@@ -249,10 +264,20 @@ struct SectionCard: View {
 struct TaskRow: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
+    @Environment(\.isRegularWindow) private var isRegularWindow
     var task: TodoTask
     var separator: Bool
     var sectionId: String
     var inTrash = false
+    var selectsInline = false
+
+    private var usesInlineSelection: Bool {
+        selectsInline && isRegularWindow
+    }
+
+    private var isSelected: Bool {
+        usesInlineSelection && model.selectedTaskId == task.id
+    }
 
     var body: some View {
         let compact = model.compact
@@ -266,10 +291,17 @@ struct TaskRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .hoverEffect(.highlight)
             .disabled(inTrash || model.isViewer(projectId: task.projectId))
             .accessibilityLabel((task.isCompleted ? "取消完成：" : "完成：") + task.title)
 
-            Button { model.detailTaskId = task.id } label: {
+            Button {
+                if usesInlineSelection {
+                    model.selectedTaskId = task.id
+                } else {
+                    model.detailTaskId = task.id
+                }
+            } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(task.title)
                         .txt(17, .medium)
@@ -285,11 +317,14 @@ struct TaskRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, pad)
                 .padding(.trailing, 16)
-                .overlay(alignment: .top) { if separator { Rectangle().fill(Palette.separator).frame(height: 1) } }
+                .overlay(alignment: .top) { if separator && !isSelected { Rectangle().fill(Palette.separator).frame(height: 1) } }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .hoverEffect(.highlight)
         }
+        .background(isSelected ? accent.soft : .clear)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .contextMenu { menu }
     }
 
@@ -352,7 +387,7 @@ struct TaskRow: View {
         if inTrash {
             if !isViewer {
                 Button("還原", systemImage: "arrow.uturn.backward") { Task { await model.perform { try await $0.restoreTask(id: id) } } }
-                Button("永久刪除", systemImage: "trash", role: .destructive) { Task { await model.perform { try await $0.purgeTask(id: id) } } }
+                Button("永久刪除", systemImage: "trash", role: .destructive) { Task { await model.purgeTask(id: id) } }
             }
         } else if !isViewer {
             Menu("優先級", systemImage: "flag") {
@@ -371,7 +406,12 @@ struct TaskRow: View {
                 Button("下週一") { setDay(nextMonday) }
                 Button("清除日期") { model.updateTask(id) { $0.schedule = .clear } }
             }
-            Button("刪除", systemImage: "trash", role: .destructive) { Task { await model.perform { try await $0.deleteTask(id: id) } } }
+            Button("刪除", systemImage: "trash", role: .destructive) {
+                Task {
+                    await model.perform { try await $0.deleteTask(id: id) }
+                    if model.selectedTaskId == id { model.selectedTaskId = nil }
+                }
+            }
         }
     }
 

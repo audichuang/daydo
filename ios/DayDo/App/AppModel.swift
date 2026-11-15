@@ -73,22 +73,142 @@ final class AppModel {
     var pendingManualInviteCode: String?
     var invitePrompt: PendingInvitePrompt?
     var showingJoinInvite = false
+    var showingMeNamePrompt = false
 
     // Navigation
     var tab: MainTab = .tasks
-    var scope: TaskScope = .smart(.today)
+    var scope: TaskScope = .smart(.today) {
+        didSet {
+            if oldValue != scope {
+                selectedTaskId = nil
+            }
+        }
+    }
     var drawerOpen = false
     var detailTaskId: String?
+    var selectedTaskId: String? {
+        didSet {
+            if oldValue != selectedTaskId {
+                inlineDetailSubpageTaskId = nil
+                inlineDetailFocusedTaskId = nil
+            }
+        }
+    }
+    var inlineDetailSubpageTaskId: String?
+    var inlineDetailFocusedTaskId: String?
+    var searchFocusTrigger = 0
+    var detailFocusTrigger = 0
+
+    var inlineDetailAllowsSelectionShortcuts: Bool {
+        guard let selectedTaskId else { return false }
+        return inlineDetailSubpageTaskId != selectedTaskId && inlineDetailFocusedTaskId != selectedTaskId
+    }
     /// Task opened from a notification while another detail sheet was open;
     /// shown after that sheet is dismissed so unsaved edits are not replaced.
     var pendingDetailTaskId: String?
 
-    /// Opens a task's detail without replacing a detail sheet that is already open.
+    /// Opens a task's detail without replacing a sheet that is already open.
     func openDetailFromNotification(_ id: String) {
-        if let current = detailTaskId, current != id {
+        if detailTaskId == id { return }
+        if hasActiveRootSheet {
             pendingDetailTaskId = id
         } else {
             detailTaskId = id
+        }
+    }
+
+    var canComposeForCurrentScope: Bool {
+        guard tab == .tasks else { return true }
+        switch scope {
+        case .smart(.trash), .smart(.completed):
+            return false
+        case .project(let id):
+            return !isViewer(projectId: id)
+        default:
+            return true
+        }
+    }
+
+    func openComposerForCurrentScope() {
+        guard canComposeForCurrentScope else { return }
+        var req = ComposeRequest()
+        switch scope {
+        case .project(let id):
+            if !isViewer(projectId: id) { req.projectId = id }
+        case .tag(let t): req.tag = t
+        case .smart(.today): req.day = today
+        case .smart(.tomorrow): req.day = today.adding(days: 1)
+        default: break
+        }
+        composing = req
+    }
+
+    func deleteSelectedTask(id: String) {
+        let inTrash = scope == .smart(.trash)
+        Task {
+            guard let task = try? await api.getTask(id: id) else {
+                if selectedTaskId == id {
+                    selectedTaskId = nil
+                }
+                return
+            }
+            if task.deletedAt != nil {
+                if inTrash && scope == .smart(.trash) {
+                    await purgeTask(id: id)
+                } else if selectedTaskId == id {
+                    selectedTaskId = nil
+                }
+            } else if inTrash || scope == .smart(.trash) {
+                if selectedTaskId == id {
+                    selectedTaskId = nil
+                }
+            } else if !isViewer(projectId: task.projectId) {
+                await perform { try await $0.deleteTask(id: id) }
+                if selectedTaskId == id {
+                    selectedTaskId = nil
+                }
+            }
+        }
+    }
+
+    func purgeTask(id: String) async {
+        guard scope == .smart(.trash),
+              let task = try? await api.getTask(id: id),
+              scope == .smart(.trash),
+              !isViewer(projectId: task.projectId),
+              task.deletedAt != nil else { return }
+        await perform { try await $0.purgeTask(id: id) }
+        if selectedTaskId == id {
+            selectedTaskId = nil
+        }
+    }
+
+    var hasActiveRootSheet: Bool {
+        detailTaskId != nil
+            || composing != nil
+            || editingProjectId != nil
+            || sharingProjectId != nil
+            || invitePrompt != nil
+            || showingJoinInvite
+            || showingMeNamePrompt
+    }
+
+    /// Presents the next queued root-level sheet once the current sheet has dismissed.
+    func flushPendingPresentations() {
+        guard !hasActiveRootSheet else { return }
+        if pendingManualInviteCode != nil {
+            flushManualInviteIfNeeded()
+            return
+        }
+        if syncEnabled, isSignedIn, pendingInviteCode != nil {
+            Task { [weak self] in
+                await self?.processPendingInviteIfNeeded()
+            }
+            return
+        }
+        if let next = pendingDetailTaskId {
+            pendingDetailTaskId = nil
+            detailTaskId = next
         }
     }
     var composing: ComposeRequest?
@@ -117,6 +237,7 @@ final class AppModel {
     private var notificationObserverTask: Task<Void, Never>?
     private var pathMonitor: NWPathMonitor?
     private var pathSatisfied: Bool?
+    private var didAttemptGoogleAvatarSyncOnLaunch = false
 
     init(
         api: LocalDayDoAPI,
@@ -176,14 +297,21 @@ final class AppModel {
         }
 
 #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-DayDoDebugStub") {
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-DayDoDebugStub"), !args.contains("-DayDoDebugSignedOut") {
             if !((try? await syncEngine.isSignedIn) ?? false) {
                 try? await syncEngine.signIn(with: .apple(identityToken: "debug", nonce: "debug"))
             }
-            if ProcessInfo.processInfo.arguments.contains("-DayDoDemo") {
+            if !args.contains("-DayDoDebugKeepDefaultName"),
+               let currentMe = (try? await api.listMembers())?.first(where: \.isMe),
+               currentMe.name == "我" {
+                _ = try? await api.updateMe(name: "測試者", color: nil)
+                try? await syncEngine.syncNow()
+            }
+            if args.contains("-DayDoDemo") {
                 try? await DemoData.load(into: api)
             }
-            if ProcessInfo.processInfo.arguments.contains("-DayDoDebugForcedSignOut") {
+            if args.contains("-DayDoDebugForcedSignOut") {
                 _ = try? await api.createTask(CreateTaskInput(title: "舊帳號未同步任務", start: today.description, allDay: true))
                 tokenStore.accessToken = nil
                 tokenStore.refreshToken = nil
@@ -196,11 +324,15 @@ final class AppModel {
         if signedIn {
             isSignedIn = true
             await reloadData()
+            if me?.name == "我" {
+                showingMeNamePrompt = true
+            }
             ready = true
             startSyncObservers()
             await DebugLaunch.apply(to: self)
             await processPendingInviteIfNeeded()
             triggerSyncNow()
+            syncGoogleAvatarOnLaunchIfNeeded()
         } else {
             isSignedIn = false
             ready = true
@@ -265,6 +397,9 @@ final class AppModel {
     /// change notifications, scene foreground, and date boundary refreshes.
     func reloadData() async {
         await refreshLookups()
+        if showingMeNamePrompt, let currentMe = me, currentMe.name != "我" {
+            showingMeNamePrompt = false
+        }
         revision += 1
         // Never block the UI on the notification permission prompt.
         let scheduler = reminders, api = api
@@ -279,7 +414,7 @@ final class AppModel {
 
     // MARK: - Auth & Sync
 
-    func signIn(with credential: SyncAuthCredential) async throws {
+    func signIn(with credential: SyncAuthCredential, displayName: String? = nil, avatarUrl: String? = nil) async throws {
         isSigningIn = true
         defer { isSigningIn = false }
         startSyncObservers()
@@ -287,7 +422,9 @@ final class AppModel {
             try await syncEngine.signIn(with: credential)
             isSignedIn = true
             await reloadData()
+            await resolveMeProfileAfterSignIn(suggestedName: displayName)
             await processPendingInviteIfNeeded()
+            syncGoogleAvatarAfterSignIn(credential: credential, explicitAvatarUrl: avatarUrl)
         } catch {
             let stillSignedIn = (try? await syncEngine.isSignedIn) ?? false
             if !stillSignedIn {
@@ -295,11 +432,96 @@ final class AppModel {
             } else if let syncError = error as? SyncError, case .retryable = syncError {
                 isSignedIn = true
                 await reloadData()
+                await resolveMeProfileAfterSignIn(suggestedName: displayName)
                 await handleSyncError(syncError)
                 await processPendingInviteIfNeeded()
+                syncGoogleAvatarAfterSignIn(credential: credential, explicitAvatarUrl: avatarUrl)
                 return
             }
             throw error
+        }
+    }
+
+    private func syncGoogleAvatarOnLaunchIfNeeded() {
+        guard syncEnabled, isSignedIn, !didAttemptGoogleAvatarSyncOnLaunch else { return }
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-DayDoDebugStub") {
+            return
+        }
+#endif
+        didAttemptGoogleAvatarSyncOnLaunch = true
+        Task { [weak self] in
+            guard let self else { return }
+            let googleUser: GIDGoogleUser?
+            if let current = GIDSignIn.sharedInstance.currentUser {
+                googleUser = current
+            } else if GIDSignIn.sharedInstance.hasPreviousSignIn() {
+                googleUser = try? await GIDSignIn.sharedInstance.restorePreviousSignIn()
+            } else {
+                googleUser = nil
+            }
+            guard let avatarUrl = self.googleProfileAvatarURL(from: googleUser) else { return }
+            await self.syncGoogleAvatarIfNeeded(avatarUrl)
+        }
+    }
+
+    private func syncGoogleAvatarAfterSignIn(credential: SyncAuthCredential, explicitAvatarUrl: String?) {
+        guard case .google = credential else { return }
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-DayDoDebugStub") {
+            return
+        }
+#endif
+        let resolvedAvatarUrl = explicitAvatarUrl ?? googleProfileAvatarURL(from: GIDSignIn.sharedInstance.currentUser)
+        guard let resolvedAvatarUrl else { return }
+        Task { [weak self] in
+            await self?.syncGoogleAvatarIfNeeded(resolvedAvatarUrl)
+        }
+    }
+
+    private func googleProfileAvatarURL(from user: GIDGoogleUser?) -> String? {
+        guard let profile = user?.profile,
+              profile.hasImage,
+              let url = profile.imageURL(withDimension: 256),
+              url.scheme?.lowercased() == "https" else {
+            return nil
+        }
+        return url.absoluteString
+    }
+
+    private func syncGoogleAvatarIfNeeded(_ avatarUrl: String) async {
+        guard syncEnabled, isSignedIn else { return }
+        // A nil stored value is the case this sync exists for (accounts signed in before avatars), so only
+        // a failed read or an identical URL skips the upload.
+        let storedAvatarUrl: String?
+        do { storedAvatarUrl = try await syncEngine.meAvatarUrl } catch { return }
+        guard storedAvatarUrl != avatarUrl else { return }
+        _ = try? await syncEngine.updateMeAvatar(avatarUrl)
+    }
+
+    private func resolveMeProfileAfterSignIn(suggestedName: String?) async {
+        guard let currentMe = me else { return }
+        let legacyColorFix = currentMe.color == Member.legacyDefaultColor
+            ? Member.defaultColor(for: currentMe.id)
+            : nil
+
+        if currentMe.name == "我" {
+            let cleaned = suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let cleaned, !cleaned.isEmpty, cleaned != "我" {
+                if (try? await api.updateMe(name: cleaned, color: legacyColorFix)) != nil {
+                    await didWrite()
+                }
+                showingMeNamePrompt = false
+            } else {
+                showingMeNamePrompt = true
+            }
+        } else {
+            if let legacyColorFix {
+                if (try? await api.updateMe(name: currentMe.name, color: legacyColorFix)) != nil {
+                    await didWrite()
+                }
+            }
+            showingMeNamePrompt = false
         }
     }
 
@@ -322,7 +544,7 @@ final class AppModel {
         resetLocalUIState()
     }
 
-    func replaceAccountAndSignIn(with credential: SyncAuthCredential) async throws {
+    func replaceAccountAndSignIn(with credential: SyncAuthCredential, displayName: String? = nil, avatarUrl: String? = nil) async throws {
         isSigningIn = true
         defer { isSigningIn = false }
         stopSyncObservers()
@@ -331,7 +553,7 @@ final class AppModel {
             try await syncEngine.signOut()
         }
         resetLocalUIState()
-        try await signIn(with: credential)
+        try await signIn(with: credential, displayName: displayName, avatarUrl: avatarUrl)
     }
 
     private func resetLocalUIState() {
@@ -345,6 +567,7 @@ final class AppModel {
         tab = .tasks
         drawerOpen = false
         detailTaskId = nil
+        selectedTaskId = nil
         pendingDetailTaskId = nil
         composing = nil
         editingProjectId = nil
@@ -353,6 +576,7 @@ final class AppModel {
         pendingInviteCode = nil
         pendingManualInviteCode = nil
         showingJoinInvite = false
+        showingMeNamePrompt = false
         isSignedIn = false
         revision += 1
     }
@@ -500,7 +724,7 @@ final class AppModel {
     }
 
     func processPendingInviteIfNeeded() async {
-        guard syncEnabled, isSignedIn, let code = pendingInviteCode else { return }
+        guard syncEnabled, isSignedIn, !hasActiveRootSheet, let code = pendingInviteCode else { return }
         pendingInviteCode = nil
         let prompt = PendingInvitePrompt(code: code, info: nil, isLoading: true, error: nil)
         invitePrompt = prompt
@@ -537,6 +761,7 @@ final class AppModel {
             tab = .tasks
             drawerOpen = false
             detailTaskId = nil
+            selectedTaskId = nil
             invitePrompt = nil
         } catch let error as SyncError {
             if case .signedOut = error {

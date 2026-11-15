@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import DayDoCore
 
 /// Round glass button used in the top toolbar (44×44 hit area).
@@ -17,6 +18,7 @@ struct GlassIconButton: View {
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .circle)
+        .hoverEffect(.highlight)
         .accessibilityLabel(label)
     }
 }
@@ -48,17 +50,126 @@ struct ListDot: View {
     }
 }
 
+final class AvatarImageCache: @unchecked Sendable {
+    static let shared = AvatarImageCache()
+
+    private let memory = NSCache<NSString, UIImage>()
+    private let session: URLSession
+
+    private init() {
+        memory.countLimit = 128
+        let urlCache = URLCache(memoryCapacity: 16 * 1024 * 1024, diskCapacity: 64 * 1024 * 1024)
+        let config = URLSessionConfiguration.default
+        config.urlCache = urlCache
+        config.requestCachePolicy = .returnCacheDataElseLoad
+        session = URLSession(configuration: config)
+    }
+
+    func cachedImage(for urlString: String) -> UIImage? {
+        memory.object(forKey: urlString as NSString)
+    }
+
+    func loadImage(from urlString: String) async -> UIImage? {
+        if let cached = memory.object(forKey: urlString as NSString) {
+            return cached
+        }
+        guard let url = URL(string: urlString) else { return nil }
+        if url.isFileURL {
+            guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else {
+                return nil
+            }
+            memory.setObject(image, forKey: urlString as NSString)
+            return image
+        }
+        guard url.scheme?.lowercased() == "https" else { return nil }
+        var request = URLRequest(url: url)
+        request.cachePolicy = .returnCacheDataElseLoad
+        guard let (data, response) = try? await session.data(for: request) else {
+            return nil
+        }
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            return nil
+        }
+        guard let image = UIImage(data: data) else { return nil }
+        memory.setObject(image, forKey: urlString as NSString)
+        return image
+    }
+}
+
+struct AvatarView: View {
+    @Environment(\.accent) private var accent
+
+    var member: Member?
+    var size: CGFloat = 32
+    var fallbackColor: String? = nil
+
+    @State private var loadedUrl: String?
+    @State private var loadedImage: UIImage?
+
+    private var urlString: String? {
+        guard let raw = member?.avatarUrl?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        return raw
+    }
+
+    private var resolvedImage: UIImage? {
+        guard let urlString else { return nil }
+        if loadedUrl == urlString, let loadedImage {
+            return loadedImage
+        }
+        return AvatarImageCache.shared.cachedImage(for: urlString)
+    }
+
+    private var fillColor: Color {
+        Color(hex: member?.color ?? fallbackColor ?? accent.hex)
+    }
+
+    var body: some View {
+        Group {
+            if let image = resolvedImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+                    .accessibilityLabel(member?.name ?? "頭像")
+            } else {
+                Text(member?.initial ?? "")
+                    .font(.system(size: max(9, (size * 0.42).rounded()), weight: .bold))
+                    .foregroundStyle(Palette.background)
+                    .frame(width: size, height: size)
+                    .background(Circle().fill(fillColor))
+            }
+        }
+        .frame(width: size, height: size)
+        .task(id: urlString) {
+            guard let urlString else {
+                loadedUrl = nil
+                loadedImage = nil
+                return
+            }
+            if let cached = AvatarImageCache.shared.cachedImage(for: urlString) {
+                loadedUrl = urlString
+                loadedImage = cached
+                return
+            }
+            let image = await AvatarImageCache.shared.loadImage(from: urlString)
+            if !Task.isCancelled {
+                loadedUrl = urlString
+                loadedImage = image
+            }
+        }
+    }
+}
+
 struct AvatarStack: View {
     var members: [Member]
     var size: CGFloat = 18
     var body: some View {
         HStack(spacing: -4) {
             ForEach(members) { m in
-                Text(m.initial)
-                    .font(.system(size: size * 0.5, weight: .bold))
-                    .foregroundStyle(Palette.background)
-                    .frame(width: size, height: size)
-                    .background(Circle().fill(Color(hex: m.color)))
+                AvatarView(member: m, size: size)
                     .overlay(Circle().stroke(Palette.card, lineWidth: 1.5))
             }
         }
@@ -98,6 +209,7 @@ struct OptionChip: View {
                 .overlay(Capsule().strokeBorder(on ? accent.color : (filled ? .clear : Color(hex: "#33363A")), lineWidth: 1))
         }
         .buttonStyle(.plain)
+        .hoverEffect(.highlight)
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
@@ -119,6 +231,7 @@ struct PillButton: View {
                 .background(Capsule().fill(kind == .primary ? accent.color : (kind == .disabled ? Palette.separator : Palette.control)))
         }
         .buttonStyle(.plain)
+        .hoverEffect(.highlight)
         .disabled(kind == .disabled)
     }
 }
@@ -200,4 +313,101 @@ struct MonthPicker: View {
 
 extension Int64 {
     var byteText: String { ByteCountFormatter.string(fromByteCount: self, countStyle: .file) }
+}
+
+private struct IsRegularWindowKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var isRegularWindow: Bool {
+        get { self[IsRegularWindowKey.self] }
+        set { self[IsRegularWindowKey.self] = newValue }
+    }
+}
+
+private struct AdaptiveSheetModifier: ViewModifier {
+    @Environment(\.isRegularWindow) private var isRegularWindow
+    var detents: Set<PresentationDetent>
+    var selection: Binding<PresentationDetent>?
+    var dragIndicator: Visibility
+
+    func body(content: Content) -> some View {
+        if isRegularWindow {
+            content
+                .presentationSizing(.form)
+                .presentationBackground(Palette.card)
+        } else if let selection {
+            content
+                .presentationDetents(detents, selection: selection)
+                .presentationDragIndicator(dragIndicator)
+                .presentationBackground(Palette.card)
+                .presentationCornerRadius(28)
+        } else {
+            content
+                .presentationDetents(detents)
+                .presentationDragIndicator(dragIndicator)
+                .presentationBackground(Palette.card)
+                .presentationCornerRadius(28)
+        }
+    }
+}
+
+extension View {
+    func adaptiveSheet(
+        detents: Set<PresentationDetent>,
+        selection: Binding<PresentationDetent>? = nil,
+        dragIndicator: Visibility = .automatic
+    ) -> some View {
+        modifier(AdaptiveSheetModifier(detents: detents, selection: selection, dragIndicator: dragIndicator))
+    }
+}
+
+/// Presents `UIActivityViewController` anchored to the host view on iPad so
+/// share actions triggered from menus always have a valid popover source.
+struct ActivityAnchor: UIViewRepresentable {
+    @Binding var text: String?
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        guard let text, !context.coordinator.isPresenting else { return }
+        context.coordinator.isPresenting = true
+        DispatchQueue.main.async {
+            guard let host = uiView.nearestViewController, host.presentedViewController == nil else {
+                self.text = nil
+                context.coordinator.isPresenting = false
+                return
+            }
+            let activity = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+            if let popover = activity.popoverPresentationController {
+                popover.sourceView = uiView
+                popover.sourceRect = uiView.bounds
+            }
+            activity.completionWithItemsHandler = { _, _, _, _ in
+                self.text = nil
+                context.coordinator.isPresenting = false
+            }
+            host.present(activity, animated: true)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    final class Coordinator { var isPresenting = false }
+}
+
+private extension UIView {
+    var nearestViewController: UIViewController? {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let vc = current as? UIViewController { return vc }
+            responder = current.next
+        }
+        return nil
+    }
 }

@@ -39,17 +39,16 @@ struct ShareListSheet: View {
                         let ownerMember = projectMembers.first { $0.memberId == project.ownerId }
                         let fallbackOwner = model.members.first { $0.id == project.ownerId } ?? model.me
                         let ownerIsMe = ownerMember?.isMe ?? fallbackOwner?.isMe ?? project.isOwner
-                        let ownerInitial = ownerMember?.initial ?? fallbackOwner?.initial ?? "我"
                         let ownerColor = ownerMember?.color ?? fallbackOwner?.color ?? accent.hex
-                        let ownerName = ownerIsMe ? "我" : (ownerMember?.name ?? fallbackOwner?.name ?? "擁有者")
+                        let ownerAvatarMember = ownerMember?.asMember ?? fallbackOwner
+                        let rawOwnerName = ownerMember?.name ?? fallbackOwner?.name ?? "擁有者"
+                        let ownerName = ownerIsMe ? "\(rawOwnerName)（你）" : rawOwnerName
 
                         section("所有者") {
                             HStack(spacing: 12) {
-                                memberAvatar(
-                                    initial: ownerInitial,
-                                    fill: Color(hex: ownerColor),
-                                    textColor: Palette.background
-                                )
+                                AvatarView(member: ownerAvatarMember, size: 32, fallbackColor: ownerColor)
+                                    .accessibilityIdentifier("share.ownerAvatar")
+                                    .accessibilityValue(ownerColor)
                                 Text(ownerName)
                                     .txt(15, .medium)
                                     .foregroundStyle(Palette.text)
@@ -74,8 +73,10 @@ struct ShareListSheet: View {
                             } else {
                                 ForEach(Array(realMembers.enumerated()), id: \.element.id) { idx, m in
                                     let rowContent = HStack(spacing: 12) {
-                                        memberAvatar(initial: m.initial, fill: Color(hex: m.color), textColor: Palette.background)
-                                        Text(m.isMe ? "我" : m.name)
+                                        AvatarView(member: m.asMember, size: 32)
+                                            .accessibilityIdentifier("share.memberAvatar.\(m.memberId)")
+                                            .accessibilityValue(m.color)
+                                        Text(m.isMe ? "\(m.name)（你）" : m.name)
                                             .txt(15, .medium)
                                             .foregroundStyle(Palette.text)
                                         Spacer()
@@ -151,6 +152,7 @@ struct ShareListSheet: View {
                                                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(accent.color))
                                             }
                                             .buttonStyle(.plain)
+                                            .hoverEffect(.highlight)
                                             .accessibilityIdentifier("share.shareLink")
 
                                             Button {
@@ -165,6 +167,7 @@ struct ShareListSheet: View {
                                                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.chip))
                                             }
                                             .buttonStyle(.plain)
+                                            .hoverEffect(.highlight)
                                             .accessibilityIdentifier("share.copyLink")
                                         }
 
@@ -206,6 +209,7 @@ struct ShareListSheet: View {
                                         .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
+                                    .hoverEffect(.highlight)
                                     .disabled(creatingInvite)
                                     .accessibilityIdentifier("share.createInviteLink")
                                 }
@@ -236,9 +240,7 @@ struct ShareListSheet: View {
             }
         }
         .background(Palette.card)
-        .presentationDetents([.large])
-        .presentationBackground(Palette.card)
-        .presentationCornerRadius(28)
+        .adaptiveSheet(detents: [.large])
         .sheet(item: $editingMember) { member in
             MemberDetailSheet(projectId: projectId, member: member) {
                 Task {
@@ -359,14 +361,6 @@ struct ShareListSheet: View {
         }
     }
 
-    private func memberAvatar(initial: String, fill: Color, textColor: Color) -> some View {
-        Text(initial)
-            .font(.system(size: 13, weight: .bold))
-            .foregroundStyle(textColor)
-            .frame(width: 32, height: 32)
-            .background(Circle().fill(fill))
-    }
-
     private func section<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).txt(12, .semibold).foregroundStyle(Palette.textTertiary).padding(.leading, 4)
@@ -398,7 +392,7 @@ private struct MemberDetailSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                Text(member.name).txt(17, .bold).foregroundStyle(Palette.text)
+                Text(member.isMe ? "\(member.name)（你）" : member.name).txt(17, .bold).foregroundStyle(Palette.text)
                 HStack {
                     PillButton(title: "完成") { dismiss() }
                     Spacer()
@@ -451,9 +445,7 @@ private struct MemberDetailSheet: View {
             .padding(.horizontal, 16)
         }
         .background(Palette.card)
-        .presentationDetents([.height(300)])
-        .presentationBackground(Palette.card)
-        .presentationCornerRadius(28)
+        .adaptiveSheet(detents: [.height(300)])
     }
 
     private func setRole(_ newRole: String) {

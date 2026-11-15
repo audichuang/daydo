@@ -7,6 +7,44 @@ export interface VerifiedIdentity {
   provider: ProviderName;
   sub: string;
   email: string | null;
+  avatarUrl?: string | null;
+}
+
+const MAX_AVATAR_URL_LENGTH = 2048;
+
+function parseHttpsUrl(raw: unknown): URL | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:' || !parsed.hostname) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function sanitizeHttpsAvatarUrl(raw: unknown): string | null {
+  return parseHttpsUrl(raw)?.toString() ?? null;
+}
+
+export function sanitizeGoogleAvatarUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw.length > MAX_AVATAR_URL_LENGTH) {
+    return null;
+  }
+  const parsed = parseHttpsUrl(raw);
+  if (!parsed || parsed.username || parsed.password || parsed.port) {
+    return null;
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host !== 'googleusercontent.com' && !host.endsWith('.googleusercontent.com')) {
+    return null;
+  }
+  const normalized = parsed.toString();
+  return normalized.length <= MAX_AVATAR_URL_LENGTH ? normalized : null;
 }
 
 export type KeySource = JWTVerifyGetKey | CryptoKey;
@@ -105,5 +143,6 @@ export async function verifyGoogleToken(params: {
     provider: 'google',
     sub: payload.sub,
     email: typeof payload.email === 'string' && payload.email.length > 0 ? payload.email : null,
+    avatarUrl: sanitizeHttpsAvatarUrl(payload.picture),
   };
 }

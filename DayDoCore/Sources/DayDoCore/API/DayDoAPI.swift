@@ -7,6 +7,7 @@ import Foundation
 public protocol DayDoAPI: Sendable {
     // Members
     func listMembers() async throws -> [Member]
+    func updateMe(name: String, color: String?) async throws -> Member
 
     // Folders
     func listFolders() async throws -> [Folder]

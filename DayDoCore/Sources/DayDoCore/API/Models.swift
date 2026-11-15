@@ -13,14 +13,46 @@ public struct Member: Codable, Hashable, Sendable, Identifiable {
     public var isMe: Bool
     /// Server account userId for sharing role/removal calls, when known.
     public var userId: String?
+    public var avatarUrl: String?
 
-    public init(id: String, name: String, initial: String, color: String, isMe: Bool, userId: String? = nil) {
+    public init(id: String, name: String, initial: String, color: String, isMe: Bool, userId: String? = nil, avatarUrl: String? = nil) {
         self.id = id
         self.name = name
         self.initial = initial
         self.color = color
         self.isMe = isMe
         self.userId = userId
+        self.avatarUrl = avatarUrl
+    }
+
+    public static let legacyDefaultColor = "#9BB8FF"
+
+    public static let avatarColors: [String] = [
+        "#6FA8FF",
+        "#4FC3A1",
+        "#E98A5B",
+        "#E8C14E",
+        "#C77DDB",
+        "#F27474",
+        "#4AA8E8",
+        "#8CD17D",
+    ]
+
+    /// Stable FNV-1a hash mapping a member id to one of `avatarColors`.
+    public static func defaultColor(for id: String) -> String {
+        var hash: UInt64 = 14695981039346656037
+        for byte in id.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1099511628211
+        }
+        return avatarColors[Int(hash % UInt64(avatarColors.count))]
+    }
+
+    /// First extended grapheme cluster of the trimmed name, uppercased for Latin.
+    public static func makeInitial(from name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first else { return "" }
+        return String(first).uppercased()
     }
 }
 
@@ -125,10 +157,15 @@ public struct ProjectMemberInfo: Codable, Hashable, Sendable, Identifiable {
     public var role: String
     /// Server account userId for sharing role/removal calls, when known.
     public var userId: String?
+    public var avatarUrl: String?
 
     public var id: String { memberId }
 
-    public init(memberId: String, name: String, initial: String, color: String, isMe: Bool, role: String, userId: String? = nil) {
+    public var asMember: Member {
+        Member(id: memberId, name: name, initial: initial, color: color, isMe: isMe, userId: userId, avatarUrl: avatarUrl)
+    }
+
+    public init(memberId: String, name: String, initial: String, color: String, isMe: Bool, role: String, userId: String? = nil, avatarUrl: String? = nil) {
         self.memberId = memberId
         self.name = name
         self.initial = initial
@@ -136,6 +173,7 @@ public struct ProjectMemberInfo: Codable, Hashable, Sendable, Identifiable {
         self.isMe = isMe
         self.role = role
         self.userId = userId
+        self.avatarUrl = avatarUrl
     }
 }
 

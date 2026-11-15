@@ -1,5 +1,6 @@
 import GoogleSignIn
 import SwiftUI
+import UIKit
 import UserNotifications
 import DayDoCore
 
@@ -85,6 +86,38 @@ struct DayDoApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
                     if model.ready && model.isSignedIn { Task { await model.reloadData() } }
                 }
+        }
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("新增任務") {
+                    guard model.isSignedIn, !model.hasActiveRootSheet, model.canComposeForCurrentScope else { return }
+                    model.openComposerForCurrentScope()
+                }
+                .keyboardShortcut("n", modifiers: .command)
+                .disabled(!model.isSignedIn || model.hasActiveRootSheet || !model.canComposeForCurrentScope)
+            }
+            CommandMenu("前往") {
+                Button("任務") { model.tab = .tasks }
+                    .keyboardShortcut("1", modifiers: .command)
+                Button("日曆") { model.tab = .calendar }
+                    .keyboardShortcut("2", modifiers: .command)
+                Button("搜尋") {
+                    guard model.isSignedIn, !model.hasActiveRootSheet else { return }
+                    model.tab = .search
+                    model.searchFocusTrigger += 1
+                }
+                .keyboardShortcut("3", modifiers: .command)
+                .disabled(!model.isSignedIn || model.hasActiveRootSheet)
+                Button("搜尋任務") {
+                    guard model.isSignedIn, !model.hasActiveRootSheet else { return }
+                    model.tab = .search
+                    model.searchFocusTrigger += 1
+                }
+                .keyboardShortcut("f", modifiers: .command)
+                .disabled(!model.isSignedIn || model.hasActiveRootSheet)
+                Button("設定") { model.tab = .settings }
+                    .keyboardShortcut("4", modifiers: .command)
+            }
         }
     }
 }
@@ -219,6 +252,8 @@ actor DebugStubTransport: SyncTransport {
     private var didPullSeed = false
     private var sawChecklistPush = false
     private var didPushRemoteContent = false
+    private var pushedMeId: String?
+    private var pushedMeColor: String?
 
     func send(method: String, path: String, headers: [String: String], body: Data?) async throws -> SyncHTTPResponse {
         let nowMs = EpochMillis(Date().timeIntervalSince1970 * 1000)
@@ -254,8 +289,19 @@ actor DebugStubTransport: SyncTransport {
                let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
                let ops = payload["ops"] as? [[String: Any]] {
                 for op in ops {
-                    if let entity = op["entity"] as? String, entity == "checklistItem" {
-                        sawChecklistPush = true
+                    if let entity = op["entity"] as? String {
+                        if entity == "checklistItem" {
+                            sawChecklistPush = true
+                        }
+                        if entity == "member" {
+                            if let entityId = op["entityId"] as? String {
+                                pushedMeId = entityId
+                            }
+                            if let row = op["row"] as? [String: Any],
+                               let color = row["color"] as? String {
+                                pushedMeColor = color
+                            }
+                        }
                     }
                     if let opId = op["opId"] as? String {
                         results.append(["opId": opId, "status": "applied"])
@@ -437,6 +483,100 @@ actor DebugStubTransport: SyncTransport {
                         "name": "小安",
                         "initial": "安",
                         "color": "#5AC8FA",
+                        "isMe": false,
+                        "createdAt": nowMs,
+                        "updatedAt": nowMs,
+                    ]],
+                ])
+            }
+            if args.contains("-DayDoSeedSharedList"), !didPullSeed, let meId = pushedMeId {
+                didPullSeed = true
+                let today = Clock.system.today.description
+                let otherId = "debug-other-member-1"
+                let otherColor = Member.avatarColors.first { $0 != pushedMeColor } ?? Member.avatarColors[0]
+                let projectId = "debug-shared-proj-1"
+                return try jsonResponse(200, [
+                    "scopes": [[
+                        "scope": "u:debug-user",
+                        "rows": [
+                            [
+                                "entity": "project",
+                                "row": [
+                                    "id": projectId,
+                                    "name": "家庭採買",
+                                    "color": "#4AA8E8",
+                                    "viewMode": "list",
+                                    "kind": "TASK",
+                                    "isInbox": false,
+                                    "ownerId": meId,
+                                    "sortKey": "z1",
+                                    "showInSmart": "all",
+                                    "notifyMode": "all",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["name": serverHLC],
+                                "serverSeq": 1,
+                            ],
+                            [
+                                "entity": "projectMember",
+                                "row": [
+                                    "projectId": projectId,
+                                    "memberId": meId,
+                                    "role": "owner",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["role": serverHLC],
+                                "serverSeq": 2,
+                            ],
+                            [
+                                "entity": "projectMember",
+                                "row": [
+                                    "projectId": projectId,
+                                    "memberId": otherId,
+                                    "role": "editor",
+                                    "createdAt": nowMs + 1,
+                                    "updatedAt": nowMs + 1,
+                                ],
+                                "clocks": ["role": serverHLC],
+                                "serverSeq": 3,
+                            ],
+                            [
+                                "entity": "task",
+                                "row": [
+                                    "id": "debug-shared-task-1",
+                                    "projectId": projectId,
+                                    "title": "買鮮奶",
+                                    "content": "",
+                                    "priority": 0,
+                                    "status": 0,
+                                    "startDay": today,
+                                    "reminders": [],
+                                    "tags": [],
+                                    "sortKey": "a0",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["title": serverHLC, "schedule": serverHLC],
+                                "serverSeq": 4,
+                            ],
+                        ],
+                        "cursor": 4,
+                        "hasMore": false,
+                    ]],
+                    "memberships": [
+                        ["projectId": projectId, "scope": "u:debug-user", "role": "owner"],
+                    ],
+                    "members": [[
+                        "id": otherId,
+                        "userId": "debug-other-user-1",
+                        "name": "小安",
+                        "initial": "小",
+                        "color": otherColor,
+                        "avatarUrl": (args.contains("-DayDoSeedAvatarPhoto")
+                            ? Bundle.main.url(forResource: "DebugAvatar", withExtension: "png")?.absoluteString
+                            : nil) as Any,
                         "isMe": false,
                         "createdAt": nowMs,
                         "updatedAt": nowMs,

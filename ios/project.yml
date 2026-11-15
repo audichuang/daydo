@@ -57,15 +57,32 @@ targets:
           UIColorName: LaunchBackground
           UIImageName: LaunchLogo
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         UIUserInterfaceStyle: Dark
         ITSAppUsesNonExemptEncryption: false
         LSApplicationCategoryType: public.app-category.productivity
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.audichuang.daydo
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_PREVIEWS: YES
+  DayDoTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: DayDoTests
+    dependencies:
+      - target: DayDo
+      - package: DayDoCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.audichuang.daydo.tests
+        GENERATE_INFOPLIST_FILE: YES
   DayDoUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -82,7 +99,9 @@ schemes:
     build:
       targets:
         DayDo: all
+        DayDoTests: [test]
         DayDoUITests: [test]
     test:
       targets:
+        - DayDoTests
         - DayDoUITests

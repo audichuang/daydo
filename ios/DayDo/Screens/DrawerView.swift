@@ -61,6 +61,7 @@ struct DrawerView: View {
     @Environment(\.accent) private var accent
     var close: () -> Void
     @Binding var rowDragging: Bool
+    var isSidebar: Bool = false
     @State private var swipedId: String?
     @State private var deletingProject: Project?
 
@@ -77,6 +78,15 @@ struct DrawerView: View {
                         smartRow(.assigned, "指派給我", "person", model.counts.assignedToMe)
                     }
 
+                    if isSidebar {
+                        Rectangle().fill(Palette.separatorSoft).frame(height: 1)
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 8)
+                        tabRow(.calendar, "日曆", "calendar", identifier: "sidebar.calendar")
+                        tabRow(.search, "搜尋", "magnifyingglass", identifier: "sidebar.search")
+                        tabRow(.settings, "設定", "gearshape", identifier: "sidebar.settings")
+                    }
+
                     HStack {
                         Text("清單").txt(12, .semibold).foregroundStyle(Palette.textTertiary)
                         Spacer()
@@ -87,6 +97,7 @@ struct DrawerView: View {
                             Image(systemName: "plus").font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.textSecondary)
                                 .frame(width: 40, height: 36)
                         }
+                        .hoverEffect(.highlight)
                         .accessibilityLabel("新增清單或資料夾")
                     }
                     .padding(.leading, 12)
@@ -107,6 +118,7 @@ struct DrawerView: View {
                                         .background(Capsule().fill(isCurrent(.tag(t.name)) ? accent.soft : Palette.raised))
                                 }
                                 .buttonStyle(.plain)
+                                .hoverEffect(.highlight)
                             }
                         }
                         .padding(.horizontal, 12)
@@ -130,9 +142,10 @@ struct DrawerView: View {
                 bottomButton("垃圾桶", .trash)
             }
             .padding(12)
-            .padding(.bottom, 20)
+            .padding(.bottom, isSidebar ? 12 : 20)
             .overlay(alignment: .top) { Rectangle().fill(Palette.separator).frame(height: 1) }
         }
+        .background(isSidebar ? Palette.card : .clear)
         .alert("新增資料夾", isPresented: Binding(get: { newFolder != nil }, set: { if !$0 { newFolder = nil } })) {
             TextField("資料夾名稱", text: Binding(get: { newFolder ?? "" }, set: { newFolder = $0 }))
             Button("取消", role: .cancel) {}
@@ -171,12 +184,8 @@ struct DrawerView: View {
     var header: some View {
         HStack(spacing: 10) {
             let me = model.me
-            Text(me?.initial ?? "我")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(Palette.background)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(Color(hex: me?.color ?? accent.hex)))
-            Text(me?.name ?? "我")
+            AvatarView(member: me, size: 34, fallbackColor: accent.hex)
+            Text(me?.name ?? "")
                 .txt(16, .semibold)
                 .foregroundStyle(Palette.text)
                 .lineLimit(1)
@@ -193,6 +202,7 @@ struct DrawerView: View {
             }
             .buttonStyle(.plain)
             .glassEffect(.regular.interactive(), in: .capsule)
+            .hoverEffect(.highlight)
             .accessibilityLabel("設定")
             .accessibilityIdentifier("drawer.settings")
         }
@@ -222,6 +232,15 @@ struct DrawerView: View {
         row(icon: Image(systemName: icon), title: title, count: count, current: isCurrent(.smart(v)), indent: false) { pick(.smart(v)) }
     }
 
+    func tabRow(_ t: MainTab, _ title: String, _ icon: String, identifier: String) -> some View {
+        row(icon: Image(systemName: icon), title: title, count: nil, current: model.tab == t, indent: false) {
+            swipedId = nil
+            model.tab = t
+            close()
+        }
+        .accessibilityIdentifier(identifier)
+    }
+
     func row(icon: some View, title: String, count: Int?, current: Bool, indent: Bool, highlighted: Bool = false, trailing: AnyView? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
@@ -238,6 +257,7 @@ struct DrawerView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .hoverEffect(.highlight)
     }
 
     func folderRow(_ f: Folder) -> some View {
@@ -319,6 +339,7 @@ struct DrawerView: View {
                 .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.raised))
         }
         .buttonStyle(.plain)
+        .hoverEffect(.highlight)
     }
 }
 

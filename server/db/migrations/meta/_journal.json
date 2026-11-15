@@ -43,6 +43,13 @@
       "when": 1794735723565,
       "tag": "20261115094203_many_toro",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1794754100781,
+      "tag": "20261115144820_smart_photon",
+      "breakpoints": true
     }
   ]
 }

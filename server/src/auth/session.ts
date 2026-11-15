@@ -2,7 +2,7 @@ import { device, identity, projectMembership, session, user } from '@schema';
 import { and, eq, gt, isNull, sql, type db } from 'void/db';
 import type { ScopeStub } from '../sync/push';
 import { generateRefreshToken, sha256Hex, signAccessToken } from './crypto';
-import type { ProviderName } from './providers';
+import { sanitizeHttpsAvatarUrl, type ProviderName } from './providers';
 
 const REFRESH_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const REFRESH_GRACE_MS = 10 * 60 * 1000;
@@ -14,6 +14,7 @@ export interface LoginStateFields {
   hasData: boolean;
   meMemberId: string | null;
   inboxProjectId: string | null;
+  avatarUrl: string | null;
 }
 
 export interface AuthSessionResult extends LoginStateFields {
@@ -34,7 +35,10 @@ async function resolveUserSyncState(
   getScopeStub?: ScopeLookup,
 ): Promise<LoginStateFields> {
   const [userRows, membershipRows] = await database.batch([
-    database.select({ meMemberId: user.meMemberId }).from(user).where(eq(user.id, userId)),
+    database
+      .select({ meMemberId: user.meMemberId, avatarUrl: user.avatarUrl })
+      .from(user)
+      .where(eq(user.id, userId)),
     database
       .select({ projectId: projectMembership.projectId })
       .from(projectMembership)
@@ -43,6 +47,10 @@ async function resolveUserSyncState(
 
   const meMemberId =
     userRows[0] && typeof userRows[0].meMemberId === 'string' ? userRows[0].meMemberId : null;
+  const avatarUrl =
+    userRows[0] && typeof userRows[0].avatarUrl === 'string' && userRows[0].avatarUrl.length > 0
+      ? userRows[0].avatarUrl
+      : null;
   const readableProjectIds = membershipRows.map((r) => String(r.projectId));
 
   let inboxProjectId: string | null = null;
@@ -56,6 +64,7 @@ async function resolveUserSyncState(
     hasData: inboxProjectId !== null,
     meMemberId,
     inboxProjectId,
+    avatarUrl,
   };
 }
 
@@ -104,6 +113,7 @@ async function issueSessionForExistingUser(
     jwtSecret: string;
     now: number;
     getScopeStub?: ScopeLookup;
+    googleAvatarUrl?: string | null;
   },
 ): Promise<AuthSessionResult> {
   // Resolve sync state before writing the session row so a transient DO RPC failure
@@ -112,7 +122,7 @@ async function issueSessionForExistingUser(
     signAccessToken(params.userId, params.jwtSecret),
     resolveUserSyncState(database, params.userId, params.getScopeStub),
   ]);
-  await database.batch([
+  const statements = [
     ...buildDeviceAndSessionStatements(database, {
       userId: params.userId,
       deviceId: params.deviceId,
@@ -121,13 +131,23 @@ async function issueSessionForExistingUser(
       refreshHash: params.refreshHash,
       now: params.now,
     }),
-  ]);
+    ...(params.googleAvatarUrl !== undefined
+      ? [
+          database
+            .update(user)
+            .set({ avatarUrl: params.googleAvatarUrl })
+            .where(eq(user.id, params.userId)),
+        ]
+      : []),
+  ];
+  await database.batch(statements as [typeof statements[0], ...typeof statements]);
   return {
     accessToken,
     refreshToken: params.refreshToken,
     user: { id: params.userId },
     isNewAccount: false,
     ...syncState,
+    ...(params.googleAvatarUrl !== undefined ? { avatarUrl: params.googleAvatarUrl } : {}),
   };
 }
 
@@ -137,6 +157,7 @@ export async function createSessionForIdentity(
     provider: ProviderName;
     sub: string;
     email: string | null;
+    avatarUrl?: string | null;
     deviceId: string;
     jwtSecret: string;
     now?: number;
@@ -148,6 +169,8 @@ export async function createSessionForIdentity(
   const refreshHash = await sha256Hex(refreshToken);
   const sessionId = crypto.randomUUID();
   const chainId = crypto.randomUUID();
+  const googleAvatarUrl =
+    params.provider === 'google' ? sanitizeHttpsAvatarUrl(params.avatarUrl) : undefined;
 
   const existing = await database
     .select({ userId: identity.userId })
@@ -166,13 +189,18 @@ export async function createSessionForIdentity(
       jwtSecret: params.jwtSecret,
       now,
       getScopeStub: params.getScopeStub,
+      googleAvatarUrl,
     });
   }
 
   const newUserId = crypto.randomUUID();
   try {
     await database.batch([
-      database.insert(user).values({ id: newUserId, createdAt: now }),
+      database.insert(user).values({
+        id: newUserId,
+        createdAt: now,
+        ...(googleAvatarUrl !== undefined ? { avatarUrl: googleAvatarUrl } : {}),
+      }),
       database.insert(identity).values({
         provider: params.provider,
         sub: params.sub,
@@ -197,6 +225,7 @@ export async function createSessionForIdentity(
       hasData: false,
       meMemberId: null,
       inboxProjectId: null,
+      avatarUrl: googleAvatarUrl ?? null,
     };
   } catch (error) {
     // Handle concurrent first-time login for the same (provider, sub).
@@ -216,6 +245,7 @@ export async function createSessionForIdentity(
       jwtSecret: params.jwtSecret,
       now,
       getScopeStub: params.getScopeStub,
+      googleAvatarUrl,
     });
   }
 }
@@ -336,4 +366,19 @@ export async function rotateRefreshToken(
   }
 
   return { accessToken, refreshToken: newRefreshToken, ...syncState };
+}
+
+export async function updateUserAvatar(
+  database: DatabaseClient,
+  params: { userId: string; avatarUrl: string },
+): Promise<{ avatarUrl: string } | null> {
+  const updated = await database
+    .update(user)
+    .set({ avatarUrl: params.avatarUrl })
+    .where(eq(user.id, params.userId))
+    .returning({ avatarUrl: user.avatarUrl });
+  if (updated.length === 0) {
+    return null;
+  }
+  return { avatarUrl: params.avatarUrl };
 }

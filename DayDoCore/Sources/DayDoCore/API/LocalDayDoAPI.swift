@@ -32,7 +32,18 @@ public final class LocalDayDoAPI: DayDoAPI {
 
     static func bootstrap(meName: String = "我", in db: Database, now: EpochMillis) throws {
         if try MemberRecord.filter(Column("isMe") == true).fetchOne(db) != nil { return }
-        let me = MemberRecord(id: ID.make(), name: meName, initial: String(meName.prefix(1)), color: "#9BB8FF", isMe: true, createdAt: now, updatedAt: now)
+        let id = ID.make()
+        let trimmed = meName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalName = trimmed.isEmpty ? "我" : String(trimmed.prefix(30)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let me = MemberRecord(
+            id: id,
+            name: finalName,
+            initial: Member.makeInitial(from: finalName),
+            color: Member.defaultColor(for: id),
+            isMe: true,
+            createdAt: now,
+            updatedAt: now
+        )
         try Outbox.save(me, entity: "member", id: me.id, in: db, now: now)
         var key: String? = nil
         func project(_ name: String, _ color: String?, inbox: Bool) throws {
@@ -142,11 +153,25 @@ public final class LocalDayDoAPI: DayDoAPI {
     }
 
     func resolveUserId(_ db: Database, member: MemberRecord) throws -> String? {
-        if let mapped = try String.fetchOne(db, sql: "SELECT userId FROM memberUser WHERE memberId = ?", arguments: [member.id]) {
+        if let mapped = try String.fetchOne(db, sql: "SELECT userId FROM memberUser WHERE memberId = ?", arguments: [member.id]),
+           !mapped.isEmpty {
             return mapped
         }
         if member.isMe, let uid = try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [SyncEngine.signedInUserIdMetaKey]) {
             return uid
+        }
+        return nil
+    }
+
+    func resolveAvatarUrl(_ db: Database, member: MemberRecord) throws -> String? {
+        if member.isMe,
+           let url = try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [SyncEngine.meAvatarUrlMetaKey]),
+           !url.isEmpty {
+            return url
+        }
+        if let mapped = try String.fetchOne(db, sql: "SELECT avatarUrl FROM memberUser WHERE memberId = ?", arguments: [member.id]),
+           !mapped.isEmpty {
+            return mapped
         }
         return nil
     }
@@ -212,9 +237,51 @@ extension LocalDayDoAPI {
                         initial: $0.initial,
                         color: $0.color,
                         isMe: $0.isMe,
-                        userId: self.resolveUserId(db, member: $0)
+                        userId: self.resolveUserId(db, member: $0),
+                        avatarUrl: self.resolveAvatarUrl(db, member: $0)
                     )
                 }
+        }
+    }
+
+    public func updateMe(name: String, color: String?) async throws -> Member {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw DayDoError.invalid("Member name is required")
+        }
+        let finalName = String(trimmed.prefix(30)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let initial = Member.makeInitial(from: finalName)
+        let normalizedColor: String?
+        if let color {
+            let c = color.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !c.isEmpty else {
+                throw DayDoError.invalid("Member color cannot be empty")
+            }
+            normalizedColor = c
+        } else {
+            normalizedColor = nil
+        }
+
+        let now = now()
+        return try await writer.write { db in
+            var record = try self.me(db)
+            let targetColor = normalizedColor ?? record.color
+            if record.name != finalName || record.initial != initial || record.color != targetColor {
+                record.name = finalName
+                record.initial = initial
+                record.color = targetColor
+                record.updatedAt = now
+                try Outbox.save(record, entity: "member", id: record.id, in: db, now: now)
+            }
+            return Member(
+                id: record.id,
+                name: record.name,
+                initial: record.initial,
+                color: record.color,
+                isMe: record.isMe,
+                userId: try self.resolveUserId(db, member: record),
+                avatarUrl: try self.resolveAvatarUrl(db, member: record)
+            )
         }
     }
 
@@ -534,7 +601,8 @@ extension LocalDayDoAPI {
                         color: m.color,
                         isMe: m.isMe,
                         role: pm.role,
-                        userId: try self.resolveUserId(db, member: m)
+                        userId: try self.resolveUserId(db, member: m),
+                        avatarUrl: try self.resolveAvatarUrl(db, member: m)
                     ))
                 }
             }
