@@ -10,8 +10,8 @@ TestFlight 一律從合併後的 main 打包，不從 worktree 打。
 - 沒有 Xcode Cloud，只有手動上傳：
 
 ```bash
-cd ios && BUILD_NUMBER=$(~/Project/audi-skill/ios-release/scripts/tf next-build --app 6834936769) ./scripts/testflight.sh
-~/Project/audi-skill/ios-release/scripts/tf verify --app 6834936769 --build <N> --group "自己" --wait 20m
+cd ios && BUILD_NUMBER=$(tf next-build --app 6834936769) ./scripts/testflight.sh
+tf verify --app 6834936769 --build <N> --group "自己" --wait 20m
 ```
 
 - 簽章走 Xcode 已登入的帳號；帶 API key（`-authenticationKey*`）時 Xcode 27.2 回 `Authentication failed: bearer token`。
