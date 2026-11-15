@@ -2259,14 +2259,16 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         let commentOp = try #require(ops.first { $0["entity"]?.stringValue == "comment" })
         #expect(commentOp["row"]?.objectValue?["authorId"]?.stringValue == serverMeId)
 
-        // Local projectInvite ops stay local (never pushed), and their outbox payload was remapped.
+        // Local projectInvite ops stay local (never pushed), their outbox payload was remapped, and they are marked local-only.
         #expect(!ops.contains { $0["entity"]?.stringValue == "projectInvite" })
         let localInviteChange = try await db.writer.read { db in
             try ChangeRecord
-                .filter(Column("entity") == "projectInvite" && Column("entityId") == inviteId && Column("ackedAt") == nil)
+                .filter(Column("entity") == "projectInvite" && Column("entityId") == inviteId)
                 .fetchOne(db)
         }
         let remappedChange = try #require(localInviteChange)
+        #expect(remappedChange.ackedAt == nowMs)
+        #expect(remappedChange.result == "local-only")
         let remappedChangeRow = try JSONDecoder().decode([String: SyncJSONValue].self, from: Data(remappedChange.row.utf8))
         #expect(remappedChangeRow["projectId"]?.stringValue == serverInboxId)
     }
@@ -2773,6 +2775,117 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         #expect(task?.title == "回補任務")
     }
 
+    @Test func newMembershipLearnedFromNormalPullIsBackfilledInSameCycle() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+        let sharedId = ID.make()
+        let ownerId = ID.make()
+        let taskId = ID.make()
+
+        let pullBodies = PullBodyRecorder()
+        let (_, db, _, _, engine) = try await makeSyncSetup { req, _ in
+            if req.path == "/sync/push" {
+                return try jsonResponse(200, ["results": [], "serverTime": serverHLC])
+            }
+            let bodyObj = try decodeBodyObject(req.body)
+            await pullBodies.append(bodyObj)
+            let backfillIds = bodyObj["backfill"]?.arrayValue?.compactMap(\.stringValue)
+            if backfillIds == [sharedId] {
+                return try jsonResponse(200, [
+                    "scopes": [[
+                        "scope": "u:owner-a",
+                        "rows": [
+                            [
+                                "entity": "project",
+                                "row": [
+                                    "id": sharedId,
+                                    "name": "既有共享清單",
+                                    "viewMode": "list",
+                                    "kind": "TASK",
+                                    "isInbox": false,
+                                    "ownerId": ownerId,
+                                    "sortKey": "z0",
+                                    "showInSmart": "all",
+                                    "notifyMode": "all",
+                                    "createdAt": nowMs - 10_000,
+                                    "updatedAt": nowMs - 10_000,
+                                ],
+                                "clocks": ["name": serverHLC],
+                                "serverSeq": 1,
+                            ],
+                            [
+                                "entity": "task",
+                                "row": [
+                                    "id": taskId,
+                                    "projectId": sharedId,
+                                    "title": "舊清單任務",
+                                    "content": "",
+                                    "priority": 0,
+                                    "status": 0,
+                                    "reminders": [],
+                                    "tags": [],
+                                    "sortKey": "a0",
+                                    "createdAt": nowMs - 10_000,
+                                    "updatedAt": nowMs - 10_000,
+                                ],
+                                "clocks": ["title": serverHLC],
+                                "serverSeq": 2,
+                            ],
+                        ],
+                        "cursor": 2,
+                        "hasMore": false,
+                    ]],
+                    "memberships": [
+                        ["projectId": sharedId, "scope": "u:owner-a", "role": "editor"],
+                    ],
+                    "members": [],
+                ])
+            }
+            return try jsonResponse(200, [
+                "scopes": [[
+                    "scope": "u:owner-a",
+                    "rows": [],
+                    "cursor": 10,
+                    "hasMore": false,
+                ]],
+                "memberships": [
+                    ["projectId": sharedId, "scope": "u:owner-a", "role": "editor"],
+                ],
+                "members": [],
+            ])
+        }
+        try await ackAllChanges(in: db)
+        try await db.writer.write { db in
+            try SyncEngine.savePullCursors(["u:owner-a": 10], in: db)
+        }
+
+        // Single syncNow() on B2 (already has cursors): normal pull reveals new membership,
+        // and the same syncNow() must immediately issue backfill and apply the old list rows.
+        let summary = try await engine.syncNow()
+
+        let pulls = await pullBodies.bodies
+        try #require(pulls.count == 2)
+        #expect(pulls[0]["backfill"] == nil)
+        #expect(pulls[0]["cursors"]?.objectValue?["u:owner-a"] == .int(10))
+        #expect(pulls[1]["backfill"]?.arrayValue?.compactMap(\.stringValue) == [sharedId])
+
+        let (project, task, needsBackfill) = try await db.writer.read { db in
+            (
+                try ProjectRecord.fetchOne(db, key: sharedId),
+                try TaskRecord.fetchOne(db, key: taskId),
+                try Bool.fetchOne(
+                    db,
+                    sql: "SELECT needsBackfill FROM projectMembership WHERE projectId = ?",
+                    arguments: [sharedId]
+                )
+            )
+        }
+        #expect(project?.name == "既有共享清單")
+        #expect(task?.title == "舊清單任務")
+        #expect(needsBackfill == false)
+        #expect(summary.didChangeLocalData)
+    }
+
     @Test func membershipDisappearsDeletesSharedListLocally() async throws {
         let nowMs = noon.epochMillis
         let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
@@ -3239,6 +3352,66 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         await #expect(throws: SharingError.badRequest("Cannot remove owner")) {
             try await engine.leaveProject(projectId: "p1")
         }
+    }
+
+    @Test func signInMarksLocalProjectInviteOpsLocalOnly() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs + 100, counter: 0, deviceId: "server").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-sync-tests-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+
+        let list = try await api.createProject(CreateProjectInput(name: "共享清單"))
+        let invite = try await api.inviteMember(projectId: list.id, email: "family@example.test", role: "editor")
+        _ = try await api.updateInviteRole(id: invite.id, role: "viewer")
+
+        let pushed = PushOpRecorder()
+        let tokens = InMemorySyncTokenStore()
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/auth/google" {
+                return try jsonResponse(200, [
+                    "accessToken": "acc-invite",
+                    "refreshToken": "ref-invite",
+                    "user": ["id": "user-invite"],
+                    "isNewAccount": true,
+                    "hasData": false,
+                    "meMemberId": NSNull(),
+                    "inboxProjectId": NSNull(),
+                ])
+            }
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                await pushed.append(ops)
+                return try jsonResponse(200, [
+                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "applied", "row": NSNull(), "clocks": [:]] },
+                    "serverTime": serverTime,
+                ])
+            }
+            return try jsonResponse(200, ["scopes": [], "memberships": [], "members": []])
+        }
+
+        let engine = SyncEngine(database: db, transport: transport, tokenStore: tokens, clock: .fixed(noon, timeZone: taipei))
+        _ = try await engine.signIn(with: .google(idToken: "g-tok"))
+
+        let ops = await pushed.ops
+        #expect(!ops.contains { $0["entity"]?.stringValue == "projectInvite" })
+
+        let (inviteChanges, pendingCount, keptInvite) = try await db.writer.read { db in
+            (
+                try ChangeRecord
+                    .filter(Column("entity") == "projectInvite" && Column("entityId") == invite.id)
+                    .order(Column("seq"))
+                    .fetchAll(db),
+                try ChangeRecord.filter(Column("ackedAt") == nil).fetchCount(db),
+                try ProjectInviteRecord.fetchOne(db, key: invite.id)
+            )
+        }
+        #expect(inviteChanges.count == 2)
+        #expect(inviteChanges.allSatisfy { $0.ackedAt == nowMs && $0.result == "local-only" })
+        #expect(pendingCount == 0)
+        #expect(keptInvite?.email == "family@example.test")
+        #expect(keptInvite?.role == "viewer")
     }
 }
 
