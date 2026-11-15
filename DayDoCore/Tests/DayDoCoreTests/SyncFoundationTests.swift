@@ -165,6 +165,28 @@ import Testing
             #expect(deviceId == deviceId?.lowercased())
         }
     }
+
+    @Test func migratesV3DatabaseCreatingPurgedIdTable() throws {
+        let queue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(queue, upTo: "v3")
+        let hadTableBefore = try queue.read { db in
+            try db.tableExists("purgedId")
+        }
+        #expect(!hadTableBefore)
+
+        let appDB = try AppDatabase(queue)
+        try appDB.writer.write { db in
+            #expect(try db.tableExists("purgedId"))
+            let columns = try db.columns(in: "purgedId").map(\.name)
+            #expect(columns == ["entity", "id", "purgedAt"])
+            try PurgedId.record(entity: "task", id: "abc", purgedAt: 1000, in: db)
+            try PurgedId.record(entity: "task", id: "abc", purgedAt: 2000, in: db)
+            let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM purgedId")
+            #expect(count == 1)
+            let changeCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM change")
+            #expect(changeCount == 0)
+        }
+    }
 }
 
 @Suite struct SyncFoundationOutboxTests {
@@ -251,6 +273,104 @@ import Testing
         let expectedAllDayCloneId = ID.v5(name: "\(allDay.id)|2026-11-15|")
         let allDayDone = try await api.completeTask(id: allDay.id)
         #expect(allDayDone.id == expectedAllDayCloneId)
+    }
+
+    @Test func completingAfterPurgingCloneUsesFreshIdAndNeverRewritesPurgedId() async throws {
+        let api = try await makeAPI()
+        let t = try await api.createTask(CreateTaskInput(
+            title: "吃藥",
+            start: "2026-11-15T09:00:00+0800",
+            timeZone: "Asia/Taipei",
+            repeat: "RRULE:FREQ=DAILY",
+            subtasks: ["維他命"]
+        ))
+        let expectedDeterministicId = ID.v5(name: "\(t.id)|2026-11-15|540")
+
+        let done1 = try await api.completeTask(id: t.id)
+        #expect(done1.id == expectedDeterministicId)
+
+        try await api.purgeTask(id: done1.id)
+        let seqAfterPurge = try #require(try await api.pendingChanges(limit: 500).last?.seq)
+
+        let purgedAt = try await api.database.writer.read { db in
+            try EpochMillis.fetchOne(db, sql: "SELECT purgedAt FROM purgedId WHERE entity = 'task' AND id = ?", arguments: [done1.id])
+        }
+        #expect(purgedAt == noon.epochMillis)
+
+        // Move master back to the same slot and complete again.
+        var moveBack = UpdateTaskInput(taskId: t.id)
+        moveBack.start = .set("2026-11-15T09:00:00+0800")
+        moveBack.timeZone = "Asia/Taipei"
+        _ = try await api.updateTask(moveBack)
+
+        let done2 = try await api.completeTask(id: t.id)
+        #expect(done2.id != done1.id)
+        #expect(done2.id == done2.id.lowercased())
+        #expect(UUID(uuidString: done2.id) != nil)
+        #expect(done2.status == 2)
+        #expect(done2.items.map(\.id) == [ID.v5(name: "\(done2.id)|\(t.items[0].id)")])
+
+        let allChanges = try await api.pendingChanges(limit: 500)
+        #expect(!allChanges.contains { $0.entity == "purgedId" })
+        let changesAfterPurge = allChanges.filter { ($0.seq ?? 0) > seqAfterPurge }
+        #expect(!changesAfterPurge.contains { $0.entityId == done1.id })
+        #expect(changesAfterPurge.contains { $0.entity == "task" && $0.entityId == done2.id && $0.op == "upsert" })
+    }
+
+    @Test func completingAfterUncompletingAndEditingClonePreservesCloneEdits() async throws {
+        let api = try await makeAPI()
+        let t = try await api.createTask(CreateTaskInput(
+            title: "吃藥",
+            start: "2026-11-15T09:00:00+0800",
+            timeZone: "Asia/Taipei",
+            repeat: "RRULE:FREQ=DAILY",
+            subtasks: ["維他命"]
+        ))
+        let done1 = try await api.completeTask(id: t.id)
+
+        _ = try await api.uncompleteTask(id: done1.id)
+        var editClone = UpdateTaskInput(taskId: done1.id)
+        editClone.title = "吃維他命（已改）"
+        _ = try await api.updateTask(editClone)
+
+        // Move master back to the same slot and complete again.
+        var moveBack = UpdateTaskInput(taskId: t.id)
+        moveBack.start = .set("2026-11-15T09:00:00+0800")
+        moveBack.timeZone = "Asia/Taipei"
+        _ = try await api.updateTask(moveBack)
+
+        let done2 = try await api.completeTask(id: t.id)
+        #expect(done2.id == done1.id)
+        #expect(done2.title == "吃維他命（已改）")
+        #expect(done2.status == 2)
+        #expect(done2.completedAt != nil)
+
+        let cloneCount = try await api.database.writer.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM task WHERE id != ? AND deletedAt IS NULL", arguments: [t.id]) ?? 0
+        }
+        #expect(cloneCount == 1)
+    }
+
+    @Test func recordingServerTombstoneAvoidsPurgedDeterministicCloneIdWithoutOutbox() async throws {
+        let api = try await makeAPI()
+        let t = try await api.createTask(CreateTaskInput(
+            title: "伺服端已清掉的重複實例",
+            start: "2026-11-15T09:00:00+0800",
+            timeZone: "Asia/Taipei",
+            repeat: "RRULE:FREQ=DAILY"
+        ))
+        let deterministicId = ID.v5(name: "\(t.id)|2026-11-15|540")
+        let changeCountBefore = try await api.pendingChanges(limit: 500).count
+
+        try await api.database.writer.write { db in
+            try PurgedId.record(entity: "task", id: deterministicId, purgedAt: noon.epochMillis, in: db)
+        }
+        let changeCountAfter = try await api.pendingChanges(limit: 500).count
+        #expect(changeCountAfter == changeCountBefore)
+
+        let done = try await api.completeTask(id: t.id)
+        #expect(done.id != deterministicId)
+        #expect(done.status == 2)
     }
 
     @Test func completingRecurringTaskWithFutureUpdatedAtUsesWallClockForHLCAndChangeAt() async throws {

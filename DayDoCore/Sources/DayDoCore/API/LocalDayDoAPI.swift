@@ -920,11 +920,20 @@ extension LocalDayDoAPI {
             }
             if let rule = t.repeatRule.flatMap(Recurrence.init(rrule:)), let s = t.schedule {
                 let minutePart = s.startMinute.map(String.init) ?? ""
-                let cloneId = ID.v5(name: "\(t.id)|\(s.startDay.description)|\(minutePart)")
+                let deterministicId = ID.v5(name: "\(t.id)|\(s.startDay.description)|\(minutePart)")
+                let cloneId = try PurgedId.contains(entity: "task", id: deterministicId, in: db) ? ID.make() : deterministicId
                 let existingClone = try TaskRecord.fetchOne(db, key: cloneId)
                 let done: TaskRecord
-                if let existing = existingClone, existing.deletedAt == nil, existing.status == 2 {
-                    done = existing
+                if var existing = existingClone, existing.deletedAt == nil {
+                    if existing.status == 2 {
+                        done = existing
+                    } else {
+                        existing.status = 2
+                        existing.completedAt = now
+                        existing.updatedAt = now
+                        try self.saveTask(db, existing)
+                        done = existing
+                    }
                 } else {
                     var copy = t
                     copy.id = cloneId
@@ -1002,10 +1011,12 @@ extension LocalDayDoAPI {
     }
 
     public func purgeTask(id: String) async throws {
+        let now = now()
         try await writer.write { db in
             let t = try self.taskRecord(db, id, includeDeleted: true)
             _ = try t.delete(db)
             try self.recordDelete(db, entity: "task", id: id)
+            try PurgedId.record(entity: "task", id: id, purgedAt: now, in: db)
         }
     }
 

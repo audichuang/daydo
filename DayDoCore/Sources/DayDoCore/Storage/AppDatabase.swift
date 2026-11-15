@@ -177,6 +177,14 @@ public final class AppDatabase: Sendable {
                 try HLC.saveLast(lastHLC, in: db)
             }
         }
+        m.registerMigration("v4") { db in
+            try db.create(table: "purgedId") { t in
+                t.column("entity", .text).notNull()
+                t.column("id", .text).notNull()
+                t.column("purgedAt", .integer).notNull()
+                t.primaryKey(["entity", "id"])
+            }
+        }
         return m
     }
 }
@@ -229,5 +237,30 @@ enum Outbox {
         case let (a?, b?): return (a as AnyObject).isEqual(b as AnyObject)
         default: return false
         }
+    }
+}
+
+// MARK: - Local purge bookkeeping
+
+enum PurgedId {
+    /// Records a permanently deleted entity id in `purgedId` without writing to
+    /// the `change` outbox. Called locally by `purgeTask` and by the sync engine
+    /// when it applies a server tombstone (a row with `purgedAt`).
+    static func record(entity: String, id: String, purgedAt: EpochMillis, in db: Database) throws {
+        try db.execute(
+            sql: """
+            INSERT INTO purgedId (entity, id, purgedAt) VALUES (?, ?, ?)
+            ON CONFLICT(entity, id) DO UPDATE SET purgedAt = excluded.purgedAt
+            """,
+            arguments: [entity, id, purgedAt]
+        )
+    }
+
+    static func contains(entity: String, id: String, in db: Database) throws -> Bool {
+        try Row.fetchOne(
+            db,
+            sql: "SELECT 1 FROM purgedId WHERE entity = ? AND id = ?",
+            arguments: [entity, id]
+        ) != nil
     }
 }
