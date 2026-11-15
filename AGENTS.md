@@ -8,8 +8,6 @@ DayDo 是待辦加日曆的 iPhone App，給自己和家人用，互動對標 Ti
 2. **同步與多人**（進行中）：Cloudflare Worker + D1 + Durable Objects，註冊登入、多裝置同步、共享清單、成員指派。
 3. **MCP**：掛在 Worker 上，讓 AI 讀寫任務，工具沿用 ticktick-mcp 的名稱與欄位。
 
-另外待做：桌面小工具（設計稿 6a/6b）、macOS 版；提醒超過 60 筆的背景補排、跟隨系統 Dynamic Type、寫入後縮小刷新範圍（目前每次寫入都重讀全部 lookup 並重排提醒）。
-
 設計稿在 `design/`（`design/source/*.html` 是原始設計元件，`design/shots/` 是截圖），畫面編號 1a–6b 對應設計板標題；設計稿用的是舊名 Doneday。
 
 ## 結構
@@ -28,6 +26,8 @@ design/      設計稿
 - API 名稱與欄位對齊 ticktick-mcp（私有 repo `audichuang/ticktick-mcp` 的 `src/tools.ts`，本機沒有 clone，用 `gh api repos/audichuang/ticktick-mcp/contents/src/tools.ts --jq .content | base64 -d` 讀）：priority 0/1/3/5、status 0/2、`TRIGGER:` 提醒、RRULE、ISO 8601 `start`/`due` + `timezone` + `all_day`。之後的 MCP 直接沿用那套工具名。
 - Schema 為同步預留：id 由 client 產生（UUIDv7），時間戳是 epoch ms，刪除用 `deletedAt` 軟刪除，每次寫入在同一 transaction 寫一筆 `change`（outbox，含變更欄位名）。改 schema 用新的 migration，已有的不改。
 - 排序鍵用 `SortKey`（fractional index），不要重新編號。
+- 互動照 TickTick，配色與字級照設計稿；兩者衝突時互動跟 TickTick。使用者會貼 TickTick 與 DayDo 的截圖附一句話回饋，先比對 TickTick 截圖的結構與互動再改。
+- 只處理正常使用會碰到的情況：需要異常 client、刻意重用 id、極端並發時序才會發生的，記進 `spec/sync.md`「已知限制」，不加新機制。功能範圍以家人實際會用到的為準，少用的往後排。
 - 這個 App 目前是測試用：畫面照使用者給的 TickTick 截圖做齊，後端（第二階段同步）還沒好的功能也保留入口，在本機可操作（例如邀請記為「等待同步」）；不放「尚未開放」「僅存於這台裝置」之類的說明文字。共享掛在清單上，不另開分頁。
 - API 回傳的 `schedule` 已換成裝置時區。更新任務時，只有日期或時間真的改了才送 `schedule`，否則會把任務原本的時區改掉（只改提醒也會中招）。
 - 牆鐘時間用該時區的年月日時分組件建立，不用「當天午夜＋分鐘數」：夏令時間切換日會差一小時。第二階段的 Worker 也照這條。
@@ -38,25 +38,19 @@ design/      設計稿
 cd DayDoCore && swift test                       # 核心單元測試
 cd server && npm ci && npm run check              # 同步後端：lint＋型別檢查＋單元測試＋本機 dev server 上的登入與同步 e2e
 cd ios && xcodegen generate                      # 改了 project.yml 或增刪檔案後
-cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
-  -destination 'platform=iOS Simulator,id=<DD 模擬器 UDID>' CODE_SIGNING_ALLOWED=NO   # UI 流程測試
+ios/scripts/uitest.sh [iphone|ipad] [xcodebuild 參數…]   # UI 流程測試，單一測試加 -only-testing:DayDoUITests/<類別>/<方法>
 ```
 
 啟動參數（Debug 用）：`-DayDoSkipLogin` 跳過登入、只用本機資料（UI 測試都要帶）；`-DayDoReset` 清空資料與偏好、`-DayDoDemo` 載入設計稿範例資料、`-DayDoScreen <名稱>` 直接開到某畫面（可用的名稱看 `ios/DayDo/App/DayDoApp.swift` 處理 `-DayDoScreen` 的 switch）。
 
 ## 模擬器
 
-代號 `DD`。常駐機：`DD iPhone 18 Pro`（iOS 27.2）、`DD iPad Pro 11`（`43C3F165-E561-41CB-A39D-84AD902CCF91`）。
+常駐機：`DD iPhone 18 Pro`（iOS 27.2）；iPad 版面用 `DD iPad Pro 11`。
 
-- iPad UI 測試：`cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo -destination 'platform=iOS Simulator,id=43C3F165-E561-41CB-A39D-84AD902CCF91' CODE_SIGNING_ALLOWED=NO`
-
-- Codex 審查與 agy 也會在 DD 常駐機跑 UI 測試；自己跑完整 UI 測試前先 `pgrep -fl xcodebuild`，有別的在跑就等它結束（同時跑會在啟動時失敗：`Failed to send signal 19`）。
+- UI 測試一律走 `ios/scripts/uitest.sh`：依名稱找機器、等別的 `xcodebuild` 跑完再開始（Codex、agy 和其他 session 共用這兩台，同時跑會在啟動時失敗：`Failed to send signal 19`）、關掉平行測試。
+- 平行 UI 測試才開臨時機，命名 `DD tmp <任務名>`，用 `ios/scripts/uitest.sh "DD tmp <任務名>"` 跑。
 - Xcode 27.2 沒有 Simulator.app，模擬器視窗改由 `Xcode.app/Contents/Applications/DeviceHub.app` 開啟（它也列出其他專案的機器，別按到別人的 Start）。
-- 通用規則（臨時機、收尾、DerivedData）見 `~/.agents/AGENTS.md` 的 iOS 模擬器那條，這裡只補 DD 專屬：
-  - 臨時機命名 `DD tmp <任務名>`，只在平行 UI 測試才開；用完當下 `xcrun simctl shutdown <UDID>`，worktree 收斂時 `xcrun simctl delete <UDID>`。
-  - 沒有開機腳本，直接 `xcrun simctl boot|shutdown <UDID>`。自己跑 `xcodebuild` 一律 `-destination 'platform=iOS Simulator,id=<UDID>' -parallel-testing-enabled NO`，不用 `booted` 別名。
-  - iPad 版面測試用 `DD iPad Pro 11`，其餘用 `DD iPhone 18 Pro`；UDID 用 `xcrun simctl list devices` 依名稱查。
-- 互動驗收用 `DayDoUITests`：跑測試時設 `TEST_RUNNER_DAYDO_SHOTS=<目錄>`，`shot()` 會把截圖寫進去，再和 `design/shots` 或使用者給的參考圖對照。
+- 互動驗收：跑測試時設 `TEST_RUNNER_DAYDO_SHOTS=<目錄>`，`DayDoUITests` 的 `shot()` 會把截圖寫進去，再和 `design/shots` 或使用者給的參考圖對照。
 
 ## 發版（TestFlight）
 
@@ -68,3 +62,7 @@ cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
 
 - 只在使用者要求發版或部署時才 `void deploy`。
 - 改了 App 的 Record 或 outbox 編碼，要用 `DAYDO_WRITE_FIXTURE=1 swift test` 重新產生 `spec/fixtures/sync-ops.json`，再跑 server 的測試。
+
+## Code Review Rules
+
+- 每個問題照常回報，但標明正常使用 DayDo 會不會碰到；只有異常 client 或極端時序才會發生的，建議記進 `spec/sync.md`「已知限制」，不要求加機制。
