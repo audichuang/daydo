@@ -46,6 +46,7 @@ cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
 
 代號 `DD`。常駐機：`DD iPhone 18 Pro`（iOS 27.2）。平行任務可臨時建 `DD …`，用完刪掉；不碰其他代號的模擬器。
 
+- Codex 審查與 agy 也會在 DD 常駐機跑 UI 測試；自己跑完整 UI 測試前先 `pgrep -fl xcodebuild`，有別的在跑就等它結束（同時跑會在啟動時失敗：`Failed to send signal 19`）。
 - Xcode 27.2 沒有 Simulator.app，模擬器視窗改由 `Xcode.app/Contents/Applications/DeviceHub.app` 開啟（它也列出其他專案的機器，別按到別人的 Start）。
 - 互動驗收用 `DayDoUITests`：跑測試時設 `TEST_RUNNER_DAYDO_SHOTS=<目錄>`，`shot()` 會把截圖寫進去，再和 `design/shots` 或使用者給的參考圖對照。
 
