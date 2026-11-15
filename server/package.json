@@ -6,18 +6,20 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "lint": "oxlint --deny-warnings",
     "typecheck": "void prepare && tsc --noEmit",
     "test": "vitest run",
     "e2e": "node scripts/e2e.mjs",
     "e2e:sync": "node scripts/e2e-sync.mjs",
     "smoke:prod": "node scripts/smoke-prod.mjs",
-    "check": "npm run typecheck && npm test && npm run e2e && npm run e2e:sync"
+    "check": "npm run lint && npm run typecheck && npm test && npm run e2e && npm run e2e:sync"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "devDependencies": {
+    "oxlint": "^1.93.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.8",
     "vitest": "^5.1.0",

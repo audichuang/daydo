@@ -146,7 +146,7 @@ export function shouldSplitTransaction(
 }
 
 function tableColumnsFor(entity: EntityName): string[] {
-  const cols = [...Object.keys(ENTITY_FIELDS[entity])];
+  const cols = Object.keys(ENTITY_FIELDS[entity]);
   if (isTaskChildEntity(entity)) {
     cols.push('projectId');
   }

@@ -45,7 +45,7 @@ DayDo puts your tasks and your schedule on the same screen. Every task can carry
 | Phase | What | State |
 | --- | --- | --- |
 | 1 | Standalone app — all data in on-device SQLite | Done, in TestFlight |
-| 2 | Sync & sharing — sign-in, multi-device sync, shared lists, assignees | In progress (runs locally, not deployed) |
+| 2 | Sync & sharing — sign-in, multi-device sync, shared lists, assignees | In progress |
 | 3 | MCP server — let AI assistants read and write your tasks | Planned |
 
 Also on the list: home-screen widgets and a macOS version.

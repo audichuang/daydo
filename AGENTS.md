@@ -26,27 +26,23 @@ design/      設計稿
 
 - UI 不直接碰資料庫：所有讀寫走 `DayDoAPI`（`LocalDayDoAPI` 是本機實作）。新增功能時先加 API 方法與 `spec/openapi.yaml`，再接 UI。
 - API 名稱與欄位對齊 ticktick-mcp（私有 repo `audichuang/ticktick-mcp` 的 `src/tools.ts`，本機沒有 clone，用 `gh api repos/audichuang/ticktick-mcp/contents/src/tools.ts --jq .content | base64 -d` 讀）：priority 0/1/3/5、status 0/2、`TRIGGER:` 提醒、RRULE、ISO 8601 `start`/`due` + `timezone` + `all_day`。之後的 MCP 直接沿用那套工具名。
-- Schema 為同步預留：id 由 client 產生（UUIDv7），時間戳是 epoch ms，刪除用 `deletedAt` 軟刪除，每次寫入在同一 transaction 寫一筆 `change`（outbox，含變更欄位名）。改 schema 用新的 migration，已有的不改（`v2` 是 `projectInvite`，`v3` 是同步用的 outbox 欄位）。
+- Schema 為同步預留：id 由 client 產生（UUIDv7），時間戳是 epoch ms，刪除用 `deletedAt` 軟刪除，每次寫入在同一 transaction 寫一筆 `change`（outbox，含變更欄位名）。改 schema 用新的 migration，已有的不改。
 - 排序鍵用 `SortKey`（fractional index），不要重新編號。
 - 這個 App 目前是測試用：畫面照使用者給的 TickTick 截圖做齊，後端（第二階段同步）還沒好的功能也保留入口，在本機可操作（例如邀請記為「等待同步」）；不放「尚未開放」「僅存於這台裝置」之類的說明文字。共享掛在清單上，不另開分頁。
 - API 回傳的 `schedule` 已換成裝置時區。更新任務時，只有日期或時間真的改了才送 `schedule`，否則會把任務原本的時區改掉（只改提醒也會中招）。
 - 牆鐘時間用該時區的年月日時分組件建立，不用「當天午夜＋分鐘數」：夏令時間切換日會差一小時。第二階段的 Worker 也照這條。
 
-## 分支與 worktree
-
-TestFlight 一律從合併後的 main 打包，不從 worktree 打。
-
 ## 指令
 
 ```bash
 cd DayDoCore && swift test                       # 核心單元測試
-cd server && npm ci && npm run check              # 同步後端：型別檢查＋單元測試＋本機 dev server 上的登入與同步 e2e
+cd server && npm ci && npm run check              # 同步後端：lint＋型別檢查＋單元測試＋本機 dev server 上的登入與同步 e2e
 cd ios && xcodegen generate                      # 改了 project.yml 或增刪檔案後
 cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
   -destination 'platform=iOS Simulator,id=<DD 模擬器 UDID>' CODE_SIGNING_ALLOWED=NO   # UI 流程測試
 ```
 
-啟動參數（Debug 用）：`-DayDoSkipLogin` 跳過登入、只用本機資料（UI 測試都要帶）；`-DayDoReset` 清空資料與偏好、`-DayDoDemo` 載入設計稿範例資料、`-DayDoScreen <drawer|detail|date|calendar|events|week|editlist|compose|settings|search>` 直接開到某畫面。
+啟動參數（Debug 用）：`-DayDoSkipLogin` 跳過登入、只用本機資料（UI 測試都要帶）；`-DayDoReset` 清空資料與偏好、`-DayDoDemo` 載入設計稿範例資料、`-DayDoScreen <名稱>` 直接開到某畫面（可用的名稱看 `ios/DayDo/App/DayDoApp.swift` 處理 `-DayDoScreen` 的 switch）。
 
 ## 模擬器
 
@@ -56,31 +52,19 @@ cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
 
 - Codex 審查與 agy 也會在 DD 常駐機跑 UI 測試；自己跑完整 UI 測試前先 `pgrep -fl xcodebuild`，有別的在跑就等它結束（同時跑會在啟動時失敗：`Failed to send signal 19`）。
 - Xcode 27.2 沒有 Simulator.app，模擬器視窗改由 `Xcode.app/Contents/Applications/DeviceHub.app` 開啟（它也列出其他專案的機器，別按到別人的 Start）。
+- 通用規則（臨時機、收尾、DerivedData）見 `~/.agents/AGENTS.md` 的 iOS 模擬器那條，這裡只補 DD 專屬：
+  - 臨時機命名 `DD tmp <任務名>`，只在平行 UI 測試才開；用完當下 `xcrun simctl shutdown <UDID>`，worktree 收斂時 `xcrun simctl delete <UDID>`。
+  - 沒有開機腳本，直接 `xcrun simctl boot|shutdown <UDID>`。自己跑 `xcodebuild` 一律 `-destination 'platform=iOS Simulator,id=<UDID>' -parallel-testing-enabled NO`，不用 `booted` 別名。
+  - iPad 版面測試用 `DD iPad Pro 11`，其餘用 `DD iPhone 18 Pro`；UDID 用 `xcrun simctl list devices` 依名稱查。
 - 互動驗收用 `DayDoUITests`：跑測試時設 `TEST_RUNNER_DAYDO_SHOTS=<目錄>`，`shot()` 會把截圖寫進去，再和 `design/shots` 或使用者給的參考圖對照。
 
 ## 發版（TestFlight）
 
-- App Store Connect app id `6834936769`，bundle id `com.audichuang.daydo`，team `37HFR5V2JJ`。
-- 群組：內部「自己」（使用者本人）；外部「家人」（使用者與家人，`tf distribute` 一律帶 `--group`）。新 build 只發給「自己」；要發給「家人」必須使用者明說這版已穩定。外部群組每個版本的第一個 build 要過 Apple 的 Beta App Review（審查聯絡資訊與測試說明已在 App Store Connect 設好）。`ios/ExportOptions.plist` 不能加回 `testFlightInternalTestingOnly`，加了上傳的 build 就不能送外部測試。
-- 家人用 Google 登入前，要把他的 Gmail 加進 Google Cloud 專案 `daydo-514804` 的 OAuth 測試使用者（測試模式）。
-- App 連正式環境用的 Access service token 在打包時由 `ios/scripts/gen-secrets.sh` 從 1Password 寫進 `ios/Secrets.xcconfig`（gitignored），`testflight.sh` 會自動跑；模擬器要連正式環境就先手動跑一次。
-- 沒有 Xcode Cloud，只有手動上傳：
-
-```bash
-cd ios && BUILD_NUMBER=$(~/Project/audi-skill/ios-release/scripts/tf next-build --app 6834936769) ./scripts/testflight.sh
-~/Project/audi-skill/ios-release/scripts/tf verify --app 6834936769 --build <N> --group "自己" --wait 20m
-```
-
-- 簽章走 Xcode 已登入的帳號；帶 API key（`-authenticationKey*`）時 Xcode 27.2 回 `Authentication failed: bearer token`。
-- build 號用 `tf next-build` 的流水號，不用時間戳。
-- 上傳後 build 不會自動進「自己」，照 `tf verify` 的 `next=` 跑 `tf distribute`，到 `RESULT READY` 才算發出去。
+發版前讀 `ios/RELEASE.md`。一律從合併後的 main 打包；新 build 只發「自己」，發給「家人」要使用者明說這版已穩定。
 
 ## 第二階段（進行中）
 
 同步協議（含進度與待決事項）寫在 `spec/sync.md`，改協議或改兩端的行為先改那份文件。
 
-- 正式環境 `https://daydo-api.audichuang.app`，前面是 Cloudflare Access（應用程式「DayDo API (iOS app only)」，只放行 service token）。部署與 secrets 照 `server/README.md` 的 Deploy；service token 與 `JWT_SECRET` 在 1Password `Agent` vault（「DayDo Cloudflare Access service token」「DayDo server JWT_SECRET」）。部署後跑 `npm run smoke:prod`。
-- 改了 D1 schema 的部署會先套 migration 並留還原點；只在使用者要求發版或部署時才 `void deploy`。
-- void 固定 1.8.0：npm 設定只裝發布滿 3 天的版本，新版會被拒，不要改 npm 設定繞過。
-- 每位使用者的 `Scope` DO（`u:<userId>`）用自己的 SQLite 存列資料，寫入包在 `transactionSync` 內同步完成；`SYNC_FAULT=split-txn` 是僅開發建置有效的故障開關，並發測試開啟時必須失敗。
+- 只在使用者要求發版或部署時才 `void deploy`。
 - 改了 App 的 Record 或 outbox 編碼，要用 `DAYDO_WRITE_FIXTURE=1 swift test` 重新產生 `spec/fixtures/sync-ops.json`，再跑 server 的測試。
