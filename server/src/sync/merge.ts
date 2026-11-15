@@ -48,6 +48,7 @@ function cloneRow(entity: EntityName, source: Record<string, unknown>): Record<s
 
 export interface MergeOptions {
   parentPurged?: boolean;
+  ignoreFields?: ReadonlySet<string>;
 }
 
 /**
@@ -103,7 +104,7 @@ export function mergeOp(
   for (const field of op.fields) {
     if (seenFields.has(field)) continue;
     seenFields.add(field);
-    if (nonSynced?.has(field)) continue;
+    if (nonSynced?.has(field) || options?.ignoreFields?.has(field)) continue;
     if (!Object.hasOwn(schema, field)) continue;
 
     if (op.entity === 'task' && SCHEDULE_FIELD_SET.has(field)) {

@@ -5,6 +5,7 @@ import {
   dbRecordToState,
   ENTITY_FIELDS,
   ENTITY_NAMES,
+  entityIdFromDbRow,
   hasAllRequiredFields,
   isEntityName,
   isTaskChildEntity,
@@ -47,6 +48,38 @@ export interface ScopePushResponse {
   serverTime: string;
 }
 
+export interface ExpectedProjectMember {
+  memberId: string;
+  role: 'editor' | 'viewer';
+}
+
+export interface ScopeProjectMemberInput {
+  projectId: string;
+  memberId: string;
+  role: 'editor' | 'viewer';
+  deleted: boolean;
+  nowMs?: number;
+}
+
+export interface ScopePurgeProjectInput {
+  projectId: string;
+  purgedAt: number;
+  opId?: string;
+  pusherUserId?: string;
+}
+
+export interface ScopePurgeProjectResponse {
+  projectId: string;
+  purgedRow: Record<string, unknown> | null;
+  clocks: Record<string, string>;
+  serverTime: string;
+}
+
+export interface ScopeProjectInfo {
+  name: string;
+  purgedAt: number | null;
+}
+
 export interface ScopePullInput {
   scope: string;
   scopeUserId: string;
@@ -56,6 +89,7 @@ export interface ScopePullInput {
   memberships: Record<string, MembershipRole>;
   backfillProjectIds?: string[];
   meMemberId: string | null;
+  expectedProjectMembers?: Record<string, ExpectedProjectMember[]>;
 }
 
 export type PullScopeRow =
@@ -90,6 +124,7 @@ interface OpAppliedRow {
 type TaskChildEntity = 'checklistItem' | 'attachment' | 'comment';
 const CHILD_ENTITIES: readonly TaskChildEntity[] = ['checklistItem', 'attachment', 'comment'];
 const CREATOR_ONLY_ENTITIES: readonly EntityName[] = ['member', 'folder', 'tag'];
+const PROJECT_NON_CREATOR_IGNORED_FIELDS = new Set<string>(['folderId']);
 const LIST_SCOPED_ENTITIES: ReadonlyArray<{
   entity: Exclude<EntityName, 'member' | 'folder' | 'tag'>;
   listCol: 'id' | 'projectId';
@@ -670,6 +705,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
       return {
         row: serializePublicRow(entity, state.row, state.purgedAt, {
           meMemberId: isScopeOwner ? meMemberId : null,
+          omitFolderId: !isScopeOwner,
         }),
         clocks: { ...state.clocks },
       };
@@ -764,6 +800,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
                 status: 'applied',
                 row: serializePublicRow(rawEntity, state.row, state.purgedAt, {
                   meMemberId: isScopeOwner ? meMemberId : null,
+                  omitFolderId: !isScopeOwner,
                 }),
                 clocks: { ...state.clocks },
               });
@@ -829,8 +866,14 @@ export class ScopeObject extends DurableObject<CloudBindings> {
         }
       } else if (op.entity === 'project') {
         if (op.op === 'delete') {
-          rejectOp(op.opId, 'Project deletion is not allowed via sync', op.entity, op.entityId);
-          continue;
+          if (input.memberships[op.entityId] !== 'owner') {
+            rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
+            continue;
+          }
+          if (!purgedSet.has(op.entityId)) {
+            rejectOp(op.opId, 'Project deletion must be purged via D1', op.entity, op.entityId);
+            continue;
+          }
         }
         const touchesDeletedAt =
           op.fields.includes('deletedAt') &&
@@ -857,14 +900,16 @@ export class ScopeObject extends DurableObject<CloudBindings> {
           );
           continue;
         }
-        if (purgedSet.has(op.entityId)) {
+        if (purgedSet.has(op.entityId) && op.op !== 'delete') {
           rejectOp(op.opId, 'Project is purged', op.entity, op.entityId);
           continue;
         }
-        const role = input.memberships[op.entityId];
-        if (role !== 'owner' && role !== 'editor') {
-          rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
-          continue;
+        if (op.op === 'upsert') {
+          const role = input.memberships[op.entityId];
+          if (role !== 'owner' && role !== 'editor') {
+            rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
+            continue;
+          }
         }
       } else if (op.entity === 'task') {
         if (!existing) {
@@ -885,6 +930,10 @@ export class ScopeObject extends DurableObject<CloudBindings> {
           }
         } else {
           const currentProjectId = String(existing.row.projectId);
+          if (purgedSet.has(currentProjectId)) {
+            rejectOp(op.opId, 'Project is purged', op.entity, op.entityId);
+            continue;
+          }
           const allowEmptyTombstoneReplay =
             existing.purgedAt !== null && currentProjectId === '' && isScopeOwner;
           if (!allowEmptyTombstoneReplay) {
@@ -927,6 +976,10 @@ export class ScopeObject extends DurableObject<CloudBindings> {
             ? String(parentTask.row.projectId)
             : (existing.projectId ?? '');
           childProjectId = currentProjectId;
+          if (purgedSet.has(currentProjectId)) {
+            rejectOp(op.opId, 'Project is purged', op.entity, op.entityId);
+            continue;
+          }
           const allowEmptyTombstoneReplay =
             existing.purgedAt !== null && currentProjectId === '' && isScopeOwner;
           if (!allowEmptyTombstoneReplay) {
@@ -948,6 +1001,10 @@ export class ScopeObject extends DurableObject<CloudBindings> {
           }
           const currentProjectId = String(parentTask.row.projectId);
           childProjectId = currentProjectId;
+          if (purgedSet.has(currentProjectId)) {
+            rejectOp(op.opId, 'Project is purged', op.entity, op.entityId);
+            continue;
+          }
           const allowEmptyTaskTombstone =
             parentTask.purgedAt !== null && currentProjectId === '' && isScopeOwner;
           if (!allowEmptyTaskTombstone) {
@@ -987,7 +1044,13 @@ export class ScopeObject extends DurableObject<CloudBindings> {
             row: op.row,
           },
           nowMs,
-          { parentPurged },
+          {
+            parentPurged,
+            ignoreFields:
+              op.entity === 'project' && !isScopeOwner
+                ? PROJECT_NON_CREATOR_IGNORED_FIELDS
+                : undefined,
+          },
         );
         batchHlcs.push(clamped.hlc);
       } catch (err) {
@@ -1094,6 +1157,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
         status: 'applied',
         row: serializePublicRow(op.entity, merged.row, merged.purgedAt, {
           meMemberId: isScopeOwner ? meMemberId : null,
+          omitFolderId: !isScopeOwner,
         }),
         clocks: merged.clocks,
       });
@@ -1137,7 +1201,263 @@ export class ScopeObject extends DurableObject<CloudBindings> {
     return rows.length > 0 ? String(rows[0].id) : null;
   }
 
+  getProjectInfo(input: { projectId: string }): ScopeProjectInfo | null {
+    const rows = this.ctx.storage.sql
+      .exec('SELECT name, purgedAt FROM project WHERE id = ?', input.projectId)
+      .toArray();
+    if (rows.length === 0) return null;
+    return {
+      name: String(rows[0].name),
+      purgedAt: typeof rows[0].purgedAt === 'number' ? rows[0].purgedAt : null,
+    };
+  }
+
+  private applyProjectMemberChanges(
+    store: ScopeStore,
+    nowMs: number,
+    changes: ScopeProjectMemberInput[],
+  ): void {
+    const initialSeq = store.getCounter();
+    let currentSeq = initialSeq;
+    const serverHlc = advanceServerHlc(nowMs, [], this.lastServerHlc);
+
+    for (const change of changes) {
+      const entityId = `${change.projectId}:${change.memberId}`;
+      const existing = store.getRow('projectMember', entityId);
+      if (existing && existing.purgedAt !== null) {
+        continue;
+      }
+
+      if (change.deleted) {
+        if (!existing || existing.row.deletedAt !== null) {
+          continue;
+        }
+        currentSeq += 1;
+        store.upsertRow('projectMember', entityId, {
+          ...existing,
+          row: {
+            ...existing.row,
+            updatedAt: nowMs,
+            deletedAt: nowMs,
+          },
+          clocks: {
+            ...existing.clocks,
+            updatedAt: serverHlc.formatted,
+            deletedAt: serverHlc.formatted,
+          },
+          serverSeq: currentSeq,
+        });
+      } else {
+        if (existing && existing.row.deletedAt === null && existing.row.role === change.role) {
+          continue;
+        }
+        currentSeq += 1;
+        if (existing) {
+          store.upsertRow('projectMember', entityId, {
+            ...existing,
+            row: {
+              ...existing.row,
+              role: change.role,
+              updatedAt: nowMs,
+              deletedAt: null,
+            },
+            clocks: {
+              ...existing.clocks,
+              role: serverHlc.formatted,
+              updatedAt: serverHlc.formatted,
+              deletedAt: serverHlc.formatted,
+            },
+            serverSeq: currentSeq,
+          });
+        } else {
+          store.upsertRow('projectMember', entityId, {
+            row: {
+              projectId: change.projectId,
+              memberId: change.memberId,
+              role: change.role,
+              createdAt: nowMs,
+              updatedAt: nowMs,
+              deletedAt: null,
+            },
+            clocks: {
+              projectId: serverHlc.formatted,
+              memberId: serverHlc.formatted,
+              role: serverHlc.formatted,
+              createdAt: serverHlc.formatted,
+              updatedAt: serverHlc.formatted,
+              deletedAt: serverHlc.formatted,
+            },
+            purgedAt: null,
+            serverSeq: currentSeq,
+          });
+        }
+      }
+    }
+
+    if (currentSeq !== initialSeq) {
+      store.setCounter(currentSeq);
+      this.lastServerHlc = serverHlc.hlc;
+    }
+  }
+
+  projectMember(input: ScopeProjectMemberInput): void {
+    const nowMs = input.nowMs ?? Date.now();
+    this.ctx.storage.transactionSync(() => {
+      const store = new SqliteScopeStore(this.ctx.storage.sql);
+      this.applyProjectMemberChanges(store, nowMs, [input]);
+    });
+  }
+
+  purgeProject(input: ScopePurgeProjectInput): ScopePurgeProjectResponse {
+    return this.ctx.storage.transactionSync(() => {
+      const store = new SqliteScopeStore(this.ctx.storage.sql);
+      const nowMs = Date.now();
+      const nextServerHlc = advanceServerHlc(nowMs, [], this.lastServerHlc);
+      this.lastServerHlc = nextServerHlc.hlc;
+
+      if (input.opId && input.pusherUserId) {
+        const seen = store.getOpApplied(input.opId);
+        if (seen && seen.userId === input.pusherUserId && seen.status === 'applied') {
+          const projState = store.getRow('project', input.projectId);
+          return {
+            projectId: input.projectId,
+            purgedRow: projState
+              ? serializePublicRow('project', projState.row, projState.purgedAt, {
+                  omitFolderId: false,
+                })
+              : null,
+            clocks: projState ? { ...projState.clocks } : {},
+            serverTime: nextServerHlc.formatted,
+          };
+        }
+      }
+
+      this.ctx.storage.sql.exec(
+        'INSERT INTO purgedProject (projectId, purgedAt) VALUES (?, ?) ON CONFLICT (projectId) DO NOTHING',
+        input.projectId,
+        input.purgedAt,
+      );
+
+      const initialSeq = store.getCounter();
+      let currentSeq = initialSeq;
+
+      for (const { entity, listCol } of LIST_SCOPED_ENTITIES) {
+        const rows = this.ctx.storage.sql
+          .exec(
+            `SELECT * FROM "${entity}" WHERE "${listCol}" = ? AND purgedAt IS NULL`,
+            input.projectId,
+          )
+          .toArray();
+        for (const r of rows) {
+          const state = dbRecordToState(entity, r as Record<string, unknown>);
+          const eid = entityIdFromDbRow(entity, r as Record<string, unknown>);
+          currentSeq += 1;
+          store.upsertRow(entity, eid, {
+            ...state,
+            purgedAt: input.purgedAt,
+            serverSeq: currentSeq,
+          });
+        }
+      }
+
+      if (currentSeq !== initialSeq) {
+        store.setCounter(currentSeq);
+      }
+
+      const projState = store.getRow('project', input.projectId);
+      if (input.opId && input.pusherUserId) {
+        store.insertOpApplied({
+          opId: input.opId,
+          userId: input.pusherUserId,
+          status: 'applied',
+          reason: null,
+          serverSeq: projState?.serverSeq ?? currentSeq,
+        });
+      }
+
+      return {
+        projectId: input.projectId,
+        purgedRow: projState
+          ? serializePublicRow('project', projState.row, projState.purgedAt, {
+              omitFolderId: false,
+            })
+          : null,
+        clocks: projState ? { ...projState.clocks } : {},
+        serverTime: nextServerHlc.formatted,
+      };
+    });
+  }
+
+  private reconcileProjectMembers(
+    expectedByProject: Record<string, ExpectedProjectMember[]>,
+  ): void {
+    const projectIds = Object.keys(expectedByProject);
+    if (projectIds.length === 0) return;
+    const sql = this.ctx.storage.sql;
+    const purgedRows = sql
+      .exec(
+        'SELECT projectId FROM purgedProject WHERE projectId IN (SELECT value FROM json_each(?))',
+        JSON.stringify(projectIds),
+      )
+      .toArray();
+    const purgedSet = new Set(purgedRows.map((r) => String(r.projectId)));
+
+    const existingRows = sql
+      .exec(
+        'SELECT * FROM projectMember WHERE projectId IN (SELECT value FROM json_each(?))',
+        JSON.stringify(projectIds),
+      )
+      .toArray();
+    const existingByProject = new Map<string, Map<string, StoredEntityState>>();
+    for (const r of existingRows) {
+      const state = dbRecordToState('projectMember', r as Record<string, unknown>);
+      const pid = String(state.row.projectId);
+      const mid = String(state.row.memberId);
+      let map = existingByProject.get(pid);
+      if (!map) {
+        map = new Map();
+        existingByProject.set(pid, map);
+      }
+      map.set(mid, state);
+    }
+
+    const changes: ScopeProjectMemberInput[] = [];
+    for (const pid of projectIds) {
+      if (purgedSet.has(pid)) continue;
+      const expectedList = expectedByProject[pid] ?? [];
+      const expectedMap = new Map(expectedList.map((m) => [m.memberId, m.role]));
+      const doMap = existingByProject.get(pid) ?? new Map<string, StoredEntityState>();
+
+      for (const [mid, role] of expectedMap) {
+        const existing = doMap.get(mid);
+        if (existing && existing.purgedAt !== null) continue;
+        if (!existing || existing.row.deletedAt !== null || existing.row.role !== role) {
+          changes.push({ projectId: pid, memberId: mid, role, deleted: false });
+        }
+      }
+      for (const [mid, existing] of doMap) {
+        if (existing.purgedAt === null && existing.row.deletedAt === null && !expectedMap.has(mid)) {
+          const existingRole =
+            existing.row.role === 'editor' || existing.row.role === 'viewer'
+              ? existing.row.role
+              : 'viewer';
+          changes.push({ projectId: pid, memberId: mid, role: existingRole, deleted: true });
+        }
+      }
+    }
+
+    if (changes.length === 0) return;
+    const nowMs = Date.now();
+    this.ctx.storage.transactionSync(() => {
+      const store = new SqliteScopeStore(this.ctx.storage.sql);
+      this.applyProjectMemberChanges(store, nowMs, changes);
+    });
+  }
+
   pull(input: ScopePullInput): ScopePullResponse {
+    if (input.expectedProjectMembers) {
+      this.reconcileProjectMembers(input.expectedProjectMembers);
+    }
     const sql = this.ctx.storage.sql;
     const isBackfill =
       Array.isArray(input.backfillProjectIds) && input.backfillProjectIds.length > 0;
@@ -1188,6 +1508,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
             entity,
             row: serializePublicRow(entity, state.row, state.purgedAt, {
               meMemberId: isCreator ? input.meMemberId : null,
+              omitFolderId: entity === 'project' && !isCreator,
             }),
             clocks: state.clocks,
             serverSeq: state.serverSeq,

@@ -4,8 +4,12 @@ import type * as schema from '@schema';
 import type { DrizzleD1Database } from 'void/db';
 import type {
   PushOpResult,
+  ScopeProjectInfo,
+  ScopeProjectMemberInput,
   ScopePullInput,
   ScopePullResponse,
+  ScopePurgeProjectInput,
+  ScopePurgeProjectResponse,
   ScopePushInput,
   ScopePushResponse,
 } from '../../durable-objects/scope';
@@ -26,6 +30,9 @@ export interface ScopeStub {
   push(input: ScopePushInput): Promise<ScopePushResponse>;
   pull(input: ScopePullInput): Promise<ScopePullResponse>;
   getInboxProjectId(input: { readableProjectIds: string[] }): Promise<string | null>;
+  getProjectInfo(input: { projectId: string }): Promise<ScopeProjectInfo | null>;
+  projectMember(input: ScopeProjectMemberInput): Promise<void>;
+  purgeProject(input: ScopePurgeProjectInput): Promise<ScopePurgeProjectResponse>;
 }
 
 const QUERY_CHUNK_SIZE = 50;
@@ -122,10 +129,11 @@ export async function executeSyncPush(
       }
     }
 
-    if (validated.ok && validated.op.op === 'upsert') {
+    if (validated.ok) {
       if (validated.op.entity === 'project') {
         projectIdsToCheck.add(validated.op.entityId);
       } else if (
+        validated.op.op === 'upsert' &&
         validated.op.entity === 'task' &&
         validated.op.fields.includes('projectId') &&
         Object.hasOwn(validated.op.row, 'projectId') &&
@@ -176,9 +184,13 @@ export async function executeSyncPush(
   const membershipQueryIdx = batch1Queries.length;
   batch1Queries.push(
     db
-      .select({ projectId: projectMembership.projectId, role: projectMembership.role })
+      .select({
+        projectId: projectMembership.projectId,
+        role: projectMembership.role,
+        removedAt: projectMembership.removedAt,
+      })
       .from(projectMembership)
-      .where(and(eq(projectMembership.userId, userId), isNull(projectMembership.removedAt))),
+      .where(eq(projectMembership.userId, userId)),
   );
 
   const batch1Results = (await db.batch(
@@ -203,10 +215,15 @@ export async function executeSyncPush(
     userRow && typeof userRow.meMemberId === 'string' ? userRow.meMemberId : null;
 
   let memberships: Record<string, MembershipRole> = {};
+  const removedOwnerProjects = new Set<string>();
   for (const row of batch1Results[membershipQueryIdx] ?? []) {
     const role = row.role;
-    if (role === 'owner' || role === 'editor' || role === 'viewer') {
-      memberships[String(row.projectId)] = role;
+    if (row.removedAt === null || row.removedAt === undefined) {
+      if (role === 'owner' || role === 'editor' || role === 'viewer') {
+        memberships[String(row.projectId)] = role;
+      }
+    } else if (role === 'owner') {
+      removedOwnerProjects.add(String(row.projectId));
     }
   }
 
@@ -218,6 +235,12 @@ export async function executeSyncPush(
   const inBatchRejectedTasks = new Map<string, string>();
   const inBatchNewProjects = new Set<string>();
   const projectOwnerBackfills = new Set<string>();
+  const ownerProjectDeletes: Array<{
+    opIndex: number;
+    projectId: string;
+    homeScope: string;
+    opId: string;
+  }> = [];
   const listScopeTargets: Array<{ opIndex: number; projectId: string; scope: string }> = [];
   const opTargetScope: Array<string | null> = new Array(ops.length).fill(null);
 
@@ -311,6 +334,24 @@ export async function executeSyncPush(
         }
       }
 
+      if (
+        entity === 'project' &&
+        validated.ok &&
+        validated.op.op === 'delete' &&
+        ((memberships[entityId] === 'owner' && !purgedSet.has(entityId)) ||
+          (purgedSet.has(entityId) &&
+            removedOwnerProjects.has(entityId) &&
+            targetScope === pusherScope))
+      ) {
+        ownerProjectDeletes.push({
+          opIndex: i,
+          projectId: entityId,
+          homeScope: targetScope,
+          opId: validated.op.opId,
+        });
+        continue;
+      }
+
       opTargetScope[i] = targetScope;
       if (entity === 'project' && validated.ok && validated.op.op === 'upsert') {
         if (targetScope === pusherScope && !memberships[entityId] && !purgedSet.has(entityId)) {
@@ -328,11 +369,20 @@ export async function executeSyncPush(
         typeof validated.op.row.projectId === 'string' &&
         validated.op.row.projectId.length > 0
       ) {
-        listScopeTargets.push({
-          opIndex: i,
-          projectId: validated.op.row.projectId,
-          scope: targetScope,
-        });
+        const targetPid = validated.op.row.projectId;
+        const targetRole = memberships[targetPid];
+        if (
+          targetRole === 'owner' ||
+          targetRole === 'editor' ||
+          inBatchNewProjects.has(targetPid) ||
+          projectOwnerBackfills.has(targetPid)
+        ) {
+          listScopeTargets.push({
+            opIndex: i,
+            projectId: targetPid,
+            scope: targetScope,
+          });
+        }
       }
       continue;
     }
@@ -354,7 +404,7 @@ export async function executeSyncPush(
       results[i] = {
         opId: op.opId,
         status: 'rejected',
-        reason: 'Project deletion is not allowed via sync',
+        reason: 'unknown-row',
         row: null,
         clocks: {},
       };
@@ -445,6 +495,29 @@ export async function executeSyncPush(
         clocks: {},
       };
       continue;
+    }
+    if (op.entity === 'task' && op.op === 'upsert') {
+      const targetPid =
+        Object.hasOwn(op.row, 'projectId') && typeof op.row.projectId === 'string'
+          ? op.row.projectId
+          : '';
+      const targetRole = targetPid ? memberships[targetPid] : undefined;
+      if (
+        !inBatchNewProjects.has(targetPid) &&
+        !projectOwnerBackfills.has(targetPid) &&
+        targetRole !== 'owner' &&
+        targetRole !== 'editor'
+      ) {
+        inBatchRejectedTasks.set(op.entityId, 'Forbidden');
+        results[i] = {
+          opId: op.opId,
+          status: 'rejected',
+          reason: 'Forbidden',
+          row: null,
+          clocks: {},
+        };
+        continue;
+      }
     }
     if (
       op.entity === 'project' &&
@@ -699,6 +772,84 @@ export async function executeSyncPush(
     }
   }
 
+  // Permanently delete lists requested by their owners (D1 purge + fan-out to listed scopes).
+  const extraServerTimes: string[] = [];
+  for (const del of ownerProjectDeletes) {
+    const purgeBatchResults = (await db.batch([
+      db
+        .insert(purgedProject)
+        .values({ projectId: del.projectId, purgedAt: nowMs })
+        .onConflictDoNothing(),
+      db
+        .update(projectMembership)
+        .set({ removedAt: nowMs })
+        .where(
+          and(
+            eq(projectMembership.projectId, del.projectId),
+            isNull(projectMembership.removedAt),
+          ),
+        ),
+      db
+        .select({ scope: listScopes.scope })
+        .from(listScopes)
+        .where(eq(listScopes.projectId, del.projectId)),
+    ])) as Array<Array<Record<string, unknown>>>;
+
+    const listedScopes = (purgeBatchResults[2] ?? []).map((r) => String(r.scope));
+    const scopesToPurge = Array.from(new Set([...listedScopes, del.homeScope]));
+    const settleResults = await Promise.allSettled(
+      scopesToPurge.map(async (targetScope) =>
+        getScopeStub(targetScope).purgeProject({
+          projectId: del.projectId,
+          purgedAt: nowMs,
+          opId: targetScope === del.homeScope ? del.opId : undefined,
+          pusherUserId: targetScope === del.homeScope ? userId : undefined,
+        }),
+      ),
+    );
+
+    const succeededScopes: string[] = [];
+    let homeResult: ScopePurgeProjectResponse | null = null;
+    let homeError: unknown = null;
+    for (let idx = 0; idx < scopesToPurge.length; idx += 1) {
+      const targetScope = scopesToPurge[idx];
+      const settled = settleResults[idx];
+      if (settled.status === 'fulfilled') {
+        succeededScopes.push(targetScope);
+        if (targetScope === del.homeScope) {
+          homeResult = settled.value;
+        }
+      } else if (targetScope === del.homeScope) {
+        homeError = settled.reason;
+      }
+    }
+
+    if (succeededScopes.length > 0) {
+      await db
+        .delete(listScopes)
+        .where(
+          and(
+            eq(listScopes.projectId, del.projectId),
+            inArray(listScopes.scope, succeededScopes),
+          ),
+        );
+    }
+
+    if (homeError !== null) {
+      throw homeError;
+    }
+
+    purgedSet.add(del.projectId);
+    delete memberships[del.projectId];
+    extraServerTimes.push(homeResult!.serverTime);
+    results[del.opIndex] = {
+      opId: del.opId,
+      status: 'applied',
+      row: homeResult!.purgedRow,
+      clocks: homeResult!.clocks,
+    };
+  }
+
   // Group remaining ops by target scope preserving relative order.
   const scopeGroups = new Map<string, Array<{ index: number; op: unknown }>>();
   for (let i = 0; i < ops.length; i += 1) {
@@ -746,14 +897,48 @@ export async function executeSyncPush(
     }
   }
 
+  const effectiveMeMemberId = boundMeMemberId ?? meMemberId;
+  let profileUpdate: { name: string | null; initial: string | null; color: string | null } | null =
+    null;
+  if (effectiveMeMemberId !== null) {
+    for (const { scope, group, response } of scopeResponses) {
+      if (scope !== pusherScope) continue;
+      for (let j = 0; j < group.length; j += 1) {
+        const res = response.results[j];
+        const opObj = group[j].op as Record<string, unknown>;
+        if (
+          res.status === 'applied' &&
+          res.row &&
+          opObj.entity === 'member' &&
+          opObj.entityId === effectiveMeMemberId &&
+          opObj.op === 'upsert'
+        ) {
+          profileUpdate = {
+            name: typeof res.row.name === 'string' ? res.row.name : null,
+            initial: typeof res.row.initial === 'string' ? res.row.initial : null,
+            color: typeof res.row.color === 'string' ? res.row.color : null,
+          };
+        }
+      }
+    }
+  }
+
   if (boundMeMemberId !== null) {
     await db
       .update(user)
-      .set({ meMemberId: boundMeMemberId })
+      .set({ meMemberId: boundMeMemberId, ...(profileUpdate ?? {}) })
       .where(and(eq(user.id, userId), isNull(user.meMemberId)));
+  } else if (profileUpdate !== null && effectiveMeMemberId !== null) {
+    await db
+      .update(user)
+      .set(profileUpdate)
+      .where(and(eq(user.id, userId), eq(user.meMemberId, effectiveMeMemberId)));
   }
 
-  const scopeServerTimes = scopeResponses.map((r) => r.response.serverTime);
+  const scopeServerTimes = [
+    ...extraServerTimes,
+    ...scopeResponses.map((r) => r.response.serverTime),
+  ];
   return {
     results: results as PushOpResult[],
     serverTime: nextServerTime(Math.max(Date.now(), nowMs), scopeServerTimes),

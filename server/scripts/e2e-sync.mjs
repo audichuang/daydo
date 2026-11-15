@@ -107,16 +107,21 @@ async function waitForHealth(baseUrl, child, getLogs) {
   throw new Error(`Timed out waiting for dev server at ${baseUrl}:\n${getLogs()}`);
 }
 
-async function postJson(baseUrl, routePath, body, token) {
-  const headers = { 'Content-Type': 'application/json' };
+async function requestJson(baseUrl, method, routePath, body, token) {
+  const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${baseUrl}${routePath}`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-  });
+  const init = { method, headers };
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+  const res = await fetch(`${baseUrl}${routePath}`, init);
   const data = await res.json().catch(() => null);
   return { status: res.status, data };
+}
+
+async function postJson(baseUrl, routePath, body, token) {
+  return requestJson(baseUrl, 'POST', routePath, body, token);
 }
 
 async function createUserToken(baseUrl, jwks, sub = `apple-sync-${randomUUID()}`) {
@@ -1614,6 +1619,452 @@ async function runTwoDeviceScenario({ baseUrl, jwks }) {
   assert.equal(dev1.snapshotRows()[`task:${taskB}`].updatedAt, baseMs2 + 20);
 }
 
+async function runSharingScenario({ baseUrl, jwks }) {
+  const userA = await createUserToken(baseUrl, jwks, `apple-share-a-${randomUUID()}`);
+  const userB = await createUserToken(baseUrl, jwks, `apple-share-b-${randomUUID()}`);
+
+  const baseMs = 1_700_005_000_000;
+  const meA = randomUUID();
+  const folderA = randomUUID();
+  const sharedList = randomUUID();
+  const privList = randomUUID();
+  const task1 = randomUUID();
+  const task2 = randomUUID();
+  const child1 = randomUUID();
+  const taskB = randomUUID();
+
+  const aSetup = await postJson(
+    baseUrl,
+    '/sync/push',
+    {
+      deviceId: userA.deviceId,
+      ops: [
+        {
+          opId: randomUUID(),
+          hlc: makeHlc(baseMs, 1, userA.deviceId),
+          entity: 'member',
+          entityId: meA,
+          op: 'upsert',
+          fields: ['id', 'name', 'initial', 'color', 'isMe', 'createdAt', 'updatedAt'],
+          row: {
+            id: meA,
+            name: 'Alice',
+            initial: 'AL',
+            color: '#FF3B30',
+            isMe: true,
+            createdAt: baseMs,
+            updatedAt: baseMs,
+          },
+        },
+        {
+          opId: randomUUID(),
+          hlc: makeHlc(baseMs, 2, userA.deviceId),
+          entity: 'folder',
+          entityId: folderA,
+          op: 'upsert',
+          fields: ['id', 'name', 'sortKey', 'createdAt', 'updatedAt'],
+          row: {
+            id: folderA,
+            name: 'A Folder',
+            sortKey: 'a0',
+            createdAt: baseMs,
+            updatedAt: baseMs,
+          },
+        },
+        {
+          ...makeProjectOp({
+            hlc: makeHlc(baseMs, 3, userA.deviceId),
+            projectId: sharedList,
+            ownerId: meA,
+            name: 'Family List',
+            now: baseMs,
+          }),
+          fields: [
+            'id',
+            'name',
+            'viewMode',
+            'kind',
+            'isInbox',
+            'ownerId',
+            'folderId',
+            'sortKey',
+            'showInSmart',
+            'notifyMode',
+            'createdAt',
+            'updatedAt',
+          ],
+          row: {
+            id: sharedList,
+            name: 'Family List',
+            viewMode: 'list',
+            kind: 'task',
+            isInbox: false,
+            ownerId: meA,
+            folderId: folderA,
+            sortKey: 'i',
+            showInSmart: 'all',
+            notifyMode: 'all',
+            createdAt: baseMs,
+            updatedAt: baseMs,
+          },
+        },
+        makeProjectOp({
+          hlc: makeHlc(baseMs, 4, userA.deviceId),
+          projectId: privList,
+          ownerId: meA,
+          name: 'Private List',
+          now: baseMs,
+        }),
+        fullTaskCreateOp({
+          hlc: makeHlc(baseMs, 5, userA.deviceId),
+          taskId: task1,
+          projectId: sharedList,
+          title: 'Shared Task 1',
+          now: baseMs,
+        }),
+        {
+          opId: randomUUID(),
+          hlc: makeHlc(baseMs, 6, userA.deviceId),
+          entity: 'checklistItem',
+          entityId: child1,
+          op: 'upsert',
+          fields: ['id', 'taskId', 'title', 'status', 'sortKey', 'createdAt', 'updatedAt'],
+          row: {
+            id: child1,
+            taskId: task1,
+            title: 'Milk',
+            status: 0,
+            sortKey: 'a0',
+            createdAt: baseMs,
+            updatedAt: baseMs,
+          },
+        },
+        fullTaskCreateOp({
+          hlc: makeHlc(baseMs, 7, userA.deviceId),
+          taskId: task2,
+          projectId: sharedList,
+          title: 'Shared Task 2',
+          now: baseMs,
+        }),
+      ],
+    },
+    userA.token,
+  );
+  assert.equal(aSetup.status, 200);
+  assert(aSetup.data.results.every((r) => r.status === 'applied'));
+
+  const invRes = await postJson(
+    baseUrl,
+    '/invites',
+    { projectId: sharedList, role: 'editor', email: 'bob@example.com' },
+    userA.token,
+  );
+  assert.equal(invRes.status, 200);
+  assert.equal(invRes.data.url, `daydo://invite/${invRes.data.code}`);
+
+  const infoRes = await requestJson(baseUrl, 'GET', `/invites/${invRes.data.code}`, undefined, userB.token);
+  assert.equal(infoRes.status, 200);
+  assert.equal(infoRes.data.projectName, 'Family List');
+  assert.equal(infoRes.data.inviterName, 'Alice');
+  assert.equal(infoRes.data.role, 'editor');
+
+  const acceptRes = await postJson(
+    baseUrl,
+    `/invites/${invRes.data.code}/accept`,
+    {},
+    userB.token,
+  );
+  assert.equal(acceptRes.status, 200);
+  assert.deepEqual(acceptRes.data, {
+    projectId: sharedList,
+    scope: userA.scope,
+    role: 'editor',
+  });
+
+  // B backfills the shared list and sees A's tasks + A in members, without folderId.
+  const bBackfill = await pullSync(baseUrl, userB.token, {
+    backfill: [sharedList],
+    cursors: {},
+  });
+  assert.equal(bBackfill.status, 200);
+  assert.deepEqual(bBackfill.data.memberships, [
+    { projectId: sharedList, scope: userA.scope, role: 'editor' },
+  ]);
+  assert(
+    bBackfill.data.members.some(
+      (m) => m.id === meA && m.name === 'Alice' && m.initial === 'AL' && m.color === '#FF3B30' && m.isMe === false,
+    ),
+    `Expected Alice in members: ${JSON.stringify(bBackfill.data.members)}`,
+  );
+  const bSliceA = getScopeSlice(bBackfill.data, userA.scope);
+  const bProjRow = bSliceA.rows.find((r) => r.entity === 'project' && r.row?.id === sharedList);
+  assert(bProjRow, 'Expected sharedList project row in backfill');
+  assert.equal(Object.hasOwn(bProjRow.row, 'folderId'), false, 'Non-creator must not receive folderId');
+  assert(bSliceA.rows.some((r) => r.entity === 'task' && r.row?.id === task1));
+  assert(bSliceA.rows.some((r) => r.entity === 'checklistItem' && r.row?.id === child1));
+  assert(bSliceA.rows.some((r) => r.entity === 'task' && r.row?.id === task2));
+
+  // B adds a task in A's shared list -> lives in B's scope, A sees it on pull.
+  const aInitialPull = await pullSync(baseUrl, userA.token, { cursors: {} });
+  const aCursors = Object.fromEntries(aInitialPull.data.scopes.map((s) => [s.scope, s.cursor]));
+
+  const bCreate = await postJson(
+    baseUrl,
+    '/sync/push',
+    {
+      deviceId: userB.deviceId,
+      ops: [
+        fullTaskCreateOp({
+          hlc: makeHlc(baseMs + 10, 0, userB.deviceId),
+          taskId: taskB,
+          projectId: sharedList,
+          title: 'B Task In Shared',
+          now: baseMs + 10,
+        }),
+      ],
+    },
+    userB.token,
+  );
+  assert.equal(bCreate.status, 200);
+  assert.equal(bCreate.data.results[0].status, 'applied');
+
+  const aPullB = await pullSync(baseUrl, userA.token, { cursors: aCursors });
+  assert.equal(aPullB.status, 200);
+  const aSliceB = getScopeSlice(aPullB.data, userB.scope);
+  assert(aSliceB.rows.some((r) => r.entity === 'task' && r.row?.id === taskB));
+
+  // Advance B's cursor on A's scope before A moves task1 (+ child1) to privList.
+  const bCursors = { [userA.scope]: bSliceA.cursor, [userB.scope]: aSliceB.cursor };
+  const aMove = await postJson(
+    baseUrl,
+    '/sync/push',
+    {
+      deviceId: userA.deviceId,
+      ops: [
+        makeTaskOp({
+          hlc: makeHlc(baseMs + 20, 0, userA.deviceId),
+          entityId: task1,
+          fields: ['projectId', 'updatedAt'],
+          row: { id: task1, projectId: privList, updatedAt: baseMs + 20 },
+        }),
+      ],
+    },
+    userA.token,
+  );
+  assert.equal(aMove.status, 200);
+  assert.equal(aMove.data.results[0].status, 'applied');
+
+  const bPullGone = await pullSync(baseUrl, userB.token, { cursors: bCursors });
+  assert.equal(bPullGone.status, 200);
+  const bGoneRows = getScopeSlice(bPullGone.data, userA.scope).rows;
+  assert(
+    bGoneRows.some((r) => r.entity === 'task' && r.entityId === task1 && r.gone === true),
+    `Expected gone for task1: ${JSON.stringify(bGoneRows)}`,
+  );
+  assert(
+    bGoneRows.some((r) => r.entity === 'checklistItem' && r.entityId === child1 && r.gone === true),
+    `Expected gone for child1: ${JSON.stringify(bGoneRows)}`,
+  );
+
+  // A changes B to viewer -> B's edit is rejected with the current row.
+  const downgradeRes = await requestJson(
+    baseUrl,
+    'PUT',
+    `/projects/${sharedList}/members/${userB.userId}`,
+    { role: 'viewer' },
+    userA.token,
+  );
+  assert.equal(downgradeRes.status, 200);
+
+  const bViewerEdit = await postJson(
+    baseUrl,
+    '/sync/push',
+    {
+      deviceId: userB.deviceId,
+      ops: [
+        makeTaskOp({
+          hlc: makeHlc(baseMs + 30, 0, userB.deviceId),
+          entityId: task2,
+          fields: ['title', 'updatedAt'],
+          row: { id: task2, title: 'Blocked Edit', updatedAt: baseMs + 30 },
+        }),
+      ],
+    },
+    userB.token,
+  );
+  assert.equal(bViewerEdit.status, 200);
+  assert.equal(bViewerEdit.data.results[0].status, 'rejected');
+  assert.equal(bViewerEdit.data.results[0].reason, 'Forbidden');
+  assert.equal(bViewerEdit.data.results[0].row.title, 'Shared Task 2');
+
+  // A removes B -> B's pull no longer lists sharedList in memberships.
+  const removeRes = await requestJson(
+    baseUrl,
+    'DELETE',
+    `/projects/${sharedList}/members/${userB.userId}`,
+    undefined,
+    userA.token,
+  );
+  assert.equal(removeRes.status, 200);
+
+  const bFinalPull = await pullSync(baseUrl, userB.token, { cursors: {} });
+  assert.equal(bFinalPull.status, 200);
+  assert.equal(
+    bFinalPull.data.memberships.some((m) => m.projectId === sharedList),
+    false,
+  );
+}
+
+async function runMoveWithChildScenario({ baseUrl, jwks }) {
+  const userA = await createUserToken(baseUrl, jwks, `apple-mwc-a-${randomUUID()}`);
+  const userB = await createUserToken(baseUrl, jwks, `apple-mwc-b-${randomUUID()}`);
+  const userC = await createUserToken(baseUrl, jwks, `apple-mwc-c-${randomUUID()}`);
+
+  const baseMs = 1_700_006_000_000;
+  const listP1 = randomUUID();
+  const listP2 = randomUUID();
+  const taskT = randomUUID();
+  const childC = randomUUID();
+
+  // A creates P1 + task T; C creates P2.
+  const pushA1 = await postJson(
+    baseUrl,
+    '/sync/push',
+    {
+      deviceId: userA.deviceId,
+      ops: [
+        makeProjectOp({
+          hlc: makeHlc(baseMs, 0, userA.deviceId),
+          projectId: listP1,
+          ownerId: 'm-a',
+          name: 'A Shared',
+          now: baseMs,
+        }),
+        fullTaskCreateOp({
+          hlc: makeHlc(baseMs, 1, userA.deviceId),
+          taskId: taskT,
+          projectId: listP1,
+          title: 'Moving Task',
+          now: baseMs,
+        }),
+      ],
+    },
+    userA.token,
+  );
+  assert.equal(pushA1.status, 200);
+  assert(pushA1.data.results.every((r) => r.status === 'applied'));
+
+  const pushC1 = await postJson(
+    baseUrl,
+    '/sync/push',
+    {
+      deviceId: userC.deviceId,
+      ops: [
+        makeProjectOp({
+          hlc: makeHlc(baseMs, 0, userC.deviceId),
+          projectId: listP2,
+          ownerId: 'm-c',
+          name: 'C Shared',
+          now: baseMs,
+        }),
+      ],
+    },
+    userC.token,
+  );
+  assert.equal(pushC1.status, 200);
+  assert(pushC1.data.results.every((r) => r.status === 'applied'));
+
+  // A invites B to P1; C invites A and B to P2.
+  const invP1 = await postJson(
+    baseUrl,
+    '/invites',
+    { projectId: listP1, role: 'editor' },
+    userA.token,
+  );
+  assert.equal(invP1.status, 200);
+  const invP2 = await postJson(
+    baseUrl,
+    '/invites',
+    { projectId: listP2, role: 'editor' },
+    userC.token,
+  );
+  assert.equal(invP2.status, 200);
+
+  assert.equal((await postJson(baseUrl, `/invites/${invP1.data.code}/accept`, {}, userB.token)).status, 200);
+  assert.equal((await postJson(baseUrl, `/invites/${invP2.data.code}/accept`, {}, userA.token)).status, 200);
+  assert.equal((await postJson(baseUrl, `/invites/${invP2.data.code}/accept`, {}, userB.token)).status, 200);
+
+  // Concurrent operations: B adds checklistItem C to task T while A moves task T from P1 -> P2.
+  const [bAddChild, aMoveTask] = await Promise.all([
+    postJson(
+      baseUrl,
+      '/sync/push',
+      {
+        deviceId: userB.deviceId,
+        ops: [
+          {
+            opId: randomUUID(),
+            hlc: makeHlc(baseMs + 10, 0, userB.deviceId),
+            entity: 'checklistItem',
+            entityId: childC,
+            op: 'upsert',
+            fields: ['id', 'taskId', 'title', 'status', 'sortKey', 'createdAt', 'updatedAt'],
+            row: {
+              id: childC,
+              taskId: taskT,
+              title: 'Checklist Surviving Move',
+              status: 0,
+              sortKey: 'a0',
+              createdAt: baseMs + 10,
+              updatedAt: baseMs + 10,
+            },
+          },
+        ],
+      },
+      userB.token,
+    ),
+    postJson(
+      baseUrl,
+      '/sync/push',
+      {
+        deviceId: userA.deviceId,
+        ops: [
+          makeTaskOp({
+            hlc: makeHlc(baseMs + 11, 0, userA.deviceId),
+            entityId: taskT,
+            fields: ['projectId', 'updatedAt'],
+            row: { id: taskT, projectId: listP2, updatedAt: baseMs + 11 },
+          }),
+        ],
+      },
+      userA.token,
+    ),
+  ]);
+  assert.equal(bAddChild.status, 200);
+  assert.equal(bAddChild.data.results[0].status, 'applied');
+  assert.equal(aMoveTask.status, 200);
+  assert.equal(aMoveTask.data.results[0].status, 'applied');
+
+  // After everyone pulls, task T (in P2) and checklistItem C survive and are visible to A, B, and C.
+  for (const u of [userA, userB, userC]) {
+    const pull = await pullSync(baseUrl, u.token, { cursors: {} });
+    assert.equal(pull.status, 200);
+    const sliceA = getScopeSlice(pull.data, userA.scope);
+    const latestTask = [...sliceA.rows].reverse().find((r) => r.entity === 'task' && r.row?.id === taskT);
+    const latestChild = [...sliceA.rows]
+      .reverse()
+      .find((r) => r.entity === 'checklistItem' && r.row?.id === childC);
+    assert(latestTask && latestTask.row.projectId === listP2, `Expected taskT in P2 for ${u.userId}`);
+    assert(
+      latestChild &&
+        latestChild.row.taskId === taskT &&
+        latestChild.row.title === 'Checklist Surviving Move' &&
+        !latestChild.row.purgedAt,
+      `Expected surviving checklistItem for ${u.userId}: ${JSON.stringify(sliceA.rows)}`,
+    );
+  }
+}
+
 const SCENARIOS = {
   fixture: runFixtureScenario,
   lww: runLwwScenario,
@@ -1626,6 +2077,8 @@ const SCENARIOS = {
   move_task: runMoveTaskScenario,
   child_task_id: runChildTaskIdScenario,
   two_device: runTwoDeviceScenario,
+  sharing: runSharingScenario,
+  move_with_child: runMoveWithChildScenario,
 };
 
 async function main() {

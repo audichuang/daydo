@@ -588,14 +588,24 @@ describe('Scope DO T5a rules', () => {
     expect(res.results[2]).toMatchObject({ opId: 'op-valid-task', status: 'applied' });
   });
 
-  it('rejects projectMember/projectInvite ops and project delete/archive ops via sync', async () => {
+  it('rejects projectMember/projectInvite ops, project soft-delete/archive, and non-owner delete; allows owner purge', async () => {
     const h = createHarness();
     const userId = 'u-pol';
-    await h.db.insert(schema.user).values({ id: userId, createdAt: 1_700_000_000_000 });
+    const editorId = 'u-pol-ed';
+    await h.db.insert(schema.user).values([
+      { id: userId, createdAt: 1_700_000_000_000 },
+      { id: editorId, createdAt: 1_700_000_000_000 },
+    ]);
     const createProj = await h.push(userId, 'dev-a', [
       makeProjectOp({ opId: 'op-p1', hlc: '1700000000000:0000:dev-a', id: 'p-1', name: 'Work' }),
     ]);
     expect(createProj.results[0].status).toBe('applied');
+    await h.db.insert(schema.projectMembership).values({
+      projectId: 'p-1',
+      userId: editorId,
+      role: 'editor',
+      createdAt: 1_700_000_000_000,
+    });
 
     const res = await h.push(userId, 'dev-a', [
       {
@@ -649,15 +659,6 @@ describe('Scope DO T5a rules', () => {
         row: { id: 'p-1', archivedAt: 2000 },
       },
       {
-        opId: 'op-p-harddel',
-        hlc: '1700000000005:0000:dev-a',
-        entity: 'project',
-        entityId: 'p-1',
-        op: 'delete',
-        fields: [],
-        row: {},
-      },
-      {
         opId: 'op-p-rename',
         hlc: '1700000000006:0000:dev-a',
         entity: 'project',
@@ -679,13 +680,42 @@ describe('Scope DO T5a rules', () => {
       row: { id: 'p-1', name: 'Work' },
     });
     expect(res.results[4]).toMatchObject({
-      status: 'rejected',
-      row: { id: 'p-1', name: 'Work' },
-    });
-    expect(res.results[5]).toMatchObject({
       status: 'applied',
       row: { id: 'p-1', name: 'Work Renamed' },
     });
+
+    const edDel = await h.push(editorId, 'dev-b', [
+      {
+        opId: 'op-p-ed-harddel',
+        hlc: '1700000000007:0000:dev-b',
+        entity: 'project',
+        entityId: 'p-1',
+        op: 'delete',
+        fields: [],
+        row: {},
+      },
+    ]);
+    expect(edDel.results[0]).toMatchObject({
+      status: 'rejected',
+      row: { id: 'p-1', name: 'Work Renamed' },
+    });
+
+    const ownerDel = await h.push(userId, 'dev-a', [
+      {
+        opId: 'op-p-harddel',
+        hlc: '1700000000008:0000:dev-a',
+        entity: 'project',
+        entityId: 'p-1',
+        op: 'delete',
+        fields: [],
+        row: {},
+      },
+    ]);
+    expect(ownerDel.results[0]).toMatchObject({
+      status: 'applied',
+      row: { id: 'p-1', name: 'Work Renamed' },
+    });
+    expect(ownerDel.results[0].row?.purgedAt).toEqual(expect.any(Number));
   });
 
   it('rejects partial upsert to unknown row without creating entityHome, listScopes, or DO row', async () => {
@@ -1303,12 +1333,16 @@ describe('Scope DO T5a regression fixes', () => {
       const stub = h.getScopeStub(scope);
       if (scope !== `u:${userA}`) return stub;
       return {
+        ...stub,
         push: async (input) => {
           scopeACalls += 1;
           return stub.push(input);
         },
         pull: (input) => stub.pull(input),
         getInboxProjectId: (input) => stub.getInboxProjectId(input),
+        getProjectInfo: (input) => stub.getProjectInfo(input),
+        projectMember: (input) => stub.projectMember(input),
+        purgeProject: (input) => stub.purgeProject(input),
       };
     };
 
@@ -1506,6 +1540,9 @@ describe('Scope DO T5a regression fixes', () => {
       return {
         pull: (input) => real.pull(input),
         getInboxProjectId: (input) => real.getInboxProjectId(input),
+        getProjectInfo: (input) => real.getProjectInfo(input),
+        projectMember: (input) => real.projectMember(input),
+        purgeProject: (input) => real.purgeProject(input),
         push: async (input) => {
           const res = await real.push(input);
           // A's DO push just finished (rejected); before A continues to postStmts, B creates the same project.

@@ -4,6 +4,9 @@ export const user = sqliteTable('user', {
   id: text('id').primaryKey(),
   createdAt: integer('createdAt').notNull(),
   meMemberId: text('meMemberId'),
+  name: text('name'),
+  initial: text('initial'),
+  color: text('color'),
 });
 
 export const identity = sqliteTable(
@@ -96,3 +99,18 @@ export const purgedProject = sqliteTable('purgedProject', {
   projectId: text('projectId').primaryKey(),
   purgedAt: integer('purgedAt').notNull(),
 });
+
+export const invite = sqliteTable(
+  'invite',
+  {
+    codeHash: text('codeHash').primaryKey(),
+    projectId: text('projectId').notNull(),
+    role: text('role').notNull(),
+    email: text('email'),
+    createdBy: text('createdBy').notNull(),
+    createdAt: integer('createdAt').notNull(),
+    expiresAt: integer('expiresAt').notNull(),
+    revokedAt: integer('revokedAt'),
+  },
+  (t) => [index('invite_projectId_idx').on(t.projectId)],
+);

@@ -391,8 +391,13 @@ export function buildDefaultRow(
   return out;
 }
 
+export function resolveMemberId(userId: string, meMemberId: string | null): string {
+  return meMemberId && meMemberId.length > 0 ? meMemberId : `u-${userId}`;
+}
+
 export interface SerializePublicRowOptions {
   meMemberId?: string | null;
+  omitFolderId?: boolean;
 }
 
 /** Convert a merged internal row (+ purgedAt) into the app's nil-as-absent JSON object. */
@@ -417,6 +422,9 @@ export function serializePublicRow(
   }
   if (entity === 'member') {
     out.isMe = typeof options?.meMemberId === 'string' && out.id === options.meMemberId;
+  }
+  if (entity === 'project' && options?.omitFolderId) {
+    delete out.folderId;
   }
   if (purgedAt !== null && purgedAt !== undefined) {
     out.purgedAt = purgedAt;
