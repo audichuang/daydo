@@ -150,6 +150,22 @@ public struct TaskSection: Codable, Hashable, Sendable, Identifiable {
     public var id: String
     public var title: String
     public var tasks: [TodoTask]
+    public var hasMore: Bool
+
+    public init(id: String, title: String, tasks: [TodoTask], hasMore: Bool = false) {
+        self.id = id
+        self.title = title
+        self.tasks = tasks
+        self.hasMore = hasMore
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        tasks = try c.decode([TodoTask].self, forKey: .tasks)
+        hasMore = try c.decodeIfPresent(Bool.self, forKey: .hasMore) ?? false
+    }
 }
 
 public struct SmartCounts: Codable, Hashable, Sendable {

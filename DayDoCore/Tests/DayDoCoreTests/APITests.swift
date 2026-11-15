@@ -101,11 +101,94 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         let counts = try await api.smartCounts()
         #expect(counts.today == 3)
         #expect(counts.inbox == 5)
-        let moved = try await api.postponeOverdue()
+        let overdueIds = sections.first(where: { $0.id == "overdue" })!.tasks.map(\.id)
+        let moved = try await api.postponeOverdue(taskIds: overdueIds)
         #expect(moved == 1)
         #expect(try await api.listSections(.smart(.today)).first?.id == "today")
         let inRange = try await api.listTasks(TaskQuery(from: LocalDay("2026-11-16")!, to: LocalDay("2026-11-16")!))
         #expect(Set(inRange.map(\.id)).contains(trip.id))
+    }
+
+    @Test func postponeOverdueOnlyTouchesSpecifiedTasks() async throws {
+        let api = try await makeAPI()
+        let projects = try await api.listProjects(includeArchived: false)
+        let work = projects[1]
+        let personal = projects[2]
+        let workOverdue = try await api.createTask(CreateTaskInput(projectId: work.id, title: "工作逾期", start: "2026-11-14T10:00"))
+        let personalOverdue = try await api.createTask(CreateTaskInput(projectId: personal.id, title: "個人逾期", start: "2026-11-13T11:00"))
+
+        let workSections = try await api.listSections(.project(work.id))
+        let workOverdueIds = workSections.first(where: { $0.id == "overdue" })!.tasks.map(\.id)
+        let moved = try await api.postponeOverdue(taskIds: workOverdueIds)
+        #expect(moved == 1)
+        #expect(try await api.getTask(id: workOverdue.id).schedule?.startDay == LocalDay("2026-11-15"))
+        #expect(try await api.getTask(id: personalOverdue.id).schedule?.startDay == LocalDay("2026-11-13"))
+    }
+
+    @Test func completeTaskWithStaleUpdatedAtIsNoOp() async throws {
+        let api = try await makeAPI()
+        let t = try await api.createTask(CreateTaskInput(title: "每日站會", start: "2026-11-15", repeat: "RRULE:FREQ=DAILY"))
+        let done = try await api.completeTask(id: t.id, ifUpdatedAt: t.updatedAt)
+        #expect(done.isCompleted)
+        #expect(try await api.getTask(id: t.id).schedule?.startDay == LocalDay("2026-11-16"))
+
+        // Second tap arriving with the stale updatedAt token does not advance again.
+        let second = try await api.completeTask(id: t.id, ifUpdatedAt: t.updatedAt)
+        #expect(second.id == t.id)
+        #expect(!second.isCompleted)
+        #expect(try await api.getTask(id: t.id).schedule?.startDay == LocalDay("2026-11-16"))
+    }
+
+    @Test func completeRepeatingTaskCrossesMidnightZoneWithIfUpdatedAt() async throws {
+        // Daily 15:30 Asia/Taipei: 2026-11-01 -> 11-01 00:30 PDT in LA; 2026-11-02 -> 11-01 23:30 PST in LA.
+        // Both localize to 2026-11-01 in America/Los_Angeles, so only ifUpdatedAt blocks the stale resend.
+        let la = TimeZone(identifier: "America/Los_Angeles")!
+        let now = ISO8601DateFormatter().date(from: "2026-11-01T20:00:00Z")!
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-test-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: try .inMemory(), clock: .fixed(now, timeZone: la), attachmentsDirectory: dir)
+        try await api.bootstrap()
+
+        let created = try await api.createTask(CreateTaskInput(
+            title: "跨時區每日任務",
+            start: "2026-11-01T15:30:00+08:00",
+            timeZone: "Asia/Taipei",
+            repeat: "RRULE:FREQ=DAILY"
+        ))
+        #expect(created.schedule?.startDay == LocalDay("2026-11-01"))
+        #expect(created.schedule?.startMinute == 30)
+
+        let done = try await api.completeTask(id: created.id, ifUpdatedAt: created.updatedAt)
+        #expect(done.isCompleted)
+        let afterFirst = try await api.getTask(id: created.id)
+        #expect(afterFirst.schedule?.startDay == LocalDay("2026-11-01"))
+        #expect(afterFirst.schedule?.startMinute == 23 * 60 + 30)
+        #expect(afterFirst.updatedAt > created.updatedAt)
+
+        // Resend with the original updatedAt token: must be a no-op with no second completed copy.
+        let resent = try await api.completeTask(id: created.id, ifUpdatedAt: created.updatedAt)
+        #expect(!resent.isCompleted)
+        #expect(resent.schedule?.startDay == LocalDay("2026-11-01"))
+        #expect(resent.schedule?.startMinute == 23 * 60 + 30)
+        let completed = try await api.getCompletedTasks(projectId: nil, limit: 50)
+        #expect(completed.count == 1)
+    }
+
+    @Test func listSectionsPagesCompletedAndTrash() async throws {
+        let api = try await makeAPI()
+        let work = try await api.listProjects(includeArchived: false)[1]
+        for i in 1...4 {
+            let t = try await api.createTask(CreateTaskInput(projectId: work.id, title: "done-\(i)"))
+            _ = try await api.completeTask(id: t.id)
+        }
+        let page1 = try await api.listSections(.project(work.id), limit: 2)
+        let completed1 = try #require(page1.first(where: { $0.id == "completed" }))
+        #expect(completed1.tasks.count == 2)
+        #expect(completed1.hasMore)
+
+        let page2 = try await api.listSections(.project(work.id), limit: 4)
+        let completed2 = try #require(page2.first(where: { $0.id == "completed" }))
+        #expect(completed2.tasks.count == 4)
+        #expect(!completed2.hasMore)
     }
 
     @Test func outboxRecordsFieldLevelChanges() async throws {

@@ -70,8 +70,16 @@ struct SearchScreen: View {
             .scrollDismissesKeyboard(.immediately)
         }
         .task(id: SearchKey(text: text, activeOnly: activeOnly, revision: model.revision)) {
-            try? await Task.sleep(for: .milliseconds(180))
-            results = (try? await model.api.searchTasks(text: text, activeOnly: activeOnly)) ?? []
+            do {
+                try await Task.sleep(for: .milliseconds(180))
+                let found = try await model.api.searchTasks(text: text, activeOnly: activeOnly)
+                guard !Task.isCancelled else { return }
+                results = found
+            } catch is CancellationError {
+                return
+            } catch {
+                if !Task.isCancelled { model.errorMessage = error.localizedDescription }
+            }
         }
         .onAppear { if text.isEmpty { focused = true } }
     }
@@ -165,6 +173,7 @@ struct SettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("demoLoaded") private var demoLoaded = false
     @State private var exporting: URL?
+    @State private var archivedProjects: [Project] = []
 
     var body: some View {
         @Bindable var model = model
@@ -212,6 +221,24 @@ struct SettingsSheet: View {
                 } footer: {
                     Text("資料目前只存在這台裝置。匯出格式與之後的同步 API 相同（snake_case JSON）。")
                 }
+                if !archivedProjects.isEmpty {
+                    Section("已封存的清單") {
+                        ForEach(archivedProjects) { p in
+                            HStack(spacing: 10) {
+                                ListDot(color: p.color, size: 9)
+                                Text(p.name).foregroundStyle(Palette.text)
+                                Spacer()
+                                Button("取消封存") {
+                                    var u = UpdateProjectInput(projectId: p.id)
+                                    u.archived = false
+                                    let input = u
+                                    Task { await model.perform { try await $0.updateProject(input) } }
+                                }
+                                .foregroundStyle(accent.text)
+                            }
+                        }
+                    }
+                }
                 Section("關於") {
                     LabeledContent("版本", value: (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "") + " (" + (Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "") + ")")
                 }
@@ -223,6 +250,17 @@ struct SettingsSheet: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
         }
         .presentationBackground(Palette.card)
+        .task(id: model.revision) {
+            do {
+                let all = try await model.api.listProjects(includeArchived: true)
+                guard !Task.isCancelled else { return }
+                archivedProjects = all.filter(\.archived)
+            } catch is CancellationError {
+                return
+            } catch {
+                if !Task.isCancelled { model.errorMessage = error.localizedDescription }
+            }
+        }
     }
 
     struct Export: Encodable {
@@ -236,9 +274,13 @@ struct SettingsSheet: View {
     func export() async -> URL? {
         do {
             let api = model.api
-            let active = try await api.listTasks(TaskQuery(includeCompleted: true))
-            let payload = Export(exportedAt: ISO8601DateFormatter().string(from: Date()), projects: try await api.listProjects(includeArchived: true),
-                                 folders: try await api.listFolders(), tags: try await api.listTags(), tasks: active)
+            let projects = try await api.listProjects(includeArchived: true)
+            var allTasks = try await api.listTasks(TaskQuery(includeCompleted: true))
+            for p in projects where p.archived {
+                allTasks += try await api.listTasks(TaskQuery(projectId: p.id, includeCompleted: true))
+            }
+            let payload = Export(exportedAt: ISO8601DateFormatter().string(from: Date()), projects: projects,
+                                 folders: try await api.listFolders(), tags: try await api.listTags(), tasks: allTasks)
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("DayDo-export.json")
             try DayDoJSON.encoder.encode(payload).write(to: url)
             return url

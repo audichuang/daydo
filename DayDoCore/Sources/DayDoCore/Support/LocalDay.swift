@@ -84,8 +84,10 @@ public struct LocalDay: Hashable, Comparable, Codable, Sendable, CustomStringCon
     public func date(minute: Int, in timeZone: TimeZone) -> Date {
         var cal = LocalDay.calendar
         cal.timeZone = timeZone
-        let base = cal.date(from: DateComponents(year: year, month: month, day: day))!
-        return cal.date(byAdding: .minute, value: minute, to: base)!
+        let dayOffset = minute >= 0 ? minute / 1440 : (minute - 1439) / 1440
+        let m = minute - dayOffset * 1440
+        let d = dayOffset == 0 ? self : adding(days: dayOffset)
+        return cal.date(from: DateComponents(year: d.year, month: d.month, day: d.day, hour: m / 60, minute: m % 60))!
     }
 
     public static let weekdaySymbols = ["日", "一", "二", "三", "四", "五", "六"]

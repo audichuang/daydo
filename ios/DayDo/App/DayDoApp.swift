@@ -9,7 +9,9 @@ struct DayDoApp: App {
 
     init() {
         let api = Self.makeAPI()
-        _model = State(initialValue: AppModel(api: api))
+        let m = AppModel(api: api)
+        _model = State(initialValue: m)
+        UNUserNotificationCenter.current().delegate = m.notificationDelegate
     }
 
     static let appGroup = "group.com.audichuang.daydo"
@@ -70,15 +72,39 @@ struct DayDoApp: App {
 /// Schedules local notifications for the next reminders (iOS keeps at most
 /// 64 pending requests per app, so only the nearest ones are registered).
 actor ReminderScheduler {
-    private var authorized: Bool?
+    private var isRescheduling = false
+    private var dirty = false
 
     func reschedule(api: LocalDayDoAPI) async {
+        if isRescheduling {
+            dirty = true
+            return
+        }
+        isRescheduling = true
+        defer { isRescheduling = false }
+        repeat {
+            dirty = false
+            await performReschedule(api: api)
+        } while dirty
+    }
+
+    private func performReschedule(api: LocalDayDoAPI) async {
         let center = UNUserNotificationCenter.current()
         guard let upcoming = try? await api.upcomingReminders(limit: 60) else { return }
-        if authorized == nil {
-            authorized = upcoming.isEmpty ? nil : ((try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false)
+        let settings = await center.notificationSettings()
+        let allowed: Bool
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            allowed = true
+        case .notDetermined:
+            guard !upcoming.isEmpty else { return }
+            allowed = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+        case .denied:
+            allowed = false
+        @unknown default:
+            allowed = false
         }
-        guard authorized == true else { return }
+        guard allowed else { return }
         center.removeAllPendingNotificationRequests()
         for r in upcoming {
             let content = UNMutableNotificationContent()
@@ -93,11 +119,42 @@ actor ReminderScheduler {
     }
 }
 
+@MainActor
+final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    weak var model: AppModel?
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        guard let id = response.notification.request.content.userInfo["taskId"] as? String else { return }
+        await MainActor.run {
+            model?.openDetailFromNotification(id)
+        }
+    }
+}
+
 /// `-DayDoScreen <name>` opens a screen directly (used for screenshots).
 @MainActor
 enum DebugLaunch {
     static func apply(to model: AppModel) async {
         let args = ProcessInfo.processInfo.arguments
+#if DEBUG
+        if args.contains("-DayDoSeedManyAllDay") {
+            let start = model.today.description
+            for n in 1...8 {
+                _ = try? await model.api.createTask(CreateTaskInput(title: "全天壓測 \(n)", start: start, allDay: true))
+            }
+            await model.didWrite()
+        }
+#endif
         guard let i = args.firstIndex(of: "-DayDoScreen"), i + 1 < args.count else { return }
         let screen = args[i + 1]
         if args.contains("-DayDoCompact") { model.compact = true }
@@ -105,6 +162,7 @@ enum DebugLaunch {
         switch screen {
         case "drawer": model.drawerOpen = true
         case "calendar": model.tab = .calendar
+        case "day": UserDefaults.standard.set("day", forKey: "calendarViewMode"); model.tab = .calendar
         case "events": UserDefaults.standard.set("month", forKey: "calendarViewMode"); model.tab = .calendar
         case "week": UserDefaults.standard.set("week", forKey: "calendarViewMode"); model.tab = .calendar
         case "search": model.tab = .search

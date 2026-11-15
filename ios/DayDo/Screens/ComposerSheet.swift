@@ -21,6 +21,8 @@ struct ComposerSheet: View {
     @State private var addingTag = false
     @State private var tagText = ""
     @State private var added = 0
+    @State private var isSubmitting = false
+    @State private var contentHeight: CGFloat = 168
     @FocusState private var focus: Field?
     enum Field { case title, note }
 
@@ -61,8 +63,16 @@ struct ComposerSheet: View {
         .padding(.horizontal, 18)
         .padding(.top, 18)
         .padding(.bottom, 10)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height
+        } action: { height in
+            let clamped = min(max(height, 168), 340)
+            if abs(contentHeight - clamped) > 1 {
+                contentHeight = clamped
+            }
+        }
         .frame(maxHeight: .infinity, alignment: .top)
-        .presentationDetents([.height(tags.isEmpty ? 168 : 206)])
+        .presentationDetents([.height(contentHeight)])
         .presentationBackground(Palette.card)
         .presentationCornerRadius(28)
         .presentationDragIndicator(.hidden)
@@ -98,7 +108,7 @@ struct ComposerSheet: View {
         }
     }
 
-    var canSave: Bool { !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var canSave: Bool { !isSubmitting && !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var toolbar: some View {
         HStack(spacing: 4) {
@@ -215,11 +225,16 @@ struct ComposerSheet: View {
 
     func submit(openDetail: Bool = false) {
         guard canSave else { return }
-        let input = CreateTaskInput(projectId: projectId, title: title, content: note, priority: priority,
+        let snapTitle = title
+        let snapNote = note
+        isSubmitting = true
+        let input = CreateTaskInput(projectId: projectId, title: snapTitle, content: snapNote, priority: priority,
                                     schedule: draft.schedule, reminders: draft.schedule == nil ? [] : draft.reminders,
                                     repeat: draft.schedule == nil ? nil : draft.repeatRule, tags: tags)
         Task {
-            guard let t = await model.perform({ try await $0.createTask(input) }) else { return }
+            let created = await model.perform { try await $0.createTask(input) }
+            isSubmitting = false
+            guard let t = created else { return }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             if openDetail {
                 dismiss()
@@ -227,8 +242,8 @@ struct ComposerSheet: View {
                 model.detailTaskId = t.id
             } else {
                 // Keep the composer open for the next task, like a quick-capture bar.
-                title = ""
-                note = ""
+                if title == snapTitle { title = "" }
+                if note == snapNote { note = "" }
                 added += 1
                 focus = .title
             }

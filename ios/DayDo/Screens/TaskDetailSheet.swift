@@ -365,7 +365,19 @@ struct TaskDetailSheet: View {
     // MARK: Behaviour
 
     func load() async {
-        guard let t = try? await model.api.getTask(id: taskId) else { dismiss(); return }
+        let t: TodoTask
+        do {
+            t = try await model.api.getTask(id: taskId)
+        } catch is CancellationError {
+            return
+        } catch DayDoError.notFound {
+            dismiss()
+            return
+        } catch {
+            model.errorMessage = error.localizedDescription
+            return
+        }
+        guard !Task.isCancelled else { return }
         let wasDirty = dirty
         let first = task == nil
         task = t
@@ -389,9 +401,7 @@ struct TaskDetailSheet: View {
     }
 
     func toggleDone(_ task: TodoTask) {
-        let id = task.id, done = task.isCompleted
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        Task { await model.perform { done ? try await $0.uncompleteTask(id: id) : try await $0.completeTask(id: id) } }
+        model.toggleComplete(task)
     }
 
     func addItem(_ task: TodoTask) {
@@ -445,13 +455,19 @@ struct TaskDetailSheet: View {
     func commitDate() {
         guard let task else { return }
         let d = draft
+        let initial = DateDraft(task: task, today: model.today)
+        let scheduleUnchanged = d.day == initial.day && d.endDay == initial.endDay
+            && d.allDay == initial.allDay && d.start == initial.start
+            && d.end == initial.end && d.timeZone == initial.timeZone
         model.updateTask(task.id) { u in
-            if let s = d.schedule {
-                u.schedule = .set(s)
-                u.reminders = d.reminders
-                u.repeat = d.repeatRule.map { .set($0) } ?? .clear
-            } else {
-                u.schedule = .clear
+            if !scheduleUnchanged {
+                u.schedule = d.schedule.map { .set($0) } ?? .clear
+            }
+            if d.schedule != nil {
+                if d.reminders != initial.reminders { u.reminders = d.reminders }
+                if d.repeatRule != initial.repeatRule {
+                    u.repeat = d.repeatRule.map { .set($0) } ?? .clear
+                }
             }
         }
         page = .detail

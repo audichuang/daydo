@@ -10,6 +10,7 @@ struct TaskListScreen: View {
 
     @State private var sections: [TaskSection] = []
     @State private var loaded = false
+    @State private var limits: [TaskScope: Int] = [:]
     @AppStorage("closedSections") private var closedRaw = "completed"
 
     var closed: Set<String> { Set(closedRaw.split(separator: ",").map(String.init)) }
@@ -31,7 +32,13 @@ struct TaskListScreen: View {
                     ForEach(sections) { sec in
                         SectionCard(section: sec, scope: scope, closed: closed.contains(sec.id)) { toggle(sec.id) }
                     }
-                    if !sections.isEmpty {
+                    if sections.contains(where: \.hasMore) {
+                        Button { loadMore() } label: {
+                            Text("載入更多").txt(13, .semibold).foregroundStyle(accent.text)
+                                .frame(maxWidth: .infinity, minHeight: 36)
+                        }
+                        .buttonStyle(.plain)
+                    } else if !sections.isEmpty {
                         Text("已顯示全部").txt(12).foregroundStyle(Palette.textFaint).frame(maxWidth: .infinity).padding(.vertical, 4)
                     }
                 }
@@ -54,8 +61,8 @@ struct TaskListScreen: View {
                     if case .project(let id) = scope {
                         Button("編輯清單", systemImage: "slider.horizontal.3") { model.editingProjectId = id }
                     }
-                    if sections.contains(where: { $0.id == "overdue" }) {
-                        Button("全部延到今天", systemImage: "arrow.uturn.forward") { postpone() }
+                    if let overdue = sections.first(where: { $0.id == "overdue" }) {
+                        Button("全部延到今天", systemImage: "arrow.uturn.forward") { postpone(overdue.tasks.map(\.id)) }
                     }
                     Button(closed.contains("completed") ? "顯示已完成" : "收合已完成", systemImage: "checkmark.circle") { toggle("completed") }
                     Button("設定", systemImage: "gearshape") { model.showSettings = true }
@@ -65,7 +72,7 @@ struct TaskListScreen: View {
                 .accessibilityLabel("更多選項")
             }
         }
-        .task(id: TaskReload(scope: scope, revision: model.revision)) { await load() }
+        .task(id: TaskReload(scope: scope, revision: model.revision, limit: limits[scope])) { await load() }
     }
 
     var subtitle: String {
@@ -80,12 +87,22 @@ struct TaskListScreen: View {
 
     func load() async {
         do {
-            sections = try await model.api.listSections(scope)
+            let loadedSections = try await model.api.listSections(scope, limit: limits[scope])
+            guard !Task.isCancelled else { return }
+            sections = loadedSections
             loaded = true
+        } catch is CancellationError {
+            return
         } catch {
             // A list deleted from another screen: fall back to Today.
             if case DayDoError.notFound = error { model.scope = .smart(.today) } else { model.errorMessage = error.localizedDescription }
         }
+    }
+
+    func loadMore() {
+        let current = sections.first(where: \.hasMore)?.tasks.count ?? 0
+        let step = (scope == .smart(.completed) || scope == .smart(.trash)) ? 300 : 30
+        limits[scope] = current + step
     }
 
     func toggle(_ id: String) {
@@ -94,7 +111,7 @@ struct TaskListScreen: View {
         withAnimation(.snappy) { closedRaw = c.sorted().joined(separator: ",") }
     }
 
-    func postpone() { Task { await model.perform { try await $0.postponeOverdue() } } }
+    func postpone(_ ids: [String]) { Task { await model.perform { try await $0.postponeOverdue(taskIds: ids) } } }
 
     func compose() {
         var req = ComposeRequest()
@@ -109,7 +126,7 @@ struct TaskListScreen: View {
     }
 }
 
-struct TaskReload: Hashable { var scope: TaskScope; var revision: Int }
+struct TaskReload: Hashable { var scope: TaskScope; var revision: Int; var limit: Int? }
 
 struct SectionCard: View {
     @Environment(AppModel.self) private var model
@@ -134,8 +151,11 @@ struct SectionCard: View {
                     Text(section.title).txt(15, .bold).foregroundStyle(titleColor)
                     Spacer()
                     if section.id == "overdue" {
-                        Button("全部延到今天") { Task { await model.perform { try await $0.postponeOverdue() } } }
-                            .txt(13, .semibold).foregroundStyle(accent.text).padding(.trailing, 6).buttonStyle(.plain)
+                        Button("全部延到今天") {
+                            let ids = section.tasks.map(\.id)
+                            Task { await model.perform { try await $0.postponeOverdue(taskIds: ids) } }
+                        }
+                        .txt(13, .semibold).foregroundStyle(accent.text).padding(.trailing, 6).buttonStyle(.plain)
                     }
                     Text("\(section.tasks.count)").txt(13).foregroundStyle(Palette.textTertiary)
                     Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textTertiary)
@@ -255,9 +275,7 @@ struct TaskRow: View {
     }
 
     func toggle() {
-        let id = task.id, done = task.isCompleted
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        Task { await model.perform { done ? try await $0.uncompleteTask(id: id) : try await $0.completeTask(id: id) } }
+        model.toggleComplete(task)
     }
 
     @ViewBuilder var menu: some View {

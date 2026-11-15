@@ -358,7 +358,7 @@ extension LocalDayDoAPI {
         try await writer.read { db in try self.fetchActive(db, query: query, smartOnly: false) }
     }
 
-    public func listSections(_ scope: TaskScope) async throws -> [TaskSection] {
+    public func listSections(_ scope: TaskScope, limit: Int?) async throws -> [TaskSection] {
         let today = today
         return try await writer.read { db in
             let meId = try self.me(db).id
@@ -372,22 +372,31 @@ extension LocalDayDoAPI {
                 case .inbox:
                     let pid = try self.inbox(db).id
                     let active = try self.fetchActive(db, query: TaskQuery(projectId: pid), smartOnly: false)
-                    let done = try self.completed(db, projectId: pid, limit: 30)
-                    return TaskGrouping.sections(for: scope, tasks: active, completed: done, today: today)
+                    let pageLimit = limit ?? 30
+                    let fetched = try self.completed(db, projectId: pid, limit: pageLimit + 1)
+                    let sections = TaskGrouping.sections(for: scope, tasks: active, completed: Array(fetched.prefix(pageLimit)), today: today)
+                    return self.markingHasMore(sections, sectionId: "completed", hasMore: fetched.count > pageLimit)
                 case .assigned:
                     let active = try self.fetchActive(db, query: TaskQuery(), smartOnly: false).filter { $0.assigneeId == meId }
                     return TaskGrouping.sections(for: scope, tasks: active, completed: [], today: today)
                 case .completed:
-                    return TaskGrouping.sections(for: scope, tasks: [], completed: try self.completed(db, projectId: nil, limit: 300), today: today)
+                    let pageLimit = limit ?? 300
+                    let fetched = try self.completed(db, projectId: nil, limit: pageLimit + 1)
+                    let sections = TaskGrouping.sections(for: scope, tasks: [], completed: Array(fetched.prefix(pageLimit)), today: today)
+                    return self.markingHasMore(sections, sectionId: "completed", hasMore: fetched.count > pageLimit)
                 case .trash:
-                    let recs = try TaskRecord.filter(Column("deletedAt") != nil).order(Column("deletedAt").desc).limit(300).fetchAll(db)
-                    return TaskGrouping.sections(for: scope, tasks: try self.tasks(db, recs), completed: [], today: today)
+                    let pageLimit = limit ?? 300
+                    let recs = try TaskRecord.filter(Column("deletedAt") != nil).order(Column("deletedAt").desc).limit(pageLimit + 1).fetchAll(db)
+                    let sections = TaskGrouping.sections(for: scope, tasks: try self.tasks(db, Array(recs.prefix(pageLimit))), completed: [], today: today)
+                    return self.markingHasMore(sections, sectionId: "trash", hasMore: recs.count > pageLimit)
                 }
             case .project(let pid):
                 _ = try self.projectRecord(db, pid)
                 let active = try self.fetchActive(db, query: TaskQuery(projectId: pid), smartOnly: false)
-                let done = try self.completed(db, projectId: pid, limit: 30)
-                return TaskGrouping.sections(for: scope, tasks: active, completed: done, today: today)
+                let pageLimit = limit ?? 30
+                let fetched = try self.completed(db, projectId: pid, limit: pageLimit + 1)
+                let sections = TaskGrouping.sections(for: scope, tasks: active, completed: Array(fetched.prefix(pageLimit)), today: today)
+                return self.markingHasMore(sections, sectionId: "completed", hasMore: fetched.count > pageLimit)
             case .tag(let name):
                 let active = try self.fetchActive(db, query: TaskQuery(tag: name), smartOnly: false)
                 return TaskGrouping.sections(for: scope, tasks: active, completed: [], today: today)
@@ -395,11 +404,21 @@ extension LocalDayDoAPI {
         }
     }
 
+    private func markingHasMore(_ sections: [TaskSection], sectionId: String, hasMore: Bool) -> [TaskSection] {
+        guard hasMore else { return sections }
+        return sections.map { sec in
+            guard sec.id == sectionId else { return sec }
+            var copy = sec
+            copy.hasMore = true
+            return copy
+        }
+    }
+
     func completed(_ db: Database, projectId: String?, limit: Int) throws -> [TodoTask] {
         let live = try liveProjectIds(db, smartOnly: false)
-        var req = TaskRecord.filter(Column("deletedAt") == nil && Column("status") == 2)
+        var req = TaskRecord.filter(Column("deletedAt") == nil && Column("status") == 2 && live.contains(Column("projectId")))
         if let projectId { req = req.filter(Column("projectId") == projectId) }
-        let recs = try req.order(Column("completedAt").desc).limit(limit).fetchAll(db).filter { live.contains($0.projectId) }
+        let recs = try req.order(Column("completedAt").desc).limit(limit).fetchAll(db)
         return try tasks(db, recs)
     }
 
@@ -572,12 +591,17 @@ extension LocalDayDoAPI {
     }
 
     /// Completing a repeating task records a completed copy and moves the
-    /// original to its next occurrence (TickTick behaviour).
-    public func completeTask(id: String) async throws -> TodoTask {
+    /// original to its next occurrence (TickTick behaviour). When
+    /// `ifUpdatedAt` is provided and no longer matches the stored `updatedAt`,
+    /// returns the task unchanged (optimistic-concurrency guard).
+    public func completeTask(id: String, ifUpdatedAt: EpochMillis?) async throws -> TodoTask {
         let now = now()
         return try await writer.write { db in
             var t = try self.taskRecord(db, id)
             if t.status == 2 { return try self.task(db, t) }
+            if let expected = ifUpdatedAt, t.updatedAt != expected {
+                return try self.task(db, t)
+            }
             if let rule = t.repeatRule.flatMap(Recurrence.init(rrule:)), let s = t.schedule {
                 var done = t
                 done.id = ID.make()
@@ -602,7 +626,7 @@ extension LocalDayDoAPI {
                 var guardCount = 0
                 while next < self.today && guardCount < 1000 { next = rule.next(after: next); guardCount += 1 }
                 t.schedule = s.moved(to: next)
-                t.updatedAt = now
+                t.updatedAt = max(now, t.updatedAt + 1)
                 try self.saveTask(db, t)
                 return try self.task(db, done)
             }
@@ -662,13 +686,14 @@ extension LocalDayDoAPI {
         return try await updateTask(u)
     }
 
-    public func postponeOverdue() async throws -> Int {
+    public func postponeOverdue(taskIds: [String]) async throws -> Int {
+        guard !taskIds.isEmpty else { return 0 }
+        let idSet = Set(taskIds)
         let now = now()
         let today = today
         return try await writer.write { db in
-            let live = try self.liveProjectIds(db, smartOnly: true)
             var n = 0
-            for var t in try TaskRecord.filter(Column("deletedAt") == nil && Column("status") == 0).fetchAll(db) where live.contains(t.projectId) {
+            for var t in try TaskRecord.filter(Column("deletedAt") == nil && Column("status") == 0 && idSet.contains(Column("id"))).fetchAll(db) {
                 guard let s = t.schedule?.localized(to: self.clock.timeZone()), s.lastDay < today else { continue }
                 // Keep the shape; land the last day on today.
                 t.schedule = s.moved(to: today.adding(days: -s.startDay.days(until: s.lastDay)))

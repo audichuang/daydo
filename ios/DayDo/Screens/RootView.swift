@@ -27,7 +27,12 @@ struct RootView: View {
             DrawerOverlay(open: $model.drawerOpen)
             }
         }
-        .sheet(item: Binding(get: { model.detailTaskId.map(TaskRef.init) }, set: { model.detailTaskId = $0?.id })) { ref in
+        .sheet(item: Binding(get: { model.detailTaskId.map(TaskRef.init) }, set: { model.detailTaskId = $0?.id }), onDismiss: {
+            if let next = model.pendingDetailTaskId {
+                model.pendingDetailTaskId = nil
+                model.detailTaskId = next
+            }
+        }) { ref in
             TaskDetailSheet(taskId: ref.id)
         }
         .sheet(item: $model.composing) { req in

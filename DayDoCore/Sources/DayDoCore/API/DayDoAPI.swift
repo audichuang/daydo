@@ -24,20 +24,20 @@ public protocol DayDoAPI: Sendable {
 
     // Tasks
     func listTasks(_ query: TaskQuery) async throws -> [TodoTask]
-    func listSections(_ scope: TaskScope) async throws -> [TaskSection]
+    func listSections(_ scope: TaskScope, limit: Int?) async throws -> [TaskSection]
     func searchTasks(text: String, activeOnly: Bool) async throws -> [TodoTask]
     func getTask(id: String) async throws -> TodoTask
     func createTask(_ input: CreateTaskInput) async throws -> TodoTask
     func updateTask(_ input: UpdateTaskInput) async throws -> TodoTask
-    func completeTask(id: String) async throws -> TodoTask
+    func completeTask(id: String, ifUpdatedAt: EpochMillis?) async throws -> TodoTask
     func uncompleteTask(id: String) async throws -> TodoTask
     func deleteTask(id: String) async throws
     func restoreTask(id: String) async throws -> TodoTask
     func purgeTask(id: String) async throws
     func moveTask(id: String, toProjectId: String) async throws -> TodoTask
     func getCompletedTasks(projectId: String?, limit: Int) async throws -> [TodoTask]
-    /// 「全部延到今天」: moves overdue tasks to today keeping their times.
-    func postponeOverdue() async throws -> Int
+    /// 「全部延到今天」: moves the specified overdue tasks to today keeping their times.
+    func postponeOverdue(taskIds: [String]) async throws -> Int
     func smartCounts() async throws -> SmartCounts
 
     // Checklist (子任務)
@@ -58,4 +58,16 @@ public protocol DayDoAPI: Sendable {
 
     // Reminders
     func upcomingReminders(limit: Int) async throws -> [ScheduledReminder]
+}
+
+// Convenience overloads with distinct signatures, so a conforming type that
+// forgets a requirement fails to compile instead of recursing forever.
+public extension DayDoAPI {
+    func listSections(_ scope: TaskScope) async throws -> [TaskSection] {
+        try await listSections(scope, limit: nil)
+    }
+
+    func completeTask(id: String) async throws -> TodoTask {
+        try await completeTask(id: id, ifUpdatedAt: nil)
+    }
 }

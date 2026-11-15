@@ -114,7 +114,11 @@ final class DayDoFlowTests: XCTestCase {
         let block = app.otherElements["正在編輯的時間區塊，可拖曳移動或調整起訖"]
         XCTAssertTrue(block.waitForExistence(timeout: 3))
         let start = block.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
-        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 60)))
+        // Quick drag over the block scrolls instead of moving it.
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 60)))
+        XCTAssertTrue(app.staticTexts["18:00 – 18:30"].waitForExistence(timeout: 2))
+        // Long press (~0.3s+) then drag moves the block.
+        start.press(forDuration: 0.4, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 65)))
         sleep(1)
         shot("09-time-block")
         XCTAssertTrue(app.staticTexts["19:00 – 19:30"].waitForExistence(timeout: 3), app.debugDescription)
@@ -239,5 +243,75 @@ final class DayDoFlowTests: XCTestCase {
         trashed.press(forDuration: 1.0)
         app.buttons["還原"].tap()
         XCTAssertTrue(trashed.waitForNonExistence(timeout: 3))
+    }
+
+    func testMultilineComposerYearTapAndArchive() {
+        dismissNotificationPrompt()
+
+        // 1. Composer with a 3-line wrapping title keeps send button visible.
+        app.buttons["新增任務"].firstMatch.tap()
+        let field = app.descendants(matching: .any)["composerTitle"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        field.typeText("這是一個會自動換行到第三行的長標題任務用來測試快速輸入面板的高度會隨著內容自動調整而不會遮擋下方按鈕")
+        let send = app.buttons["新增"]
+        XCTAssertTrue(send.waitForExistence(timeout: 3) && send.isHittable)
+        shot("22-composer-multiline")
+        app.buttons["composerMore"].tap()
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(field.waitForNonExistence(timeout: 3))
+
+        // 2. Year view tap a day -> opens day view at that date.
+        app.buttons["日曆"].tap()
+        let calMode = app.buttons["calendarMode"]
+        XCTAssertTrue(calMode.waitForExistence(timeout: 3))
+        calMode.tap()
+        app.buttons["年"].firstMatch.tap()
+        let todayCell = app.buttons["yearDay.\(dayString(offset: 0))"].firstMatch
+        XCTAssertTrue(todayCell.waitForExistence(timeout: 3))
+        todayCell.tap()
+        let dayModeBtn = app.buttons["切換檢視：目前日"]
+        XCTAssertTrue(dayModeBtn.waitForExistence(timeout: 3), app.debugDescription)
+        sleep(1)
+        shot("23-year-tap-day")
+
+        // 3. Archive a list, inspect 已封存的清單 in Settings, and restore it.
+        app.buttons["任務"].firstMatch.tap()
+        app.buttons["開啟清單抽屜"].tap()
+        let folder = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '工作與學習'")).firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 3))
+        folder.tap()
+        let work = app.buttons["drawer.list.工作"]
+        XCTAssertTrue(work.waitForExistence(timeout: 3))
+        work.tap()
+        app.buttons["更多選項"].tap()
+        app.buttons["編輯清單"].tap()
+        let archiveBtn = app.buttons["封存清單"]
+        XCTAssertTrue(archiveBtn.waitForExistence(timeout: 3))
+        archiveBtn.tap()
+
+        app.buttons["更多選項"].tap()
+        app.buttons["設定"].tap()
+        let unarchiveBtn = app.buttons["取消封存"].firstMatch
+        XCTAssertTrue(unarchiveBtn.waitForExistence(timeout: 3), app.debugDescription)
+        shot("24-archived")
+        unarchiveBtn.tap()
+        XCTAssertTrue(unarchiveBtn.waitForNonExistence(timeout: 3))
+    }
+
+    func testDayAllDayManyScrolls() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDemo", "-DayDoSeedManyAllDay", "-DayDoScreen", "day"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        let dayModeBtn = app.buttons["切換檢視：目前日"]
+        XCTAssertTrue(dayModeBtn.waitForExistence(timeout: 5), app.debugDescription)
+        let firstSeeded = app.buttons["全天壓測 1"].firstMatch
+        XCTAssertTrue(firstSeeded.waitForExistence(timeout: 3), app.debugDescription)
+        let lastSeeded = app.buttons["全天壓測 8"].firstMatch
+        XCTAssertTrue(lastSeeded.exists)
+        // Verify time grid stays visible below the capped 4-lane all-day strip.
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label ENDSWITH '空白時段，點兩下新增'")).firstMatch.isHittable)
+        shot("25-day-allday-many")
     }
 }

@@ -18,6 +18,7 @@ struct TimeBlockEditor: View {
     @State private var others: [TodoTask] = []
     @State private var allDayTitles: [String] = []
     @State private var dragStart: (Int, Int)?
+    @GestureState private var isMoving = false
 
     static let pxPerMinute: CGFloat = 1
     static let maxEnd = 26 * 60
@@ -195,7 +196,8 @@ struct TimeBlockEditor: View {
             .padding(.horizontal, 10).padding(.vertical, 6)
         }
         .frame(width: width, height: h)
-        .highPriorityGesture(dragGesture(.move))
+        .scaleEffect(isMoving ? 1.02 : 1)
+        .highPriorityGesture(moveGesture)
         .overlay(alignment: .top) { handle.offset(y: -12).highPriorityGesture(dragGesture(.start)).accessibilityLabel("拖曳調整開始時間").accessibilityValue(DateText.hm(s)) }
         .overlay(alignment: .bottom) { handle.offset(y: 12).highPriorityGesture(dragGesture(.end)).accessibilityLabel("拖曳調整結束時間").accessibilityValue(DateText.hm(e)) }
         .accessibilityElement(children: .contain)
@@ -210,6 +212,35 @@ struct TimeBlockEditor: View {
     }
 
     enum DragKind { case move, start, end }
+
+    /// Moving the whole block requires a 0.3s long press so vertical timeline
+    /// scrolling over the block does not accidentally reposition it.
+    var moveGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.3)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+            .updating($isMoving) { value, state, _ in
+                if case .second(true, _) = value { state = true }
+            }
+            .onChanged { value in
+                guard case .second(true, let drag?) = value else { return }
+                if dragStart == nil {
+                    dragStart = (s, e)
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                }
+                let (s0, e0) = dragStart!
+                let dm = Int((drag.translation.height / Self.pxPerMinute / 5).rounded()) * 5
+                let len = e0 - s0
+                let ns = max(0, min(1440 - 5, s0 + dm))
+                s = ns
+                e = min(ns + len, Self.maxEnd)
+            }
+            .onEnded { _ in
+                if dragStart != nil {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                }
+                dragStart = nil
+            }
+    }
 
     func dragGesture(_ kind: DragKind) -> some Gesture {
         DragGesture(minimumDistance: 2, coordinateSpace: .global)

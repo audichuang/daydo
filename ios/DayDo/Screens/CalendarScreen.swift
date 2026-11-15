@@ -193,7 +193,15 @@ struct CalendarScreen: View {
 
     func load() async {
         let q = TaskQuery(from: range.lowerBound, to: range.upperBound, includeCompleted: showCompleted, memberId: memberFilter)
-        tasks = (try? await model.api.listTasks(q)) ?? []
+        do {
+            let loaded = try await model.api.listTasks(q)
+            guard !Task.isCancelled else { return }
+            tasks = loaded
+        } catch is CancellationError {
+            return
+        } catch {
+            if !Task.isCancelled { model.errorMessage = error.localizedDescription }
+        }
     }
 
     var filtered: [TodoTask] {
@@ -253,9 +261,11 @@ struct CalendarScreen: View {
             .scrollIndicators(.hidden)
         case .year:
             ScrollView {
-                YearGrid(year: shownMonth.year, today: model.today, busy: busyDays) { m in
+                YearGrid(year: shownMonth.year, today: model.today, busy: busyDays, openMonth: { m in
                     withAnimation(.snappy) { month = m; selected = m; modeRaw = CalMode.list.rawValue; collapsed = false }
-                }
+                }, openDay: { d in
+                    withAnimation(.snappy) { selected = d; month = d.firstOfMonth; modeRaw = CalMode.day.rawValue }
+                })
                 .padding(.horizontal, 16)
                 .padding(.bottom, 170)
             }
@@ -391,7 +401,7 @@ struct CalendarScreen: View {
             }
             .padding(.bottom, 4)
             ForEach(Array(layout.weeks.enumerated()), id: \.offset) { _, w in
-                WeekRow(week: w, month: shownMonth, selected: sel, today: model.today, lanes: 5) { d in
+                WeekRow(week: w, month: shownMonth, selected: sel, today: model.today) { d in
                     withAnimation(.snappy) { selected = d; modeRaw = CalMode.day.rawValue }
                 } open: { id in model.detailTaskId = id }
             }
@@ -440,9 +450,7 @@ struct AgendaRow: View {
     }
 
     func toggle() {
-        let id = task.id, done = task.isCompleted
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        Task { await model.perform { done ? try await $0.uncompleteTask(id: id) : try await $0.completeTask(id: id) } }
+        model.toggleComplete(task)
     }
 }
 
@@ -508,36 +516,50 @@ enum AgendaText {
     }
 }
 
-/// 年: twelve mini months; tapping one opens it in 清單.
+/// 年: twelve mini months; tapping month title opens it in 清單, tapping a day opens 日 view.
 struct YearGrid: View {
     @Environment(\.accent) private var accent
     var year: Int
     var today: LocalDay
     var busy: Set<LocalDay>
-    var open: (LocalDay) -> Void
+    var openMonth: (LocalDay) -> Void
+    var openDay: (LocalDay) -> Void
 
     var body: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 3), spacing: 18) {
             ForEach(1...12, id: \.self) { m in
                 let first = LocalDay(year: year, month: m, day: 1)
-                Button { open(first) } label: {
-                    VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Button { openMonth(first) } label: {
                         Text("\(m)月").txt(15, .bold).foregroundStyle(first.month == today.month && year == today.year ? accent.text : Palette.text)
-                        let days = MonthLayout.gridDays(for: first)
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 2) {
-                            ForEach(days, id: \.self) { d in
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(year) 年 \(m) 月")
+
+                    let days = MonthLayout.gridDays(for: first)
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 2) {
+                        ForEach(days, id: \.self) { d in
+                            if d.month == m {
                                 let isToday = d == today
-                                Text(d.month == m ? "\(d.day)" : "")
-                                    .font(.system(size: 8.5, weight: isToday ? .bold : .regular))
-                                    .foregroundStyle(isToday ? accent.onAccent : (busy.contains(d) ? accent.text : Palette.textSecondary))
-                                    .frame(width: 13, height: 13)
-                                    .background(Circle().fill(isToday && d.month == m ? accent.color : .clear))
+                                Button { openDay(d) } label: {
+                                    Text("\(d.day)")
+                                        .font(.system(size: 8.5, weight: isToday ? .bold : .regular))
+                                        .foregroundStyle(isToday ? accent.onAccent : (busy.contains(d) ? accent.text : Palette.textSecondary))
+                                        .frame(width: 13, height: 13)
+                                        .background(Circle().fill(isToday ? accent.color : .clear))
+                                        .frame(maxWidth: .infinity, minHeight: 14)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("yearDay.\(d)")
+                                .accessibilityLabel(DateText.full(d))
+                            } else {
+                                Color.clear.frame(height: 14)
                             }
                         }
                     }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(year) 年 \(m) 月")
             }
         }
         .padding(.top, 8)
@@ -552,11 +574,17 @@ struct WeekRow: View {
     var month: LocalDay
     var selected: LocalDay
     var today: LocalDay
-    var lanes: Int
     var pick: (LocalDay) -> Void
     var open: (String) -> Void
 
     let laneH: CGFloat = 17
+
+    private var rowHeight: CGFloat {
+        let usedLanes = (week.bars.map(\.lane).max() ?? -1) + 1
+        let visibleLanes = max(1, usedLanes)
+        let bottomPad: CGFloat = week.overflow.isEmpty ? 8 : 18
+        return 36 + laneH * CGFloat(visibleLanes) + bottomPad
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -611,7 +639,7 @@ struct WeekRow: View {
                 }
             }
         }
-        .frame(height: 36 + laneH * CGFloat(lanes) + 18)
+        .frame(height: rowHeight)
     }
 }
 
@@ -672,30 +700,69 @@ struct TimeGrid: View {
                 .padding(.bottom, 4)
 
                 let ad = allDayItems
-                let laneCount = min(3, (ad.map(\.3).max() ?? -1) + 1)
-                if laneCount > 0 {
-                    ZStack(alignment: .topLeading) {
-                        Text("全天").font(.system(size: 10)).foregroundStyle(Palette.textFaint).frame(width: gutter).padding(.top, 4)
-                        ForEach(Array(ad.filter { $0.3 < 3 }.enumerated()), id: \.offset) { _, item in
-                            let (t, a, b, lane) = item
-                            let color = Color(hex: model.project(t.projectId)?.color ?? "#5B6461")
-                            Button { openTask(t.id) } label: {
-                                HStack(spacing: 0) {
-                                    Rectangle().fill(color).frame(width: 2)
-                                    Text(t.title).font(.system(size: 11, weight: .medium)).foregroundStyle(t.isCompleted ? Palette.done : Palette.text).lineLimit(1).padding(.horizontal, 4)
-                                    Spacer(minLength: 0)
-                                }
-                                .frame(width: colW * CGFloat(b - a + 1) - 3, height: 19)
-                                .background(RoundedRectangle(cornerRadius: 3).fill(color.opacity(0.28)))
-                                .clipShape(RoundedRectangle(cornerRadius: 3))
-                            }
-                            .buttonStyle(.plain)
-                            .offset(x: gutter + colW * CGFloat(a) + 1.5, y: CGFloat(lane) * 21 + 2)
-                        }
+                let isDay = days.count == 1
+                let totalLanes = (ad.map(\.3).max() ?? -1) + 1
+                let maxVisibleLanes = isDay ? 4 : 3
+                let laneCount = min(maxVisibleLanes, totalLanes)
+                let overflowByCol: [Int: Int] = {
+                    guard !isDay else { return [:] }
+                    var counts: [Int: Int] = [:]
+                    for (_, a, b, lane) in ad where lane >= maxVisibleLanes {
+                        for col in a...b { counts[col, default: 0] += 1 }
                     }
-                    .frame(height: CGFloat(laneCount) * 21 + 6, alignment: .topLeading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .overlay(alignment: .bottom) { Rectangle().fill(Palette.separator).frame(height: 1) }
+                    return counts
+                }()
+                if laneCount > 0 {
+                    if isDay {
+                        let visibleHeight = CGFloat(laneCount) * 21 + 6
+                        HStack(alignment: .top, spacing: 0) {
+                            Text("全天")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Palette.textFaint)
+                                .frame(width: gutter)
+                                .padding(.top, 4)
+                            ScrollView(.vertical, showsIndicators: totalLanes > maxVisibleLanes) {
+                                ZStack(alignment: .topLeading) {
+                                    ForEach(Array(ad.enumerated()), id: \.offset) { _, item in
+                                        let (t, a, b, lane) = item
+                                        allDayChip(t, width: colW * CGFloat(b - a + 1) - 3)
+                                            .offset(x: colW * CGFloat(a) + 1.5, y: CGFloat(lane) * 21 + 2)
+                                    }
+                                }
+                                .frame(width: colW, height: CGFloat(totalLanes) * 21 + 4, alignment: .topLeading)
+                            }
+                            .frame(height: visibleHeight)
+                        }
+                        .frame(height: visibleHeight, alignment: .topLeading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay(alignment: .bottom) { Rectangle().fill(Palette.separator).frame(height: 1) }
+                    } else {
+                        ZStack(alignment: .topLeading) {
+                            Text("全天").font(.system(size: 10)).foregroundStyle(Palette.textFaint).frame(width: gutter).padding(.top, 4)
+                            ForEach(Array(ad.filter { $0.3 < maxVisibleLanes }.enumerated()), id: \.offset) { _, item in
+                                let (t, a, b, lane) = item
+                                allDayChip(t, width: colW * CGFloat(b - a + 1) - 3)
+                                    .offset(x: gutter + colW * CGFloat(a) + 1.5, y: CGFloat(lane) * 21 + 2)
+                            }
+                            ForEach(overflowByCol.keys.sorted(), id: \.self) { col in
+                                let n = overflowByCol[col]!
+                                Button { tapDay(days[col]) } label: {
+                                    Text("+\(n)")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(accent.text)
+                                        .frame(width: colW - 3, height: 16, alignment: .leading)
+                                        .padding(.leading, 4)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .offset(x: gutter + colW * CGFloat(col) + 1.5, y: CGFloat(laneCount) * 21 + 2)
+                                .accessibilityLabel("還有 \(n) 項全天任務，點按切換至單日檢視")
+                            }
+                        }
+                        .frame(height: CGFloat(laneCount) * 21 + (overflowByCol.isEmpty ? 6 : 20), alignment: .topLeading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay(alignment: .bottom) { Rectangle().fill(Palette.separator).frame(height: 1) }
+                    }
                 }
 
                 ScrollViewReader { proxy in
@@ -759,6 +826,25 @@ struct TimeGrid: View {
         return c.hour! * 60 + c.minute!
     }
     var nowY: CGFloat { CGFloat(nowMinute) / 60 * hourH }
+
+    func allDayChip(_ t: TodoTask, width: CGFloat) -> some View {
+        let color = Color(hex: model.project(t.projectId)?.color ?? "#5B6461")
+        return Button { openTask(t.id) } label: {
+            HStack(spacing: 0) {
+                Rectangle().fill(color).frame(width: 2)
+                Text(t.title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(t.isCompleted ? Palette.done : Palette.text)
+                    .lineLimit(1)
+                    .padding(.horizontal, 4)
+                Spacer(minLength: 0)
+            }
+            .frame(width: width, height: 19)
+            .background(RoundedRectangle(cornerRadius: 3).fill(color.opacity(0.28)))
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+        }
+        .buttonStyle(.plain)
+    }
 
     func nowLine(colW: CGFloat) -> some View {
         HStack(spacing: 0) {

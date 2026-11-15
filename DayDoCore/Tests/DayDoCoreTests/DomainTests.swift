@@ -96,6 +96,22 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         #expect(Reminder(offsetSeconds: 32400).label(allDay: true) == "當天 09:00")
     }
 
+    @Test func dstSpringForwardPreservesWallClock() {
+        let la = TimeZone(identifier: "America/Los_Angeles")!
+        let springForward = day("2026-03-08")
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = la
+
+        let nineAM = springForward.date(minute: 9 * 60, in: la)
+        let comps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: nineAM)
+        #expect(comps.year == 2026 && comps.month == 3 && comps.day == 8 && comps.hour == 9 && comps.minute == 0)
+
+        let allDaySched = Schedule(startDay: springForward, timeZone: "America/Los_Angeles")
+        let fire = Reminder(offsetSeconds: 9 * 3600).fireDate(for: allDaySched)
+        let fireComps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: fire)
+        #expect(fireComps.year == 2026 && fireComps.month == 3 && fireComps.day == 8 && fireComps.hour == 9 && fireComps.minute == 0)
+    }
+
     @Test func nextOccurrences() {
         let sun = day("2026-11-15")
         #expect(sun.weekday == 0)

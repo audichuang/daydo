@@ -75,8 +75,20 @@ public struct Reminder: Hashable, Sendable {
     }
 
     public func fireDate(for schedule: Schedule) -> Date {
-        let anchor = schedule.startDay.date(minute: schedule.startMinute ?? 0, in: schedule.zone)
-        return anchor.addingTimeInterval(TimeInterval(offsetSeconds))
+        let tz = schedule.zone
+        if let startMinute = schedule.startMinute {
+            let anchor = schedule.startDay.date(minute: startMinute, in: tz)
+            return anchor.addingTimeInterval(TimeInterval(offsetSeconds))
+        }
+        let dayOffset = offsetSeconds >= 0 ? offsetSeconds / 86400 : -((-offsetSeconds + 86399) / 86400)
+        let rem = offsetSeconds - dayOffset * 86400
+        let day = schedule.startDay.adding(days: dayOffset)
+        var cal = LocalDay.calendar
+        cal.timeZone = tz
+        return cal.date(from: DateComponents(
+            year: day.year, month: day.month, day: day.day,
+            hour: rem / 3600, minute: (rem % 3600) / 60, second: rem % 60
+        ))!
     }
 
     /// Presets shown in the date panel (4b).

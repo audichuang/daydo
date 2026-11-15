@@ -29,6 +29,18 @@ final class AppModel {
     var scope: TaskScope = .smart(.today)
     var drawerOpen = false
     var detailTaskId: String?
+    /// Task opened from a notification while another detail sheet was open;
+    /// shown after that sheet is dismissed so unsaved edits are not replaced.
+    var pendingDetailTaskId: String?
+
+    /// Opens a task's detail without replacing a detail sheet that is already open.
+    func openDetailFromNotification(_ id: String) {
+        if let current = detailTaskId, current != id {
+            pendingDetailTaskId = id
+        } else {
+            detailTaskId = id
+        }
+    }
     var composing: ComposeRequest?
     var editingProjectId: String?
     var showSettings = false
@@ -39,7 +51,11 @@ final class AppModel {
     var textScale: Double { didSet { UserDefaults.standard.set(textScale, forKey: "textScale") } }
     var openFolders: Set<String> { didSet { UserDefaults.standard.set(Array(openFolders), forKey: "openFolders") } }
 
+    /// Task ids currently executing `completeTask` to ignore double-taps.
+    private(set) var completingIds: Set<String> = []
+
     let reminders = ReminderScheduler()
+    let notificationDelegate = NotificationDelegate()
 
     init(api: LocalDayDoAPI) {
         self.api = api
@@ -48,6 +64,7 @@ final class AppModel {
         compact = d.bool(forKey: "compact")
         textScale = d.object(forKey: "textScale") as? Double ?? 1
         openFolders = Set(d.stringArray(forKey: "openFolders") ?? [])
+        notificationDelegate.model = self
     }
 
     var accent: AccentTheme { AccentTheme(hex: accentHex) }
@@ -90,6 +107,23 @@ final class AppModel {
         edit(&u)
         let input = u
         Task { await perform { try await $0.updateTask(input) } }
+    }
+
+    /// Completes or uncompletes a task while preventing double-tap re-entry.
+    func toggleComplete(_ task: TodoTask) {
+        let id = task.id
+        if task.isCompleted {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Task { await perform { try await $0.uncompleteTask(id: id) } }
+            return
+        }
+        guard completingIds.insert(id).inserted else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let ifUpdatedAt = task.updatedAt
+        Task {
+            defer { completingIds.remove(id) }
+            await perform { try await $0.completeTask(id: id, ifUpdatedAt: ifUpdatedAt) }
+        }
     }
 
     func didWrite() async {

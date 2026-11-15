@@ -122,6 +122,7 @@ paths:
         - { name: view, in: query, schema: { type: string, enum: [today, tomorrow, next7, inbox, assigned, completed, trash] } }
         - { name: project_id, in: query, schema: { type: string } }
         - { name: tag, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
       responses:
         "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/TaskSection" } } } } }
   /tasks/search:
@@ -149,7 +150,16 @@ paths:
   /tasks/postpone-overdue:
     post:
       operationId: postpone_overdue
-      description: 全部延到今天 — moves every overdue active task so it ends today, keeping times.
+      description: 全部延到今天 — moves the given overdue active tasks so each ends today, keeping times.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [task_ids]
+              properties:
+                task_ids: { type: array, items: { type: string } }
       responses:
         "200": { description: Number of tasks moved, content: { application/json: { schema: { type: object, properties: { moved: { type: integer } } } } } }
   /tasks/{task_id}:
@@ -174,6 +184,14 @@ paths:
     post:
       operationId: complete_task
       description: Returns the completed task (for repeating tasks, the completed copy).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                if_updated_at: { type: integer, description: Optimistic-concurrency token; if the stored updated_at differs, returns the task unchanged. }
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Task" } } } }
   /tasks/{task_id}/uncomplete:
@@ -387,6 +405,7 @@ components:
         id: { type: string, description: "overdue | today | tomorrow | later | nodate | completed | trash | day:YYYY-MM-DD" }
         title: { type: string }
         tasks: { type: array, items: { $ref: "#/components/schemas/Task" } }
+        has_more: { type: boolean }
     SmartCounts:
       type: object
       properties:
