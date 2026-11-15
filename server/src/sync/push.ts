@@ -254,6 +254,54 @@ export async function executeSyncPush(
 
     if (knownHome.has(key)) {
       const targetScope = knownHome.get(key)!;
+      if (
+        validated.ok &&
+        validated.op.op === 'upsert' &&
+        hasAllRequiredFields(entity, validated.op.fields)
+      ) {
+        if (isTaskChildEntity(entity)) {
+          const taskId =
+            Object.hasOwn(validated.op.row, 'taskId') &&
+            typeof validated.op.row.taskId === 'string'
+              ? validated.op.row.taskId
+              : '';
+          const parentRejectReason = taskId ? inBatchRejectedTasks.get(taskId) : undefined;
+          if (parentRejectReason) {
+            results[i] = {
+              opId: validated.op.opId,
+              status: 'rejected',
+              reason: parentRejectReason,
+              row: null,
+              clocks: {},
+            };
+            continue;
+          }
+          const taskHome = taskId ? knownHome.get(entityHomeKey('task', taskId)) : undefined;
+          if (taskHome ? targetScope !== taskHome : targetScope !== pusherScope) {
+            results[i] = {
+              opId: validated.op.opId,
+              status: 'rejected',
+              reason: 'id-in-other-scope',
+              row: null,
+              clocks: {},
+            };
+            continue;
+          }
+        } else if (targetScope !== pusherScope) {
+          if (entity === 'task') {
+            inBatchRejectedTasks.set(entityId, 'id-in-other-scope');
+          }
+          results[i] = {
+            opId: validated.op.opId,
+            status: 'rejected',
+            reason: 'id-in-other-scope',
+            row: null,
+            clocks: {},
+          };
+          continue;
+        }
+      }
+
       opTargetScope[i] = targetScope;
       if (entity === 'project' && validated.ok && validated.op.op === 'upsert') {
         if (targetScope === pusherScope && !memberships[entityId] && !purgedSet.has(entityId)) {
@@ -328,13 +376,23 @@ export async function executeSyncPush(
       }
       const taskId =
         Object.hasOwn(op.row, 'taskId') && typeof op.row.taskId === 'string' ? op.row.taskId : '';
-      const parentScope = taskId ? knownHome.get(entityHomeKey('task', taskId)) : undefined;
-      if (!parentScope) {
-        const parentRejectReason = taskId ? inBatchRejectedTasks.get(taskId) : undefined;
+      const parentRejectReason = taskId ? inBatchRejectedTasks.get(taskId) : undefined;
+      if (parentRejectReason) {
         results[i] = {
           opId: op.opId,
           status: 'rejected',
-          reason: parentRejectReason ?? 'unknown-row',
+          reason: parentRejectReason,
+          row: null,
+          clocks: {},
+        };
+        continue;
+      }
+      const parentScope = taskId ? knownHome.get(entityHomeKey('task', taskId)) : undefined;
+      if (!parentScope) {
+        results[i] = {
+          opId: op.opId,
+          status: 'rejected',
+          reason: 'unknown-row',
           row: null,
           clocks: {},
         };
@@ -669,66 +727,21 @@ export async function executeSyncPush(
     }),
   );
 
-  const existingKeySet = new Set<string>();
   let boundMeMemberId: string | null = null;
   for (const { scope, group, response } of scopeResponses) {
     for (let j = 0; j < group.length; j += 1) {
       results[group[j].index] = response.results[j];
-    }
-    for (const k of response.existingKeys) {
-      existingKeySet.add(entityHomeKey(k.entity, k.entityId));
     }
     if (scope === pusherScope && response.boundMeMemberId) {
       boundMeMemberId = response.boundMeMemberId;
     }
   }
 
-  const postStmts: BatchItem<'sqlite'>[] = [];
   if (boundMeMemberId !== null) {
-    postStmts.push(
-      db
-        .update(user)
-        .set({ meMemberId: boundMeMemberId })
-        .where(and(eq(user.id, userId), isNull(user.meMemberId))),
-    );
-  }
-
-  // Clean up any newly-bound entityHome entries whose rows do not exist in the DO.
-  const rejectedNewKeys: Array<{ entity: EntityName; entityId: string }> = [];
-  for (const key of newlyWonKeys) {
-    if (!existingKeySet.has(key)) {
-      const entry = inBatchNewHome.get(key);
-      if (entry) {
-        rejectedNewKeys.push({ entity: entry.entity, entityId: entry.entityId });
-      }
-    }
-  }
-  for (const chunk of chunkArray(rejectedNewKeys, PAIR_CHUNK_SIZE)) {
-    postStmts.push(
-      db
-        .delete(entityHome)
-        .where(
-          or(
-            ...chunk.map((k) =>
-              and(eq(entityHome.entity, k.entity), eq(entityHome.entityId, k.entityId)),
-            ),
-          ),
-        ),
-    );
-  }
-  const rejectedProjectIds = rejectedNewKeys
-    .filter((k) => k.entity === 'project')
-    .map((k) => k.entityId);
-  for (const chunk of chunkArray(rejectedProjectIds, QUERY_CHUNK_SIZE)) {
-    postStmts.push(
-      db
-        .delete(projectMembership)
-        .where(and(inArray(projectMembership.projectId, chunk), eq(projectMembership.userId, userId))),
-    );
-  }
-
-  if (postStmts.length > 0) {
-    await db.batch(postStmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+    await db
+      .update(user)
+      .set({ meMemberId: boundMeMemberId })
+      .where(and(eq(user.id, userId), isNull(user.meMemberId)));
   }
 
   return {

@@ -1093,7 +1093,7 @@ describe('Scope DO T5a regression fixes', () => {
     expect(removedRes.results[0]).toMatchObject({ status: 'rejected', reason: 'Forbidden' });
   });
 
-  it('Finding 2 (class fix): replay reports appliedKeys/existingKeys and rejected concurrent op preserves live entityHome', async () => {
+  it('Finding 2: replay returns applied/gone without rollback and rejected concurrent op preserves live entityHome', async () => {
     const h = createHarness();
     const userId = 'u-f2-class';
     await h.db.insert(schema.user).values({ id: userId, createdAt: 1_700_000_000_000 });
@@ -1119,7 +1119,7 @@ describe('Scope DO T5a regression fixes', () => {
       meMemberId: null,
       ops: [taskOp],
     });
-    expect(first.appliedKeys).toEqual([{ entity: 'task', entityId: 'task-R' }]);
+    expect(first.results[0].status).toBe('applied');
 
     const replay = await stub.push({
       scope: `u:${userId}`,
@@ -1132,10 +1132,8 @@ describe('Scope DO T5a regression fixes', () => {
       ops: [taskOp],
     });
     expect(replay.results[0].status).toBe('applied');
-    expect(replay.appliedKeys).toEqual([{ entity: 'task', entityId: 'task-R' }]);
-    expect(replay.existingKeys).toEqual([{ entity: 'task', entityId: 'task-R' }]);
 
-    // Even when gone:true (no longer a member), replay still reports appliedKeys/existingKeys.
+    // Even when gone:true (no longer a member), replay still succeeds with gone:true.
     const goneReplay = await stub.push({
       scope: `u:${userId}`,
       scopeUserId: userId,
@@ -1147,8 +1145,6 @@ describe('Scope DO T5a regression fixes', () => {
       ops: [taskOp],
     });
     expect(goneReplay.results[0]).toMatchObject({ status: 'applied', gone: true });
-    expect(goneReplay.appliedKeys).toEqual([{ entity: 'task', entityId: 'task-R' }]);
-    expect(goneReplay.existingKeys).toEqual([{ entity: 'task', entityId: 'task-R' }]);
 
     // Concurrent valid create + rejected op for same task-Y: rejected op must not delete live entityHome.
     // Seed a rejected opId in the DO first so the second concurrent request gets rejected in DO.
@@ -1199,5 +1195,347 @@ describe('Scope DO T5a regression fixes', () => {
       .prepare('SELECT scope FROM entityHome WHERE entity = ? AND entityId = ?')
       .get('task', 'task-Y') as { scope: string } | undefined;
     expect(homeY?.scope).toBe(`u:${userId}`);
+  });
+
+  it('Finding 1 (new): rejects full creates for ids already bound to another scope with id-in-other-scope, no gone, no listScopes, no DO call', async () => {
+    const h = createHarness();
+    const userA = 'u-f1-a';
+    const userB = 'u-f1-b';
+    await h.db.insert(schema.user).values([
+      { id: userA, createdAt: 1000 },
+      { id: userB, createdAt: 1000 },
+    ]);
+
+    const projA = 'proj-a';
+    const projB = 'proj-b';
+    const sharedProjId = 'proj-colliding';
+    const sharedTaskId = 'task-colliding';
+    const sharedMemberId = 'member-colliding';
+    const sharedFolderId = 'folder-colliding';
+    const sharedChildId = 'ci-colliding';
+
+    const pushA = await h.push(userA, 'dev-a', [
+      makeProjectOp({ opId: 'op-a-pa', hlc: '1700000000001:0000:dev-a', id: projA, name: 'A List' }),
+      makeProjectOp({
+        opId: 'op-a-pc',
+        hlc: '1700000000002:0000:dev-a',
+        id: sharedProjId,
+        name: 'A Colliding List',
+      }),
+      {
+        opId: 'op-a-mem',
+        hlc: '1700000000003:0000:dev-a',
+        entity: 'member',
+        entityId: sharedMemberId,
+        op: 'upsert',
+        fields: ['id', 'name', 'initial', 'color', 'isMe', 'createdAt', 'updatedAt'],
+        row: {
+          id: sharedMemberId,
+          name: 'Alice',
+          initial: 'A',
+          color: '#111111',
+          isMe: true,
+          createdAt: 1000,
+          updatedAt: 1000,
+        },
+      },
+      {
+        opId: 'op-a-fol',
+        hlc: '1700000000004:0000:dev-a',
+        entity: 'folder',
+        entityId: sharedFolderId,
+        op: 'upsert',
+        fields: ['id', 'name', 'sortKey', 'createdAt', 'updatedAt'],
+        row: {
+          id: sharedFolderId,
+          name: 'A Folder',
+          sortKey: 'i',
+          createdAt: 1000,
+          updatedAt: 1000,
+        },
+      },
+      makeFullTaskOp({
+        opId: 'op-a-t',
+        hlc: '1700000000005:0000:dev-a',
+        id: sharedTaskId,
+        projectId: projA,
+        title: 'A Task',
+      }),
+      {
+        opId: 'op-a-ci',
+        hlc: '1700000000006:0000:dev-a',
+        entity: 'checklistItem',
+        entityId: sharedChildId,
+        op: 'upsert',
+        fields: ['id', 'taskId', 'title', 'status', 'sortKey', 'createdAt', 'updatedAt'],
+        row: {
+          id: sharedChildId,
+          taskId: sharedTaskId,
+          title: 'A Item',
+          status: 0,
+          sortKey: 'i',
+          createdAt: 1000,
+          updatedAt: 1000,
+        },
+      },
+    ]);
+    expect(pushA.results.every((r) => r.status === 'applied')).toBe(true);
+
+    // User B initializes their own project and task.
+    const taskB = 'task-b-own';
+    const setupB = await h.push(userB, 'dev-b', [
+      makeProjectOp({ opId: 'op-b-pb', hlc: '1700000000010:0000:dev-b', id: projB, name: 'B List' }),
+      makeFullTaskOp({
+        opId: 'op-b-tb',
+        hlc: '1700000000011:0000:dev-b',
+        id: taskB,
+        projectId: projB,
+        title: 'B Own Task',
+      }),
+    ]);
+    expect(setupB.results.every((r) => r.status === 'applied')).toBe(true);
+
+    // Spy on Scope DO calls to ensure userA's DO is never called during B's colliding creates.
+    let scopeACalls = 0;
+    const spyGetScopeStub = (scope: string): ScopeStub => {
+      const stub = h.getScopeStub(scope);
+      if (scope !== `u:${userA}`) return stub;
+      return {
+        push: async (input) => {
+          scopeACalls += 1;
+          return stub.push(input);
+        },
+        pull: (input) => stub.pull(input),
+      };
+    };
+
+    const collideRes = await executeSyncPush(h.db, {
+      userId: userB,
+      deviceId: 'dev-b',
+      getScopeStub: spyGetScopeStub,
+      ops: [
+        makeFullTaskOp({
+          opId: 'op-b-col-task',
+          hlc: '1700000000020:0000:dev-b',
+          id: sharedTaskId,
+          projectId: projB,
+          title: 'B Colliding Task',
+        }),
+        makeProjectOp({
+          opId: 'op-b-col-proj',
+          hlc: '1700000000021:0000:dev-b',
+          id: sharedProjId,
+          name: 'B Colliding List',
+        }),
+        {
+          opId: 'op-b-col-mem',
+          hlc: '1700000000022:0000:dev-b',
+          entity: 'member',
+          entityId: sharedMemberId,
+          op: 'upsert',
+          fields: ['id', 'name', 'initial', 'color', 'isMe', 'createdAt', 'updatedAt'],
+          row: {
+            id: sharedMemberId,
+            name: 'Bob',
+            initial: 'B',
+            color: '#222222',
+            isMe: true,
+            createdAt: 1000,
+            updatedAt: 1000,
+          },
+        },
+        {
+          opId: 'op-b-col-fol',
+          hlc: '1700000000023:0000:dev-b',
+          entity: 'folder',
+          entityId: sharedFolderId,
+          op: 'upsert',
+          fields: ['id', 'name', 'sortKey', 'createdAt', 'updatedAt'],
+          row: {
+            id: sharedFolderId,
+            name: 'B Folder',
+            sortKey: 'i',
+            createdAt: 1000,
+            updatedAt: 1000,
+          },
+        },
+        {
+          opId: 'op-b-col-ci',
+          hlc: '1700000000024:0000:dev-b',
+          entity: 'checklistItem',
+          entityId: sharedChildId,
+          op: 'upsert',
+          fields: ['id', 'taskId', 'title', 'status', 'sortKey', 'createdAt', 'updatedAt'],
+          row: {
+            id: sharedChildId,
+            taskId: taskB,
+            title: 'B Item on B Task',
+            status: 0,
+            sortKey: 'i',
+            createdAt: 1000,
+            updatedAt: 1000,
+          },
+        },
+        // Same-batch child referencing a task rejected with id-in-other-scope must also reject without touching u:A.
+        {
+          opId: 'op-b-col-child-of-col-task',
+          hlc: '1700000000025:0000:dev-b',
+          entity: 'checklistItem',
+          entityId: 'ci-new-under-col-task',
+          op: 'upsert',
+          fields: ['id', 'taskId', 'title', 'status', 'sortKey', 'createdAt', 'updatedAt'],
+          row: {
+            id: 'ci-new-under-col-task',
+            taskId: sharedTaskId,
+            title: 'Child of colliding task',
+            status: 0,
+            sortKey: 'i',
+            createdAt: 1000,
+            updatedAt: 1000,
+          },
+        },
+      ],
+    });
+
+    expect(scopeACalls).toBe(0);
+    for (const r of collideRes.results) {
+      expect(r).toEqual({
+        opId: r.opId,
+        status: 'rejected',
+        reason: 'id-in-other-scope',
+        row: null,
+        clocks: {},
+      });
+      expect(Object.hasOwn(r, 'gone')).toBe(false);
+    }
+
+    // Batch 3 must NOT register listScopes(projB, u:userA).
+    const bogusListScopes = h.sqlite
+      .prepare('SELECT * FROM listScopes WHERE projectId = ? AND scope = ?')
+      .all(projB, `u:${userA}`);
+    expect(bogusListScopes).toHaveLength(0);
+
+    // Child entityHome for ci-new-under-col-task must NOT be written.
+    const orphanChildHome = h.sqlite
+      .prepare('SELECT * FROM entityHome WHERE entity = ? AND entityId = ?')
+      .all('checklistItem', 'ci-new-under-col-task');
+    expect(orphanChildHome).toHaveLength(0);
+
+    // Legitimate shared-list collaboration: editor B creating a child on A's task (home = u:A)
+    // and replaying it must still route to u:A and succeed.
+    await h.db.insert(schema.projectMembership).values({
+      projectId: projA,
+      userId: userB,
+      role: 'editor',
+      createdAt: 1000,
+      removedAt: null,
+    });
+    const sharedChildOp = {
+      opId: 'op-b-shared-ci',
+      hlc: '1700000000030:0000:dev-b',
+      entity: 'checklistItem',
+      entityId: 'ci-shared-legit',
+      op: 'upsert',
+      fields: ['id', 'taskId', 'title', 'status', 'sortKey', 'createdAt', 'updatedAt'],
+      row: {
+        id: 'ci-shared-legit',
+        taskId: sharedTaskId,
+        title: 'Legit Shared Child',
+        status: 0,
+        sortKey: 'i',
+        createdAt: 1000,
+        updatedAt: 1000,
+      },
+    };
+    const sharedFirst = await h.push(userB, 'dev-b', [sharedChildOp]);
+    expect(sharedFirst.results[0].status).toBe('applied');
+    const sharedReplay = await h.push(userB, 'dev-b', [sharedChildOp]);
+    expect(sharedReplay.results[0].status).toBe('applied');
+  });
+
+  it('Finding 2 (new): A DO-rejected -> B creates the same project -> A finishes leaves B owner membership and entityHome intact', async () => {
+    const h = createHarness();
+    const userId = 'u-f2-proj-race';
+    await h.db.insert(schema.user).values({ id: userId, createdAt: 1_700_000_000_000 });
+
+    const projId = 'p-race';
+    const rejectedOpId = 'op-proj-rejected-seed';
+    const scopeStub = h.getScopeStub(`u:${userId}`);
+
+    // Seed op-proj-rejected-seed as rejected in DO so Request A gets rejected by DO after D1 Batch 2.
+    await scopeStub.push({
+      scope: `u:${userId}`,
+      scopeUserId: userId,
+      pusherUserId: userId,
+      deviceId: 'dev-a',
+      memberships: {},
+      purgedProjects: [],
+      meMemberId: null,
+      ops: [
+        {
+          opId: rejectedOpId,
+          hlc: 'bad-hlc',
+          entity: 'project',
+          entityId: 'p-other',
+          op: 'upsert',
+          fields: ['id'],
+          row: { id: 'p-other' },
+        },
+      ],
+    });
+
+    const opA = makeProjectOp({
+      opId: rejectedOpId,
+      hlc: '1700000000001:0000:dev-a',
+      id: projId,
+      name: 'From A',
+    });
+    const opB = makeProjectOp({
+      opId: 'op-proj-valid-b',
+      hlc: '1700000000002:0000:dev-b',
+      id: projId,
+      name: 'From B',
+    });
+
+    let bResult: Awaited<ReturnType<typeof h.push>> | null = null;
+    const interleavedGetScopeStub = (scope: string): ScopeStub => {
+      const real = h.getScopeStub(scope);
+      return {
+        pull: (input) => real.pull(input),
+        push: async (input) => {
+          const res = await real.push(input);
+          // A's DO push just finished (rejected); before A continues to postStmts, B creates the same project.
+          bResult = await h.push(userId, 'dev-b', [opB]);
+          return res;
+        },
+      };
+    };
+
+    const aResult = await executeSyncPush(h.db, {
+      userId,
+      deviceId: 'dev-a',
+      ops: [opA],
+      getScopeStub: interleavedGetScopeStub,
+    });
+
+    expect(aResult.results[0].status).toBe('rejected');
+    expect(bResult).not.toBeNull();
+    expect(bResult!.results[0].status).toBe('applied');
+
+    const homeRow = h.sqlite
+      .prepare('SELECT scope FROM entityHome WHERE entity = ? AND entityId = ?')
+      .get('project', projId) as { scope: string } | undefined;
+    expect(homeRow?.scope).toBe(`u:${userId}`);
+
+    const membershipRow = h.sqlite
+      .prepare('SELECT role, removedAt FROM projectMembership WHERE projectId = ? AND userId = ?')
+      .get(projId, userId) as { role: string; removedAt: number | null } | undefined;
+    expect(membershipRow).toEqual({ role: 'owner', removedAt: null });
+
+    const pulled = await h.pull(userId);
+    expect(pulled.memberships.some((m) => m.projectId === projId && m.role === 'owner')).toBe(true);
+    expect(
+      pulled.scopes[0].rows.some((r) => 'row' in r && r.entity === 'project' && r.row.id === projId),
+    ).toBe(true);
   });
 });

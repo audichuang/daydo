@@ -870,6 +870,7 @@ async function runIdRaceScenario({ baseUrl, jwks }) {
   const userB = await createUserToken(baseUrl, jwks);
   const projectA = randomUUID();
   const projectB = randomUUID();
+  const seqTaskId = randomUUID();
   const sharedTaskId = randomUUID();
   const now = Date.now();
 
@@ -893,6 +894,51 @@ async function runIdRaceScenario({ baseUrl, jwks }) {
   );
   assert.equal(initA.status, 200);
   assert.equal(initB.status, 200);
+
+  // Sequential case: A creates seqTaskId, then B creates the same id -> B must get id-in-other-scope without gone.
+  const seqResA = await postJson(
+    baseUrl,
+    '/sync/push',
+    {
+      deviceId: userA.deviceId,
+      ops: [
+        fullTaskCreateOp({
+          hlc: makeHlc(now + 5, 0, userA.deviceId),
+          taskId: seqTaskId,
+          projectId: projectA,
+          title: 'Seq From A',
+          now,
+        }),
+      ],
+    },
+    userA.token,
+  );
+  assert.equal(seqResA.status, 200);
+  assert.equal(seqResA.data.results[0].status, 'applied');
+
+  const seqResB = await postJson(
+    baseUrl,
+    '/sync/push',
+    {
+      deviceId: userB.deviceId,
+      ops: [
+        fullTaskCreateOp({
+          hlc: makeHlc(now + 6, 0, userB.deviceId),
+          taskId: seqTaskId,
+          projectId: projectB,
+          title: 'Seq From B',
+          now,
+        }),
+      ],
+    },
+    userB.token,
+  );
+  assert.equal(seqResB.status, 200);
+  assert.equal(seqResB.data.results[0].status, 'rejected');
+  assert.equal(seqResB.data.results[0].reason, 'id-in-other-scope');
+  assert.equal(seqResB.data.results[0].row, null);
+  assert.deepEqual(seqResB.data.results[0].clocks, {});
+  assert.equal(seqResB.data.results[0].gone, undefined);
 
   const [resA, resB] = await Promise.all([
     postJson(
@@ -945,6 +991,19 @@ async function runIdRaceScenario({ baseUrl, jwks }) {
   const loserResult = rA.status === 'applied' ? rB : rA;
   assert.equal(loserResult.reason, 'id-in-other-scope');
   assert.equal(loserResult.row, null);
+  assert.equal(loserResult.gone, undefined);
+
+  const pullSeqA = await pullSync(baseUrl, userA.token, { cursors: {} });
+  const pullSeqB = await pullSync(baseUrl, userB.token, { cursors: {} });
+  assert(
+    getScopeSlice(pullSeqA.data, userA.scope).rows.some((r) => r.row?.id === seqTaskId),
+    'A must see sequential task in pull',
+  );
+  assert.equal(
+    getScopeSlice(pullSeqB.data, userB.scope).rows.some((r) => r.row?.id === seqTaskId),
+    false,
+    'B must not see sequential task in pull',
+  );
 
   const pullWinner = await pullSync(baseUrl, winner.token, { cursors: {} });
   const pullLoser = await pullSync(baseUrl, loser.token, { cursors: {} });
