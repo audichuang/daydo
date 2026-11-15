@@ -66,6 +66,7 @@ struct DrawerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            header
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     smartRow(.today, "今天", "sun.max", model.counts.today)
@@ -112,7 +113,6 @@ struct DrawerView: View {
                     }
                 }
                 .padding(.horizontal, 8)
-                .padding(.top, 14)
                 .padding(.bottom, 20)
             }
             .background {
@@ -167,6 +167,39 @@ struct DrawerView: View {
     @State private var newFolder: String?
     @State private var renaming: Folder?
     @State private var renameText = ""
+
+    var header: some View {
+        HStack(spacing: 10) {
+            let me = model.me
+            Text(me?.initial ?? "我")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Palette.background)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(Color(hex: me?.color ?? accent.hex)))
+            Text(me?.name ?? "我")
+                .txt(16, .semibold)
+                .foregroundStyle(Palette.text)
+                .lineLimit(1)
+            Spacer()
+            Button {
+                close()
+                model.tab = .settings
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Palette.textBody)
+                    .frame(width: 40, height: 36)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .accessibilityLabel("設定")
+            .accessibilityIdentifier("drawer.settings")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+    }
 
     func lists(in folder: String?) -> [Project] {
         model.projects.filter { !$0.isInbox && $0.folderId == folder }

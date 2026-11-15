@@ -21,7 +21,18 @@ public protocol DayDoAPI: Sendable {
     func createProject(_ input: CreateProjectInput) async throws -> Project
     func updateProject(_ input: UpdateProjectInput) async throws -> Project
     func moveProject(id: String, beforeProjectId: String?) async throws -> Project
+    func duplicateProject(id: String) async throws -> Project
+    func transferProjectOwner(projectId: String, toMemberId: String) async throws -> Project
     func deleteProject(id: String) async throws
+
+    // Project members & invites (清單成員與共享邀請)
+    func listProjectMembers(projectId: String) async throws -> [ProjectMemberInfo]
+    func updateMemberRole(projectId: String, memberId: String, role: String) async throws
+    func removeMember(projectId: String, memberId: String) async throws
+    func listInvites(projectId: String) async throws -> [ProjectInvite]
+    func inviteMember(projectId: String, email: String, role: String) async throws -> ProjectInvite
+    func cancelInvite(id: String) async throws
+    func updateInviteRole(id: String, role: String) async throws -> ProjectInvite
 
     // Tasks
     func listTasks(_ query: TaskQuery) async throws -> [TodoTask]

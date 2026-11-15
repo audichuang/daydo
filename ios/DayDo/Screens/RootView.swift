@@ -41,6 +41,9 @@ struct RootView: View {
         .sheet(item: Binding(get: { model.editingProjectId.map(TaskRef.init) }, set: { model.editingProjectId = $0?.id })) { ref in
             EditListSheet(projectId: ref.id == "new" ? nil : ref.id)
         }
+        .sheet(item: Binding(get: { model.sharingProjectId.map(TaskRef.init) }, set: { model.sharingProjectId = $0?.id })) { ref in
+            ShareListSheet(projectId: ref.id)
+        }
         .alert("出了點問題", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("好", role: .cancel) {}
         } message: {

@@ -111,6 +111,111 @@ paths:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
         "400": { $ref: "#/components/responses/Invalid" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /projects/{project_id}/duplicate:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+    post:
+      operationId: duplicate_project
+      description: Creates a copy of the list and its active tasks right after the source list.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /projects/{project_id}/owner:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+    post:
+      operationId: transfer_project_owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to_member_id]
+              properties:
+                to_member_id: { type: string }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /projects/{project_id}/members:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+    get:
+      operationId: list_project_members
+      description: Non-deleted project members with their per-list role, ordered by join time.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ProjectMemberInfo" } } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /projects/{project_id}/members/{member_id}:
+    parameters:
+      - { $ref: "#/components/parameters/ProjectId" }
+      - { $ref: "#/components/parameters/MemberId" }
+    patch:
+      operationId: update_member_role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [editor, viewer] }
+      responses:
+        "204": { description: Updated }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: remove_member
+      responses:
+        "204": { description: Removed }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /projects/{project_id}/invites:
+    parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+    get:
+      operationId: list_invites
+      description: Non-deleted invites for a project, ordered by created_at.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ProjectInvite" } } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: invite_member
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [editor, viewer] }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ProjectInvite" } } } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /invites/{invite_id}:
+    parameters: [{ $ref: "#/components/parameters/InviteId" }]
+    patch:
+      operationId: update_invite_role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [editor, viewer] }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ProjectInvite" } } } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: cancel_invite
+      responses:
+        "204": { description: Cancelled }
+        "404": { $ref: "#/components/responses/NotFound" }
   /tasks:
     get:
       operationId: list_tasks
@@ -303,6 +408,8 @@ components:
   parameters:
     TaskId: { name: task_id, in: path, required: true, schema: { type: string } }
     ProjectId: { name: project_id, in: path, required: true, schema: { type: string } }
+    MemberId: { name: member_id, in: path, required: true, schema: { type: string } }
+    InviteId: { name: invite_id, in: path, required: true, schema: { type: string } }
     FolderId: { name: folder_id, in: path, required: true, schema: { type: string } }
   responses:
     NotFound:
@@ -339,6 +446,25 @@ components:
         archived: { type: boolean }
         member_ids: { type: array, items: { type: string } }
         active_count: { type: integer }
+        created_at: { type: integer }
+        updated_at: { type: integer }
+    ProjectMemberInfo:
+      type: object
+      properties:
+        member_id: { type: string }
+        name: { type: string }
+        initial: { type: string }
+        color: { type: string }
+        is_me: { type: boolean }
+        role: { type: string, enum: [owner, editor, viewer] }
+    ProjectInvite:
+      type: object
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [editor, viewer] }
+        status: { type: string, enum: [pending, accepted, declined, expired], description: Set by the server; local client writes always start as pending. }
         created_at: { type: integer }
         updated_at: { type: integer }
     CreateProjectInput:

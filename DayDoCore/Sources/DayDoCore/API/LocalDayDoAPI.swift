@@ -357,6 +357,279 @@ extension LocalDayDoAPI {
             try Outbox.save(p, entity: "project", id: p.id, in: db, now: now)
         }
     }
+
+    public func duplicateProject(id: String) async throws -> Project {
+        let now = now()
+        return try await writer.write { db in
+            let src = try self.projectRecord(db, id)
+            if src.isInbox { throw DayDoError.invalid("The inbox cannot be duplicated") }
+            let me = try self.me(db)
+            let nextSortKey = try ProjectRecord
+                .filter(Column("deletedAt") == nil && Column("archivedAt") == nil && Column("isInbox") == false && Column("folderId") == src.folderId && Column("sortKey") > src.sortKey)
+                .order(Column("sortKey"))
+                .fetchOne(db)?
+                .sortKey
+            let copy = ProjectRecord(
+                id: ID.make(),
+                name: "\(src.name) 副本",
+                color: src.color,
+                icon: src.icon,
+                folderId: src.folderId,
+                viewMode: src.viewMode,
+                kind: src.kind,
+                isInbox: false,
+                ownerId: me.id,
+                sortKey: SortKey.between(src.sortKey, nextSortKey),
+                showInSmart: src.showInSmart,
+                notifyMode: src.notifyMode,
+                archivedAt: nil,
+                createdAt: now,
+                updatedAt: now
+            )
+            try Outbox.save(copy, entity: "project", id: copy.id, in: db, now: now)
+            let pm = ProjectMemberRecord(projectId: copy.id, memberId: me.id, role: "owner", createdAt: now, updatedAt: now)
+            try Outbox.save(pm, entity: "projectMember", id: "\(copy.id):\(me.id)", key: ["projectId": copy.id, "memberId": me.id], in: db, now: now)
+
+            let tasks = try TaskRecord
+                .filter(Column("projectId") == id && Column("deletedAt") == nil && Column("status") == 0)
+                .order(Column("sortKey"))
+                .fetchAll(db)
+            for t in tasks {
+                var tc = t
+                tc.id = ID.make()
+                tc.projectId = copy.id
+                tc.assigneeId = nil
+                tc.createdAt = now
+                tc.updatedAt = now
+                try self.saveTask(db, tc)
+                let items = try ChecklistItemRecord
+                    .filter(Column("taskId") == t.id && Column("deletedAt") == nil)
+                    .order(Column("sortKey"))
+                    .fetchAll(db)
+                for item in items {
+                    let ic = ChecklistItemRecord(id: ID.make(), taskId: tc.id, title: item.title, status: item.status, sortKey: item.sortKey, createdAt: now, updatedAt: now)
+                    try Outbox.save(ic, entity: "checklistItem", id: ic.id, in: db, now: now)
+                }
+                let atts = try AttachmentRecord
+                    .filter(Column("taskId") == t.id && Column("deletedAt") == nil)
+                    .order(Column("createdAt"))
+                    .fetchAll(db)
+                for att in atts {
+                    let newAttId = ID.make()
+                    var newRel: String?
+                    if let oldRel = att.localPath {
+                        let srcURL = self.attachmentsDirectory.appendingPathComponent(oldRel)
+                        if FileManager.default.fileExists(atPath: srcURL.path) {
+                            let safeName = att.fileName.replacingOccurrences(of: "/", with: "_")
+                            let rel = "\(newAttId)/\(safeName)"
+                            let dstURL = self.attachmentsDirectory.appendingPathComponent(rel)
+                            try FileManager.default.createDirectory(at: dstURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                            // Remove the copy if the transaction rolls back, including a failed COMMIT.
+                            let dir = dstURL.deletingLastPathComponent()
+                            db.afterNextTransaction(onCommit: { _ in }, onRollback: { _ in try? FileManager.default.removeItem(at: dir) })
+                            try FileManager.default.copyItem(at: srcURL, to: dstURL)
+                            newRel = rel
+                        }
+                    }
+                    let ac = AttachmentRecord(
+                        id: newAttId,
+                        taskId: tc.id,
+                        fileName: att.fileName,
+                        size: att.size,
+                        mimeType: att.mimeType,
+                        localPath: newRel,
+                        originalPath: att.originalPath,
+                        createdAt: now,
+                        updatedAt: now
+                    )
+                    try Outbox.save(ac, entity: "attachment", id: ac.id, in: db, now: now)
+                }
+            }
+            return try self.project(db, copy)
+        }
+    }
+
+    public func transferProjectOwner(projectId: String, toMemberId: String) async throws -> Project {
+        let now = now()
+        return try await writer.write { db in
+            var p = try self.projectRecord(db, projectId)
+            if p.isInbox { throw DayDoError.invalid("The inbox owner cannot be transferred") }
+            guard var targetPM = try ProjectMemberRecord
+                .filter(Column("projectId") == projectId && Column("memberId") == toMemberId && Column("deletedAt") == nil)
+                .fetchOne(db) else {
+                throw DayDoError.invalid("Target must be a member of this project")
+            }
+            if p.ownerId != toMemberId {
+                if var oldPM = try ProjectMemberRecord
+                    .filter(Column("projectId") == projectId && Column("memberId") == p.ownerId && Column("deletedAt") == nil)
+                    .fetchOne(db) {
+                    oldPM.role = "editor"
+                    oldPM.updatedAt = now
+                    try Outbox.save(oldPM, entity: "projectMember", id: "\(projectId):\(p.ownerId)", key: ["projectId": projectId, "memberId": p.ownerId], in: db, now: now)
+                }
+                targetPM.role = "owner"
+                targetPM.updatedAt = now
+                try Outbox.save(targetPM, entity: "projectMember", id: "\(projectId):\(toMemberId)", key: ["projectId": projectId, "memberId": toMemberId], in: db, now: now)
+                p.ownerId = toMemberId
+                p.updatedAt = now
+                try Outbox.save(p, entity: "project", id: p.id, in: db, now: now)
+            }
+            return try self.project(db, p)
+        }
+    }
+
+    public func listProjectMembers(projectId: String) async throws -> [ProjectMemberInfo] {
+        try await writer.read { db in
+            _ = try self.projectRecord(db, projectId)
+            let pms = try ProjectMemberRecord
+                .filter(Column("projectId") == projectId && Column("deletedAt") == nil)
+                .order(Column("createdAt"))
+                .fetchAll(db)
+            var out: [ProjectMemberInfo] = []
+            for pm in pms {
+                if let m = try MemberRecord.fetchOne(db, key: pm.memberId), m.deletedAt == nil {
+                    out.append(ProjectMemberInfo(
+                        memberId: m.id,
+                        name: m.name,
+                        initial: m.initial,
+                        color: m.color,
+                        isMe: m.isMe,
+                        role: pm.role
+                    ))
+                }
+            }
+            return out
+        }
+    }
+
+    public func updateMemberRole(projectId: String, memberId: String, role: String) async throws {
+        guard role == "editor" || role == "viewer" else {
+            throw DayDoError.invalid("role must be editor or viewer")
+        }
+        let now = now()
+        try await writer.write { db in
+            let p = try self.projectRecord(db, projectId)
+            if p.isInbox { throw DayDoError.invalid("The inbox has no shared members") }
+            if memberId == p.ownerId { throw DayDoError.invalid("Cannot change the project owner's role") }
+            guard var pm = try ProjectMemberRecord
+                .filter(Column("projectId") == projectId && Column("memberId") == memberId && Column("deletedAt") == nil)
+                .fetchOne(db) else {
+                throw DayDoError.notFound("project_member", "\(projectId):\(memberId)")
+            }
+            pm.role = role
+            pm.updatedAt = now
+            try Outbox.save(pm, entity: "projectMember", id: "\(projectId):\(memberId)", key: ["projectId": projectId, "memberId": memberId], in: db, now: now)
+        }
+    }
+
+    public func removeMember(projectId: String, memberId: String) async throws {
+        let now = now()
+        try await writer.write { db in
+            let p = try self.projectRecord(db, projectId)
+            if p.isInbox { throw DayDoError.invalid("The inbox has no shared members") }
+            if memberId == p.ownerId { throw DayDoError.invalid("Cannot remove the project owner") }
+            guard var pm = try ProjectMemberRecord
+                .filter(Column("projectId") == projectId && Column("memberId") == memberId && Column("deletedAt") == nil)
+                .fetchOne(db) else {
+                throw DayDoError.notFound("project_member", "\(projectId):\(memberId)")
+            }
+            pm.deletedAt = now
+            pm.updatedAt = now
+            try Outbox.save(pm, entity: "projectMember", id: "\(projectId):\(memberId)", key: ["projectId": projectId, "memberId": memberId], in: db, now: now)
+        }
+    }
+
+    public func listInvites(projectId: String) async throws -> [ProjectInvite] {
+        try await writer.read { db in
+            _ = try self.projectRecord(db, projectId)
+            return try ProjectInviteRecord
+                .filter(Column("projectId") == projectId && Column("deletedAt") == nil)
+                .order(Column("createdAt"))
+                .fetchAll(db)
+                .map(Self.invite)
+        }
+    }
+
+    public func inviteMember(projectId: String, email: String, role: String) async throws -> ProjectInvite {
+        guard role == "editor" || role == "viewer" else {
+            throw DayDoError.invalid("role must be editor or viewer")
+        }
+        let normalized = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard Self.isValidInviteEmail(normalized) else {
+            throw DayDoError.invalid("Invalid email address")
+        }
+        let now = now()
+        return try await writer.write { db in
+            let p = try self.projectRecord(db, projectId)
+            if p.isInbox { throw DayDoError.invalid("The inbox cannot be shared") }
+            let dup = try ProjectInviteRecord
+                .filter(Column("projectId") == projectId && Column("email") == normalized && Column("status") == "pending" && Column("deletedAt") == nil)
+                .fetchOne(db)
+            if dup != nil {
+                throw DayDoError.invalid("An invite for this email is already pending")
+            }
+            let rec = ProjectInviteRecord(
+                id: ID.make(),
+                projectId: projectId,
+                email: normalized,
+                role: role,
+                status: "pending",
+                createdAt: now,
+                updatedAt: now,
+                deletedAt: nil
+            )
+            try Outbox.save(rec, entity: "projectInvite", id: rec.id, in: db, now: now)
+            return Self.invite(rec)
+        }
+    }
+
+    public func cancelInvite(id: String) async throws {
+        let now = now()
+        try await writer.write { db in
+            guard var rec = try ProjectInviteRecord.fetchOne(db, key: id), rec.deletedAt == nil else {
+                throw DayDoError.notFound("project_invite", id)
+            }
+            rec.deletedAt = now
+            rec.updatedAt = now
+            try Outbox.save(rec, entity: "projectInvite", id: rec.id, in: db, now: now)
+        }
+    }
+
+    public func updateInviteRole(id: String, role: String) async throws -> ProjectInvite {
+        guard role == "editor" || role == "viewer" else {
+            throw DayDoError.invalid("role must be editor or viewer")
+        }
+        let now = now()
+        return try await writer.write { db in
+            guard var rec = try ProjectInviteRecord.fetchOne(db, key: id), rec.deletedAt == nil else {
+                throw DayDoError.notFound("project_invite", id)
+            }
+            rec.role = role
+            rec.updatedAt = now
+            try Outbox.save(rec, entity: "projectInvite", id: rec.id, in: db, now: now)
+            return Self.invite(rec)
+        }
+    }
+
+    private static func invite(_ r: ProjectInviteRecord) -> ProjectInvite {
+        ProjectInvite(
+            id: r.id,
+            projectId: r.projectId,
+            email: r.email,
+            role: r.role,
+            status: r.status,
+            createdAt: r.createdAt,
+            updatedAt: r.updatedAt
+        )
+    }
+
+    private static func isValidInviteEmail(_ email: String) -> Bool {
+        guard !email.isEmpty, !email.contains(where: { $0.isWhitespace }) else { return false }
+        let parts = email.split(separator: "@", omittingEmptySubsequences: false)
+        guard parts.count == 2, !parts[0].isEmpty else { return false }
+        let domainParts = parts[1].split(separator: ".", omittingEmptySubsequences: false)
+        return domainParts.count >= 2 && domainParts.allSatisfy { !$0.isEmpty }
+    }
 }
 
 // MARK: - Task queries

@@ -13,6 +13,7 @@
 		1F43E9357842CB04A22105DB /* DayDoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 615E31EA2D033F846C07B08E /* DayDoApp.swift */; };
 		23FCC3E72501BB4E763CA638 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2E3411D9BD47A773354B9EE /* RootView.swift */; };
 		2586B4711A3F7B5A08BFC598 /* EditListSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 723C6FDF68327E755BBBC400 /* EditListSheet.swift */; };
+		291183E9EBCB11282851A4F3 /* ShareListSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD944E1EAEB502E47717D303 /* ShareListSheet.swift */; };
 		36C06F0D17D9C8A91549B2E6 /* TaskListScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBE69B8A39D6026F6C72A644 /* TaskListScreen.swift */; };
 		5C95C3DAF6AA8AF7C303DEEA /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36A61F18DDDC6C2FC166DDDB /* Theme.swift */; };
 		6241455AB6BDC69BCF835DB0 /* DayDoFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93AF820DEE1E49529E90A0E0 /* DayDoFlowTests.swift */; };
@@ -57,6 +58,7 @@
 		B385BD7500B9C55FC5E7A64A /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		C790B6FFBAFDB9BADA3CE1FC /* TaskDetailSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskDetailSheet.swift; sourceTree = "<group>"; };
 		CBE69B8A39D6026F6C72A644 /* TaskListScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskListScreen.swift; sourceTree = "<group>"; };
+		DD944E1EAEB502E47717D303 /* ShareListSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareListSheet.swift; sourceTree = "<group>"; };
 		DFFE20E498B56F159D6BDC5C /* DayDo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DayDo.entitlements; sourceTree = "<group>"; };
 		E45AF04A64333352B5667B17 /* DrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerView.swift; sourceTree = "<group>"; };
 		F68BFC5798449FCFE7B82212 /* DayDoCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DayDoCore; path = ../DayDoCore; sourceTree = SOURCE_ROOT; };
@@ -149,6 +151,7 @@
 				723C6FDF68327E755BBBC400 /* EditListSheet.swift */,
 				586710AA91D1F8A386C4DA0F /* OtherScreens.swift */,
 				B2E3411D9BD47A773354B9EE /* RootView.swift */,
+				DD944E1EAEB502E47717D303 /* ShareListSheet.swift */,
 				C790B6FFBAFDB9BADA3CE1FC /* TaskDetailSheet.swift */,
 				CBE69B8A39D6026F6C72A644 /* TaskListScreen.swift */,
 				3CC0B1CED20281F2431A79ED /* TimeBlockEditor.swift */,
@@ -293,6 +296,7 @@
 				2586B4711A3F7B5A08BFC598 /* EditListSheet.swift in Sources */,
 				7454858BA67E1C4407B53A26 /* OtherScreens.swift in Sources */,
 				23FCC3E72501BB4E763CA638 /* RootView.swift in Sources */,
+				291183E9EBCB11282851A4F3 /* ShareListSheet.swift in Sources */,
 				728A01A5331B302B834B290A /* TaskDetailSheet.swift in Sources */,
 				36C06F0D17D9C8A91549B2E6 /* TaskListScreen.swift in Sources */,
 				5C95C3DAF6AA8AF7C303DEEA /* Theme.swift in Sources */,

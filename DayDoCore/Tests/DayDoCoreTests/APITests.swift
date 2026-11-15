@@ -285,4 +285,190 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         let input = try DayDoJSON.decoder.decode(CreateTaskInput.self, from: Data(#"{"title":"x","start":"2026-11-15T09:00","timezone":"Asia/Tokyo"}"#.utf8))
         #expect(input.timeZone == "Asia/Tokyo")
     }
+
+    @Test func projectInvitesLifecycleValidationAndOutbox() async throws {
+        let api = try await makeAPI()
+        let projects = try await api.listProjects(includeArchived: false)
+        let inbox = projects[0]
+        let work = projects[1]
+
+        // Inbox cannot be shared.
+        await #expect(throws: DayDoError.self) {
+            try await api.inviteMember(projectId: inbox.id, email: "a@example.com", role: "editor")
+        }
+        // Invalid emails & roles (incl. legacy write/read) are rejected.
+        for badEmail in ["", "invalid", "a@b", "a@.com", "a@b.", "a b@c.com", "@b.com"] {
+            await #expect(throws: DayDoError.self) {
+                try await api.inviteMember(projectId: work.id, email: badEmail, role: "editor")
+            }
+        }
+        for badRole in ["admin", "write", "read"] {
+            await #expect(throws: DayDoError.self) {
+                try await api.inviteMember(projectId: work.id, email: "a@example.com", role: badRole)
+            }
+        }
+
+        let beforeChanges = try await api.pendingChanges().count
+        let inv1 = try await api.inviteMember(projectId: work.id, email: "  Alice@Example.COM ", role: "editor")
+        let inv2 = try await api.inviteMember(projectId: work.id, email: "bob@example.com", role: "viewer")
+        #expect(inv1.email == "alice@example.com")
+        #expect(inv1.role == "editor")
+        #expect(inv1.status == "pending")
+        #expect(try await api.listInvites(projectId: work.id).map(\.id) == [inv1.id, inv2.id])
+
+        // Duplicate pending invite for same project+email is rejected (case-insensitive).
+        await #expect(throws: DayDoError.self) {
+            try await api.inviteMember(projectId: work.id, email: "ALICE@example.com", role: "viewer")
+        }
+
+        // Pending invites never create members or mark project shared.
+        let reloadedWork = try await api.listProjects(includeArchived: false).first { $0.id == work.id }!
+        #expect(reloadedWork.memberIds.count == 1)
+        #expect(reloadedWork.isShared == false)
+
+        // Update role.
+        let updated = try await api.updateInviteRole(id: inv1.id, role: "viewer")
+        #expect(updated.role == "viewer")
+        await #expect(throws: DayDoError.self) { try await api.updateInviteRole(id: inv1.id, role: "owner") }
+        await #expect(throws: DayDoError.self) { try await api.updateInviteRole(id: inv1.id, role: "write") }
+        await #expect(throws: DayDoError.self) { try await api.updateInviteRole(id: "missing", role: "editor") }
+
+        // Cancel invite soft-deletes; same email can be re-invited afterwards.
+        try await api.cancelInvite(id: inv1.id)
+        #expect(try await api.listInvites(projectId: work.id).map(\.id) == [inv2.id])
+        await #expect(throws: DayDoError.self) { try await api.cancelInvite(id: inv1.id) }
+        _ = try await api.inviteMember(projectId: work.id, email: "alice@example.com", role: "editor")
+
+        let changes = try await api.pendingChanges()
+        let inviteChanges = changes.dropFirst(beforeChanges).filter { $0.entity == "projectInvite" }
+        #expect(inviteChanges.count == 5) // create inv1, create inv2, update inv1, cancel inv1, re-create alice
+        #expect(inviteChanges[0].op == "upsert")
+        #expect(inviteChanges[2].fields == ["role"])
+        #expect(inviteChanges[3].fields.contains("deletedAt"))
+
+        let json = String(data: try DayDoJSON.encoder.encode(inv2), encoding: .utf8)!
+        #expect(json.contains("\"project_id\""))
+        #expect(json.contains("\"created_at\""))
+        #expect(json.contains("\"updated_at\""))
+    }
+
+    @Test func migratingV1DatabaseAddsProjectInvite() async throws {
+        var config = Configuration()
+        config.foreignKeysEnabled = true
+        let queue = try DatabaseQueue(configuration: config)
+        try AppDatabase.migrator.migrate(queue, upTo: "v1")
+        let hasInviteBefore = try await queue.read { db in
+            try Bool.fetchOne(db, sql: "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='projectInvite'") ?? false
+        }
+        #expect(hasInviteBefore == false)
+
+        try await queue.write { db in
+            try MemberRecord(id: "me", name: "我", initial: "我", color: "orange", isMe: true, createdAt: 1, updatedAt: 1, deletedAt: nil).insert(db)
+            try ProjectRecord(id: "inbox", name: "收件匣", color: nil, icon: nil, folderId: nil, viewMode: "list", kind: "TASK", isInbox: true, ownerId: "me", sortKey: "0", showInSmart: "all", notifyMode: "all", archivedAt: nil, createdAt: 1, updatedAt: 1, deletedAt: nil).insert(db)
+            try ProjectRecord(id: "p1", name: "家庭", color: "blue", icon: nil, folderId: nil, viewMode: "list", kind: "TASK", isInbox: false, ownerId: "me", sortKey: "a", showInSmart: "all", notifyMode: "all", archivedAt: nil, createdAt: 1, updatedAt: 1, deletedAt: nil).insert(db)
+            try ProjectMemberRecord(projectId: "p1", memberId: "me", role: "owner", createdAt: 1, updatedAt: 1, deletedAt: nil).insert(db)
+        }
+
+        let appDB = try AppDatabase(queue)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-mig-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: appDB, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        let inv = try await api.inviteMember(projectId: "p1", email: "family@example.com", role: "editor")
+        #expect(inv.projectId == "p1")
+        #expect(try await api.listInvites(projectId: "p1").count == 1)
+    }
+
+    @Test func duplicateProjectCopiesActiveTasksAttachmentsAndSitsAfterSource() async throws {
+        let api = try await makeAPI()
+        let projects = try await api.listProjects(includeArchived: false)
+        let inbox = projects[0]
+        let work = projects[1]
+
+        await #expect(throws: DayDoError.self) { try await api.duplicateProject(id: inbox.id) }
+
+        let active = try await api.createTask(CreateTaskInput(projectId: work.id, title: "未完成任務"))
+        _ = try await api.addChecklistItem(taskId: active.id, title: "步驟一")
+        let payload = Data("contract-bytes".utf8)
+        let srcAtt = try await api.addAttachment(taskId: active.id, fileName: "spec.txt", data: payload, mimeType: "text/plain", originalPath: nil)
+        let done = try await api.createTask(CreateTaskInput(projectId: work.id, title: "已完成任務"))
+        _ = try await api.completeTask(id: done.id, ifUpdatedAt: done.updatedAt)
+
+        let beforeChanges = try await api.pendingChanges().count
+        let copy = try await api.duplicateProject(id: work.id)
+        #expect(copy.name == "工作 副本")
+        #expect(copy.id != work.id)
+
+        let after = try await api.listProjects(includeArchived: false)
+        #expect(after.map(\.name) == ["收件匣", "工作", "工作 副本", "個人", "購物"])
+
+        let copyData = try await api.getProjectData(id: copy.id)
+        #expect(copyData.tasks.count == 1)
+        let copiedTask = copyData.tasks[0]
+        #expect(copiedTask.title == active.title)
+        #expect(copiedTask.id != active.id)
+        #expect(copiedTask.items.map(\.title) == ["步驟一"])
+        #expect(copiedTask.attachments.count == 1)
+        let copiedAtt = copiedTask.attachments[0]
+        #expect(copiedAtt.id != srcAtt.id)
+        #expect(copiedAtt.localPath != srcAtt.localPath)
+
+        let newChanges = try await api.pendingChanges().dropFirst(beforeChanges)
+        #expect(newChanges.contains { $0.entity == "project" && $0.entityId == copy.id })
+        #expect(newChanges.contains { $0.entity == "task" && $0.entityId == copiedTask.id })
+        #expect(newChanges.contains { $0.entity == "checklistItem" })
+        #expect(newChanges.contains { $0.entity == "attachment" && $0.entityId == copiedAtt.id })
+
+        // Deleting the source attachment and purging the source task keeps the copy's attachment intact & readable.
+        try await api.deleteAttachment(id: srcAtt.id)
+        try await api.deleteTask(id: active.id)
+        try await api.purgeTask(id: active.id)
+        let reloadedCopy = try await api.getTask(id: copiedTask.id)
+        #expect(reloadedCopy.attachments.count == 1)
+        let copiedURL = api.attachmentURL(reloadedCopy.attachments[0])!
+        #expect(try Data(contentsOf: copiedURL) == payload)
+    }
+
+    @Test func transferOwnerUpdateRoleAndRemoveMember() async throws {
+        let appDB = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-mbr-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: appDB, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+        let projects = try await api.listProjects(includeArchived: false)
+        let inbox = projects[0]
+        let work = projects[1]
+        let me = try await api.listMembers()[0]
+
+        // Non-member cannot become owner or be updated/removed.
+        await #expect(throws: DayDoError.self) { try await api.transferProjectOwner(projectId: work.id, toMemberId: "stranger") }
+        await #expect(throws: DayDoError.self) { try await api.transferProjectOwner(projectId: inbox.id, toMemberId: me.id) }
+        await #expect(throws: DayDoError.self) { try await api.updateMemberRole(projectId: work.id, memberId: me.id, role: "viewer") }
+        await #expect(throws: DayDoError.self) { try await api.removeMember(projectId: work.id, memberId: me.id) }
+
+        // Seed a real second project member (as sync would deliver later).
+        try await appDB.writer.write { db in
+            try MemberRecord(id: "m2", name: "家人", initial: "家", color: "#4AA8E8", isMe: false, createdAt: 2, updatedAt: 2, deletedAt: nil).insert(db)
+            try ProjectMemberRecord(projectId: work.id, memberId: "m2", role: "editor", createdAt: 2, updatedAt: 2, deletedAt: nil).insert(db)
+        }
+
+        let before = try await api.pendingChanges().count
+        try await api.updateMemberRole(projectId: work.id, memberId: "m2", role: "viewer")
+        let members = try await api.listProjectMembers(projectId: work.id)
+        #expect(members.first { $0.memberId == "m2" }?.role == "viewer")
+        #expect(members.first { $0.memberId == me.id }?.role == "owner")
+        for bad in ["admin", "write", "read"] {
+            await #expect(throws: DayDoError.self) { try await api.updateMemberRole(projectId: work.id, memberId: "m2", role: bad) }
+        }
+
+        let transferred = try await api.transferProjectOwner(projectId: work.id, toMemberId: "m2")
+        #expect(transferred.ownerId == "m2")
+
+        // Now original owner `me` is no longer owner and can be removed.
+        try await api.removeMember(projectId: work.id, memberId: me.id)
+        let afterRemove = try await api.getProject(id: work.id)
+        #expect(afterRemove.memberIds == ["m2"])
+
+        let newChanges = try await api.pendingChanges().dropFirst(before)
+        #expect(newChanges.contains { $0.entity == "projectMember" && $0.entityId == "\(work.id):m2" && $0.fields.contains("role") })
+        #expect(newChanges.contains { $0.entity == "project" && $0.entityId == work.id && $0.fields == ["ownerId"] })
+        #expect(newChanges.contains { $0.entity == "projectMember" && $0.entityId == "\(work.id):\(me.id)" && $0.fields.contains("deletedAt") })
+    }
 }
