@@ -27,7 +27,7 @@ design/      設計稿
 - API 名稱與欄位對齊 ticktick-mcp（作者另一個私有 repo 的 `ticktick-mcp/src/tools.ts`）：priority 0/1/3/5、status 0/2、`TRIGGER:` 提醒、RRULE、ISO 8601 `start`/`due` + `timezone` + `all_day`。之後的 MCP 直接沿用那套工具名。
 - Schema 為同步預留：id 由 client 產生（UUIDv7），時間戳是 epoch ms，刪除用 `deletedAt` 軟刪除，每次寫入在同一 transaction 寫一筆 `change`（outbox，含變更欄位名）。改 schema 用新的 migration，不改 `v1`。
 - 排序鍵用 `SortKey`（fractional index），不要重新編號。
-- 單機階段沒有帳號與成員：UI 不得顯示假的「已同步」、成員或留言數。
+- 單機階段沒有帳號與成員：同步、帳號、成員相關的 UI 元素直接不放，也不要用「僅存於這台裝置」之類的文字說明它們不存在。共享是清單的屬性（清單選單 → 共享與成員），不另開分頁。
 - API 回傳的 `schedule` 已換成裝置時區。更新任務時，只有日期或時間真的改了才送 `schedule`，否則會把任務原本的時區改掉（只改提醒也會中招）。
 - 牆鐘時間用該時區的年月日時分組件建立，不用「當天午夜＋分鐘數」：夏令時間切換日會差一小時。第二階段的 Worker 也照這條。
 
@@ -40,7 +40,7 @@ cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
   -destination 'platform=iOS Simulator,id=<DD 模擬器 UDID>' CODE_SIGNING_ALLOWED=NO   # UI 流程測試
 ```
 
-啟動參數（Debug 用）：`-DayDoReset` 清空資料與偏好、`-DayDoDemo` 載入設計稿範例資料、`-DayDoScreen <drawer|detail|date|calendar|events|week|editlist|compose|settings|search|shared>` 直接開到某畫面。
+啟動參數（Debug 用）：`-DayDoReset` 清空資料與偏好、`-DayDoDemo` 載入設計稿範例資料、`-DayDoScreen <drawer|detail|date|calendar|events|week|editlist|compose|settings|search>` 直接開到某畫面。
 
 ## 模擬器
 

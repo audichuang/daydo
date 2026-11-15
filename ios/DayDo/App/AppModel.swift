@@ -152,7 +152,7 @@ final class AppModel {
     }
 }
 
-enum MainTab: Hashable { case tasks, calendar, shared, search }
+enum MainTab: Hashable { case tasks, calendar, search }
 
 /// Opening the composer with defaults (e.g. the day selected in the calendar).
 struct ComposeRequest: Identifiable {

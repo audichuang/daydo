@@ -166,7 +166,6 @@ enum DebugLaunch {
         case "events": UserDefaults.standard.set("month", forKey: "calendarViewMode"); model.tab = .calendar
         case "week": UserDefaults.standard.set("week", forKey: "calendarViewMode"); model.tab = .calendar
         case "search": model.tab = .search
-        case "shared": model.tab = .shared
         case "detail", "date", "time":
             model.detailTaskId = tasks.first?.id
             if screen != "detail" { UserDefaults.standard.set(screen, forKey: "debugDetailPage") }

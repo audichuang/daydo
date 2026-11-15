@@ -127,20 +127,8 @@ struct DrawerView: View {
 
     var header: some View {
         HStack(spacing: 10) {
-            Text(model.me?.initial ?? "我")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(Palette.background)
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(Color(hex: model.me?.color ?? "#9BB8FF")))
-            VStack(alignment: .leading, spacing: 1) {
-                Text(model.me?.name ?? "我").txt(15, .bold).foregroundStyle(Palette.text)
-                Text("僅存於這台裝置").txt(11).foregroundStyle(Palette.textTertiary)
-            }
+            // No account yet: no avatar or sync status until phase 2 adds sign-in.
             Spacer()
-            Button { close(); model.tab = .search } label: {
-                Image(systemName: "magnifyingglass").frame(width: 40, height: 40)
-            }
-            .accessibilityLabel("搜尋")
             Button { close(); model.showSettings = true } label: {
                 Image(systemName: "gearshape").frame(width: 40, height: 40)
             }

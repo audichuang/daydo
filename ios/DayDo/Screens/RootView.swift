@@ -14,7 +14,6 @@ struct RootView: View {
                 switch model.tab {
                 case .tasks: TaskListScreen(scope: model.scope)
                 case .calendar: CalendarScreen()
-                case .shared: SharedScreen()
                 case .search: SearchScreen()
                 }
             }
@@ -52,7 +51,7 @@ struct RootView: View {
 
 struct TaskRef: Identifiable { let id: String }
 
-/// Floating glass navigation: 任務／日曆／共享／搜尋 (62pt high, 30pt from bottom).
+/// Floating glass navigation: 任務／日曆／搜尋 (62pt high, 30pt from bottom).
 struct BottomNav: View {
     @Environment(\.accent) private var accent
     @Binding var tab: MainTab
@@ -62,7 +61,6 @@ struct BottomNav: View {
         HStack(spacing: 2) {
             item(.tasks, "任務", "checkmark.square")
             item(.calendar, "日曆", "calendar")
-            item(.shared, "共享", "person.2")
             item(.search, "搜尋", "magnifyingglass")
         }
         .padding(5)
