@@ -253,8 +253,8 @@ export async function rotateRefreshToken(
   let isGraceRetry = false;
 
   if (existing.revokedAt !== null) {
-    // Allow a single lost-response grace retry when `existing` was revoked by normal rotation
-    // within the grace window and its direct successor has not been used or revoked yet.
+    // Allow lost-response grace retries when `existing` was revoked by normal rotation
+    // within the grace window and its latest direct successor has not been used or revoked yet.
     const withinGrace =
       now >= existing.revokedAt && now - existing.revokedAt <= REFRESH_GRACE_MS;
     const successor =
@@ -291,7 +291,10 @@ export async function rotateRefreshToken(
 
   // Atomically insert the replacement only while `target` is still unrevoked and unexpired,
   // and claim `target` in the same D1 batch so no reuse or concurrent grace retry can slip in.
-  const [, revoked] = await database.batch([
+  // On a grace retry, also repoint `existing.replacedBy` to `newSessionId` (without changing
+  // `existing.revokedAt`) so subsequent lost-response retries within the same 10-minute window
+  // still find the latest unused successor.
+  const baseStatements = [
     database.insert(session).select(
       sql`SELECT ${newSessionId}, ${existing.userId}, ${existing.deviceId}, ${existing.chainId}, ${newRefreshHash}, ${now + REFRESH_TTL_MS}, ${now}, NULL, NULL WHERE EXISTS (SELECT 1 FROM session WHERE id = ${target.id} AND revokedAt IS NULL AND expiresAt > ${now})`,
     ),
@@ -307,7 +310,25 @@ export async function rotateRefreshToken(
         target: device.id,
         set: { userId: existing.userId, lastSeenAt: now },
       }),
-  ]);
+  ] as const;
+
+  const [, revoked] = await database.batch(
+    isGraceRetry
+      ? [
+          ...baseStatements,
+          database
+            .update(session)
+            .set({ replacedBy: newSessionId })
+            .where(
+              and(
+                eq(session.id, existing.id),
+                eq(session.replacedBy, target.id),
+                sql`EXISTS (SELECT 1 FROM session WHERE id = ${newSessionId})`,
+              ),
+            ),
+        ]
+      : [...baseStatements],
+  );
 
   if (revoked.length === 0) {
     await revokeChain(database, existing.chainId, now);

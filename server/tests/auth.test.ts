@@ -437,6 +437,106 @@ describe('refresh token grace window for lost-response retries', () => {
     expect(followUp).not.toBeNull();
   });
 
+  it('twoConsecutiveLostResponsesWithinGraceSucceedWithoutExtendingDeadline', async () => {
+    const { db } = createTestD1();
+    const database = db as unknown as DatabaseClient;
+
+    const initial = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'grace-user-consecutive-1',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1000,
+    });
+
+    const r1 = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2000,
+    });
+    expect(r1).not.toBeNull();
+
+    // First lost-response grace retry at +8 min.
+    const r2 = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2000 + 8 * 60 * 1000,
+    });
+    expect(r2).not.toBeNull();
+    expect(r2!.refreshToken).not.toBe(initial.refreshToken);
+    expect(r2!.refreshToken).not.toBe(r1!.refreshToken);
+
+    // Second consecutive lost-response grace retry with the same R0 at +9 min.
+    const r3 = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2000 + 9 * 60 * 1000,
+    });
+    expect(r3).not.toBeNull();
+    expect(r3!.refreshToken).not.toBe(initial.refreshToken);
+    expect(r3!.refreshToken).not.toBe(r1!.refreshToken);
+    expect(r3!.refreshToken).not.toBe(r2!.refreshToken);
+
+    // Latest grace-issued token r3 works for normal rotation.
+    const r4 = await rotateRefreshToken(database, {
+      refreshToken: r3!.refreshToken,
+      jwtSecret,
+      now: 2000 + 9 * 60 * 1000 + 1000,
+    });
+    expect(r4).not.toBeNull();
+
+    // Once r3 has been used, retrying with R0 within 10 minutes must revoke the chain (including r4).
+    const replayAfterR3Used = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2000 + 9 * 60 * 1000 + 2000,
+    });
+    expect(replayAfterR3Used).toBeNull();
+    const r4After = await rotateRefreshToken(database, {
+      refreshToken: r4!.refreshToken,
+      jwtSecret,
+      now: 2000 + 9 * 60 * 1000 + 3000,
+    });
+    expect(r4After).toBeNull();
+
+    // Original 10-minute deadline from t=2000 must NOT be extended by an earlier grace retry.
+    const initial2 = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'grace-user-consecutive-2',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1000,
+    });
+    await rotateRefreshToken(database, {
+      refreshToken: initial2.refreshToken,
+      jwtSecret,
+      now: 2000,
+    });
+    const graceAt8Min = await rotateRefreshToken(database, {
+      refreshToken: initial2.refreshToken,
+      jwtSecret,
+      now: 2000 + 8 * 60 * 1000,
+    });
+    expect(graceAt8Min).not.toBeNull();
+
+    // 1ms past the original 10-minute deadline (only ~2 min after graceAt8Min) must fail and revoke the chain.
+    const pastOriginalDeadline = await rotateRefreshToken(database, {
+      refreshToken: initial2.refreshToken,
+      jwtSecret,
+      now: 2000 + TEN_MINUTES_MS + 1,
+    });
+    expect(pastOriginalDeadline).toBeNull();
+
+    const afterDeadlineRevoke = await rotateRefreshToken(database, {
+      refreshToken: graceAt8Min!.refreshToken,
+      jwtSecret,
+      now: 2000 + TEN_MINUTES_MS + 2,
+    });
+    expect(afterDeadlineRevoke).toBeNull();
+  });
+
   it('graceRetryRevokesUnusedSuccessor', async () => {
     const { db } = createTestD1();
     const database = db as unknown as DatabaseClient;
