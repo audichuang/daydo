@@ -60,7 +60,7 @@
 - **離開紀錄（gone）**：DO 另存 `departure(entity, entityId, projectId, serverSeq)`：資料列離開某份清單（移動、清單被永久刪除）時寫一筆。pull 時，只對**現在已經看不到這一列**的使用者（是原清單成員、但不是資料列目前所在清單的成員）回 `{entity, entityId, gone: true, serverSeq}`；仍看得到的人會在同一範圍拿到移動後的列（serverSeq 較新），本機未送出的修改照常保留。App 收到 gone 就在本機硬刪除這一列與它的子列、丟掉它尚未送出的 op（不記 `purgedId`，id 之後還可能回來）。
 - **被拒絕時**：推送者仍讀得到這一列 → `rejected` 附目前的 `row` 與 `clocks`，App 照它覆蓋（例如被降成 viewer 後離線改的標題會被還原）；讀不到了 → `rejected` 附 `gone: true`，App 照上一條處理。
 - **永久刪除清單**：owner 永久刪除清單時，Worker 用一個 `batch()` 把清單標成已永久刪除並讀出當下的 `listScopes`（之後任何讓資料進入它的寫入都會在登記那步被拒；登記與標記都在 batch 裡，兩者不會交錯出漏網的範圍），再依讀出的範圍通知每個存有它資料的範圍。各範圍 DO 在交易裡記下「這份清單已永久刪除」、把屬於它的任務與子列永久刪除（留 tombstone），之後對這份清單的寫入一律拒絕。通知是冪等的，未完成的記在 D1 由下一次請求或排程重試，全部範圍都確認後才算完成。
-- **成員與邀請不走一般同步**：projectMember 與 projectInvite 只能由 owner 透過專用 API 改（見 Endpoint），先寫 D1、再由伺服器投影到清單建立者範圍的 projectMember 列（給 App 顯示）。投影是冪等的；寫完 D1 但投影失敗時，下一次 pull 該清單前 Worker 會比對 D1 與 DO 補齊。App 送來的 projectMember／projectInvite op 一律 `rejected`（附目前的列）。App 端「等待同步」的邀請在登入且連線後改成呼叫建立邀請的 API。
+- **成員與邀請不走一般同步**：projectMember 與 projectInvite 只能由 owner 透過專用 API 改（見 Endpoint），先寫 D1、再由伺服器投影到清單建立者範圍的 projectMember 列（給 App 顯示）。投影是冪等的；寫完 D1 但投影失敗時，下一次 pull 該清單前 Worker 會比對 D1 與 DO 補齊。App 送來的 projectMember／projectInvite op 一律 `rejected`（附目前的列）。App 改用邀請連結；舊版本機建立的「等待同步」邀請不上傳，登入時標成只在本機。
 - **共享清單需要的其他資料**：
   - 成員的顯示資料（名字、縮寫、顏色）存在 D1 的 `user`，使用者推送自己的 member 列時 Worker 一併更新 D1。pull 回應的 `members` 帶「與我共享任何一份清單的人」的 member 列（id 是對方的 `meMemberId`），App 照一般資料列套用；members 列另帶 `userId`，供成員管理 API 使用。
   - `project.folderId` 是個人分類：只有清單建立者能改。pull 別人建立的清單時不帶 `folderId`，App 對別人建立的清單保留本機的 `folderId`，也不送這個欄位。
@@ -75,6 +75,7 @@
 - Worker 重啟後回傳的 `serverTime` 可能比之前回過的小；只影響時鐘不準的裝置。
 - 附件只同步資料列，檔案本身還不上傳：別台裝置打不開，登出再登入後本機的附件路徑也會遺失（檔案還在手機上）。之後做附件上傳時一起處理。
 - refresh token 的 10 分鐘寬限：換發後 10 分鐘內、手機還沒用新 token 之前，持有舊 refresh token 的人能搶先換到新 session（要先偷到 Keychain 裡的 token）；真手機下次 refresh 時整條鏈會被撤銷。這是為了避免訊號差時回應遺失就被登出所接受的取捨。
+- 永久刪除清單在 App 還沒有入口；之後加入時，擁有者的其他裝置要另外收到清除通知（目前 pull 不再回傳那份清單，其他裝置會留著）。
 
 ## 線上格式（App 與 Worker 共用，兩邊各自實作前先以這裡為準）
 

@@ -152,6 +152,7 @@ public actor SyncEngine {
         let now = clock.now().epochMillis
         let didChangeInReconcile = try await database.writer.write { db -> Bool in
             if try Self.loadSignedInUserId(in: db) != nil {
+                try Self.markLocalProjectInviteOpsLocalOnly(in: db, now: now)
                 return false
             }
             let changed = try Self.reconcileFirstLogin(auth: auth, in: db, now: now)
@@ -516,13 +517,69 @@ public actor SyncEngine {
     }
 
     private func performPull(_ progress: inout PullProgress, generation: UInt64) async throws {
-        let pendingBackfill = try await database.writer.read { db in
-            try String.fetchAll(
-                db,
-                sql: "SELECT projectId FROM projectMembership WHERE needsBackfill = 1 ORDER BY projectId"
-            )
+        var backfilledProjectIds: Set<String> = []
+        try await runPendingBackfill(
+            excluding: &backfilledProjectIds,
+            progress: &progress,
+            generation: generation
+        )
+
+        var cursors = try await database.writer.read { db in
+            try Self.loadPullCursors(in: db)
         }
-        if !pendingBackfill.isEmpty {
+
+        while true {
+            guard generation == sessionGeneration else {
+                throw SyncError.signedOut
+            }
+            let requestData = try encoder.encode(SyncPullRequest(cursors: cursors, limit: pullLimit))
+            let responseData = try await sendAuthorized(method: "POST", path: "/sync/pull", body: requestData)
+            guard generation == sessionGeneration else {
+                throw SyncError.signedOut
+            }
+            let response = try decode(SyncPullResponse.self, from: responseData)
+            let (pageRowCount, pageChanged, updatedCursors) = try await applyPullResponsePage(
+                response,
+                isBackfill: false,
+                fallbackCursors: cursors
+            )
+
+            cursors = updatedCursors
+            progress.pulledCount += pageRowCount
+            if pageChanged {
+                progress.didChangeLocalData = true
+            }
+
+            if !response.scopes.contains(where: { $0.hasMore }) {
+                break
+            }
+        }
+
+        try await runPendingBackfill(
+            excluding: &backfilledProjectIds,
+            progress: &progress,
+            generation: generation
+        )
+    }
+
+    private func runPendingBackfill(
+        excluding attemptedBackfill: inout Set<String>,
+        progress: inout PullProgress,
+        generation: UInt64
+    ) async throws {
+        while true {
+            let pendingBackfill = try await database.writer.read { db in
+                try String.fetchAll(
+                    db,
+                    sql: "SELECT projectId FROM projectMembership WHERE needsBackfill = 1 ORDER BY projectId"
+                )
+            }.filter { !attemptedBackfill.contains($0) }
+
+            if pendingBackfill.isEmpty {
+                return
+            }
+            attemptedBackfill.formUnion(pendingBackfill)
+
             var backfillCursors: [String: Int64] = [:]
             while true {
                 guard generation == sessionGeneration else {
@@ -557,37 +614,6 @@ public actor SyncEngine {
                         arguments: [pid]
                     )
                 }
-            }
-        }
-
-        var cursors = try await database.writer.read { db in
-            try Self.loadPullCursors(in: db)
-        }
-
-        while true {
-            guard generation == sessionGeneration else {
-                throw SyncError.signedOut
-            }
-            let requestData = try encoder.encode(SyncPullRequest(cursors: cursors, limit: pullLimit))
-            let responseData = try await sendAuthorized(method: "POST", path: "/sync/pull", body: requestData)
-            guard generation == sessionGeneration else {
-                throw SyncError.signedOut
-            }
-            let response = try decode(SyncPullResponse.self, from: responseData)
-            let (pageRowCount, pageChanged, updatedCursors) = try await applyPullResponsePage(
-                response,
-                isBackfill: false,
-                fallbackCursors: cursors
-            )
-
-            cursors = updatedCursors
-            progress.pulledCount += pageRowCount
-            if pageChanged {
-                progress.didChangeLocalData = true
-            }
-
-            if !response.scopes.contains(where: { $0.hasMore }) {
-                break
             }
         }
     }
@@ -999,20 +1025,24 @@ public actor SyncEngine {
         now: EpochMillis
     ) throws -> Bool {
         let localMe = try MemberRecord.filter(Column("isMe") == true).fetchOne(db)
+        let didChange: Bool
 
         switch (localMe != nil, auth.hasData) {
         case (false, false):
             try LocalDayDoAPI.bootstrap(in: db, now: now)
-            return true
+            didChange = true
 
         case (false, true):
-            return false
+            didChange = false
 
         case (true, false):
-            return false
+            didChange = false
 
         case (true, true):
-            guard let localMe else { return false }
+            guard let localMe else {
+                try markLocalProjectInviteOpsLocalOnly(in: db, now: now)
+                return false
+            }
             let localInbox = try ProjectRecord
                 .filter(Column("isInbox") == true)
                 .order(Column("createdAt"))
@@ -1060,8 +1090,22 @@ public actor SyncEngine {
                 try deleteCreateOps(entity: "project", entityId: newInboxId, in: db)
             }
 
-            return remapMe != nil || remapInbox != nil || droppedAny
+            didChange = remapMe != nil || remapInbox != nil || droppedAny
         }
+
+        try markLocalProjectInviteOpsLocalOnly(in: db, now: now)
+        return didChange
+    }
+
+    private static func markLocalProjectInviteOpsLocalOnly(in db: Database, now: EpochMillis) throws {
+        try db.execute(
+            sql: """
+                UPDATE change
+                SET ackedAt = ?, result = 'local-only'
+                WHERE entity = 'projectInvite' AND ackedAt IS NULL
+                """,
+            arguments: [now]
+        )
     }
 
     private static func remapUnackedChanges(
