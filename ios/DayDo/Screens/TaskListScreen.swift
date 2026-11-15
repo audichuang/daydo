@@ -79,9 +79,11 @@ struct TaskListScreen: View {
                         withAnimation(.snappy) { model.compact.toggle() }
                     }
                     Button(closed.contains("completed") ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle("completed") }
-                    if let overdue = sections.first(where: { $0.id == "overdue" }), !isViewerScope {
+                    if let overdue = sections.first(where: { $0.id == "overdue" }),
+                       !isViewerScope,
+                       !model.editableTaskIds(in: overdue.tasks).isEmpty {
                         Divider()
-                        Button("全部延到今天", systemImage: "arrow.uturn.forward") { postpone(overdue.tasks.map(\.id)) }
+                        Button("全部延到今天", systemImage: "arrow.uturn.forward") { model.postponeOverdue(tasks: overdue.tasks) }
                     }
                     if case .project(let id) = scope, let proj = model.project(id), !proj.isInbox {
                         Divider()
@@ -137,8 +139,6 @@ struct TaskListScreen: View {
         if c.contains(id) { c.remove(id) } else { c.insert(id) }
         withAnimation(.snappy) { closedRaw = c.sorted().joined(separator: ",") }
     }
-
-    func postpone(_ ids: [String]) { Task { await model.perform { try await $0.postponeOverdue(taskIds: ids) } } }
 
     @ViewBuilder
     func viewMenuItem(_ title: String, mode: String, current: String, projectId: String) -> some View {
@@ -217,10 +217,11 @@ struct SectionCard: View {
                 HStack(spacing: 8) {
                     Text(section.title).txt(15, .bold).foregroundStyle(titleColor)
                     Spacer()
-                    if section.id == "overdue", !isViewerScope {
+                    if section.id == "overdue",
+                       !isViewerScope,
+                       !model.editableTaskIds(in: section.tasks).isEmpty {
                         Button("全部延到今天") {
-                            let ids = section.tasks.map(\.id)
-                            Task { await model.perform { try await $0.postponeOverdue(taskIds: ids) } }
+                            model.postponeOverdue(tasks: section.tasks)
                         }
                         .txt(13, .semibold).foregroundStyle(accent.text).padding(.trailing, 6).buttonStyle(.plain)
                     }

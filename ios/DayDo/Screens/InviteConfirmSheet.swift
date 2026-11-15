@@ -14,7 +14,12 @@ struct InviteConfirmSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
+#if DEBUG
                 Text("清單邀請").txt(17, .bold).foregroundStyle(Palette.text)
+                    .accessibilityValue("appear:\(model.debugInviteAppearCount)")
+#else
+                Text("清單邀請").txt(17, .bold).foregroundStyle(Palette.text)
+#endif
                 HStack {
                     PillButton(title: "關閉") {
                         model.invitePrompt = nil
@@ -132,6 +137,11 @@ struct InviteConfirmSheet: View {
         .presentationDragIndicator(.visible)
         .presentationBackground(Palette.card)
         .presentationCornerRadius(28)
+#if DEBUG
+        .onAppear {
+            model.debugInviteAppearCount += 1
+        }
+#endif
     }
 
     private func infoRow(_ label: String, value: String, last: Bool) -> some View {

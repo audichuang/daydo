@@ -571,4 +571,88 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["invite.accept"].exists)
         shot("37-invite-confirm")
     }
+
+    @MainActor
+    func testInviteConfirmLoadingToLoadedAndCancelError() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoScreen", "settings"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        let joinInviteButton = app.buttons["settings.joinInvite"]
+        XCTAssertTrue(joinInviteButton.waitForExistence(timeout: 5), app.debugDescription)
+
+        func submitInvite(_ code: String) {
+            joinInviteButton.tap()
+            let joinInput = app.textFields["joinInvite.input"]
+            XCTAssertTrue(joinInput.waitForExistence(timeout: 3), app.debugDescription)
+            let clearBtn = app.buttons["清除邀請連結"]
+            if clearBtn.exists { clearBtn.tap() }
+            joinInput.tap()
+            joinInput.typeText("daydo://invite/\(code)")
+            app.buttons["joinInvite.submit"].tap()
+        }
+
+        // 1. loading -> loaded updates in place without closing/reopening the sheet.
+        submitInvite("slow-ok")
+        XCTAssertTrue(app.staticTexts["正在讀取邀請資訊…"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["小安 邀請你加入「家庭採買」"].waitForExistence(timeout: 6), app.debugDescription)
+        XCTAssertEqual(app.staticTexts["清單邀請"].value as? String, "appear:1", "Sheet should not dismiss and reopen during loading -> loaded")
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(app.staticTexts["清單邀請"].waitForNonExistence(timeout: 3))
+
+        // 2. Closing during loading suppresses generic (404) error from reopening the sheet.
+        submitInvite("slow-404")
+        XCTAssertTrue(app.staticTexts["正在讀取邀請資訊…"].waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(app.staticTexts["清單邀請"].waitForNonExistence(timeout: 3))
+        Thread.sleep(forTimeInterval: 2.5)
+        XCTAssertFalse(app.staticTexts["清單邀請"].exists, "Closed invite sheet should not reopen on 404 error")
+
+        // 3. Closing during loading suppresses SyncError.retryable (500) from reopening the sheet.
+        submitInvite("slow-500")
+        XCTAssertTrue(app.staticTexts["正在讀取邀請資訊…"].waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(app.staticTexts["清單邀請"].waitForNonExistence(timeout: 3))
+        Thread.sleep(forTimeInterval: 2.5)
+        XCTAssertFalse(app.staticTexts["清單邀請"].exists, "Closed invite sheet should not reopen on SyncError.retryable")
+    }
+
+    @MainActor
+    func testSmartTodayOverdueViewerOnlyHidesPostpone() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoSeedViewerOverdueOnly"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        XCTAssertTrue(app.staticTexts["已逾期"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS '唯讀逾期任務'")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["全部延到今天"].exists, "Viewer-only overdue section should hide 全部延到今天")
+
+        app.buttons["更多選項"].tap()
+        XCTAssertTrue(app.buttons["隱藏詳情"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["全部延到今天"].exists, "Toolbar menu should hide 全部延到今天 when no editable overdue tasks exist")
+    }
+
+    @MainActor
+    func testSmartTodayOverdueMixedPostponesOnlyEditable() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDemo", "-DayDoDebugStub", "-DayDoSeedViewerOverdue"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        XCTAssertTrue(app.staticTexts["已逾期"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS '唯讀逾期任務'")).firstMatch.exists)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS '回覆客戶報價信'")).firstMatch.exists)
+
+        let postponeBtn = app.buttons["全部延到今天"]
+        XCTAssertTrue(postponeBtn.waitForExistence(timeout: 3), app.debugDescription)
+        postponeBtn.tap()
+
+        // Only the editable task should move to 今天; the viewer task remains in 已逾期 and 全部延到今天 hides.
+        XCTAssertTrue(postponeBtn.waitForNonExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["已逾期"].exists)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS '唯讀逾期任務'")).firstMatch.exists)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS '回覆客戶報價信'")).firstMatch.exists)
+    }
 }

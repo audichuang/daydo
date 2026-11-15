@@ -28,11 +28,12 @@ enum SyncConfig {
 }
 
 struct PendingInvitePrompt: Identifiable, Equatable {
-    let id = UUID()
+    var id: String { code }
     let code: String
     var info: InviteInfo?
     var isLoading: Bool
     var error: String?
+    fileprivate let requestId = UUID()
 }
 
 extension Project {
@@ -48,7 +49,7 @@ extension Project {
 final class AppModel {
     let api: LocalDayDoAPI
     let syncEngine: SyncEngine
-    let tokenStore: KeychainSyncTokenStore
+    let tokenStore: any SyncTokenStore
     let syncEnabled: Bool
 
     // Lookups shared by many screens
@@ -108,6 +109,7 @@ final class AppModel {
 
 #if DEBUG
     var debugAccountPreview = false
+    var debugInviteAppearCount = 0
 #endif
 
     private var debounceSyncTask: Task<Void, Never>?
@@ -118,19 +120,20 @@ final class AppModel {
 
     init(
         api: LocalDayDoAPI,
-        tokenStore: KeychainSyncTokenStore = KeychainSyncTokenStore(),
-        syncEnabled: Bool = !ProcessInfo.processInfo.arguments.contains("-DayDoSkipLogin")
+        tokenStore: any SyncTokenStore = KeychainSyncTokenStore(),
+        syncEnabled: Bool = !ProcessInfo.processInfo.arguments.contains("-DayDoSkipLogin"),
+        transport: (any SyncTransport)? = nil
     ) {
         self.api = api
         self.tokenStore = tokenStore
         self.syncEnabled = syncEnabled
-        let transport = HTTPSyncTransport(
+        let resolvedTransport: any SyncTransport = transport ?? HTTPSyncTransport(
             baseURL: SyncConfig.baseURL,
             extraHeaders: SyncConfig.accessHeaders()
         )
         self.syncEngine = SyncEngine(
             database: api.database,
-            transport: transport,
+            transport: resolvedTransport,
             tokenStore: tokenStore
         )
         let d = UserDefaults.standard
@@ -148,6 +151,15 @@ final class AppModel {
 
     func project(_ id: String?) -> Project? { projects.first { $0.id == id } }
     func isViewer(projectId: String?) -> Bool { project(projectId)?.isViewer ?? false }
+    func editableTaskIds(in tasks: [TodoTask]) -> [String] {
+        tasks.filter { !isViewer(projectId: $0.projectId) }.map(\.id)
+    }
+
+    func postponeOverdue(tasks: [TodoTask]) {
+        let ids = editableTaskIds(in: tasks)
+        guard !ids.isEmpty else { return }
+        Task { await perform { try await $0.postponeOverdue(taskIds: ids) } }
+    }
     var inbox: Project? { projects.first(where: \.isInbox) }
 
     func launch() async {
@@ -162,6 +174,17 @@ final class AppModel {
             await DebugLaunch.apply(to: self)
             return
         }
+
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-DayDoDebugStub") {
+            if !((try? await syncEngine.isSignedIn) ?? false) {
+                try? await syncEngine.signIn(with: .apple(identityToken: "debug", nonce: "debug"))
+            }
+            if ProcessInfo.processInfo.arguments.contains("-DayDoDemo") {
+                try? await DemoData.load(into: api)
+            }
+        }
+#endif
 
         let signedIn = (try? await syncEngine.isSignedIn) ?? false
         if signedIn {
@@ -457,21 +480,30 @@ final class AppModel {
     func processPendingInviteIfNeeded() async {
         guard syncEnabled, isSignedIn, let code = pendingInviteCode else { return }
         pendingInviteCode = nil
-        invitePrompt = PendingInvitePrompt(code: code, info: nil, isLoading: true, error: nil)
+        let prompt = PendingInvitePrompt(code: code, info: nil, isLoading: true, error: nil)
+        invitePrompt = prompt
         do {
             let info = try await syncEngine.inviteInfo(code: code)
-            guard invitePrompt?.code == code else { return }
-            invitePrompt = PendingInvitePrompt(code: code, info: info, isLoading: false, error: nil)
+            guard invitePrompt?.requestId == prompt.requestId else { return }
+            invitePrompt?.info = info
+            invitePrompt?.isLoading = false
+            invitePrompt?.error = nil
         } catch let error as SyncError {
             if case .signedOut = error {
-                invitePrompt = nil
+                if invitePrompt?.requestId == prompt.requestId {
+                    invitePrompt = nil
+                }
                 pendingInviteCode = code
                 await handleSyncError(.signedOut)
             } else {
-                invitePrompt = PendingInvitePrompt(code: code, info: nil, isLoading: false, error: error.localizedDescription)
+                guard invitePrompt?.requestId == prompt.requestId else { return }
+                invitePrompt?.isLoading = false
+                invitePrompt?.error = error.localizedDescription
             }
         } catch {
-            invitePrompt = PendingInvitePrompt(code: code, info: nil, isLoading: false, error: error.localizedDescription)
+            guard invitePrompt?.requestId == prompt.requestId else { return }
+            invitePrompt?.isLoading = false
+            invitePrompt?.error = error.localizedDescription
         }
     }
 

@@ -10,7 +10,17 @@ struct DayDoApp: App {
 
     init() {
         let (api, tokenStore) = Self.makeStorage()
+#if DEBUG
+        let useStub = ProcessInfo.processInfo.arguments.contains("-DayDoDebugStub")
+        let effectiveTokenStore: any SyncTokenStore = useStub ? InMemorySyncTokenStore() : tokenStore
+        let m = AppModel(
+            api: api,
+            tokenStore: effectiveTokenStore,
+            transport: useStub ? DebugStubTransport() : nil
+        )
+#else
         let m = AppModel(api: api, tokenStore: tokenStore)
+#endif
         _model = State(initialValue: m)
         UNUserNotificationCenter.current().delegate = m.notificationDelegate
         if let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String,
@@ -203,3 +213,146 @@ enum DebugLaunch {
         }
     }
 }
+
+#if DEBUG
+actor DebugStubTransport: SyncTransport {
+    private var didPullSeed = false
+
+    func send(method: String, path: String, headers: [String: String], body: Data?) async throws -> SyncHTTPResponse {
+        let nowMs = EpochMillis(Date().timeIntervalSince1970 * 1000)
+        let serverHLC = HLC(ms: nowMs, counter: 0, deviceId: "srv").description
+
+        if method == "POST" && path == "/auth/apple" {
+            return try jsonResponse(200, [
+                "accessToken": "debug-access",
+                "refreshToken": "debug-refresh",
+                "user": ["id": "debug-user"],
+                "isNewAccount": true,
+                "hasData": false,
+                "meMemberId": NSNull(),
+                "inboxProjectId": NSNull(),
+            ])
+        }
+
+        if method == "POST" && path == "/sync/push" {
+            var results: [[String: Any]] = []
+            if let body,
+               let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+               let ops = payload["ops"] as? [[String: Any]] {
+                for op in ops {
+                    if let opId = op["opId"] as? String {
+                        results.append(["opId": opId, "status": "applied"])
+                    }
+                }
+            }
+            return try jsonResponse(200, [
+                "results": results,
+                "serverTime": serverHLC,
+            ])
+        }
+
+        if method == "POST" && path == "/sync/pull" {
+            let args = ProcessInfo.processInfo.arguments
+            let seedViewer = args.contains("-DayDoSeedViewerOverdue") || args.contains("-DayDoSeedViewerOverdueOnly")
+            if seedViewer && !didPullSeed {
+                didPullSeed = true
+                let yesterday = Clock.system.today.adding(days: -1).description
+                let ownerId = "debug-owner-1"
+                let projectId = "debug-viewer-proj-1"
+                let taskId = "debug-viewer-task-1"
+                return try jsonResponse(200, [
+                    "scopes": [[
+                        "scope": "u:debug-owner",
+                        "rows": [
+                            [
+                                "entity": "project",
+                                "row": [
+                                    "id": projectId,
+                                    "name": "唯讀共享清單",
+                                    "color": "#5AC8FA",
+                                    "viewMode": "list",
+                                    "kind": "TASK",
+                                    "isInbox": false,
+                                    "ownerId": ownerId,
+                                    "sortKey": "z1",
+                                    "showInSmart": "all",
+                                    "notifyMode": "all",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["name": serverHLC],
+                                "serverSeq": 1,
+                            ],
+                            [
+                                "entity": "task",
+                                "row": [
+                                    "id": taskId,
+                                    "projectId": projectId,
+                                    "title": "唯讀逾期任務",
+                                    "content": "",
+                                    "priority": 0,
+                                    "status": 0,
+                                    "startDay": yesterday,
+                                    "reminders": [],
+                                    "tags": [],
+                                    "sortKey": "a0",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["title": serverHLC, "schedule": serverHLC],
+                                "serverSeq": 2,
+                            ],
+                        ],
+                        "cursor": 2,
+                        "hasMore": false,
+                    ]],
+                    "memberships": [
+                        ["projectId": projectId, "scope": "u:debug-owner", "role": "viewer"],
+                    ],
+                    "members": [[
+                        "id": ownerId,
+                        "name": "小安",
+                        "initial": "安",
+                        "color": "#5AC8FA",
+                        "isMe": false,
+                        "createdAt": nowMs,
+                        "updatedAt": nowMs,
+                    ]],
+                ])
+            }
+            return try jsonResponse(200, [
+                "scopes": [],
+                "members": [],
+            ])
+        }
+
+        if method == "GET" && path == "/invites/slow-ok" {
+            try await Task.sleep(for: .milliseconds(2500))
+            let expiresAt = EpochMillis(Date().addingTimeInterval(7 * 86400).timeIntervalSince1970 * 1000)
+            return try jsonResponse(200, [
+                "projectName": "家庭採買",
+                "inviterName": "小安",
+                "role": "editor",
+                "expiresAt": expiresAt,
+            ])
+        }
+
+        if method == "GET" && path == "/invites/slow-404" {
+            try await Task.sleep(for: .milliseconds(2500))
+            return try jsonResponse(404, ["error": "Invite not found"])
+        }
+
+        if method == "GET" && path == "/invites/slow-500" {
+            try await Task.sleep(for: .milliseconds(2500))
+            return try jsonResponse(500, ["error": "Server busy"])
+        }
+
+        return try jsonResponse(404, ["error": "Not found"])
+    }
+
+    private func jsonResponse(_ status: Int, _ object: Any) throws -> SyncHTTPResponse {
+        let data = try JSONSerialization.data(withJSONObject: object)
+        return SyncHTTPResponse(status: status, body: data)
+    }
+}
+#endif
