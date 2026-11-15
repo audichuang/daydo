@@ -73,6 +73,7 @@
 - 共享清單的 editor 能把清單的 `isInbox` 改成 true（App 不會這樣送）。
 - 兩台舊版手機在同一瞬間第一次登入，可能各自上傳一個收件匣。
 - Worker 重啟後回傳的 `serverTime` 可能比之前回過的小；只影響時鐘不準的裝置。
+- 附件只同步資料列，檔案本身還不上傳：別台裝置打不開，登出再登入後本機的附件路徑也會遺失（檔案還在手機上）。之後做附件上傳時一起處理。
 - refresh token 的 10 分鐘寬限：換發後 10 分鐘內、手機還沒用新 token 之前，持有舊 refresh token 的人能搶先換到新 session（要先偷到 Keychain 裡的 token）；真手機下次 refresh 時整條鏈會被撤銷。這是為了避免訊號差時回應遺失就被登出所接受的取捨。
 
 ## 線上格式（App 與 Worker 共用，兩邊各自實作前先以這裡為準）
@@ -186,5 +187,5 @@
 4. ✓ T5b Worker：`serverTime`、登入回應的 `hasData`／`meMemberId`／`inboxProjectId`、兩台裝置的 e2e。T7 從這裡開始。
 5. ✓ T5c Worker：成員與邀請 API、權限矩陣、成員投影、`listScopes` 與多範圍 pull、`gone` 與離開紀錄、加入時的 backfill、共享清單的 members 與 folderId 規則、永久刪除清單的通知。
 6. ✓ T6：Access 驗證、部署到 `daydo-api.audichuang.app`、對公開網址跑冒煙測試（`npm run smoke:prod`：Access 擋未帶 token 的請求、假 token 登入被拒）。完整登入與同步要真的 Apple／Google token，留到 T8 在手機上驗。
-7. T7 App：同步引擎與兩台裝置收斂測試。T8 App：登入畫面、邀請連結畫面。
+7. T7 App：✓ T7a 同步引擎與兩台裝置收斂測試；✓ T7b 登入、登出與第一次登入；T7c 共享清單。T8 App：登入畫面、邀請連結畫面。
 8. WebSocket 通知、MCP。
