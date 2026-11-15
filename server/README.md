@@ -53,6 +53,7 @@ Void starts Vite with `workerd` and a local D1 database.
   - Response: `{ accessToken, refreshToken, user: { id }, isNewAccount, hasData, meMemberId, inboxProjectId }`
 - `POST /auth/refresh` (`{ refreshToken }`)
   - Response: `{ accessToken, refreshToken, hasData, meMemberId, inboxProjectId }`
+  - Grace rule: retrying a token rotated within 10 minutes whose successor is still unrevoked revokes that unused successor and issues a new token pair; any other reuse revokes the session chain (`401`).
 - `inboxProjectId` is queried from the user's `Scope` Durable Object (`getInboxProjectId`, filtered by active `projectMembership`), `meMemberId` comes from `user.meMemberId`, and `hasData` is `inboxProjectId !== null`.
 
 ## Sync Endpoints

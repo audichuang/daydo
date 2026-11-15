@@ -1,10 +1,11 @@
 import { device, identity, projectMembership, session, user } from '@schema';
-import { and, eq, isNull, sql, type db } from 'void/db';
+import { and, eq, gt, isNull, sql, type db } from 'void/db';
 import type { ScopeStub } from '../sync/push';
 import { generateRefreshToken, sha256Hex, signAccessToken } from './crypto';
 import type { ProviderName } from './providers';
 
 const REFRESH_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const REFRESH_GRACE_MS = 10 * 60 * 1000;
 
 export type DatabaseClient = typeof db;
 export type ScopeLookup = (scope: string) => Pick<ScopeStub, 'getInboxProjectId'>;
@@ -86,6 +87,7 @@ function buildDeviceAndSessionStatements(
       expiresAt: params.now + REFRESH_TTL_MS,
       createdAt: params.now,
       revokedAt: null,
+      replacedBy: null,
     }),
   ] as const;
 }
@@ -218,6 +220,13 @@ export async function createSessionForIdentity(
   }
 }
 
+async function revokeChain(database: DatabaseClient, chainId: string, now: number): Promise<void> {
+  await database
+    .update(session)
+    .set({ revokedAt: now })
+    .where(and(eq(session.chainId, chainId), isNull(session.revokedAt)));
+}
+
 export async function rotateRefreshToken(
   database: DatabaseClient,
   params: {
@@ -240,21 +249,37 @@ export async function rotateRefreshToken(
     return null;
   }
 
-  if (existing.revokedAt !== null) {
-    // Reuse of a revoked refresh token: revoke the entire session chain.
-    await database
-      .update(session)
-      .set({ revokedAt: now })
-      .where(and(eq(session.chainId, existing.chainId), isNull(session.revokedAt)));
-    return null;
-  }
+  let target = existing;
+  let isGraceRetry = false;
 
-  if (existing.expiresAt <= now) {
+  if (existing.revokedAt !== null) {
+    // Allow lost-response grace retries when `existing` was revoked by normal rotation
+    // within the grace window and its latest direct successor has not been used or revoked yet.
+    const withinGrace =
+      now >= existing.revokedAt && now - existing.revokedAt <= REFRESH_GRACE_MS;
+    const successor =
+      withinGrace && existing.replacedBy !== null
+        ? await database
+            .select()
+            .from(session)
+            .where(and(eq(session.id, existing.replacedBy), eq(session.chainId, existing.chainId)))
+            .get()
+        : undefined;
+
+    if (!successor || successor.revokedAt !== null || successor.expiresAt <= now) {
+      // Reuse of a revoked refresh token: revoke the entire session chain.
+      await revokeChain(database, existing.chainId, now);
+      return null;
+    }
+
+    target = successor;
+    isGraceRetry = true;
+  } else if (existing.expiresAt <= now) {
     return null;
   }
 
   // Resolve sync state before rotating so a transient Scope DO RPC failure leaves
-  // the current refresh token valid and avoids triggering reuse detection on retry.
+  // the active token valid and avoids triggering reuse detection on retry.
   const [accessToken, syncState] = await Promise.all([
     signAccessToken(existing.userId, params.jwtSecret),
     resolveUserSyncState(database, existing.userId, params.getScopeStub),
@@ -264,16 +289,19 @@ export async function rotateRefreshToken(
   const newRefreshHash = await sha256Hex(newRefreshToken);
   const newSessionId = crypto.randomUUID();
 
-  // Atomically insert the replacement only while `existing` is still unrevoked and unexpired,
-  // and claim `existing` in the same D1 batch so no reuse can slip in between revoke and insert.
-  const [, revoked] = await database.batch([
+  // Atomically insert the replacement only while `target` is still unrevoked and unexpired,
+  // and claim `target` in the same D1 batch so no reuse or concurrent grace retry can slip in.
+  // On a grace retry, also repoint `existing.replacedBy` to `newSessionId` (without changing
+  // `existing.revokedAt`) so subsequent lost-response retries within the same 10-minute window
+  // still find the latest unused successor.
+  const baseStatements = [
     database.insert(session).select(
-      sql`SELECT ${newSessionId}, ${existing.userId}, ${existing.deviceId}, ${existing.chainId}, ${newRefreshHash}, ${now + REFRESH_TTL_MS}, ${now}, NULL WHERE EXISTS (SELECT 1 FROM session WHERE id = ${existing.id} AND revokedAt IS NULL AND expiresAt > ${now})`,
+      sql`SELECT ${newSessionId}, ${existing.userId}, ${existing.deviceId}, ${existing.chainId}, ${newRefreshHash}, ${now + REFRESH_TTL_MS}, ${now}, NULL, NULL WHERE EXISTS (SELECT 1 FROM session WHERE id = ${target.id} AND revokedAt IS NULL AND expiresAt > ${now})`,
     ),
     database
       .update(session)
-      .set({ revokedAt: now })
-      .where(and(eq(session.id, existing.id), isNull(session.revokedAt)))
+      .set(isGraceRetry ? { revokedAt: now } : { revokedAt: now, replacedBy: newSessionId })
+      .where(and(eq(session.id, target.id), isNull(session.revokedAt), gt(session.expiresAt, now)))
       .returning({ id: session.id }),
     database
       .insert(device)
@@ -282,13 +310,28 @@ export async function rotateRefreshToken(
         target: device.id,
         set: { userId: existing.userId, lastSeenAt: now },
       }),
-  ]);
+  ] as const;
+
+  const [, revoked] = await database.batch(
+    isGraceRetry
+      ? [
+          ...baseStatements,
+          database
+            .update(session)
+            .set({ replacedBy: newSessionId })
+            .where(
+              and(
+                eq(session.id, existing.id),
+                eq(session.replacedBy, target.id),
+                sql`EXISTS (SELECT 1 FROM session WHERE id = ${newSessionId})`,
+              ),
+            ),
+        ]
+      : [...baseStatements],
+  );
 
   if (revoked.length === 0) {
-    await database
-      .update(session)
-      .set({ revokedAt: now })
-      .where(and(eq(session.chainId, existing.chainId), isNull(session.revokedAt)));
+    await revokeChain(database, existing.chainId, now);
     return null;
   }
 
