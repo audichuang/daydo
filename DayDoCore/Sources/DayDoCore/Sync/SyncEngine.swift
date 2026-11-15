@@ -101,22 +101,31 @@ public actor SyncEngine {
     }
 
     private func performSyncCycle() async throws -> SyncSummary {
-        let pushResult = try await performPush()
-        let pullResult = try await performPull()
+        var pushProgress = PushProgress()
+        var pullProgress = PullProgress()
+        defer {
+            let summary = makeSummary(push: pushProgress, pull: pullProgress)
+            if summary.didChangeLocalData {
+                emitChange(summary)
+            }
+        }
+
+        try await performPush(&pushProgress)
+        try await performPull(&pullProgress)
 
         consecutiveRetryableFailures = 0
 
-        let summary = SyncSummary(
-            pushedCount: pushResult.pushedCount,
-            appliedCount: pushResult.appliedCount,
-            rejectedCount: pushResult.rejectedCount,
-            pulledCount: pullResult.pulledCount,
-            didChangeLocalData: pushResult.didChangeLocalData || pullResult.didChangeLocalData
+        return makeSummary(push: pushProgress, pull: pullProgress)
+    }
+
+    private func makeSummary(push: PushProgress, pull: PullProgress) -> SyncSummary {
+        SyncSummary(
+            pushedCount: push.pushedCount,
+            appliedCount: push.appliedCount,
+            rejectedCount: push.rejectedCount,
+            pulledCount: pull.pulledCount,
+            didChangeLocalData: push.didChangeLocalData || pull.didChangeLocalData
         )
-        if summary.didChangeLocalData {
-            emitChange(summary)
-        }
-        return summary
     }
 
     // MARK: - Push
@@ -128,8 +137,7 @@ public actor SyncEngine {
         var didChangeLocalData: Bool = false
     }
 
-    private func performPush() async throws -> PushProgress {
-        var progress = PushProgress()
+    private func performPush(_ progress: inout PushProgress) async throws {
         let batchLimit = pushBatchSize
 
         while true {
@@ -235,8 +243,6 @@ public actor SyncEngine {
                 progress.didChangeLocalData = true
             }
         }
-
-        return progress
     }
 
     // MARK: - Pull
@@ -246,8 +252,7 @@ public actor SyncEngine {
         var didChangeLocalData: Bool = false
     }
 
-    private func performPull() async throws -> PullProgress {
-        var progress = PullProgress()
+    private func performPull(_ progress: inout PullProgress) async throws {
         var cursors = try await database.writer.read { db in
             try Self.loadPullCursors(in: db)
         }
@@ -381,8 +386,6 @@ public actor SyncEngine {
                 break
             }
         }
-
-        return progress
     }
 
     // MARK: - Authorized HTTP + Refresh

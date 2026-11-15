@@ -1289,4 +1289,277 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         let event = await remoteIter.next()
         #expect(event == changed)
     }
+
+    private func nextEmittedSummary(from stream: AsyncStream<SyncSummary>) async -> SyncSummary? {
+        await withTaskGroup(of: SyncSummary?.self) { group in
+            group.addTask {
+                var iter = stream.makeAsyncIterator()
+                return await iter.next()
+            }
+            group.addTask {
+                try? await Task.sleep(for: .milliseconds(250))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
+    @Test func pullPartialPageFailureEmitsChangeBeforeThrowing() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs, counter: 0, deviceId: "server").description
+        let taskId = ID.make()
+
+        let (_, db, _, _, _) = try await makeSyncSetup { _, _ in
+            try jsonResponse(200, ["results": [], "serverTime": serverTime])
+        }
+        try await ackAllChanges(in: db)
+        let projectId = try await db.writer.read { db in
+            try ProjectRecord.fetchOne(db)!.id
+        }
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/sync/push" {
+                return try jsonResponse(200, ["results": [], "serverTime": serverTime])
+            }
+            let body = try decodeJSONObject(req.body)
+            let cursors = (body["cursors"] as? [String: Any]) ?? [:]
+            let cursor = (cursors["u:user-1"] as? NSNumber)?.int64Value ?? 0
+            if cursor == 0 {
+                return try jsonResponse(200, [
+                    "scopes": [[
+                        "scope": "u:user-1",
+                        "rows": [[
+                            "entity": "task",
+                            "row": [
+                                "id": taskId,
+                                "projectId": projectId,
+                                "title": "第一頁任務",
+                                "content": "",
+                                "priority": 0,
+                                "status": 0,
+                                "reminders": [],
+                                "tags": [],
+                                "sortKey": "a0",
+                                "createdAt": nowMs,
+                                "updatedAt": nowMs,
+                            ],
+                            "clocks": ["title": serverTime],
+                            "serverSeq": 1,
+                        ]],
+                        "cursor": 1,
+                        "hasMore": true,
+                    ]],
+                    "memberships": [],
+                    "members": [],
+                ])
+            }
+            return SyncHTTPResponse(status: 500, body: Data("pull page 2 error".utf8))
+        }
+
+        let engine = SyncEngine(
+            database: db,
+            transport: transport,
+            tokenStore: InMemorySyncTokenStore(accessToken: "a", refreshToken: "r"),
+            clock: .fixed(noon, timeZone: taipei)
+        )
+        let stream = await engine.changeNotifications()
+
+        var thrownError: SyncError?
+        do {
+            _ = try await engine.syncNow()
+            Issue.record("Expected syncNow() to throw on pull page 2 500")
+        } catch let error as SyncError {
+            thrownError = error
+        }
+
+        guard case .retryable(_, let statusCode, _) = thrownError else {
+            Issue.record("Expected retryable error, got \(String(describing: thrownError))")
+            return
+        }
+        #expect(statusCode == 500)
+
+        let taskRowsInDB = try await db.writer.read { db in
+            try TaskRecord.filter(Column("id") == taskId).fetchCount(db)
+        }
+        #expect(taskRowsInDB == 1)
+
+        let emitted = await nextEmittedSummary(from: stream)
+        #expect(emitted == SyncSummary(
+            pushedCount: 0,
+            appliedCount: 0,
+            rejectedCount: 0,
+            pulledCount: 1,
+            didChangeLocalData: true
+        ))
+    }
+
+    @Test func pushChangeThenPullFailureEmitsChangeBeforeThrowing() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs + 5000, counter: 0, deviceId: "server").description
+        let (api, db, _, _, _) = try await makeSyncSetup { _, _ in
+            try jsonResponse(200, ["results": [], "serverTime": serverTime])
+        }
+        try await ackAllChanges(in: db)
+
+        let created = try await api.createTask(CreateTaskInput(title: "本機標題"))
+        let createdId = created.id
+        let projectId = created.projectId
+        let sortKey = created.sortKey
+        let createdAt = created.createdAt
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/sync/push" {
+                let body = try decodeJSONObject(req.body)
+                let ops = (body["ops"] as? [[String: Any]]) ?? []
+                let serverRow: [String: Any] = [
+                    "id": createdId,
+                    "projectId": projectId,
+                    "title": "伺服器覆蓋標題",
+                    "content": "",
+                    "priority": 0,
+                    "status": 0,
+                    "reminders": [],
+                    "tags": [],
+                    "sortKey": sortKey,
+                    "createdAt": createdAt,
+                    "updatedAt": nowMs + 5000,
+                ]
+                return try jsonResponse(200, [
+                    "results": ops.map {
+                        [
+                            "opId": $0["opId"]!,
+                            "status": "rejected",
+                            "row": serverRow,
+                            "clocks": ["title": serverTime],
+                        ] as [String: Any]
+                    },
+                    "serverTime": serverTime,
+                ])
+            }
+            return SyncHTTPResponse(status: 500, body: Data("pull failed".utf8))
+        }
+
+        let engine = SyncEngine(
+            database: db,
+            transport: transport,
+            tokenStore: InMemorySyncTokenStore(accessToken: "a", refreshToken: "r"),
+            clock: .fixed(noon, timeZone: taipei)
+        )
+        let stream = await engine.changeNotifications()
+
+        var thrownError: SyncError?
+        do {
+            _ = try await engine.syncNow()
+            Issue.record("Expected syncNow() to throw on pull 500")
+        } catch let error as SyncError {
+            thrownError = error
+        }
+
+        guard case .retryable(_, let statusCode, _) = thrownError else {
+            Issue.record("Expected retryable error, got \(String(describing: thrownError))")
+            return
+        }
+        #expect(statusCode == 500)
+
+        let storedTitle = try await db.writer.read { db in
+            try TaskRecord.fetchOne(db, key: created.id)?.title
+        }
+        #expect(storedTitle == "伺服器覆蓋標題")
+
+        let emitted = await nextEmittedSummary(from: stream)
+        #expect(emitted == SyncSummary(
+            pushedCount: 1,
+            appliedCount: 0,
+            rejectedCount: 1,
+            pulledCount: 0,
+            didChangeLocalData: true
+        ))
+    }
+
+    @Test func pushBatch1ChangeThenBatch2FailureEmitsChangeBeforeThrowing() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs + 5000, counter: 0, deviceId: "server").description
+        let (api, db, _, _, _) = try await makeSyncSetup { _, _ in
+            try jsonResponse(200, ["results": [], "serverTime": serverTime])
+        }
+        try await ackAllChanges(in: db)
+
+        let task1 = try await api.createTask(CreateTaskInput(title: "任務一"))
+        _ = try await api.createTask(CreateTaskInput(title: "任務二"))
+        let task1Id = task1.id
+        let projectId = task1.projectId
+        let sortKey1 = task1.sortKey
+        let createdAt1 = task1.createdAt
+
+        let transport = FakeSyncTransport { req, index in
+            if index == 0 {
+                let body = try decodeJSONObject(req.body)
+                let ops = (body["ops"] as? [[String: Any]]) ?? []
+                let serverRow1: [String: Any] = [
+                    "id": task1Id,
+                    "projectId": projectId,
+                    "title": "批次一覆蓋",
+                    "content": "",
+                    "priority": 0,
+                    "status": 0,
+                    "reminders": [],
+                    "tags": [],
+                    "sortKey": sortKey1,
+                    "createdAt": createdAt1,
+                    "updatedAt": nowMs + 5000,
+                ]
+                return try jsonResponse(200, [
+                    "results": ops.map {
+                        [
+                            "opId": $0["opId"]!,
+                            "status": "rejected",
+                            "row": serverRow1,
+                            "clocks": ["title": serverTime],
+                        ] as [String: Any]
+                    },
+                    "serverTime": serverTime,
+                ])
+            }
+            return SyncHTTPResponse(status: 500, body: Data("push batch 2 failed".utf8))
+        }
+
+        let engine = SyncEngine(
+            database: db,
+            transport: transport,
+            tokenStore: InMemorySyncTokenStore(accessToken: "a", refreshToken: "r"),
+            clock: .fixed(noon, timeZone: taipei),
+            pushBatchSize: 1
+        )
+        let stream = await engine.changeNotifications()
+
+        var thrownError: SyncError?
+        do {
+            _ = try await engine.syncNow()
+            Issue.record("Expected syncNow() to throw on push batch 2 500")
+        } catch let error as SyncError {
+            thrownError = error
+        }
+
+        guard case .retryable(_, let statusCode, _) = thrownError else {
+            Issue.record("Expected retryable error, got \(String(describing: thrownError))")
+            return
+        }
+        #expect(statusCode == 500)
+
+        let storedTitle = try await db.writer.read { db in
+            try TaskRecord.fetchOne(db, key: task1.id)?.title
+        }
+        #expect(storedTitle == "批次一覆蓋")
+
+        let emitted = await nextEmittedSummary(from: stream)
+        #expect(emitted == SyncSummary(
+            pushedCount: 1,
+            appliedCount: 0,
+            rejectedCount: 1,
+            pulledCount: 0,
+            didChangeLocalData: true
+        ))
+    }
 }
