@@ -34,12 +34,7 @@ design/      設計稿
 
 ## 分支與 worktree
 
-這個 repo 常有多個 session 同時在做，`ticktick/` 這個 main checkout 只用來合併與發版，不直接改：
-
-- 每個需求（連文件、小修）先開 worktree：`git worktree add ../ticktick-wt/<名稱> -b <名稱> main`，之後所有改檔、測試、commit 都在那個目錄。
-- 做完在 worktree 先併入最新 main、跑過測試，再回 main checkout `git merge <名稱>`、push；合併成功後 `git worktree remove ../ticktick-wt/<名稱>`、`git branch -d <名稱>`。
-- TestFlight 從合併後的 main 打包。
-- 別的 session 的 worktree 與分支（例如 `sync-*`）不動、不合併、不刪，要動先問使用者。
+worktree 規定照全域規則（目錄 `../ticktick-wt/<名稱>`，`sync-*` 是別的 session 的同步工作）。TestFlight 一律從合併後的 main 打包，不從 worktree 打。
 
 ## 指令
 
