@@ -330,4 +330,125 @@ final class DayDoIPadTests: XCTestCase {
         XCTAssertEqual(titleField.value as? String, "表單環境測試")
         XCTAssertLessThan(titleField.frame.width, windowWidth * 0.7)
     }
+
+    @MainActor
+    func testInlineDetailDatePageIgnoresReturnAndDelete() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "iPad only")
+        launchDemo(orientation: .landscapeLeft)
+
+        let taskRow = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).element(boundBy: 1)
+        XCTAssertTrue(taskRow.waitForExistence(timeout: 5), app.debugDescription)
+        taskRow.tap()
+
+        let titleField = app.descendants(matching: .any)["taskTitleField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 3), app.debugDescription)
+
+        let dateButton = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '設定日期與時間：'")).firstMatch
+        XCTAssertTrue(dateButton.waitForExistence(timeout: 3), app.debugDescription)
+        dateButton.tap()
+
+        let confirmBtn = app.buttons["確定"]
+        XCTAssertTrue(confirmBtn.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.buttons["持續時間"].exists, app.debugDescription)
+        XCTAssertFalse(titleField.exists)
+
+        app.typeKey(XCUIKeyboardKey(rawValue: "\n"), modifierFlags: [])
+        app.typeKey(.delete, modifierFlags: [])
+
+        XCTAssertTrue(confirmBtn.exists, "Return/Delete must not close DatePanel")
+        XCTAssertTrue(app.buttons["持續時間"].exists)
+        XCTAssertFalse(titleField.exists, "Return must not switch back to detail page")
+
+        app.buttons["取消"].tap()
+        XCTAssertTrue(titleField.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(taskRow.exists, "Delete on DatePanel must not delete the task")
+    }
+
+    @MainActor
+    func testTrashScopeCommandNDoesNotOpenComposer() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "iPad only")
+        launchDemo(orientation: .landscapeLeft)
+
+        let trashBtn = app.buttons["垃圾桶"]
+        XCTAssertTrue(trashBtn.waitForExistence(timeout: 5), app.debugDescription)
+        trashBtn.tap()
+        XCTAssertTrue(app.staticTexts["刪除的任務可在這裡還原"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(app.buttons["新增任務"].exists)
+
+        let composer = app.descendants(matching: .any)["composerTitle"]
+        app.typeKey("n", modifierFlags: .command)
+        XCTAssertFalse(composer.waitForExistence(timeout: 1.5), "⌘N must not open composer in 垃圾桶")
+
+        app.buttons["已完成"].tap()
+        XCTAssertTrue(app.staticTexts["已完成"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["新增任務"].exists)
+        app.typeKey("n", modifierFlags: .command)
+        XCTAssertFalse(composer.waitForExistence(timeout: 1.5), "⌘N must not open composer in 已完成")
+
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH '今天'")).firstMatch.tap()
+        XCTAssertTrue(app.buttons["新增任務"].waitForExistence(timeout: 3))
+        app.typeKey("n", modifierFlags: .command)
+        XCTAssertTrue(composer.waitForExistence(timeout: 3), "⌘N should open composer in 今天")
+    }
+
+    @MainActor
+    func testIPadShareActionsPresentSystemShareSheet() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "iPad only")
+        launchDemo(orientation: .landscapeLeft)
+        openListWorkFromSidebar()
+
+        // 1. Task-list more menu -> 更多 -> 分享
+        let moreOptions = app.buttons["更多選項"]
+        XCTAssertTrue(moreOptions.waitForExistence(timeout: 3), app.debugDescription)
+        moreOptions.tap()
+        let moreSubmenu = app.buttons["更多"]
+        XCTAssertTrue(moreSubmenu.waitForExistence(timeout: 3), app.debugDescription)
+        moreSubmenu.tap()
+        let shareMenuItem = app.buttons["分享"]
+        XCTAssertTrue(shareMenuItem.waitForExistence(timeout: 3), app.debugDescription)
+        shareMenuItem.tap()
+
+        assertSystemShareSheetPresented(context: "iPad task-list share menu")
+        dismissSystemShareSheet()
+
+        // 2. ShareListSheet -> 建立邀請連結 -> 分享邀請連結
+        let shareToolbarBtn = app.buttons["共享"]
+        XCTAssertTrue(shareToolbarBtn.waitForExistence(timeout: 3), app.debugDescription)
+        shareToolbarBtn.tap()
+        let createInvite = app.buttons["share.createInviteLink"]
+        XCTAssertTrue(createInvite.waitForExistence(timeout: 3), app.debugDescription)
+        createInvite.tap()
+        let shareLinkBtn = app.buttons["share.shareLink"]
+        XCTAssertTrue(shareLinkBtn.waitForExistence(timeout: 3), app.debugDescription)
+        shareLinkBtn.tap()
+
+        assertSystemShareSheetPresented(context: "iPad ShareListSheet")
+    }
+
+    private func assertSystemShareSheetPresented(context: String, file: StaticString = #filePath, line: UInt = #line) {
+        let activityList = app.otherElements["ActivityListView"]
+        let copyAction = app.buttons.matching(NSPredicate(format: "label == '拷貝' OR label == 'Copy'")).firstMatch
+        let closeAction = app.buttons.matching(NSPredicate(format: "label == '關閉' OR label == 'Close'")).firstMatch
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if activityList.exists || copyAction.exists || closeAction.exists {
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTFail("Expected system share sheet (UIActivityViewController) for \(context)\n\(app.debugDescription)", file: file, line: line)
+    }
+
+    private func dismissSystemShareSheet() {
+        let closeAction = app.buttons.matching(NSPredicate(format: "label == '關閉' OR label == 'Close'")).firstMatch
+        if closeAction.exists {
+            closeAction.tap()
+        } else if app.otherElements["PopoverDismissRegion"].exists {
+            app.otherElements["PopoverDismissRegion"].tap()
+        } else {
+            app.typeKey(.escape, modifierFlags: [])
+        }
+        let activityList = app.otherElements["ActivityListView"]
+        XCTAssertTrue(activityList.waitForNonExistence(timeout: 4), app.debugDescription)
+    }
 }

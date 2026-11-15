@@ -90,11 +90,11 @@ struct DayDoApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("新增任務") {
-                    guard model.isSignedIn, !model.hasActiveRootSheet else { return }
+                    guard model.isSignedIn, !model.hasActiveRootSheet, model.canComposeForCurrentScope else { return }
                     model.openComposerForCurrentScope()
                 }
                 .keyboardShortcut("n", modifiers: .command)
-                .disabled(!model.isSignedIn || model.hasActiveRootSheet)
+                .disabled(!model.isSignedIn || model.hasActiveRootSheet || !model.canComposeForCurrentScope)
             }
             CommandMenu("前往") {
                 Button("任務") { model.tab = .tasks }

@@ -937,4 +937,70 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["你的名字"].waitForNonExistence(timeout: 3), app.debugDescription)
         XCTAssertTrue(app.staticTexts["小安 邀請你加入「家庭採買」"].waitForExistence(timeout: 6), app.debugDescription)
     }
+
+    @MainActor
+    func testIPhoneShareActionsPresentSystemShareSheet() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        app.buttons["開啟清單抽屜"].tap()
+        let folder = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '工作與學習'")).firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 3), app.debugDescription)
+        folder.tap()
+        let work = app.buttons["drawer.list.工作"]
+        XCTAssertTrue(work.waitForExistence(timeout: 3), app.debugDescription)
+        work.tap()
+
+        // 1. Task-list more menu -> 更多 -> 分享
+        app.buttons["更多選項"].tap()
+        let moreSubmenu = app.buttons["更多"]
+        XCTAssertTrue(moreSubmenu.waitForExistence(timeout: 3), app.debugDescription)
+        moreSubmenu.tap()
+        let shareMenuItem = app.buttons["分享"]
+        XCTAssertTrue(shareMenuItem.waitForExistence(timeout: 3), app.debugDescription)
+        shareMenuItem.tap()
+
+        assertSystemShareSheetPresented(context: "iPhone task-list share menu")
+        dismissSystemShareSheet()
+
+        // 2. ShareListSheet -> 建立邀請連結 -> 分享邀請連結
+        let shareBtn = app.buttons["共享"]
+        XCTAssertTrue(shareBtn.waitForExistence(timeout: 3), app.debugDescription)
+        shareBtn.tap()
+        let createInvite = app.buttons["share.createInviteLink"]
+        XCTAssertTrue(createInvite.waitForExistence(timeout: 3), app.debugDescription)
+        createInvite.tap()
+        let shareLinkBtn = app.buttons["share.shareLink"]
+        XCTAssertTrue(shareLinkBtn.waitForExistence(timeout: 3), app.debugDescription)
+        shareLinkBtn.tap()
+
+        assertSystemShareSheetPresented(context: "iPhone ShareListSheet")
+    }
+
+    private func assertSystemShareSheetPresented(context: String, file: StaticString = #filePath, line: UInt = #line) {
+        let activityList = app.otherElements["ActivityListView"]
+        let copyAction = app.buttons.matching(NSPredicate(format: "label == '拷貝' OR label == 'Copy'")).firstMatch
+        let closeAction = app.buttons.matching(NSPredicate(format: "label == '關閉' OR label == 'Close'")).firstMatch
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if activityList.exists || copyAction.exists || closeAction.exists {
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTFail("Expected system share sheet (UIActivityViewController) for \(context)\n\(app.debugDescription)", file: file, line: line)
+    }
+
+    private func dismissSystemShareSheet() {
+        let closeAction = app.buttons.matching(NSPredicate(format: "label IN {'關閉', 'Close', '完成', 'Done', '取消', 'Cancel'}")).firstMatch
+        if closeAction.exists {
+            closeAction.tap()
+        } else if app.otherElements["PopoverDismissRegion"].exists {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85)).tap()
+        } else {
+            app.swipeDown()
+        }
+        let activityList = app.otherElements["ActivityListView"]
+        XCTAssertTrue(activityList.waitForNonExistence(timeout: 4), app.debugDescription)
+    }
 }

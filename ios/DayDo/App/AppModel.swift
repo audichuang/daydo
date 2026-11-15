@@ -86,9 +86,23 @@ final class AppModel {
     }
     var drawerOpen = false
     var detailTaskId: String?
-    var selectedTaskId: String?
+    var selectedTaskId: String? {
+        didSet {
+            if oldValue != selectedTaskId {
+                inlineDetailSubpageTaskId = nil
+                inlineDetailFocusedTaskId = nil
+            }
+        }
+    }
+    var inlineDetailSubpageTaskId: String?
+    var inlineDetailFocusedTaskId: String?
     var searchFocusTrigger = 0
     var detailFocusTrigger = 0
+
+    var inlineDetailAllowsSelectionShortcuts: Bool {
+        guard let selectedTaskId else { return false }
+        return inlineDetailSubpageTaskId != selectedTaskId && inlineDetailFocusedTaskId != selectedTaskId
+    }
     /// Task opened from a notification while another detail sheet was open;
     /// shown after that sheet is dismissed so unsaved edits are not replaced.
     var pendingDetailTaskId: String?
@@ -103,7 +117,20 @@ final class AppModel {
         }
     }
 
+    var canComposeForCurrentScope: Bool {
+        guard tab == .tasks else { return true }
+        switch scope {
+        case .smart(.trash), .smart(.completed):
+            return false
+        case .project(let id):
+            return !isViewer(projectId: id)
+        default:
+            return true
+        }
+    }
+
     func openComposerForCurrentScope() {
+        guard canComposeForCurrentScope else { return }
         var req = ComposeRequest()
         switch scope {
         case .project(let id):

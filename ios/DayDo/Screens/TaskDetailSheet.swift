@@ -109,10 +109,37 @@ struct TaskDetailContent: View {
         }
         .onDisappear {
             saveText(auto: true)
+            if isInline {
+                if model.inlineDetailSubpageTaskId == taskId {
+                    model.inlineDetailSubpageTaskId = nil
+                }
+                if model.inlineDetailFocusedTaskId == taskId {
+                    model.inlineDetailFocusedTaskId = nil
+                }
+            }
+        }
+        .onChange(of: page, initial: true) { _, newPage in
+            guard isInline else { return }
+            if newPage == .detail {
+                if model.inlineDetailSubpageTaskId == taskId {
+                    model.inlineDetailSubpageTaskId = nil
+                }
+            } else {
+                model.inlineDetailSubpageTaskId = taskId
+            }
+        }
+        .onChange(of: focus, initial: true) { _, newFocus in
+            guard isInline else { return }
+            if newFocus == nil {
+                if model.inlineDetailFocusedTaskId == taskId {
+                    model.inlineDetailFocusedTaskId = nil
+                }
+            } else {
+                model.inlineDetailFocusedTaskId = taskId
+            }
         }
         .onChange(of: model.detailFocusTrigger) { _, _ in
-            guard isInline, let task, !model.isViewer(projectId: task.projectId) else { return }
-            page = .detail
+            guard isInline, page == .detail, let task, !model.isViewer(projectId: task.projectId) else { return }
             focus = .title
         }
         .task(id: model.revision) { await load() }

@@ -55,7 +55,11 @@ struct RootView: View {
                     }
                     .background {
                         SelectionShortcutBridge(
-                            active: splashRemoved && model.isSignedIn && !model.hasActiveRootSheet && model.tab == .tasks && model.selectedTaskId != nil,
+                            active: splashRemoved
+                                && model.isSignedIn
+                                && !model.hasActiveRootSheet
+                                && model.tab == .tasks
+                                && model.inlineDetailAllowsSelectionShortcuts,
                             selectedTaskId: model.selectedTaskId,
                             onReturn: { id in
                                 if isRegular {
@@ -455,6 +459,7 @@ private final class SelectionShortcutViewController: UIViewController {
         guard active,
               let selectedTaskId,
               let window = view.window,
+              window.isKeyWindow,
               !Self.hasActiveTextInput(in: window) else {
             super.pressesBegan(presses, with: event)
             return

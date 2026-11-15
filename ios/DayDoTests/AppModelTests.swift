@@ -194,4 +194,43 @@ final class AppModelTests: XCTestCase {
             // expected
         }
     }
+
+    func testCommandNBlockedInTrashAndCompletedScopes() async throws {
+        let (model, _) = try await makeModel()
+        model.tab = .tasks
+
+        model.scope = .smart(.trash)
+        XCTAssertFalse(model.canComposeForCurrentScope)
+        model.openComposerForCurrentScope()
+        XCTAssertNil(model.composing)
+
+        model.scope = .smart(.completed)
+        XCTAssertFalse(model.canComposeForCurrentScope)
+        model.openComposerForCurrentScope()
+        XCTAssertNil(model.composing)
+
+        model.scope = .smart(.today)
+        XCTAssertTrue(model.canComposeForCurrentScope)
+        model.openComposerForCurrentScope()
+        XCTAssertNotNil(model.composing)
+    }
+
+    func testInlineDetailSelectionShortcutsGuard() async throws {
+        let (model, _) = try await makeModel()
+        XCTAssertFalse(model.inlineDetailAllowsSelectionShortcuts)
+
+        model.selectedTaskId = "task-1"
+        XCTAssertTrue(model.inlineDetailAllowsSelectionShortcuts)
+
+        model.inlineDetailSubpageTaskId = "task-1"
+        XCTAssertFalse(model.inlineDetailAllowsSelectionShortcuts)
+
+        // Selecting a different task clears stale subpage/focus guards.
+        model.selectedTaskId = "task-2"
+        XCTAssertNil(model.inlineDetailSubpageTaskId)
+        XCTAssertTrue(model.inlineDetailAllowsSelectionShortcuts)
+
+        model.inlineDetailFocusedTaskId = "task-2"
+        XCTAssertFalse(model.inlineDetailAllowsSelectionShortcuts)
+    }
 }

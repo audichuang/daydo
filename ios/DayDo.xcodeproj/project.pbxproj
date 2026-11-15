@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		045317EF60CE505DE0087807 /* DayDoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 68A14B5281718AB2C97AE41F /* DayDoCore */; };
 		0CCFCE88645325C2F9E9DDE0 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */; };
 		0E897BC85DA0ED546D97EB62 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3AC93921B8246DF3D1A2F32B /* Assets.xcassets */; };
 		0F335A407D2DCE82DC52398D /* ComposerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36BA7575D416B540F3E5F021 /* ComposerSheet.swift */; };
@@ -18,11 +19,13 @@
 		2B68D0A20FBE89F153D00562 /* KeychainSyncTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */; };
 		36C06F0D17D9C8A91549B2E6 /* TaskListScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBE69B8A39D6026F6C72A644 /* TaskListScreen.swift */; };
 		4461E85D6F754C9A7FCD0A48 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 7E101714C88520768756EA09 /* GoogleSignIn */; };
+		509C4CA0873E1CAB038DFEA4 /* AppModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC3484874C0CCBD966338B4D /* AppModelTests.swift */; };
 		52E699F2CDF260B54AE329F5 /* DebugAvatar.png in Resources */ = {isa = PBXBuildFile; fileRef = 6797E97CCA68C6FB31E5196E /* DebugAvatar.png */; };
 		5C95C3DAF6AA8AF7C303DEEA /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36A61F18DDDC6C2FC166DDDB /* Theme.swift */; };
 		6241455AB6BDC69BCF835DB0 /* DayDoFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93AF820DEE1E49529E90A0E0 /* DayDoFlowTests.swift */; };
 		635BEE00F58D95D66615961E /* DatePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3ADCB55D80C898953405EA4 /* DatePanel.swift */; };
 		712BE556E14C8FEB3EDA5C9F /* JoinInviteSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBDFCB6E2A94018F4F751310 /* JoinInviteSheet.swift */; };
+		71E047BD3761B4116F06B846 /* DayDoIPadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E477F2C75D83F9691F85C75 /* DayDoIPadTests.swift */; };
 		728A01A5331B302B834B290A /* TaskDetailSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C790B6FFBAFDB9BADA3CE1FC /* TaskDetailSheet.swift */; };
 		7454858BA67E1C4407B53A26 /* OtherScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 586710AA91D1F8A386C4DA0F /* OtherScreens.swift */; };
 		7D0D980B5B52B78EF1CA32AF /* MeProfileSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87A6EE2C31E3EA193622C3D4 /* MeProfileSheet.swift */; };
@@ -43,10 +46,19 @@
 			remoteGlobalIDString = 0B9A652E0E50A90A28F74D8C;
 			remoteInfo = DayDo;
 		};
+		EB34F56B79216D9F78AB0A14 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 28AB0642BA8F0D2B44C8D653 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0B9A652E0E50A90A28F74D8C;
+			remoteInfo = DayDo;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		14E86541BA71F626A6811C13 /* DayDo.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DayDo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		27AE9AE733071F3B645C0DE2 /* DayDoTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DayDoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		2E477F2C75D83F9691F85C75 /* DayDoIPadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoIPadTests.swift; sourceTree = "<group>"; };
 		36A61F18DDDC6C2FC166DDDB /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		36BA7575D416B540F3E5F021 /* ComposerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerSheet.swift; sourceTree = "<group>"; };
 		3AC93921B8246DF3D1A2F32B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -73,12 +85,21 @@
 		DD944E1EAEB502E47717D303 /* ShareListSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareListSheet.swift; sourceTree = "<group>"; };
 		DFFE20E498B56F159D6BDC5C /* DayDo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DayDo.entitlements; sourceTree = "<group>"; };
 		E45AF04A64333352B5667B17 /* DrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerView.swift; sourceTree = "<group>"; };
+		EC3484874C0CCBD966338B4D /* AppModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelTests.swift; sourceTree = "<group>"; };
 		F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		F68BFC5798449FCFE7B82212 /* DayDoCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DayDoCore; path = ../DayDoCore; sourceTree = SOURCE_ROOT; };
 		"TEMP_AA138A9A-444B-453C-8704-497EACC55D01" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		7B5B6907F6C3B9205ADD57A1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				045317EF60CE505DE0087807 /* DayDoCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D725491C8E6AC36C149DBC11 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -106,6 +127,7 @@
 			isa = PBXGroup;
 			children = (
 				14E86541BA71F626A6811C13 /* DayDo.app */,
+				27AE9AE733071F3B645C0DE2 /* DayDoTests.xctest */,
 				75740C90A3D93DC752FAB1DE /* DayDoUITests.xctest */,
 			);
 			name = Products;
@@ -125,6 +147,14 @@
 				B385BD7500B9C55FC5E7A64A /* Components.swift */,
 			);
 			path = Components;
+			sourceTree = "<group>";
+		};
+		630CF5A80C94AA9B46B5BCE1 /* DayDoTests */ = {
+			isa = PBXGroup;
+			children = (
+				EC3484874C0CCBD966338B4D /* AppModelTests.swift */,
+			);
+			path = DayDoTests;
 			sourceTree = "<group>";
 		};
 		8FD703392BB84D00984B21FA /* Theme */ = {
@@ -184,6 +214,7 @@
 			isa = PBXGroup;
 			children = (
 				B36EA48CC7C86824567CEF4C /* DayDo */,
+				630CF5A80C94AA9B46B5BCE1 /* DayDoTests */,
 				E8E832832820352F66F1D79E /* DayDoUITests */,
 				33958DAB9F6D6866E32D1FE3 /* Packages */,
 				278D9ED9D8E42F80F5100B57 /* Products */,
@@ -194,6 +225,7 @@
 			isa = PBXGroup;
 			children = (
 				93AF820DEE1E49529E90A0E0 /* DayDoFlowTests.swift */,
+				2E477F2C75D83F9691F85C75 /* DayDoIPadTests.swift */,
 			);
 			path = DayDoUITests;
 			sourceTree = "<group>";
@@ -248,6 +280,26 @@
 			productReference = 75740C90A3D93DC752FAB1DE /* DayDoUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		A9DA8234155D509E2ED69B50 /* DayDoTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B99879370D3C107BD4B2933E /* Build configuration list for PBXNativeTarget "DayDoTests" */;
+			buildPhases = (
+				9856690CD3EAFD8088427859 /* Sources */,
+				7B5B6907F6C3B9205ADD57A1 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				20772BD71E53F9029C0F15A5 /* PBXTargetDependency */,
+			);
+			name = DayDoTests;
+			packageProductDependencies = (
+				68A14B5281718AB2C97AE41F /* DayDoCore */,
+			);
+			productName = DayDoTests;
+			productReference = 27AE9AE733071F3B645C0DE2 /* DayDoTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -265,6 +317,10 @@
 						DevelopmentTeam = 37HFR5V2JJ;
 						ProvisioningStyle = Automatic;
 						TestTargetID = 0B9A652E0E50A90A28F74D8C;
+					};
+					A9DA8234155D509E2ED69B50 = {
+						DevelopmentTeam = 37HFR5V2JJ;
+						ProvisioningStyle = Automatic;
 					};
 				};
 			};
@@ -287,6 +343,7 @@
 			projectRoot = "";
 			targets = (
 				0B9A652E0E50A90A28F74D8C /* DayDo */,
+				A9DA8234155D509E2ED69B50 /* DayDoTests */,
 				28B477599E33BE7FACE645FE /* DayDoUITests */,
 			);
 		};
@@ -305,11 +362,20 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		9856690CD3EAFD8088427859 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				509C4CA0873E1CAB038DFEA4 /* AppModelTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		AC31AC85554634E854B03DCC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				6241455AB6BDC69BCF835DB0 /* DayDoFlowTests.swift in Sources */,
+				71E047BD3761B4116F06B846 /* DayDoIPadTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -344,6 +410,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		20772BD71E53F9029C0F15A5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0B9A652E0E50A90A28F74D8C /* DayDo */;
+			targetProxy = EB34F56B79216D9F78AB0A14 /* PBXContainerItemProxy */;
+		};
 		306E0E99CD2A4608369F154D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 0B9A652E0E50A90A28F74D8C /* DayDo */;
@@ -401,9 +472,26 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.audichuang.daydo;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
+		};
+		7D51F9CAC863813BCE1FF02D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.audichuang.daydo.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DayDo.app/DayDo";
+			};
+			name = Debug;
 		};
 		A3F91CCC260F759FF6985CA3 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -465,6 +553,23 @@
 			};
 			name = Release;
 		};
+		A64DDA2B985FEAC34DCCF77C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.audichuang.daydo.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DayDo.app/DayDo";
+			};
+			name = Release;
+		};
 		B97B517B54A6D8DCCD7DFE92 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = "TEMP_AA138A9A-444B-453C-8704-497EACC55D01" /* Config.xcconfig */;
@@ -480,7 +585,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.audichuang.daydo;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -572,6 +677,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		B99879370D3C107BD4B2933E /* Build configuration list for PBXNativeTarget "DayDoTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7D51F9CAC863813BCE1FF02D /* Debug */,
+				A64DDA2B985FEAC34DCCF77C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		DF6EC32F98B1E80221701B21 /* Build configuration list for PBXNativeTarget "DayDo" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -603,6 +717,10 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		4677FEEE4764DF9B66BB6C5A /* DayDoCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = DayDoCore;
+		};
+		68A14B5281718AB2C97AE41F /* DayDoCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = DayDoCore;
 		};
