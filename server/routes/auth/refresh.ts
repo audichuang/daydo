@@ -1,6 +1,7 @@
 import { defineHandler } from 'void';
 import { createDb } from 'void/db';
 import { env } from 'void/env';
+import { Scope } from '../../durable-objects/scope';
 import { rotateRefreshToken } from '../../src/auth/session';
 import { nonEmptyString, readJsonObject } from '../../src/http';
 
@@ -18,6 +19,7 @@ export const POST = defineHandler(async (c) => {
   const result = await rotateRefreshToken(primaryDb, {
     refreshToken,
     jwtSecret: env.JWT_SECRET,
+    getScopeStub: (scope) => Scope.get(scope),
   });
   if (!result) {
     return c.json({ error: 'Invalid or expired refresh token' }, 401);

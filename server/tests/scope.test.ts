@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '../db/schema';
+import { compareHlc, createServerHlcClock, MAX_FUTURE_DRIFT_MS } from '../src/sync/hlc';
 import { executeSyncPull } from '../src/sync/pull';
 import { executeSyncPush, type ScopeStub } from '../src/sync/push';
 import { createTestD1, createTestDoState } from './sqliteD1';
@@ -55,6 +56,7 @@ function createHarness(syncFault: 'none' | 'split-txn' = 'none'): Harness {
   const { d1, db, sqlite } = createTestD1();
   const scopes = new Map<string, InstanceType<typeof ScopeObject>>();
   const scopeSqlites = new Map<string, ReturnType<typeof createTestDoState>['sqlite']>();
+  const clock = createServerHlcClock();
 
   const getScopeStub = (scope: string): ScopeStub => {
     let instance = scopes.get(scope);
@@ -79,7 +81,7 @@ function createHarness(syncFault: 'none' | 'split-txn' = 'none'): Harness {
     scopeSqlites,
     getScopeStub,
     push: (userId, deviceId, ops) =>
-      executeSyncPush(db, { userId, deviceId, ops, getScopeStub }),
+      executeSyncPush(db, { userId, deviceId, ops, getScopeStub, clock }),
     pull: (userId, opts) =>
       executeSyncPull(db, {
         userId,
@@ -1306,6 +1308,7 @@ describe('Scope DO T5a regression fixes', () => {
           return stub.push(input);
         },
         pull: (input) => stub.pull(input),
+        getInboxProjectId: (input) => stub.getInboxProjectId(input),
       };
     };
 
@@ -1502,6 +1505,7 @@ describe('Scope DO T5a regression fixes', () => {
       const real = h.getScopeStub(scope);
       return {
         pull: (input) => real.pull(input),
+        getInboxProjectId: (input) => real.getInboxProjectId(input),
         push: async (input) => {
           const res = await real.push(input);
           // A's DO push just finished (rejected); before A continues to postStmts, B creates the same project.
@@ -1537,5 +1541,112 @@ describe('Scope DO T5a regression fixes', () => {
     expect(
       pulled.scopes[0].rows.some((r) => 'row' in r && r.entity === 'project' && r.row.id === projId),
     ).toBe(true);
+  });
+});
+
+describe('Scope DO T5b serverTime & inbox RPC', () => {
+  it('returns monotonic HLC serverTime >= assigned and clamped batch HLCs even at fixed wall clock', async () => {
+    const fixedNow = 1_750_000_000_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(fixedNow);
+    try {
+      const h = createHarness();
+      const userId = 'u-srv-time';
+      await h.db.insert(schema.user).values({ id: userId, createdAt: fixedNow });
+
+      const empty1 = await h.push(userId, 'zzz-dev', []);
+      const empty2 = await h.push(userId, 'zzz-dev', []);
+      expect(empty1.serverTime).toMatch(/^\d{13}:\d{4}:server$/);
+      expect(compareHlc(empty2.serverTime, empty1.serverTime)).toBe(1);
+
+      // Push project + task with unclamped future-within-5m HLC and deviceId > 'server'
+      const futureWithinLimit = `${fixedNow + 60_000}:0005:zzz-dev`;
+      const p1 = await h.push(userId, 'zzz-dev', [
+        makeProjectOp({
+          opId: 'op-st-p1',
+          hlc: `${fixedNow}:0000:zzz-dev`,
+          id: 'p-st',
+        }),
+        makeFullTaskOp({
+          opId: 'op-st-t1',
+          hlc: futureWithinLimit,
+          id: 't-st-1',
+          projectId: 'p-st',
+          title: 'Future within drift',
+        }),
+      ]);
+      expect(p1.results.every((r) => r.status === 'applied')).toBe(true);
+      expect(compareHlc(p1.serverTime, futureWithinLimit)).toBeGreaterThanOrEqual(0);
+      expect(compareHlc(p1.serverTime, empty2.serverTime)).toBe(1);
+
+      // Next push at the exact same fixedNow (with an older/clamped HLC) must stay strictly > p1.serverTime.
+      const tooFarFuture = `${fixedNow + MAX_FUTURE_DRIFT_MS + 60_000}:0000:zzz-dev`;
+      const p2 = await h.push(userId, 'zzz-dev', [
+        makeFullTaskOp({
+          opId: 'op-st-t2',
+          hlc: tooFarFuture,
+          id: 't-st-2',
+          projectId: 'p-st',
+          title: 'Clamped',
+        }),
+      ]);
+      expect(p2.results[0].status).toBe('applied');
+      const clampedClock = p2.results[0].clocks.title;
+      expect(compareHlc(clampedClock, tooFarFuture)).toBe(-1);
+      expect(compareHlc(p2.serverTime, clampedClock)).toBeGreaterThanOrEqual(0);
+      expect(compareHlc(p2.serverTime, p1.serverTime)).toBe(1);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('getInboxProjectId returns readable inbox id and ignores non-inbox or unreadable lists', async () => {
+    const h = createHarness();
+    const userId = 'u-inbox-rpc';
+    await h.db.insert(schema.user).values({ id: userId, createdAt: 1000 });
+
+    const stub = h.getScopeStub(`u:${userId}`);
+    expect(await stub.getInboxProjectId({ readableProjectIds: [] })).toBeNull();
+
+    await h.push(userId, 'dev-a', [
+      makeProjectOp({ opId: 'op-reg', hlc: '1700000000001:0000:dev-a', id: 'p-regular', name: 'Work' }),
+      {
+        opId: 'op-inbox',
+        hlc: '1700000000002:0000:dev-a',
+        entity: 'project',
+        entityId: 'p-inbox',
+        op: 'upsert',
+        fields: [
+          'id',
+          'name',
+          'viewMode',
+          'kind',
+          'isInbox',
+          'ownerId',
+          'sortKey',
+          'showInSmart',
+          'notifyMode',
+          'createdAt',
+          'updatedAt',
+        ],
+        row: {
+          id: 'p-inbox',
+          name: 'Inbox',
+          viewMode: 'list',
+          kind: 'TASK',
+          isInbox: true,
+          ownerId: 'm-1',
+          sortKey: 'a',
+          showInSmart: 'all',
+          notifyMode: 'all',
+          createdAt: 1000,
+          updatedAt: 1000,
+        },
+      },
+    ]);
+
+    expect(await stub.getInboxProjectId({ readableProjectIds: ['p-regular'] })).toBeNull();
+    expect(await stub.getInboxProjectId({ readableProjectIds: ['p-regular', 'p-inbox'] })).toBe(
+      'p-inbox',
+    );
   });
 });

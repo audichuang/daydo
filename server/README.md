@@ -49,6 +49,14 @@ npm run dev
 
 Void starts Vite with `workerd` and a local D1 database.
 
+## Auth Endpoints
+
+- `POST /auth/apple` (`{ identityToken, nonce, deviceId }`) and `POST /auth/google` (`{ idToken, deviceId }`)
+  - Response: `{ accessToken, refreshToken, user: { id }, isNewAccount, hasData, meMemberId, inboxProjectId }`
+- `POST /auth/refresh` (`{ refreshToken }`)
+  - Response: `{ accessToken, refreshToken, hasData, meMemberId, inboxProjectId }`
+- `inboxProjectId` is queried from the user's `Scope` Durable Object (`getInboxProjectId`, filtered by active `projectMembership`), `meMemberId` comes from `user.meMemberId`, and `hasData` is `inboxProjectId !== null`.
+
 ## Sync Endpoints
 
 All sync endpoints require `Authorization: Bearer <accessToken>`.
@@ -56,7 +64,7 @@ All sync endpoints require `Authorization: Bearer <accessToken>`.
 - `POST /sync/push`
   - Body: `{ deviceId, ops: [{ opId, hlc, entity, entityId, op, fields, row }] }` (max 200 ops)
   - Binds new IDs and checks list/membership routing in D1, then routes each scope's ops to its `Scope` Durable Object (`Scope.get('u:<userId>')`), where each batch runs inside `transactionSync` with per-op `opId` deduplication, HLC 5-minute future clamp, and field-level LWW merge (including `schedule` grouped clock).
-  - Response: `{ results: [{ opId, status: 'applied' | 'rejected', reason?, row, clocks, gone? }], serverTime }`
+  - Response: `{ results: [{ opId, status: 'applied' | 'rejected', reason?, row, clocks, gone? }], serverTime }` where `serverTime` is the server HLC string (`<13-digit ms>:<4-digit counter>:server`), monotonic and `>=` every HLC assigned or clamped in the batch.
 - `POST /sync/pull`
   - Body: `{ cursors: { "u:<userId>": seq }, backfill?: [projectId], limit? }` (`limit` default `500`, max `1000`).
   - Response: `{ scopes: [{ scope, rows: [{ entity, row, clocks, serverSeq } | { entity, entityId, gone: true, serverSeq }], cursor, hasMore }], memberships: [{ projectId, scope, role }], members: [] }`
@@ -69,7 +77,7 @@ Runs `void prepare && tsc --noEmit`, unit tests (`vitest run`), auth e2e (`scrip
 npm run check
 ```
 
-To run only the sync e2e suite or a single scenario (`fixture`, `lww`, `concurrency`, `replay`, `paging`, `auth`, `id_race`, `unknown_row`, `move_task`, `child_task_id`):
+To run only the sync e2e suite or a single scenario (`fixture`, `lww`, `concurrency`, `replay`, `paging`, `auth`, `id_race`, `unknown_row`, `move_task`, `child_task_id`, `two_device`):
 
 ```bash
 npm run e2e:sync

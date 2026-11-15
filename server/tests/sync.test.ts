@@ -9,7 +9,15 @@ import {
   validateSyncOp,
   type EntityName,
 } from '../src/sync/entities';
-import { clampHlc, compareHlc, formatHlc, MAX_FUTURE_DRIFT_MS, parseHlc } from '../src/sync/hlc';
+import {
+  advanceServerHlc,
+  clampHlc,
+  compareHlc,
+  createServerHlcClock,
+  formatHlc,
+  MAX_FUTURE_DRIFT_MS,
+  parseHlc,
+} from '../src/sync/hlc';
 import { mergeOp, type MergeExistingState } from '../src/sync/merge';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -71,6 +79,40 @@ describe('sync HLC', () => {
     expect(clamped2.clamped).toBe(true);
     expect(clamped2.formatted).toBe(`${String(now).padStart(13, '0')}:0001:dev1`);
     expect(compareHlc(clamped2.formatted, clamped1.formatted)).toBe(1);
+  });
+
+  it('generates monotonic serverTime HLC >= observed batch HLCs', () => {
+    const clock = createServerHlcClock();
+    const t0 = 1_700_000_000_000;
+
+    const s1 = clock.tick(t0, []);
+    expect(s1).toBe('1700000000000:0000:server');
+
+    // Same millisecond advances counter strictly monotonically.
+    const s2 = clock.tick(t0, []);
+    expect(s2).toBe('1700000000000:0001:server');
+    expect(compareHlc(s2, s1)).toBe(1);
+
+    // Observed HLC in the same ms with deviceId > 'server' forces counter bump.
+    const s3 = clock.tick(t0, ['1700000000000:0002:zzz']);
+    expect(s3).toBe('1700000000000:0003:server');
+    expect(compareHlc(s3, '1700000000000:0002:zzz')).toBe(1);
+
+    // Observed unclamped future HLC within 5m advances serverTime past it, including counter 9999 rollover.
+    const futureObs = '1700000060000:9999:zzz-dev';
+    const s4 = clock.tick(t0, [futureObs]);
+    expect(s4).toBe('1700000060001:0000:server');
+    expect(compareHlc(s4, futureObs)).toBe(1);
+
+    // Subsequent call at t0 stays monotonic even when wall clock is behind last serverTime.
+    const s5 = clock.tick(t0, []);
+    expect(s5).toBe('1700000060001:0001:server');
+    expect(compareHlc(s5, s4)).toBe(1);
+
+    // Wall clock advancing past last serverTime resets counter to 0.
+    const s6 = advanceServerHlc(1_700_000_070_000, [], clock.current());
+    expect(s6.formatted).toBe('1700000070000:0000:server');
+    expect(compareHlc(s6.formatted, s5)).toBe(1);
   });
 });
 

@@ -1262,6 +1262,356 @@ async function runChildTaskIdScenario({ baseUrl, jwks }) {
   assert.equal(itemRow.row.taskId, task1);
 }
 
+async function loginAppleForSub(baseUrl, jwks, sub, deviceId) {
+  const rawNonce = `nonce-${randomUUID()}`;
+  const appleToken = await new SignJWT({
+    nonce: sha256Hex(rawNonce),
+    email: `${sub}@example.com`,
+  })
+    .setProtectedHeader({ alg: 'RS256', kid: 'apple-e2e-sync-1' })
+    .setIssuer('https://appleid.apple.com')
+    .setAudience('com.audichuang.daydo')
+    .setSubject(sub)
+    .setIssuedAt()
+    .setExpirationTime('10m')
+    .sign(jwks.applePrivateKey);
+
+  const login = await postJson(baseUrl, '/auth/apple', {
+    identityToken: appleToken,
+    nonce: rawNonce,
+    deviceId,
+  });
+  assert.equal(login.status, 200, `Apple login failed: ${JSON.stringify(login.data)}`);
+  return login.data;
+}
+
+function createDeviceReplica({ baseUrl, loginData, deviceId }) {
+  const userId = loginData.user.id;
+  const scope = `u:${userId}`;
+  const state = {
+    deviceId: deviceId.toLowerCase(),
+    userId,
+    scope,
+    token: loginData.accessToken,
+    refreshToken: loginData.refreshToken,
+    cursor: 0,
+    lastServerTime: '',
+    rows: new Map(),
+    outbox: [],
+  };
+
+  const rowKey = (entity, row) => `${entity}:${entity === 'tag' ? row.name : row.id}`;
+
+  const applyServerRow = (entity, row, clocks) => {
+    const key = rowKey(entity, row);
+    if (typeof row.purgedAt === 'number') {
+      state.rows.delete(key);
+      return;
+    }
+    state.rows.set(key, {
+      entity,
+      row: structuredClone(row),
+      clocks: structuredClone(clocks),
+    });
+  };
+
+  return {
+    state,
+    enqueue(op) {
+      state.outbox.push(op);
+    },
+    async push() {
+      const ops = state.outbox;
+      const res = await postJson(baseUrl, '/sync/push', { deviceId: state.deviceId, ops }, state.token);
+      assert.equal(res.status, 200, `Push failed: ${JSON.stringify(res.data)}`);
+      const { results, serverTime } = res.data;
+      assert.equal(typeof serverTime, 'string', 'push response must include serverTime HLC string');
+      assert.match(serverTime, /^\d{13}:\d{4}:server$/);
+      if (state.lastServerTime) {
+        assert(
+          serverTime > state.lastServerTime,
+          `Expected serverTime ${serverTime} > ${state.lastServerTime}`,
+        );
+      }
+      for (const op of ops) {
+        assert(
+          serverTime >= op.hlc,
+          `Expected serverTime '${serverTime}' >= sent op HLC '${op.hlc}'`,
+        );
+      }
+      state.lastServerTime = serverTime;
+      assert.equal(results.length, ops.length);
+      for (let i = 0; i < ops.length; i += 1) {
+        const r = results[i];
+        assert.equal(r.status, 'applied', `Expected applied for ${ops[i].opId}: ${JSON.stringify(r)}`);
+        if (r.row) {
+          applyServerRow(ops[i].entity, r.row, r.clocks);
+        }
+      }
+      state.outbox = [];
+      return res.data;
+    },
+    async pull() {
+      const res = await pullSync(baseUrl, state.token, {
+        cursors: { [scope]: state.cursor },
+        limit: 500,
+      });
+      assert.equal(res.status, 200, `Pull failed: ${JSON.stringify(res.data)}`);
+      const slice = getScopeSlice(res.data, scope);
+      for (const item of slice.rows) {
+        if ('gone' in item && item.gone) {
+          state.rows.delete(`${item.entity}:${item.entityId}`);
+        } else {
+          applyServerRow(item.entity, item.row, item.clocks);
+        }
+      }
+      state.cursor = slice.cursor;
+      return slice;
+    },
+    snapshotRows() {
+      return Object.fromEntries(
+        Array.from(state.rows.entries())
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([k, v]) => [k, v.row]),
+      );
+    },
+  };
+}
+
+async function runTwoDeviceScenario({ baseUrl, jwks }) {
+  const sub = `apple-two-device-${randomUUID()}`;
+  const dev1Id = `dev1-${randomUUID()}`;
+  const dev2Id = `dev2-${randomUUID()}`;
+
+  // 1. Device 1 logs in as a new account.
+  const login1 = await loginAppleForSub(baseUrl, jwks, sub, dev1Id);
+  assert.equal(login1.isNewAccount, true);
+  assert.equal(login1.hasData, false);
+  assert.equal(login1.meMemberId, null);
+  assert.equal(login1.inboxProjectId, null);
+  const dev1 = createDeviceReplica({ baseUrl, loginData: login1, deviceId: dev1Id });
+
+  // 2. Device 1 creates member (isMe), inbox + regular list + tasks and pushes.
+  const memberId = randomUUID();
+  const inboxId = randomUUID();
+  const workListId = randomUUID();
+  const taskA = randomUUID();
+  const taskB = randomUUID();
+  const taskC = randomUUID();
+  const t0 = Date.now();
+
+  dev1.enqueue({
+    opId: randomUUID(),
+    hlc: makeHlc(t0, 0, dev1.state.deviceId),
+    entity: 'member',
+    entityId: memberId,
+    op: 'upsert',
+    fields: ['id', 'name', 'initial', 'color', 'isMe', 'createdAt', 'updatedAt'],
+    row: {
+      id: memberId,
+      name: 'Alex',
+      initial: 'A',
+      color: '#9BB8FF',
+      isMe: true,
+      createdAt: t0,
+      updatedAt: t0,
+    },
+  });
+  dev1.enqueue({
+    ...makeProjectOp({
+      hlc: makeHlc(t0, 1, dev1.state.deviceId),
+      projectId: inboxId,
+      ownerId: memberId,
+      name: 'Inbox',
+      now: t0,
+    }),
+    row: {
+      id: inboxId,
+      name: 'Inbox',
+      viewMode: 'list',
+      kind: 'TASK',
+      isInbox: true,
+      ownerId: memberId,
+      sortKey: 'a',
+      showInSmart: 'all',
+      notifyMode: 'all',
+      createdAt: t0,
+      updatedAt: t0,
+    },
+  });
+  dev1.enqueue(
+    makeProjectOp({
+      hlc: makeHlc(t0, 2, dev1.state.deviceId),
+      projectId: workListId,
+      ownerId: memberId,
+      name: 'Work',
+      now: t0,
+    }),
+  );
+  dev1.enqueue(
+    fullTaskCreateOp({
+      hlc: makeHlc(t0, 3, dev1.state.deviceId),
+      taskId: taskA,
+      projectId: inboxId,
+      title: 'Task A Initial',
+      now: t0,
+    }),
+  );
+  dev1.enqueue(
+    fullTaskCreateOp({
+      hlc: makeHlc(t0, 4, dev1.state.deviceId),
+      taskId: taskB,
+      projectId: workListId,
+      title: 'Task B Initial',
+      now: t0,
+    }),
+  );
+  dev1.enqueue(
+    fullTaskCreateOp({
+      hlc: makeHlc(t0, 5, dev1.state.deviceId),
+      taskId: taskC,
+      projectId: workListId,
+      title: 'Task C Initial',
+      now: t0,
+    }),
+  );
+
+  const initialPush = await dev1.push();
+  await dev1.pull();
+
+  // Verify refresh on device 1 also returns hasData=true, meMemberId, inboxProjectId.
+  const refresh1 = await postJson(baseUrl, '/auth/refresh', {
+    refreshToken: dev1.state.refreshToken,
+  });
+  assert.equal(refresh1.status, 200);
+  assert.equal(refresh1.data.hasData, true);
+  assert.equal(refresh1.data.meMemberId, memberId);
+  assert.equal(refresh1.data.inboxProjectId, inboxId);
+  dev1.state.token = refresh1.data.accessToken;
+  dev1.state.refreshToken = refresh1.data.refreshToken;
+
+  // 3. Device 2 logs in (same user, new deviceId, new session), sees hasData=true & ids, pulls from 0.
+  const login2 = await loginAppleForSub(baseUrl, jwks, sub, dev2Id);
+  assert.equal(login2.isNewAccount, false);
+  assert.equal(login2.user.id, dev1.state.userId);
+  assert.equal(login2.hasData, true);
+  assert.equal(login2.meMemberId, memberId);
+  assert.equal(login2.inboxProjectId, inboxId);
+  assert.notEqual(login2.refreshToken, dev1.state.refreshToken);
+
+  const dev2 = createDeviceReplica({ baseUrl, loginData: login2, deviceId: dev2Id });
+  const dev2InitialPull = await dev2.pull();
+  assert.equal(dev2InitialPull.rows.length, 6);
+  assert.deepEqual(dev2.snapshotRows(), dev1.snapshotRows());
+  assert.equal(dev2.state.rows.get(`member:${memberId}`).row.isMe, true);
+
+  // 4. Both devices edit offline (different fields + same field with different HLCs), push in both orders.
+  const baseMs = Math.max(Date.now(), Number(initialPush.serverTime.slice(0, 13)) + 50);
+
+  // taskA: dev1 has lower HLC for title + edits content; dev2 has higher HLC for title + edits priority.
+  dev1.enqueue(
+    makeTaskOp({
+      hlc: makeHlc(baseMs + 10, 0, dev1.state.deviceId),
+      entityId: taskA,
+      fields: ['title', 'content', 'updatedAt'],
+      row: { id: taskA, title: 'A from D1 (lower)', content: 'Content D1', updatedAt: baseMs + 10 },
+    }),
+  );
+  dev2.enqueue(
+    makeTaskOp({
+      hlc: makeHlc(baseMs + 20, 0, dev2.state.deviceId),
+      entityId: taskA,
+      fields: ['title', 'priority', 'updatedAt'],
+      row: { id: taskA, title: 'A from D2 (winner)', priority: 5, updatedAt: baseMs + 20 },
+    }),
+  );
+
+  // taskC: reverse push order — dev1 has HIGHER HLC for title + edits priority; dev2 has LOWER HLC for title + edits content.
+  dev1.enqueue(
+    makeTaskOp({
+      hlc: makeHlc(baseMs + 30, 0, dev1.state.deviceId),
+      entityId: taskC,
+      fields: ['title', 'priority', 'updatedAt'],
+      row: { id: taskC, title: 'C from D1 (winner)', priority: 3, updatedAt: baseMs + 30 },
+    }),
+  );
+  dev2.enqueue(
+    makeTaskOp({
+      hlc: makeHlc(baseMs + 25, 0, dev2.state.deviceId),
+      entityId: taskC,
+      fields: ['title', 'content', 'updatedAt'],
+      row: { id: taskC, title: 'C from D2 (lower)', content: 'Content D2', updatedAt: baseMs + 25 },
+    }),
+  );
+
+  // Push dev1 first, then dev2 (covers both lower-before-higher on taskA and higher-before-lower on taskC).
+  const pushD1 = await dev1.push();
+  const pushD2 = await dev2.push();
+  assert(pushD2.serverTime > pushD1.serverTime);
+
+  // Device 2's push response for taskC is immediately authoritative (retains D1's winning title & priority + D2's content).
+  const taskCAfterD2Push = pushD2.results[1].row;
+  assert.equal(taskCAfterD2Push.title, 'C from D1 (winner)');
+  assert.equal(taskCAfterD2Push.priority, 3);
+  assert.equal(taskCAfterD2Push.content, 'Content D2');
+
+  await dev1.pull();
+  await dev2.pull();
+
+  const serverCheck1 = await pullSync(baseUrl, dev1.state.token, { cursors: {} });
+  const serverRows1 = Object.fromEntries(
+    getScopeSlice(serverCheck1.data, dev1.state.scope)
+      .rows.map((r) => [`${r.entity}:${r.row.id}`, r.row])
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+
+  assert.deepEqual(dev1.snapshotRows(), serverRows1);
+  assert.deepEqual(dev2.snapshotRows(), serverRows1);
+  assert.equal(dev1.snapshotRows()[`task:${taskA}`].title, 'A from D2 (winner)');
+  assert.equal(dev1.snapshotRows()[`task:${taskA}`].content, 'Content D1');
+  assert.equal(dev1.snapshotRows()[`task:${taskA}`].priority, 5);
+  assert.equal(dev1.snapshotRows()[`task:${taskC}`].title, 'C from D1 (winner)');
+  assert.equal(dev1.snapshotRows()[`task:${taskC}`].content, 'Content D2');
+  assert.equal(dev1.snapshotRows()[`task:${taskC}`].priority, 3);
+
+  // 5. Soft delete on one device and edit on the other converge to identical state on both and server.
+  const baseMs2 = Math.max(Date.now(), Number(pushD2.serverTime.slice(0, 13)) + 50);
+  dev1.enqueue(
+    makeTaskOp({
+      hlc: makeHlc(baseMs2 + 10, 0, dev1.state.deviceId),
+      entityId: taskB,
+      fields: ['deletedAt', 'updatedAt'],
+      row: { id: taskB, deletedAt: baseMs2 + 10, updatedAt: baseMs2 + 10 },
+    }),
+  );
+  dev2.enqueue(
+    makeTaskOp({
+      hlc: makeHlc(baseMs2 + 20, 0, dev2.state.deviceId),
+      entityId: taskB,
+      fields: ['title', 'updatedAt'],
+      row: { id: taskB, title: 'B Edited While Deleted', updatedAt: baseMs2 + 20 },
+    }),
+  );
+
+  await dev1.push();
+  await dev2.push();
+  await dev1.pull();
+  await dev2.pull();
+
+  const serverCheck2 = await pullSync(baseUrl, dev2.state.token, { cursors: {} });
+  const serverRows2 = Object.fromEntries(
+    getScopeSlice(serverCheck2.data, dev2.state.scope)
+      .rows.map((r) => [`${r.entity}:${r.row.id}`, r.row])
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+
+  assert.deepEqual(dev1.snapshotRows(), serverRows2);
+  assert.deepEqual(dev2.snapshotRows(), serverRows2);
+  assert.equal(dev1.snapshotRows()[`task:${taskB}`].deletedAt, baseMs2 + 10);
+  assert.equal(dev1.snapshotRows()[`task:${taskB}`].title, 'B Edited While Deleted');
+  assert.equal(dev1.snapshotRows()[`task:${taskB}`].updatedAt, baseMs2 + 20);
+}
+
 const SCENARIOS = {
   fixture: runFixtureScenario,
   lww: runLwwScenario,
@@ -1273,6 +1623,7 @@ const SCENARIOS = {
   unknown_row: runUnknownRowScenario,
   move_task: runMoveTaskScenario,
   child_task_id: runChildTaskIdScenario,
+  two_device: runTwoDeviceScenario,
 };
 
 async function main() {

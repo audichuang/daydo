@@ -1,4 +1,5 @@
 export const MAX_FUTURE_DRIFT_MS = 5 * 60 * 1000;
+export const SERVER_HLC_DEVICE_ID = 'server';
 
 export interface Hlc {
   ms: number;
@@ -121,5 +122,70 @@ export function clampHlc(
     hlc: next,
     formatted: formatHlc(next),
     clamped: true,
+  };
+}
+
+/**
+ * Advance the server HLC so it is strictly past `last` (if provided) and strictly
+ * past every HLC in `observed` (hence `>=` every HLC assigned or clamped in a batch).
+ */
+export function advanceServerHlc(
+  nowMs: number,
+  observed: ReadonlyArray<Hlc | string> = [],
+  last?: Hlc | string | null,
+): { hlc: Hlc; formatted: string } {
+  const wall = Number.isFinite(nowMs) ? Math.max(0, Math.floor(nowMs)) : 0;
+
+  let candidate: Hlc = { ms: wall, counter: 0, deviceId: SERVER_HLC_DEVICE_ID };
+  if (last) {
+    const lastHlc = typeof last === 'string' ? parseHlc(last) : normalizeHlc(last);
+    if (lastHlc) {
+      if (wall > lastHlc.ms) {
+        candidate = { ms: wall, counter: 0, deviceId: SERVER_HLC_DEVICE_ID };
+      } else {
+        candidate = normalizeHlc({
+          ms: lastHlc.ms,
+          counter: lastHlc.counter + 1,
+          deviceId: SERVER_HLC_DEVICE_ID,
+        });
+      }
+    }
+  }
+
+  for (const item of observed) {
+    const obs = typeof item === 'string' ? parseHlc(item) : normalizeHlc(item);
+    if (!obs) continue;
+    if (compareHlc(candidate, obs) <= 0) {
+      candidate = normalizeHlc({
+        ms: obs.ms,
+        counter: obs.counter + 1,
+        deviceId: SERVER_HLC_DEVICE_ID,
+      });
+    }
+  }
+
+  return {
+    hlc: candidate,
+    formatted: formatHlc(candidate),
+  };
+}
+
+export interface ServerHlcClock {
+  tick(nowMs: number, observed?: ReadonlyArray<Hlc | string>): string;
+  current(): Hlc | null;
+}
+
+/** Stateful monotonic server HLC clock for a worker isolate or test harness. */
+export function createServerHlcClock(): ServerHlcClock {
+  let last: Hlc | null = null;
+  return {
+    tick(nowMs: number, observed: ReadonlyArray<Hlc | string> = []): string {
+      const next = advanceServerHlc(nowMs, observed, last);
+      last = next.hlc;
+      return next.formatted;
+    },
+    current() {
+      return last;
+    },
   };
 }

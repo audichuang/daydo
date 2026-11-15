@@ -1,22 +1,61 @@
-import { device, identity, session, user } from '@schema';
+import { device, identity, projectMembership, session, user } from '@schema';
 import { and, eq, isNull, sql, type db } from 'void/db';
+import type { ScopeStub } from '../sync/push';
 import { generateRefreshToken, sha256Hex, signAccessToken } from './crypto';
 import type { ProviderName } from './providers';
 
 const REFRESH_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 export type DatabaseClient = typeof db;
+export type ScopeLookup = (scope: string) => Pick<ScopeStub, 'getInboxProjectId'>;
 
-export interface AuthSessionResult {
+export interface LoginStateFields {
+  hasData: boolean;
+  meMemberId: string | null;
+  inboxProjectId: string | null;
+}
+
+export interface AuthSessionResult extends LoginStateFields {
   accessToken: string;
   refreshToken: string;
   user: { id: string };
   isNewAccount: boolean;
 }
 
-export interface RefreshResult {
+export interface RefreshResult extends LoginStateFields {
   accessToken: string;
   refreshToken: string;
+}
+
+async function resolveUserSyncState(
+  database: DatabaseClient,
+  userId: string,
+  getScopeStub?: ScopeLookup,
+): Promise<LoginStateFields> {
+  const [userRows, membershipRows] = await database.batch([
+    database.select({ meMemberId: user.meMemberId }).from(user).where(eq(user.id, userId)),
+    database
+      .select({ projectId: projectMembership.projectId })
+      .from(projectMembership)
+      .where(and(eq(projectMembership.userId, userId), isNull(projectMembership.removedAt))),
+  ]);
+
+  const meMemberId =
+    userRows[0] && typeof userRows[0].meMemberId === 'string' ? userRows[0].meMemberId : null;
+  const readableProjectIds = membershipRows.map((r) => String(r.projectId));
+
+  let inboxProjectId: string | null = null;
+  if (readableProjectIds.length > 0 && getScopeStub) {
+    inboxProjectId = await getScopeStub(`u:${userId}`).getInboxProjectId({
+      readableProjectIds,
+    });
+  }
+
+  return {
+    hasData: inboxProjectId !== null,
+    meMemberId,
+    inboxProjectId,
+  };
 }
 
 function buildDeviceAndSessionStatements(
@@ -60,6 +99,7 @@ export async function createSessionForIdentity(
     deviceId: string;
     jwtSecret: string;
     now?: number;
+    getScopeStub?: ScopeLookup;
   },
 ): Promise<AuthSessionResult> {
   const now = params.now ?? Date.now();
@@ -135,12 +175,22 @@ export async function createSessionForIdentity(
     }
   }
 
-  const accessToken = await signAccessToken(userId, params.jwtSecret);
+  const [accessToken, syncState] = await Promise.all([
+    signAccessToken(userId, params.jwtSecret),
+    isNewAccount
+      ? Promise.resolve<LoginStateFields>({
+          hasData: false,
+          meMemberId: null,
+          inboxProjectId: null,
+        })
+      : resolveUserSyncState(database, userId, params.getScopeStub),
+  ]);
   return {
     accessToken,
     refreshToken,
     user: { id: userId },
     isNewAccount,
+    ...syncState,
   };
 }
 
@@ -150,6 +200,7 @@ export async function rotateRefreshToken(
     refreshToken: string;
     jwtSecret: string;
     now?: number;
+    getScopeStub?: ScopeLookup;
   },
 ): Promise<RefreshResult | null> {
   const now = params.now ?? Date.now();
@@ -210,6 +261,9 @@ export async function rotateRefreshToken(
     return null;
   }
 
-  const accessToken = await signAccessToken(existing.userId, params.jwtSecret);
-  return { accessToken, refreshToken: newRefreshToken };
+  const [accessToken, syncState] = await Promise.all([
+    signAccessToken(existing.userId, params.jwtSecret),
+    resolveUserSyncState(database, existing.userId, params.getScopeStub),
+  ]);
+  return { accessToken, refreshToken: newRefreshToken, ...syncState };
 }

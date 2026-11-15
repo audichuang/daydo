@@ -3,9 +3,11 @@ import { createDb } from 'void/db';
 import { Scope } from '../../durable-objects/scope';
 import { requireUser } from '../../src/auth/middleware';
 import { nonEmptyString, readJsonObject } from '../../src/http';
+import { createServerHlcClock } from '../../src/sync/hlc';
 import { executeSyncPush } from '../../src/sync/push';
 
 const MAX_OPS_PER_PUSH = 200;
+const serverClock = createServerHlcClock();
 
 export const POST = defineHandler(async (c) => {
   const userId = await requireUser(c);
@@ -35,6 +37,7 @@ export const POST = defineHandler(async (c) => {
     deviceId,
     ops: body.ops,
     getScopeStub: (scope) => Scope.get(scope),
+    clock: serverClock,
   });
 
   return c.json(result, 200);

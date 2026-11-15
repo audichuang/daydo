@@ -1,5 +1,7 @@
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
+import * as schema from '../db/schema';
 import {
   generateRefreshToken,
   sha256Hex,
@@ -390,5 +392,132 @@ describe('refresh token rotation & reuse race (Finding 3)', () => {
       now: 3000,
     });
     expect(followUp).toBeNull();
+  });
+});
+
+describe('login and refresh state fields (hasData, meMemberId, inboxProjectId)', () => {
+  const jwtSecret = 'unit-test-jwt-secret-32-bytes-minimum';
+
+  it('returns hasData=false and null ids on new account, and reflects inbox + meMemberId on login and refresh', async () => {
+    const { db } = createTestD1();
+    const database = db as unknown as DatabaseClient;
+    const inboxId = 'proj-inbox-1';
+    const workId = 'proj-work-1';
+    const scopeCalls: Array<{ scope: string; readableProjectIds: string[] }> = [];
+
+    const getScopeStub = (scope: string) => ({
+      async getInboxProjectId(input: { readableProjectIds: string[] }) {
+        scopeCalls.push({ scope, readableProjectIds: input.readableProjectIds });
+        return input.readableProjectIds.includes(inboxId) ? inboxId : null;
+      },
+    });
+
+    // 1. New account -> hasData=false, meMemberId=null, inboxProjectId=null
+    const first = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'state-user-1',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1000,
+      getScopeStub,
+    });
+    expect(first).toMatchObject({
+      user: { id: first.user.id },
+      isNewAccount: true,
+      hasData: false,
+      meMemberId: null,
+      inboxProjectId: null,
+    });
+    expect(scopeCalls).toHaveLength(0);
+
+    // 2. User has meMemberId and a regular list, but no inbox -> hasData=false, inboxProjectId=null
+    await db
+      .update(schema.user)
+      .set({ meMemberId: 'mem-me-1' })
+      .where(eq(schema.user.id, first.user.id));
+    await db.insert(schema.projectMembership).values({
+      projectId: workId,
+      userId: first.user.id,
+      role: 'owner',
+      createdAt: 1001,
+      removedAt: null,
+    });
+
+    const second = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'state-user-1',
+      email: null,
+      deviceId: 'dev-2',
+      jwtSecret,
+      now: 1002,
+      getScopeStub,
+    });
+    expect(second).toMatchObject({
+      user: { id: first.user.id },
+      isNewAccount: false,
+      hasData: false,
+      meMemberId: 'mem-me-1',
+      inboxProjectId: null,
+    });
+    expect(scopeCalls[0]).toEqual({
+      scope: `u:${first.user.id}`,
+      readableProjectIds: [workId],
+    });
+
+    // 3. Add readable inbox membership -> login and refresh both return hasData=true + both ids
+    await db.insert(schema.projectMembership).values({
+      projectId: inboxId,
+      userId: first.user.id,
+      role: 'owner',
+      createdAt: 1003,
+      removedAt: null,
+    });
+
+    const third = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'state-user-1',
+      email: null,
+      deviceId: 'dev-2',
+      jwtSecret,
+      now: 1004,
+      getScopeStub,
+    });
+    expect(third).toMatchObject({
+      isNewAccount: false,
+      hasData: true,
+      meMemberId: 'mem-me-1',
+      inboxProjectId: inboxId,
+    });
+
+    const refreshed = await rotateRefreshToken(database, {
+      refreshToken: third.refreshToken,
+      jwtSecret,
+      now: 1005,
+      getScopeStub,
+    });
+    expect(refreshed).toMatchObject({
+      hasData: true,
+      meMemberId: 'mem-me-1',
+      inboxProjectId: inboxId,
+    });
+
+    // 4. Removed inbox membership -> no longer readable -> hasData=false, inboxProjectId=null
+    await db
+      .update(schema.projectMembership)
+      .set({ removedAt: 1006 })
+      .where(eq(schema.projectMembership.projectId, inboxId));
+
+    const refreshedAfterRemove = await rotateRefreshToken(database, {
+      refreshToken: refreshed!.refreshToken,
+      jwtSecret,
+      now: 1007,
+      getScopeStub,
+    });
+    expect(refreshedAfterRemove).toMatchObject({
+      hasData: false,
+      meMemberId: 'mem-me-1',
+      inboxProjectId: null,
+    });
   });
 });

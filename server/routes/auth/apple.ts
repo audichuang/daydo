@@ -1,6 +1,7 @@
 import { defineHandler } from 'void';
 import { createDb } from 'void/db';
 import { env } from 'void/env';
+import { Scope } from '../../durable-objects/scope';
 import { AuthVerificationError, verifyAppleToken } from '../../src/auth/providers';
 import { createSessionForIdentity } from '../../src/auth/session';
 import { nonEmptyString, readJsonObject } from '../../src/http';
@@ -37,6 +38,7 @@ export const POST = defineHandler(async (c) => {
     ...verified,
     deviceId,
     jwtSecret: env.JWT_SECRET,
+    getScopeStub: (scope) => Scope.get(scope),
   });
   return c.json(result, 200);
 });

@@ -16,7 +16,7 @@ import {
   type MembershipRole,
   type StoredEntityState,
 } from '../src/sync/entities';
-import { clampHlc, type Hlc } from '../src/sync/hlc';
+import { advanceServerHlc, clampHlc, type Hlc } from '../src/sync/hlc';
 import { mergeOp } from '../src/sync/merge';
 
 export interface PushOpResult {
@@ -43,6 +43,7 @@ export interface ScopePushResponse {
   results: PushOpResult[];
   serverSeq: number;
   boundMeMemberId: string | null;
+  serverTime: string;
 }
 
 export interface ScopePullInput {
@@ -370,6 +371,7 @@ class SplitTxnSnapshotStore implements ScopeStore {
 
 export class ScopeObject extends DurableObject<CloudBindings> {
   private lastClamped: Hlc | null = null;
+  private lastServerHlc: Hlc | null = null;
   private readonly allowFaultInjection: boolean;
 
   constructor(
@@ -617,12 +619,16 @@ export class ScopeObject extends DurableObject<CloudBindings> {
     const purgedSet = new Set<string>([...input.purgedProjects, ...store.getPurgedProjects()]);
 
     const results: PushOpResult[] = [];
+    const batchHlcs: Hlc[] = [];
 
     if (input.ops.length === 0) {
+      const nextServerHlc = advanceServerHlc(nowMs, batchHlcs, this.lastServerHlc);
+      this.lastServerHlc = nextServerHlc.hlc;
       return {
         results: [],
         serverSeq: currentSeq,
         boundMeMemberId: null,
+        serverTime: nextServerHlc.formatted,
       };
     }
 
@@ -982,6 +988,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
           nowMs,
           { parentPurged },
         );
+        batchHlcs.push(clamped.hlc);
       } catch (err) {
         rejectOp(
           op.opId,
@@ -1095,11 +1102,38 @@ export class ScopeObject extends DurableObject<CloudBindings> {
       store.setCounter(currentSeq);
     }
 
+    const nextServerHlc = advanceServerHlc(
+      Math.max(Date.now(), nowMs),
+      batchHlcs,
+      this.lastServerHlc,
+    );
+    this.lastServerHlc = nextServerHlc.hlc;
+
     return {
       results,
       serverSeq: currentSeq,
       boundMeMemberId,
+      serverTime: nextServerHlc.formatted,
     };
+  }
+
+  getInboxProjectId(input: { readableProjectIds: string[] }): string | null {
+    if (!Array.isArray(input.readableProjectIds) || input.readableProjectIds.length === 0) {
+      return null;
+    }
+    const rows = this.ctx.storage.sql
+      .exec(
+        `SELECT id FROM project
+         WHERE isInbox = 1
+           AND purgedAt IS NULL
+           AND deletedAt IS NULL
+           AND id IN (SELECT value FROM json_each(?))
+         ORDER BY serverSeq ASC
+         LIMIT 1`,
+        JSON.stringify(input.readableProjectIds),
+      )
+      .toArray();
+    return rows.length > 0 ? String(rows[0].id) : null;
   }
 
   pull(input: ScopePullInput): ScopePullResponse {

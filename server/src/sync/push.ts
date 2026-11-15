@@ -18,12 +18,14 @@ import {
   type EntityName,
   type MembershipRole,
 } from './entities';
+import { advanceServerHlc, type ServerHlcClock } from './hlc';
 
 export type AppDb = DrizzleD1Database<typeof schema>;
 
 export interface ScopeStub {
   push(input: ScopePushInput): Promise<ScopePushResponse>;
   pull(input: ScopePullInput): Promise<ScopePullResponse>;
+  getInboxProjectId(input: { readableProjectIds: string[] }): Promise<string | null>;
 }
 
 const QUERY_CHUNK_SIZE = 50;
@@ -48,14 +50,17 @@ export async function executeSyncPush(
     deviceId: string;
     ops: unknown[];
     getScopeStub: (scope: string) => ScopeStub;
+    clock?: ServerHlcClock;
   },
-): Promise<{ results: PushOpResult[]; serverTime: number }> {
-  const { userId, deviceId, ops, getScopeStub } = params;
+): Promise<{ results: PushOpResult[]; serverTime: string }> {
+  const { userId, deviceId, ops, getScopeStub, clock } = params;
   const nowMs = Date.now();
   const pusherScope = `u:${userId}`;
+  const nextServerTime = (timeMs: number, observed: string[] = []): string =>
+    clock ? clock.tick(timeMs, observed) : advanceServerHlc(timeMs, observed).formatted;
 
   if (ops.length === 0) {
-    return { results: [], serverTime: nowMs };
+    return { results: [], serverTime: nextServerTime(nowMs) };
   }
 
   const results: Array<PushOpResult | null> = new Array(ops.length).fill(null);
@@ -744,8 +749,9 @@ export async function executeSyncPush(
       .where(and(eq(user.id, userId), isNull(user.meMemberId)));
   }
 
+  const scopeServerTimes = scopeResponses.map((r) => r.response.serverTime);
   return {
     results: results as PushOpResult[],
-    serverTime: Date.now(),
+    serverTime: nextServerTime(Math.max(Date.now(), nowMs), scopeServerTimes),
   };
 }

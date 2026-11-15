@@ -209,6 +209,9 @@ async function main() {
     });
     assert.equal(appleLogin1.status, 200, `Expected 200, got ${appleLogin1.status}`);
     assert.equal(appleLogin1.data.isNewAccount, true);
+    assert.equal(appleLogin1.data.hasData, false);
+    assert.equal(appleLogin1.data.meMemberId, null);
+    assert.equal(appleLogin1.data.inboxProjectId, null);
     assert.equal(typeof appleLogin1.data.accessToken, 'string');
     assert.equal(typeof appleLogin1.data.refreshToken, 'string');
     assert.equal(typeof appleLogin1.data.user?.id, 'string');
@@ -259,6 +262,9 @@ async function main() {
     assert.equal(typeof refreshed.data.accessToken, 'string');
     assert.equal(typeof refreshed.data.refreshToken, 'string');
     assert.notEqual(refreshed.data.refreshToken, appleLogin1.data.refreshToken);
+    assert.equal(refreshed.data.hasData, false);
+    assert.equal(refreshed.data.meMemberId, null);
+    assert.equal(refreshed.data.inboxProjectId, null);
 
     // 6. Reusing an old refresh token returns 401 and revokes that session chain
     const replayOld = await postJson(baseUrl, '/auth/refresh', {
