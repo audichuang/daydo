@@ -215,7 +215,10 @@ function computeFixtureExpectedState(ops) {
     }
 
     for (const f of op.fields) {
-      if (op.entity === 'member' && f === 'isMe') continue;
+      if (op.entity === 'member' && f === 'isMe') {
+        entry.row.isMe = op.row.isMe === true;
+        continue;
+      }
       if (op.entity === 'attachment' && (f === 'localPath' || f === 'originalPath')) continue;
       if (op.entity === 'task' && ['startDay', 'startMinute', 'endDay', 'endMinute', 'timeZone'].includes(f)) {
         continue;
@@ -247,9 +250,9 @@ async function runFixtureScenario({ baseUrl, jwks }) {
     assert.equal(r.status, 'applied', `Expected applied for ${r.opId}, got ${JSON.stringify(r)}`);
   }
 
-  // Verify member row in push response never contains isMe
+  // Verify member row in push response computes isMe boolean
   const memberResult = pushRes.data.results[0];
-  assert.equal('isMe' in memberResult.row, false, 'member row must not contain isMe');
+  assert.equal(memberResult.row.isMe, true, 'self member row must have isMe === true');
 
   // Pull all rows for the fixture user
   const pullRes = await getJson(baseUrl, '/sync/pull?since=0&limit=500', user.token);
@@ -273,7 +276,9 @@ async function runFixtureScenario({ baseUrl, jwks }) {
   for (const [key, exp] of expected) {
     const got = pulledByKey.get(key);
     assert(got, `Missing pulled row for ${key}`);
-    assert.equal('isMe' in got.row, false, `Pulled row ${key} must not have isMe`);
+    if (got.entity === 'member') {
+      assert.equal(typeof got.row.isMe, 'boolean', `Pulled member row ${key} must include boolean isMe`);
+    }
 
     if (exp.purged) {
       assert.equal(typeof got.row.purgedAt, 'number', `Expected purgedAt on ${key}`);

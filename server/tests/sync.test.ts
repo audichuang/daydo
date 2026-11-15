@@ -325,7 +325,18 @@ describe('sync merge', () => {
       1000,
     );
     expect(memberRes.clocks.isMe).toBeUndefined();
-    expect(serializePublicRow('member', memberRes.row, null)).not.toHaveProperty('isMe');
+    expect(serializePublicRow('member', memberRes.row, null, { meMemberId: 'm1' })).toMatchObject({
+      id: 'm1',
+      isMe: true,
+    });
+    expect(serializePublicRow('member', memberRes.row, null, { meMemberId: 'm2' })).toMatchObject({
+      id: 'm1',
+      isMe: false,
+    });
+    expect(serializePublicRow('member', memberRes.row, null)).toMatchObject({
+      id: 'm1',
+      isMe: false,
+    });
 
     const onlyNonSynced = mergeOp(
       memberRes,
@@ -516,5 +527,99 @@ describe('sync merge', () => {
     expect(purgedRow.timeZone).toBeUndefined();
     expect(purgedRow.deletedAt).toBe(1794715200000);
     expect(purgedRow.purgedAt).toBe(1794715200999);
+  });
+
+  it('satisfies DayDoCore Records.swift non-optional Codable contract for every entity', () => {
+    // Non-optional properties declared in DayDoCore/Sources/DayDoCore/Storage/Records.swift
+    const requiredKeysByEntity: Record<EntityName, string[]> = {
+      member: ['id', 'name', 'initial', 'color', 'isMe', 'createdAt', 'updatedAt'],
+      folder: ['id', 'name', 'sortKey', 'createdAt', 'updatedAt'],
+      project: [
+        'id',
+        'name',
+        'viewMode',
+        'kind',
+        'isInbox',
+        'ownerId',
+        'sortKey',
+        'showInSmart',
+        'notifyMode',
+        'createdAt',
+        'updatedAt',
+      ],
+      projectMember: ['projectId', 'memberId', 'role', 'createdAt', 'updatedAt'],
+      task: [
+        'id',
+        'projectId',
+        'title',
+        'content',
+        'priority',
+        'status',
+        'reminders',
+        'tags',
+        'sortKey',
+        'createdAt',
+        'updatedAt',
+      ],
+      checklistItem: ['id', 'taskId', 'title', 'status', 'sortKey', 'createdAt', 'updatedAt'],
+      tag: ['name', 'label', 'sortKey', 'createdAt', 'updatedAt'],
+      attachment: ['id', 'taskId', 'fileName', 'size', 'mimeType', 'createdAt', 'updatedAt'],
+      comment: ['id', 'taskId', 'authorId', 'body', 'createdAt', 'updatedAt'],
+    };
+
+    for (const [entity, requiredKeys] of Object.entries(requiredKeysByEntity) as Array<
+      [EntityName, string[]]
+    >) {
+      const entityId =
+        entity === 'projectMember' ? 'p1:m1' : entity === 'tag' ? 'work' : `${entity}-1`;
+      const merged = mergeOp(
+        null,
+        {
+          entity,
+          entityId,
+          op: 'upsert',
+          hlc: hlc1,
+          fields: [],
+          row: {},
+        },
+        1000,
+      );
+      const pub = serializePublicRow(entity, merged.row, merged.purgedAt);
+      for (const key of requiredKeys) {
+        expect(Object.hasOwn(pub, key), `${entity} missing required key '${key}'`).toBe(true);
+      }
+      if (entity === 'member') {
+        expect(typeof pub.isMe).toBe('boolean');
+      }
+      if (entity === 'project') {
+        expect(typeof pub.isInbox).toBe('boolean');
+      }
+    }
+  });
+
+  it('rejects prototype-chain field names without throwing (Finding 5)', () => {
+    for (const protoKey of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      const res = validateSyncOp({
+        opId: `op-proto-${protoKey}`,
+        entity: 'member',
+        entityId: 'm1',
+        op: 'upsert',
+        hlc: hlc1,
+        fields: [protoKey],
+        row: { [protoKey]: 'x' },
+      });
+      expect(res.ok).toBe(false);
+
+      const inRowOnly = validateSyncOp({
+        opId: `op-proto-row-${protoKey}`,
+        entity: 'member',
+        entityId: 'm1',
+        op: 'upsert',
+        hlc: hlc1,
+        fields: [],
+        row: JSON.parse(`{"${protoKey}":"x"}`),
+      });
+      expect(inRowOnly.ok).toBe(true);
+    }
   });
 });

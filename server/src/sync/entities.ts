@@ -272,22 +272,34 @@ export function validateSyncOp(
   }
 
   const schema = ENTITY_FIELDS[raw.entity];
+  const nonSynced = NON_SYNCED_FIELDS[raw.entity];
+  for (const field of raw.fields) {
+    if (nonSynced?.has(field)) continue;
+    if (!Object.hasOwn(schema, field)) {
+      return { ok: false, opId, reason: `Unknown field '${field}'` };
+    }
+  }
   if (raw.op === 'upsert') {
     for (const [keyCol, keyVal] of Object.entries(keys)) {
-      if (raw.row[keyCol] !== undefined && raw.row[keyCol] !== keyVal) {
+      if (
+        Object.hasOwn(raw.row, keyCol) &&
+        raw.row[keyCol] !== undefined &&
+        raw.row[keyCol] !== keyVal
+      ) {
         return { ok: false, opId, reason: `row.${keyCol} does not match entityId` };
       }
     }
     const checkKeys = new Set<string>(raw.fields);
     for (const key of Object.keys(raw.row)) {
-      if (key in schema) checkKeys.add(key);
+      if (Object.hasOwn(schema, key)) checkKeys.add(key);
     }
     for (const field of checkKeys) {
+      if (!Object.hasOwn(schema, field)) continue;
       const spec = schema[field];
-      if (!spec) continue;
       // Only enforce non-nullability for fields explicitly listed in `fields` or present in `row`.
-      const val = raw.row[field];
-      if (field in raw.row || raw.fields.includes(field)) {
+      const hasInRow = Object.hasOwn(raw.row, field);
+      const val = hasInRow ? raw.row[field] : undefined;
+      if (hasInRow || raw.fields.includes(field)) {
         const res = validateFieldValue(spec, val);
         if (!res.ok) {
           return { ok: false, opId, reason: `Field '${field}' ${res.reason}` };
@@ -321,11 +333,11 @@ export function buildDefaultRow(
   const out: Record<string, unknown> = {};
 
   for (const [field, spec] of Object.entries(schema)) {
-    if (field in keys) {
+    if (Object.hasOwn(keys, field)) {
       out[field] = keys[field];
       continue;
     }
-    if (field in sourceRow && sourceRow[field] !== undefined) {
+    if (Object.hasOwn(sourceRow, field) && sourceRow[field] !== undefined) {
       const validated = validateFieldValue(spec, sourceRow[field]);
       if (validated.ok) {
         out[field] = validated.value;
@@ -346,16 +358,21 @@ export function buildDefaultRow(
   return out;
 }
 
+export interface SerializePublicRowOptions {
+  meMemberId?: string | null;
+}
+
 /** Convert a merged internal row (+ purgedAt) into the app's nil-as-absent JSON object. */
 export function serializePublicRow(
   entity: EntityName,
   row: Record<string, unknown>,
   purgedAt: number | null,
+  options?: SerializePublicRowOptions,
 ): Record<string, unknown> {
   const schema = ENTITY_FIELDS[entity];
   const out: Record<string, unknown> = {};
   for (const [field, spec] of Object.entries(schema)) {
-    const val = row[field];
+    const val = Object.hasOwn(row, field) ? row[field] : undefined;
     if (val === null || val === undefined) continue;
     if (spec.kind === 'bool') {
       out[field] = Boolean(val);
@@ -364,6 +381,9 @@ export function serializePublicRow(
     } else {
       out[field] = val;
     }
+  }
+  if (entity === 'member') {
+    out.isMe = typeof options?.meMemberId === 'string' && out.id === options.meMemberId;
   }
   if (purgedAt !== null && purgedAt !== undefined) {
     out.purgedAt = purgedAt;
@@ -378,7 +398,7 @@ export function parseClocksJson(raw: unknown): Record<string, string> {
       if (isPlainObject(parsed)) {
         const out: Record<string, string> = {};
         for (const [k, v] of Object.entries(parsed)) {
-          if (typeof v === 'string') out[k] = v;
+          if (k !== '__proto__' && typeof v === 'string') out[k] = v;
         }
         return out;
       }
@@ -389,7 +409,7 @@ export function parseClocksJson(raw: unknown): Record<string, string> {
   if (isPlainObject(raw)) {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(raw)) {
-      if (typeof v === 'string') out[k] = v;
+      if (k !== '__proto__' && typeof v === 'string') out[k] = v;
     }
     return out;
   }
@@ -404,7 +424,7 @@ export function dbRecordToState(
   const row: Record<string, unknown> = {};
 
   for (const [field, spec] of Object.entries(schema)) {
-    const raw = record[field];
+    const raw = Object.hasOwn(record, field) ? record[field] : undefined;
     if (raw === null || raw === undefined) {
       row[field] = null;
       continue;
@@ -446,7 +466,7 @@ export function stateToDbValues(
   const values: Record<string, unknown> = {};
 
   for (const [field, spec] of Object.entries(schema)) {
-    const val = state.row[field];
+    const val = Object.hasOwn(state.row, field) ? state.row[field] : undefined;
     if (val === null || val === undefined) {
       values[field] = null;
     } else if (spec.kind === 'bool') {

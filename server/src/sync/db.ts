@@ -8,6 +8,7 @@ import {
   projectMember,
   task,
   tag,
+  user,
 } from '@schema';
 import { and, asc, eq, gt, inArray, isNull, or, type BatchItem, type DrizzleD1Database } from 'void/db';
 import type * as schema from '@schema';
@@ -370,9 +371,26 @@ export async function pullUserRows(
     }
   }
 
+  const batchItems: BatchItem<'sqlite'>[] = queries.map((q) => q.query);
+  let meUserQueryIdx: number | null = null;
+  if (!projectId) {
+    meUserQueryIdx = batchItems.length;
+    batchItems.push(
+      db.select({ meMemberId: user.meMemberId }).from(user).where(eq(user.id, userId)),
+    );
+  }
+
   const batchResults = (await db.batch(
-    queries.map((q) => q.query) as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]],
+    batchItems as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]],
   )) as Array<Array<Record<string, unknown>>>;
+
+  let meMemberId: string | null = null;
+  if (meUserQueryIdx !== null) {
+    const meRow = batchResults[meUserQueryIdx]?.[0];
+    if (meRow && typeof meRow.meMemberId === 'string') {
+      meMemberId = meRow.meMemberId;
+    }
+  }
 
   const combined: PullRowItem[] = [];
   for (let i = 0; i < queries.length; i++) {
@@ -381,7 +399,7 @@ export async function pullUserRows(
       const state = dbRecordToState(entity, record);
       combined.push({
         entity,
-        row: serializePublicRow(entity, state.row, state.purgedAt),
+        row: serializePublicRow(entity, state.row, state.purgedAt, { meMemberId }),
         clocks: state.clocks,
         serverSeq: state.serverSeq,
       });

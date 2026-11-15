@@ -13,6 +13,7 @@ const syncMetadataColumns = () => ({
 export const user = sqliteTable('user', {
   id: text('id').primaryKey(),
   createdAt: integer('createdAt').notNull(),
+  meMemberId: text('meMemberId'),
 });
 
 export const identity = sqliteTable(

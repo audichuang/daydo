@@ -11,6 +11,12 @@ import {
   verifyAppleToken,
   verifyGoogleToken,
 } from '../src/auth/providers';
+import {
+  createSessionForIdentity,
+  rotateRefreshToken,
+  type DatabaseClient,
+} from '../src/auth/session';
+import { createTestD1 } from './sqliteD1';
 
 async function makeKeyFixture(alg: 'RS256' | 'ES256', kid: string) {
   const { publicKey, privateKey } = await generateKeyPair(alg);
@@ -237,5 +243,152 @@ describe('Google ID token verification', () => {
     await expect(
       verifyGoogleToken({ idToken: expiredToken, audience, keySource: jwks }),
     ).rejects.toThrow(AuthVerificationError);
+  });
+});
+
+describe('refresh token rotation & reuse race (Finding 3)', () => {
+  const jwtSecret = 'unit-test-jwt-secret-32-bytes-minimum';
+
+  it('kills the entire chain when B reuses the token between A revoke/read and A batch', async () => {
+    const { db } = createTestD1();
+    const database = db as unknown as DatabaseClient;
+
+    const initial = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'race-user-1',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1000,
+    });
+    const otherChain = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'race-user-1',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1001,
+    });
+
+    let intercepted = false;
+    let bResult: Awaited<ReturnType<typeof rotateRefreshToken>> | undefined;
+
+    const proxiedDb = new Proxy(database, {
+      get(target, prop, receiver) {
+        if (prop === 'batch') {
+          return async (...args: Parameters<DatabaseClient['batch']>) => {
+            if (!intercepted) {
+              intercepted = true;
+              // Run B completely against the underlying DB right before A's batch executes.
+              bResult = await rotateRefreshToken(database, {
+                refreshToken: initial.refreshToken,
+                jwtSecret,
+                now: 2001,
+              });
+            }
+            return target.batch(...args);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const aResult = await rotateRefreshToken(proxiedDb, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2000,
+    });
+
+    expect(intercepted).toBe(true);
+    // At most one of A or B could obtain a candidate replacement, and the chain must be dead afterwards.
+    if (aResult) {
+      const followUpA = await rotateRefreshToken(database, {
+        refreshToken: aResult.refreshToken,
+        jwtSecret,
+        now: 3000,
+      });
+      expect(followUpA).toBeNull();
+    }
+    if (bResult) {
+      const followUpB = await rotateRefreshToken(database, {
+        refreshToken: bResult.refreshToken,
+        jwtSecret,
+        now: 3001,
+      });
+      expect(followUpB).toBeNull();
+    }
+    expect(aResult !== null && bResult !== null).toBe(false);
+
+    // Unrelated chain for the same user/device remains valid.
+    const otherAfter = await rotateRefreshToken(database, {
+      refreshToken: otherChain.refreshToken,
+      jwtSecret,
+      now: 3002,
+    });
+    expect(otherAfter).not.toBeNull();
+  });
+
+  it('kills the entire chain in the opposite interleaving (A completes batch before B, or concurrent SELECT before batch)', async () => {
+    const { db } = createTestD1();
+    const database = db as unknown as DatabaseClient;
+
+    const initial = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'race-user-2',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1000,
+    });
+
+    // Gate B's batch until A's batch has completed, while B already passed SELECT.
+    let releaseB!: () => void;
+    const bWait = new Promise<void>((resolve) => {
+      releaseB = resolve;
+    });
+    let bReachedBatch!: () => void;
+    const bAtBatch = new Promise<void>((resolve) => {
+      bReachedBatch = resolve;
+    });
+
+    const bProxiedDb = new Proxy(database, {
+      get(target, prop, receiver) {
+        if (prop === 'batch') {
+          return async (...args: Parameters<DatabaseClient['batch']>) => {
+            bReachedBatch();
+            await bWait;
+            return target.batch(...args);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const bPromise = rotateRefreshToken(bProxiedDb, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2001,
+    });
+    await bAtBatch;
+
+    // A completes fully while B is paused right before its batch.
+    const aResult = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2000,
+    });
+    expect(aResult).not.toBeNull();
+
+    releaseB();
+    const bResult = await bPromise;
+    expect(bResult).toBeNull();
+
+    // Chain must be dead: A's replacement must be revoked by B's reuse detection.
+    const followUp = await rotateRefreshToken(database, {
+      refreshToken: aResult!.refreshToken,
+      jwtSecret,
+      now: 3000,
+    });
+    expect(followUp).toBeNull();
   });
 });

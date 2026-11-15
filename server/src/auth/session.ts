@@ -1,5 +1,5 @@
 import { device, identity, session, user } from '@schema';
-import { and, eq, isNull, type db } from 'void/db';
+import { and, eq, isNull, sql, type db } from 'void/db';
 import { generateRefreshToken, sha256Hex, signAccessToken } from './crypto';
 import type { ProviderName } from './providers';
 
@@ -178,11 +178,29 @@ export async function rotateRefreshToken(
     return null;
   }
 
-  const revoked = await database
-    .update(session)
-    .set({ revokedAt: now })
-    .where(and(eq(session.id, existing.id), isNull(session.revokedAt)))
-    .returning({ id: session.id });
+  const newRefreshToken = generateRefreshToken();
+  const newRefreshHash = await sha256Hex(newRefreshToken);
+  const newSessionId = crypto.randomUUID();
+
+  // Atomically insert the replacement only while `existing` is still unrevoked and unexpired,
+  // and claim `existing` in the same D1 batch so no reuse can slip in between revoke and insert.
+  const [, revoked] = await database.batch([
+    database.insert(session).select(
+      sql`SELECT ${newSessionId}, ${existing.userId}, ${existing.deviceId}, ${existing.chainId}, ${newRefreshHash}, ${now + REFRESH_TTL_MS}, ${now}, NULL WHERE EXISTS (SELECT 1 FROM session WHERE id = ${existing.id} AND revokedAt IS NULL AND expiresAt > ${now})`,
+    ),
+    database
+      .update(session)
+      .set({ revokedAt: now })
+      .where(and(eq(session.id, existing.id), isNull(session.revokedAt)))
+      .returning({ id: session.id }),
+    database
+      .insert(device)
+      .values({ id: existing.deviceId, userId: existing.userId, lastSeenAt: now })
+      .onConflictDoUpdate({
+        target: device.id,
+        set: { userId: existing.userId, lastSeenAt: now },
+      }),
+  ]);
 
   if (revoked.length === 0) {
     await database
@@ -191,21 +209,6 @@ export async function rotateRefreshToken(
       .where(and(eq(session.chainId, existing.chainId), isNull(session.revokedAt)));
     return null;
   }
-
-  const newRefreshToken = generateRefreshToken();
-  const newRefreshHash = await sha256Hex(newRefreshToken);
-  const newSessionId = crypto.randomUUID();
-
-  await database.batch([
-    ...buildDeviceAndSessionStatements(database, {
-      userId: existing.userId,
-      deviceId: existing.deviceId,
-      chainId: existing.chainId,
-      sessionId: newSessionId,
-      refreshHash: newRefreshHash,
-      now,
-    }),
-  ]);
 
   const accessToken = await signAccessToken(existing.userId, params.jwtSecret);
   return { accessToken, refreshToken: newRefreshToken };

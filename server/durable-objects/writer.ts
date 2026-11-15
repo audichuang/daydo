@@ -1,7 +1,7 @@
-import { opApplied, seq } from '@schema';
+import { opApplied, seq, user } from '@schema';
 import { DurableObject } from 'cloudflare:workers';
 import type { CloudBindings } from 'void';
-import { createDb, eq, inArray, type BatchItem } from 'void/db';
+import { and, createDb, eq, inArray, isNull, type BatchItem } from 'void/db';
 import { defineDurableObject } from 'void/durable';
 import {
   buildUpsertStatement,
@@ -35,12 +35,38 @@ export interface PushBatchResponse {
   serverSeq: number;
 }
 
+const TASK_CHILD_ENTITIES = new Set<EntityName>(['checklistItem', 'attachment', 'comment']);
+
+function isTaskChildEntity(entity: EntityName): boolean {
+  return TASK_CHILD_ENTITIES.has(entity);
+}
+
+export function shouldBypassWriterQueue(
+  writerQueue: string | undefined,
+  isDev: boolean = import.meta.env.DEV,
+): boolean {
+  return isDev && writerQueue === 'off';
+}
+
 class WriterObject extends DurableObject<CloudBindings> {
   private queue: Promise<void> = Promise.resolve();
   private lastClamped: Hlc | null = null;
+  private readonly allowQueueBypass: boolean;
+
+  constructor(
+    ctx: DurableObjectState,
+    env: CloudBindings,
+    allowQueueBypass: boolean = import.meta.env.DEV,
+  ) {
+    super(ctx, env);
+    this.allowQueueBypass = allowQueueBypass;
+  }
 
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.env.WRITER_QUEUE === 'off') {
+    if (
+      import.meta.env.DEV &&
+      shouldBypassWriterQueue(this.env.WRITER_QUEUE, this.allowQueueBypass)
+    ) {
       return fn();
     }
     const next = this.queue.then(fn, fn);
@@ -91,6 +117,18 @@ class WriterObject extends DurableObject<CloudBindings> {
           parseEntityId(rec.entity, rec.entityId)
         ) {
           preloadTargets.push({ entity: rec.entity, entityId: rec.entityId });
+          if (
+            isTaskChildEntity(rec.entity) &&
+            rec.row &&
+            typeof rec.row === 'object' &&
+            !Array.isArray(rec.row) &&
+            Object.hasOwn(rec.row, 'taskId')
+          ) {
+            const taskId = (rec.row as Record<string, unknown>).taskId;
+            if (typeof taskId === 'string' && taskId.length > 0) {
+              preloadTargets.push({ entity: 'task', entityId: taskId });
+            }
+          }
         }
       }
     }
@@ -98,9 +136,67 @@ class WriterObject extends DurableObject<CloudBindings> {
     const seenOpIds = await loadExistingOpIds(db, opIds);
     const workingRows = await preloadEntities(db, userId, preloadTargets);
 
+    const hasMemberOp = preloadTargets.some((t) => t.entity === 'member');
+    let meMemberId: string | null = null;
+    let bindMeMemberId: string | null = null;
+    if (hasMemberOp) {
+      const userRow = await db
+        .select({ meMemberId: user.meMemberId })
+        .from(user)
+        .where(eq(user.id, userId))
+        .get();
+      meMemberId = userRow?.meMemberId ?? null;
+    }
+
+    const missingParentTasks: Array<{ entity: 'task'; entityId: string }> = [];
+    for (const [key, state] of workingRows) {
+      const colonIdx = key.indexOf(':');
+      const entity = colonIdx > 0 ? key.slice(0, colonIdx) : '';
+      if (!isEntityName(entity) || !isTaskChildEntity(entity)) continue;
+      const tid = state.row.taskId;
+      if (
+        typeof tid === 'string' &&
+        tid.length > 0 &&
+        !workingRows.has(stateKey('task', tid, userId))
+      ) {
+        missingParentTasks.push({ entity: 'task', entityId: tid });
+      }
+    }
+    if (missingParentTasks.length > 0) {
+      const extraParents = await preloadEntities(db, userId, missingParentTasks);
+      for (const [k, v] of extraParents) {
+        if (!workingRows.has(k)) {
+          workingRows.set(k, v);
+        }
+      }
+    }
+
     const dirtyRows = new Map<string, { entity: EntityName; state: StoredEntityState }>();
     const newOpApplied: Array<typeof opApplied.$inferInsert> = [];
     const results: PushOpResult[] = [];
+    const rejectOp = (opId: string, reason: string) => {
+      if (opId.length > 0) {
+        seenOpIds.set(opId, {
+          userId,
+          status: 'rejected',
+          serverSeq: currentSeq,
+        });
+        newOpApplied.push({
+          opId,
+          userId,
+          status: 'rejected',
+          serverSeq: currentSeq,
+          createdAt: nowMs,
+        });
+      }
+      results.push({
+        opId,
+        status: 'rejected',
+        reason,
+        row: null,
+        clocks: {},
+      });
+    };
 
     for (const raw of ops) {
       const rec =
@@ -141,7 +237,19 @@ class WriterObject extends DurableObject<CloudBindings> {
         ) {
           const state = workingRows.get(stateKey(rec.entity, rec.entityId, userId));
           if (state && state.ownerUserId === userId) {
-            replayRow = serializePublicRow(rec.entity, state.row, state.purgedAt);
+            if (
+              rec.entity === 'member' &&
+              meMemberId === null &&
+              rec.row &&
+              typeof rec.row === 'object' &&
+              !Array.isArray(rec.row) &&
+              Object.hasOwn(rec.row, 'isMe') &&
+              (rec.row as Record<string, unknown>).isMe === true
+            ) {
+              meMemberId = rec.entityId;
+              bindMeMemberId = rec.entityId;
+            }
+            replayRow = serializePublicRow(rec.entity, state.row, state.purgedAt, { meMemberId });
             replayClocks = { ...state.clocks };
           }
         }
@@ -154,78 +262,80 @@ class WriterObject extends DurableObject<CloudBindings> {
         continue;
       }
 
-      const validated = validateSyncOp(raw);
-      if (!validated.ok) {
-        if (validated.opId.length > 0) {
-          seenOpIds.set(validated.opId, {
-            userId,
-            status: 'rejected',
-            serverSeq: currentSeq,
-          });
-          newOpApplied.push({
-            opId: validated.opId,
-            userId,
-            status: 'rejected',
-            serverSeq: currentSeq,
-            createdAt: nowMs,
-          });
+      let op: ReturnType<typeof validateSyncOp> extends infer R
+        ? R extends { ok: true; op: infer O }
+          ? O
+          : never
+        : never;
+      let clamped: ReturnType<typeof clampHlc>;
+      let existing: StoredEntityState | null;
+      let key: string;
+      let merged: ReturnType<typeof mergeOp>;
+      try {
+        const validated = validateSyncOp(raw);
+        if (!validated.ok) {
+          rejectOp(validated.opId, validated.reason);
+          continue;
         }
-        results.push({
-          opId: validated.opId,
-          status: 'rejected',
-          reason: validated.reason,
-          row: null,
-          clocks: {},
-        });
+        op = validated.op;
+        clamped = clampHlc(op.hlc, nowMs, this.lastClamped);
+        if (clamped.clamped) {
+          this.lastClamped = clamped.hlc;
+        }
+
+        key = stateKey(op.entity, op.entityId, userId);
+        existing = workingRows.get(key) ?? null;
+
+        if (existing && existing.ownerUserId !== userId) {
+          rejectOp(op.opId, 'Forbidden: row owned by another user');
+          continue;
+        }
+
+        let parentPurged = false;
+        if (op.op === 'upsert' && isTaskChildEntity(op.entity)) {
+          const candidateTaskIds = new Set<string>();
+          if (existing && typeof existing.row.taskId === 'string' && existing.row.taskId.length > 0) {
+            candidateTaskIds.add(existing.row.taskId);
+          }
+          if (
+            (!existing || op.fields.includes('taskId')) &&
+            Object.hasOwn(op.row, 'taskId') &&
+            typeof op.row.taskId === 'string' &&
+            op.row.taskId.length > 0
+          ) {
+            candidateTaskIds.add(op.row.taskId);
+          }
+          for (const tid of candidateTaskIds) {
+            const parentTask = workingRows.get(stateKey('task', tid, userId));
+            if (parentTask && parentTask.ownerUserId === userId && parentTask.purgedAt !== null) {
+              parentPurged = true;
+              break;
+            }
+          }
+        }
+
+        merged = mergeOp(
+          existing
+            ? { row: existing.row, clocks: existing.clocks, purgedAt: existing.purgedAt }
+            : null,
+          {
+            entity: op.entity,
+            entityId: op.entityId,
+            op: op.op,
+            hlc: clamped.formatted,
+            fields: op.fields,
+            row: op.row,
+          },
+          nowMs,
+          { parentPurged },
+        );
+      } catch (err) {
+        rejectOp(
+          rawOpId,
+          err instanceof Error ? `Invalid op: ${err.message}` : 'Invalid sync op',
+        );
         continue;
       }
-
-      const op = validated.op;
-      const clamped = clampHlc(op.hlc, nowMs, this.lastClamped);
-      if (clamped.clamped) {
-        this.lastClamped = clamped.hlc;
-      }
-
-      const key = stateKey(op.entity, op.entityId, userId);
-      const existing = workingRows.get(key) ?? null;
-
-      if (existing && existing.ownerUserId !== userId) {
-        seenOpIds.set(op.opId, {
-          userId,
-          status: 'rejected',
-          serverSeq: currentSeq,
-        });
-        newOpApplied.push({
-          opId: op.opId,
-          userId,
-          status: 'rejected',
-          serverSeq: currentSeq,
-          createdAt: nowMs,
-        });
-        results.push({
-          opId: op.opId,
-          status: 'rejected',
-          reason: 'Forbidden: row owned by another user',
-          row: null,
-          clocks: {},
-        });
-        continue;
-      }
-
-      const merged = mergeOp(
-        existing
-          ? { row: existing.row, clocks: existing.clocks, purgedAt: existing.purgedAt }
-          : null,
-        {
-          entity: op.entity,
-          entityId: op.entityId,
-          op: op.op,
-          hlc: clamped.formatted,
-          fields: op.fields,
-          row: op.row,
-        },
-        nowMs,
-      );
 
       let opServerSeq = existing?.serverSeq ?? currentSeq;
       if (merged.changed) {
@@ -254,6 +364,17 @@ class WriterObject extends DurableObject<CloudBindings> {
         }
       }
 
+      if (
+        op.entity === 'member' &&
+        op.op === 'upsert' &&
+        meMemberId === null &&
+        Object.hasOwn(op.row, 'isMe') &&
+        op.row.isMe === true
+      ) {
+        meMemberId = op.entityId;
+        bindMeMemberId = op.entityId;
+      }
+
       seenOpIds.set(op.opId, {
         userId,
         status: 'applied',
@@ -270,12 +391,21 @@ class WriterObject extends DurableObject<CloudBindings> {
       results.push({
         opId: op.opId,
         status: 'applied',
-        row: serializePublicRow(op.entity, merged.row, merged.purgedAt),
+        row: serializePublicRow(op.entity, merged.row, merged.purgedAt, { meMemberId }),
         clocks: merged.clocks,
       });
     }
 
     const statements: BatchItem<'sqlite'>[] = [];
+
+    if (bindMeMemberId !== null) {
+      statements.push(
+        db
+          .update(user)
+          .set({ meMemberId: bindMeMemberId })
+          .where(and(eq(user.id, userId), isNull(user.meMemberId))),
+      );
+    }
 
     if (currentSeq !== initialSeq) {
       statements.push(
@@ -335,13 +465,7 @@ class WriterObject extends DurableObject<CloudBindings> {
     // Also purge any child rows created earlier in the same batch before D1 flush.
     for (const [k, dirty] of dirtyRows) {
       if (childKeys.has(k)) continue;
-      if (
-        dirty.entity !== 'checklistItem' &&
-        dirty.entity !== 'attachment' &&
-        dirty.entity !== 'comment'
-      ) {
-        continue;
-      }
+      if (!isTaskChildEntity(dirty.entity)) continue;
       if (dirty.state.purgedAt !== null || dirty.state.ownerUserId !== userId) continue;
       if (dirty.state.row.taskId !== taskId) continue;
       nextSeq += 1;

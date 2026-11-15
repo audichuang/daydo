@@ -40,10 +40,14 @@ function cloneRow(entity: EntityName, source: Record<string, unknown>): Record<s
   const schema = ENTITY_FIELDS[entity];
   const out: Record<string, unknown> = {};
   for (const field of Object.keys(schema)) {
-    const val = source[field];
+    const val = Object.hasOwn(source, field) ? source[field] : undefined;
     out[field] = val === undefined ? null : cloneFieldValue(val);
   }
   return out;
+}
+
+export interface MergeOptions {
+  parentPurged?: boolean;
 }
 
 /**
@@ -54,6 +58,7 @@ export function mergeOp(
   existing: MergeExistingState | null,
   op: MergeOpInput,
   nowMs: number,
+  options?: MergeOptions,
 ): MergeResult {
   if (existing && existing.purgedAt !== null) {
     return {
@@ -64,7 +69,7 @@ export function mergeOp(
     };
   }
 
-  if (op.op === 'delete') {
+  if (op.op === 'delete' || options?.parentPurged) {
     const purgedAt = nowMs;
     if (existing) {
       return {
@@ -99,7 +104,7 @@ export function mergeOp(
     if (seenFields.has(field)) continue;
     seenFields.add(field);
     if (nonSynced?.has(field)) continue;
-    if (!(field in schema)) continue;
+    if (!Object.hasOwn(schema, field)) continue;
 
     if (op.entity === 'task' && SCHEDULE_FIELD_SET.has(field)) {
       touchedSchedule = true;
@@ -109,11 +114,11 @@ export function mergeOp(
   }
 
   if (touchedSchedule) {
-    const prevClock = clocks[SCHEDULE_CLOCK_KEY];
+    const prevClock = Object.hasOwn(clocks, SCHEDULE_CLOCK_KEY) ? clocks[SCHEDULE_CLOCK_KEY] : undefined;
     if (!prevClock || compareHlc(op.hlc, prevClock) > 0) {
       clocks[SCHEDULE_CLOCK_KEY] = op.hlc;
       for (const sf of SCHEDULE_FIELDS) {
-        const val = op.row[sf];
+        const val = Object.hasOwn(op.row, sf) ? op.row[sf] : undefined;
         row[sf] = val === undefined || val === null ? null : val;
       }
       changed = true;
@@ -121,10 +126,10 @@ export function mergeOp(
   }
 
   for (const field of regularFields) {
-    const prevClock = clocks[field];
+    const prevClock = Object.hasOwn(clocks, field) ? clocks[field] : undefined;
     if (!prevClock || compareHlc(op.hlc, prevClock) > 0) {
       clocks[field] = op.hlc;
-      const val = op.row[field];
+      const val = Object.hasOwn(op.row, field) ? op.row[field] : undefined;
       row[field] = val === undefined || val === null ? null : cloneFieldValue(val);
       changed = true;
     }
