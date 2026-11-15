@@ -146,7 +146,7 @@
 | POST | `/auth/link` | 已登入時連結另一種登入方式（之後做） |
 | DELETE | `/account` | 刪除帳號與所有資料（之後做，上架前必須有） |
 | POST | `/sync/push` | `{deviceId, ops: [{opId, hlc, entity, entityId, op, fields, row, projectId?}]}`（最多 200）→ `{results: [{opId, status, reason?, row, clocks}], serverTime}`，`results` 與 `ops` 同順序 |
-| POST | `/sync/pull` | `{cursors: {"u:<id>": seq}, backfill?: [projectId], limit?}` → `{scopes: [{scope, rows: [{entity, row, clocks, serverSeq} \| {entity, entityId, gone: true, serverSeq}], cursor, hasMore}], memberships: [{projectId, scope, role}]}`；沒給游標的範圍從 0 開始 |
+| POST | `/sync/pull` | `{cursors: {"u:<id>": seq}, backfill?: [projectId], limit?}` → `{scopes: [{scope, rows: [{entity, row, clocks, serverSeq} \| {entity, entityId, gone: true, serverSeq}], cursor, hasMore}], memberships: [{projectId, scope, role}], members: [member 列]}`；沒給游標的範圍從 0 開始 |
 | POST | `/invites` | `{projectId, role, email?}`（owner 才能建；email 只用來顯示）→ `{code, url: "daydo://invite/<code>", expiresAt}` |
 | GET | `/invites/<code>` | → `{projectName, inviterName, role, expiresAt}`（讓 App 顯示「誰邀你加入哪份清單」） |
 | POST | `/invites/<code>/accept` | 加入成員，並在歸屬範圍寫入一筆 projectMember → `{projectId, scope, role}` |
