@@ -17,6 +17,7 @@ struct SignInView: View {
     @State private var errorText: String?
     @State private var pendingSwitchCredential: SyncAuthCredential?
     @State private var pendingSwitchDisplayName: String?
+    @State private var pendingSwitchAvatarUrl: String?
     @State private var pendingSwitchUnsyncedCount = 0
     @State private var confirmSwitchAccount = false
 
@@ -130,14 +131,17 @@ struct SignInView: View {
             Button("取消", role: .cancel) {
                 pendingSwitchCredential = nil
                 pendingSwitchDisplayName = nil
+                pendingSwitchAvatarUrl = nil
             }
             Button("清除並登入", role: .destructive) {
                 guard let credential = pendingSwitchCredential else { return }
                 let displayName = pendingSwitchDisplayName
+                let avatarUrl = pendingSwitchAvatarUrl
                 pendingSwitchCredential = nil
                 pendingSwitchDisplayName = nil
+                pendingSwitchAvatarUrl = nil
                 Task {
-                    await confirmAccountSwitch(with: credential, displayName: displayName)
+                    await confirmAccountSwitch(with: credential, displayName: displayName, avatarUrl: avatarUrl)
                 }
             }
         } message: {
@@ -207,7 +211,11 @@ struct SignInView: View {
                 }
                 let profileName = result.user.profile?.name.trimmingCharacters(in: .whitespacesAndNewlines)
                 let suggestedName = (profileName?.isEmpty == false) ? profileName : nil
-                await performSignIn(.google(idToken: idToken), displayName: suggestedName)
+                let rawAvatarURL = (result.user.profile?.hasImage == true)
+                    ? result.user.profile?.imageURL(withDimension: 200)
+                    : nil
+                let suggestedAvatarUrl = (rawAvatarURL?.scheme?.lowercased() == "https") ? rawAvatarURL?.absoluteString : nil
+                await performSignIn(.google(idToken: idToken), displayName: suggestedName, avatarUrl: suggestedAvatarUrl)
             } catch {
                 let nsError = error as NSError
                 if nsError.domain == kGIDSignInErrorDomain,
@@ -219,14 +227,15 @@ struct SignInView: View {
         }
     }
 
-    private func performSignIn(_ credential: SyncAuthCredential, displayName: String?) async {
+    private func performSignIn(_ credential: SyncAuthCredential, displayName: String?, avatarUrl: String? = nil) async {
         errorText = nil
         do {
-            try await model.signIn(with: credential, displayName: displayName)
+            try await model.signIn(with: credential, displayName: displayName, avatarUrl: avatarUrl)
         } catch {
             if isDifferentUserError(error) {
                 pendingSwitchCredential = credential
                 pendingSwitchDisplayName = displayName
+                pendingSwitchAvatarUrl = avatarUrl
                 pendingSwitchUnsyncedCount = await model.unsyncedChangeCount()
                 confirmSwitchAccount = true
                 return
@@ -235,10 +244,10 @@ struct SignInView: View {
         }
     }
 
-    private func confirmAccountSwitch(with credential: SyncAuthCredential, displayName: String?) async {
+    private func confirmAccountSwitch(with credential: SyncAuthCredential, displayName: String?, avatarUrl: String? = nil) async {
         errorText = nil
         do {
-            try await model.replaceAccountAndSignIn(with: credential, displayName: displayName)
+            try await model.replaceAccountAndSignIn(with: credential, displayName: displayName, avatarUrl: avatarUrl)
         } catch {
             errorText = error.localizedDescription
         }

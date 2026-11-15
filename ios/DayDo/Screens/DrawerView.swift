@@ -171,11 +171,7 @@ struct DrawerView: View {
     var header: some View {
         HStack(spacing: 10) {
             let me = model.me
-            Text(me?.initial ?? "")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(Palette.background)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(Color(hex: me?.color ?? accent.hex)))
+            AvatarView(member: me, size: 34, fallbackColor: accent.hex)
             Text(me?.name ?? "")
                 .txt(16, .semibold)
                 .foregroundStyle(Palette.text)

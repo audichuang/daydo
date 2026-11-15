@@ -3413,6 +3413,141 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         #expect(keptInvite?.email == "family@example.test")
         #expect(keptInvite?.role == "viewer")
     }
+
+    @Test func avatarUrlPersistedFromLoginAndPullMembersAndClearedOnSignOut() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs + 100, counter: 0, deviceId: "server").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-sync-avatar-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+        let project = try await api.createProject(CreateProjectInput(name: "共享清單"))
+
+        actor AvatarState {
+            var memberAvatar: String? = "https://lh3.googleusercontent.com/a/other-1"
+            var meAvatar: String? = "https://lh3.googleusercontent.com/a/me-1"
+            func setMemberAvatar(_ v: String?) { memberAvatar = v }
+            func setMeAvatar(_ v: String?) { meAvatar = v }
+        }
+        let state = AvatarState()
+        let tokens = InMemorySyncTokenStore()
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/auth/google" {
+                let meAvatar = await state.meAvatar
+                return try jsonResponse(200, [
+                    "accessToken": "acc-1",
+                    "refreshToken": "ref-1",
+                    "user": ["id": "user-me"],
+                    "isNewAccount": true,
+                    "hasData": false,
+                    "meMemberId": NSNull(),
+                    "inboxProjectId": NSNull(),
+                    "avatarUrl": meAvatar as Any,
+                ])
+            }
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                return try jsonResponse(200, [
+                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "applied", "row": NSNull(), "clocks": [:]] },
+                    "serverTime": serverTime,
+                ])
+            }
+            if req.path == "/sync/pull" {
+                let memberAvatar = await state.memberAvatar
+                return try jsonResponse(200, [
+                    "scopes": [
+                        [
+                            "scope": "u:user-me",
+                            "rows": [
+                                [
+                                    "entity": "projectMember",
+                                    "row": [
+                                        "projectId": project.id,
+                                        "memberId": "m-other",
+                                        "role": "editor",
+                                        "createdAt": nowMs,
+                                        "updatedAt": nowMs + 50,
+                                    ],
+                                    "clocks": ["role": serverTime, "updatedAt": serverTime],
+                                    "serverSeq": 1,
+                                ],
+                            ],
+                            "cursor": 1,
+                            "hasMore": false,
+                        ],
+                    ],
+                    "memberships": [
+                        ["projectId": project.id, "scope": "u:user-me", "role": "owner"],
+                    ],
+                    "members": [
+                        [
+                            "id": "m-other",
+                            "userId": "user-other",
+                            "name": "小安",
+                            "initial": "小",
+                            "color": "#008B8B",
+                            "avatarUrl": memberAvatar as Any,
+                            "isMe": false,
+                            "createdAt": nowMs,
+                            "updatedAt": nowMs,
+                        ],
+                    ],
+                ])
+            }
+            return try jsonResponse(200, [:])
+        }
+
+        let engine = SyncEngine(database: db, transport: transport, tokenStore: tokens, clock: .fixed(noon, timeZone: taipei))
+        _ = try await engine.signIn(with: .google(idToken: "g-tok"))
+
+        let members1 = try await api.listMembers()
+        let me1 = members1.first { $0.isMe }
+        let other1 = members1.first { $0.id == "m-other" }
+        #expect(me1?.avatarUrl == "https://lh3.googleusercontent.com/a/me-1")
+        #expect(other1?.avatarUrl == "https://lh3.googleusercontent.com/a/other-1")
+        #expect(other1?.userId == "user-other")
+
+        let projMembers1 = try await api.listProjectMembers(projectId: project.id)
+        #expect(projMembers1.first { $0.memberId == "m-other" }?.avatarUrl == "https://lh3.googleusercontent.com/a/other-1")
+
+        // setMeAvatarUrlIfMissing does NOT overwrite an existing server URL.
+        try await engine.setMeAvatarUrlIfMissing("https://lh3.googleusercontent.com/a/fallback")
+        #expect(try await api.listMembers().first { $0.isMe }?.avatarUrl == "https://lh3.googleusercontent.com/a/me-1")
+
+        // Updating only co-member's avatarUrl in pull marks didChangeLocalData and preserves userId when omitted.
+        await state.setMemberAvatar("https://lh3.googleusercontent.com/a/other-2")
+        let summary2 = try await engine.syncNow()
+        #expect(summary2.didChangeLocalData)
+        let other2 = try await api.listMembers().first { $0.id == "m-other" }
+        #expect(other2?.avatarUrl == "https://lh3.googleusercontent.com/a/other-2")
+        #expect(other2?.userId == "user-other")
+
+        // Sign out clears my avatarUrl and memberUser table.
+        try await engine.signOut()
+        #expect(try await api.listMembers().isEmpty)
+
+        // When server login returns nil avatarUrl, setMeAvatarUrlIfMissing populates it.
+        await state.setMeAvatar(nil)
+        _ = try await engine.signIn(with: .google(idToken: "g-tok-2"))
+        #expect(try await api.listMembers().first { $0.isMe }?.avatarUrl == nil)
+        try await engine.setMeAvatarUrlIfMissing("https://lh3.googleusercontent.com/a/fallback")
+        #expect(try await api.listMembers().first { $0.isMe }?.avatarUrl == "https://lh3.googleusercontent.com/a/fallback")
+    }
+
+    @Test func migratesV6MemberUserAddingAvatarUrl() throws {
+        let queue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(queue, upTo: "v6")
+        try queue.write { db in
+            try db.execute(sql: "INSERT INTO memberUser (memberId, userId) VALUES ('m1', 'u1')")
+        }
+        try AppDatabase.migrator.migrate(queue)
+        try queue.read { db in
+            let row = try Row.fetchOne(db, sql: "SELECT memberId, userId, avatarUrl FROM memberUser WHERE memberId = 'm1'")
+            #expect(row?["userId"] == "u1")
+            let url: String? = row?["avatarUrl"]
+            #expect(url == nil)
+        }
+    }
 }
 
 private actor PullBodyRecorder {

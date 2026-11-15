@@ -213,7 +213,45 @@ describe('Google ID token verification', () => {
         provider: 'google',
         sub: 'google-sub-1',
         email: 'bob@gmail.com',
+        avatarUrl: null,
       });
+    }
+  });
+
+  it('extracts https picture claim and rejects non-https or malformed picture URLs', async () => {
+    const { privateKey, jwks } = await makeKeyFixture('RS256', 'google-pic');
+    const signWithPic = (picture: unknown) =>
+      new SignJWT({ email: 'pic@gmail.com', picture })
+        .setProtectedHeader({ alg: 'RS256', kid: 'google-pic' })
+        .setIssuer('https://accounts.google.com')
+        .setAudience(audience)
+        .setSubject('google-sub-pic')
+        .setIssuedAt()
+        .setExpirationTime('10m')
+        .sign(privateKey);
+
+    const validRes = await verifyGoogleToken({
+      idToken: await signWithPic('https://lh3.googleusercontent.com/a/photo=s96-c'),
+      audience,
+      keySource: jwks,
+    });
+    expect(validRes.avatarUrl).toBe('https://lh3.googleusercontent.com/a/photo=s96-c');
+
+    for (const bad of [
+      'http://lh3.googleusercontent.com/a/photo.jpg',
+      'javascript:alert(1)',
+      'data:image/png;base64,AAAA',
+      'file:///etc/passwd',
+      'not-a-url',
+      '',
+      123,
+    ]) {
+      const res = await verifyGoogleToken({
+        idToken: await signWithPic(bad),
+        audience,
+        keySource: jwks,
+      });
+      expect(res.avatarUrl).toBeNull();
     }
   });
 
@@ -1024,5 +1062,88 @@ describe('login and refresh state fields (hasData, meMemberId, inboxProjectId)',
     });
     const sessionsAfterRecovery = await db.select().from(schema.session);
     expect(sessionsAfterRecovery).toHaveLength(2);
+  });
+
+  it('stores and refreshes avatarUrl on Google login, returns it in login/refresh, and leaves it untouched on Apple login', async () => {
+    const { db } = createTestD1();
+    const database = db as unknown as DatabaseClient;
+
+    // 1. New Google user with https picture -> stored in D1 and returned on login + refresh
+    const g1 = await createSessionForIdentity(database, {
+      provider: 'google',
+      sub: 'g-avatar-1',
+      email: 'g1@example.com',
+      avatarUrl: 'https://lh3.googleusercontent.com/a/v1',
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1000,
+    });
+    expect(g1.avatarUrl).toBe('https://lh3.googleusercontent.com/a/v1');
+
+    const [uAfterG1] = await db.select().from(schema.user).where(eq(schema.user.id, g1.user.id));
+    expect(uAfterG1.avatarUrl).toBe('https://lh3.googleusercontent.com/a/v1');
+
+    const r1 = await rotateRefreshToken(database, {
+      refreshToken: g1.refreshToken,
+      jwtSecret,
+      now: 2000,
+    });
+    expect(r1?.avatarUrl).toBe('https://lh3.googleusercontent.com/a/v1');
+
+    // 2. Subsequent Google login refreshes avatarUrl in D1 and response
+    const g2 = await createSessionForIdentity(database, {
+      provider: 'google',
+      sub: 'g-avatar-1',
+      email: 'g1@example.com',
+      avatarUrl: 'https://lh3.googleusercontent.com/a/v2',
+      deviceId: 'dev-2',
+      jwtSecret,
+      now: 3000,
+    });
+    expect(g2.avatarUrl).toBe('https://lh3.googleusercontent.com/a/v2');
+    const [uAfterG2] = await db.select().from(schema.user).where(eq(schema.user.id, g1.user.id));
+    expect(uAfterG2.avatarUrl).toBe('https://lh3.googleusercontent.com/a/v2');
+
+    // 3. Subsequent Google login with null/non-https avatarUrl clears it
+    const g3 = await createSessionForIdentity(database, {
+      provider: 'google',
+      sub: 'g-avatar-1',
+      email: 'g1@example.com',
+      avatarUrl: 'http://insecure.example.com/a.png',
+      deviceId: 'dev-2',
+      jwtSecret,
+      now: 3500,
+    });
+    expect(g3.avatarUrl).toBeNull();
+    const [uAfterG3] = await db.select().from(schema.user).where(eq(schema.user.id, g1.user.id));
+    expect(uAfterG3.avatarUrl).toBeNull();
+
+    // 4. Apple login leaves avatarUrl untouched (null for new Apple user; preserves pre-existing D1 avatarUrl)
+    const a1 = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'a-avatar-1',
+      email: null,
+      deviceId: 'dev-3',
+      jwtSecret,
+      now: 4000,
+    });
+    expect(a1.avatarUrl).toBeNull();
+
+    await db
+      .update(schema.user)
+      .set({ avatarUrl: 'https://lh3.googleusercontent.com/a/preserved' })
+      .where(eq(schema.user.id, a1.user.id));
+
+    const a2 = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'a-avatar-1',
+      email: null,
+      deviceId: 'dev-4',
+      jwtSecret,
+      now: 5000,
+    });
+    expect(a2.avatarUrl).toBe('https://lh3.googleusercontent.com/a/preserved');
+    const [uAfterA2] = await db.select().from(schema.user).where(eq(schema.user.id, a1.user.id));
+    expect(uAfterA2.avatarUrl).toBe('https://lh3.googleusercontent.com/a/preserved');
   });
 });

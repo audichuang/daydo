@@ -323,12 +323,13 @@ final class AppModel {
 
     // MARK: - Auth & Sync
 
-    func signIn(with credential: SyncAuthCredential, displayName: String? = nil) async throws {
+    func signIn(with credential: SyncAuthCredential, displayName: String? = nil, avatarUrl: String? = nil) async throws {
         isSigningIn = true
         defer { isSigningIn = false }
         startSyncObservers()
         do {
             try await syncEngine.signIn(with: credential)
+            try? await syncEngine.setMeAvatarUrlIfMissing(avatarUrl)
             isSignedIn = true
             await reloadData()
             await resolveMeProfileAfterSignIn(suggestedName: displayName)
@@ -338,6 +339,7 @@ final class AppModel {
             if !stillSignedIn {
                 stopSyncObservers()
             } else if let syncError = error as? SyncError, case .retryable = syncError {
+                try? await syncEngine.setMeAvatarUrlIfMissing(avatarUrl)
                 isSignedIn = true
                 await reloadData()
                 await resolveMeProfileAfterSignIn(suggestedName: displayName)
@@ -394,7 +396,7 @@ final class AppModel {
         resetLocalUIState()
     }
 
-    func replaceAccountAndSignIn(with credential: SyncAuthCredential, displayName: String? = nil) async throws {
+    func replaceAccountAndSignIn(with credential: SyncAuthCredential, displayName: String? = nil, avatarUrl: String? = nil) async throws {
         isSigningIn = true
         defer { isSigningIn = false }
         stopSyncObservers()
@@ -403,7 +405,7 @@ final class AppModel {
             try await syncEngine.signOut()
         }
         resetLocalUIState()
-        try await signIn(with: credential, displayName: displayName)
+        try await signIn(with: credential, displayName: displayName, avatarUrl: avatarUrl)
     }
 
     private func resetLocalUIState() {

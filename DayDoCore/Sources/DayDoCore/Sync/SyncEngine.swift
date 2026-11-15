@@ -28,6 +28,7 @@ public struct SyncSummary: Sendable, Equatable {
 public actor SyncEngine {
     public static let pullCursorsMetaKey = "pullCursors"
     public static let signedInUserIdMetaKey = "signedInUserId"
+    public static let meAvatarUrlMetaKey = "meAvatarUrl"
 
     public let database: AppDatabase
     private let transport: any SyncTransport
@@ -153,11 +154,13 @@ public actor SyncEngine {
         let didChangeInReconcile = try await database.writer.write { db -> Bool in
             if try Self.loadSignedInUserId(in: db) != nil {
                 try Self.markLocalProjectInviteOpsLocalOnly(in: db, now: now)
-                return false
+                let changedAvatar = try Self.saveMeAvatarUrl(auth.avatarUrl, in: db)
+                return changedAvatar
             }
             let changed = try Self.reconcileFirstLogin(auth: auth, in: db, now: now)
             try Self.saveSignedInUserId(auth.user.id, in: db)
-            return changed
+            let changedAvatar = try Self.saveMeAvatarUrl(auth.avatarUrl, in: db)
+            return changed || changedAvatar
         }
 
         let summary: SyncSummary
@@ -215,8 +218,8 @@ public actor SyncEngine {
                 try db.execute(sql: "DELETE FROM \"\(table)\"")
             }
             try db.execute(
-                sql: "DELETE FROM meta WHERE key IN (?, ?)",
-                arguments: [Self.pullCursorsMetaKey, Self.signedInUserIdMetaKey]
+                sql: "DELETE FROM meta WHERE key IN (?, ?, ?)",
+                arguments: [Self.pullCursorsMetaKey, Self.signedInUserIdMetaKey, Self.meAvatarUrlMetaKey]
             )
         }
     }
@@ -652,14 +655,27 @@ public actor SyncEngine {
                     if existingIsMe {
                         continue
                     }
-                    if let uid = memberRow["userId"]?.stringValue, !uid.isEmpty {
+                    let uid = memberRow["userId"]?.stringValue ?? ""
+                    let avatarUrl = memberRow["avatarUrl"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
+                    let existingRow = try Row.fetchOne(
+                        db,
+                        sql: "SELECT userId, avatarUrl FROM memberUser WHERE memberId = ?",
+                        arguments: [entityId]
+                    )
+                    let existingAvatar: String? = existingRow?["avatarUrl"]
+                    if !uid.isEmpty || avatarUrl != nil || existingRow != nil {
                         try db.execute(
                             sql: """
-                                INSERT INTO memberUser (memberId, userId) VALUES (?, ?)
-                                ON CONFLICT(memberId) DO UPDATE SET userId = excluded.userId
+                                INSERT INTO memberUser (memberId, userId, avatarUrl) VALUES (?, ?, ?)
+                                ON CONFLICT(memberId) DO UPDATE SET
+                                    userId = CASE WHEN excluded.userId != '' THEN excluded.userId ELSE memberUser.userId END,
+                                    avatarUrl = excluded.avatarUrl
                                 """,
-                            arguments: [entityId, uid]
+                            arguments: [entityId, uid, avatarUrl]
                         )
+                        if existingAvatar != avatarUrl {
+                            changed = true
+                        }
                     }
                     var sanitizedRow = memberRow
                     sanitizedRow["isMe"] = .bool(false)
@@ -920,6 +936,11 @@ public actor SyncEngine {
         // Persist the rotated refresh token before exposing/using the new access token.
         tokenStore.refreshToken = decoded.refreshToken
         tokenStore.accessToken = decoded.accessToken
+        if let avatarUrl = decoded.avatarUrl, !avatarUrl.isEmpty {
+            _ = try? await database.writer.write { db in
+                try Self.saveMeAvatarUrl(avatarUrl, in: db)
+            }
+        }
         return decoded.accessToken
     }
 
@@ -1017,6 +1038,48 @@ public actor SyncEngine {
             sql: "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             arguments: [signedInUserIdMetaKey, userId]
         )
+    }
+
+    @discardableResult
+    private static func saveMeAvatarUrl(_ url: String?, in db: Database) throws -> Bool {
+        let normalized = (url?.isEmpty == false) ? url : nil
+        let existing = try String.fetchOne(
+            db,
+            sql: "SELECT value FROM meta WHERE key = ?",
+            arguments: [meAvatarUrlMetaKey]
+        )
+        let normalizedExisting = (existing?.isEmpty == false) ? existing : nil
+        if let normalized {
+            try db.execute(
+                sql: "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                arguments: [meAvatarUrlMetaKey, normalized]
+            )
+        } else {
+            try db.execute(
+                sql: "DELETE FROM meta WHERE key = ?",
+                arguments: [meAvatarUrlMetaKey]
+            )
+        }
+        return normalizedExisting != normalized
+    }
+
+    /// Saves a client-obtained avatar URL (e.g. from Google Sign-In SDK) only when no server URL is stored.
+    public func setMeAvatarUrlIfMissing(_ avatarUrl: String?) async throws {
+        guard let avatarUrl, !avatarUrl.isEmpty else { return }
+        let didUpdate = try await database.writer.write { db -> Bool in
+            let existing = try String.fetchOne(
+                db,
+                sql: "SELECT value FROM meta WHERE key = ?",
+                arguments: [Self.meAvatarUrlMetaKey]
+            )
+            if existing == nil || existing?.isEmpty == true {
+                return try Self.saveMeAvatarUrl(avatarUrl, in: db)
+            }
+            return false
+        }
+        if didUpdate {
+            emitChange(SyncSummary(didChangeLocalData: true))
+        }
     }
 
     private static func reconcileFirstLogin(

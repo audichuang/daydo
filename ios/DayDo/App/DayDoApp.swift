@@ -541,6 +541,9 @@ actor DebugStubTransport: SyncTransport {
                         "name": "小安",
                         "initial": "小",
                         "color": otherColor,
+                        "avatarUrl": (args.contains("-DayDoSeedAvatarPhoto")
+                            ? Bundle.main.url(forResource: "DebugAvatar", withExtension: "png")?.absoluteString
+                            : nil) as Any,
                         "isMe": false,
                         "createdAt": nowMs,
                         "updatedAt": nowMs,

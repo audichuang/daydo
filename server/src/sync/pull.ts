@@ -16,6 +16,7 @@ export interface PullMemberRow {
   name: string;
   initial: string;
   color: string;
+  avatarUrl: string | null;
   isMe: false;
   createdAt: number;
   updatedAt: number;
@@ -70,6 +71,7 @@ export async function executeSyncPull(
     name: string | null;
     initial: string | null;
     color: string | null;
+    avatarUrl: string | null;
     createdAt: number;
   }> = [];
 
@@ -111,6 +113,7 @@ export async function executeSyncPull(
             name: user.name,
             initial: user.initial,
             color: user.color,
+            avatarUrl: user.avatarUrl,
             createdAt: user.createdAt,
           })
           .from(projectMembership)
@@ -151,6 +154,7 @@ export async function executeSyncPull(
           name: typeof r.name === 'string' ? r.name : null,
           initial: typeof r.initial === 'string' ? r.initial : null,
           color: typeof r.color === 'string' ? r.color : null,
+          avatarUrl: typeof r.avatarUrl === 'string' && r.avatarUrl.length > 0 ? r.avatarUrl : null,
           createdAt: Number(r.createdAt),
         });
       }
@@ -199,6 +203,7 @@ export async function executeSyncPull(
         name: r.name ?? '',
         initial: r.initial ?? '',
         color: r.color ?? '',
+        avatarUrl: r.avatarUrl,
         isMe: false,
         createdAt: r.createdAt,
         updatedAt: r.createdAt,

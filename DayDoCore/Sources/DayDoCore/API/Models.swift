@@ -13,14 +13,16 @@ public struct Member: Codable, Hashable, Sendable, Identifiable {
     public var isMe: Bool
     /// Server account userId for sharing role/removal calls, when known.
     public var userId: String?
+    public var avatarUrl: String?
 
-    public init(id: String, name: String, initial: String, color: String, isMe: Bool, userId: String? = nil) {
+    public init(id: String, name: String, initial: String, color: String, isMe: Bool, userId: String? = nil, avatarUrl: String? = nil) {
         self.id = id
         self.name = name
         self.initial = initial
         self.color = color
         self.isMe = isMe
         self.userId = userId
+        self.avatarUrl = avatarUrl
     }
 
     public static let legacyDefaultColor = "#9BB8FF"
@@ -155,10 +157,15 @@ public struct ProjectMemberInfo: Codable, Hashable, Sendable, Identifiable {
     public var role: String
     /// Server account userId for sharing role/removal calls, when known.
     public var userId: String?
+    public var avatarUrl: String?
 
     public var id: String { memberId }
 
-    public init(memberId: String, name: String, initial: String, color: String, isMe: Bool, role: String, userId: String? = nil) {
+    public var asMember: Member {
+        Member(id: memberId, name: name, initial: initial, color: color, isMe: isMe, userId: userId, avatarUrl: avatarUrl)
+    }
+
+    public init(memberId: String, name: String, initial: String, color: String, isMe: Bool, role: String, userId: String? = nil, avatarUrl: String? = nil) {
         self.memberId = memberId
         self.name = name
         self.initial = initial
@@ -166,6 +173,7 @@ public struct ProjectMemberInfo: Codable, Hashable, Sendable, Identifiable {
         self.isMe = isMe
         self.role = role
         self.userId = userId
+        self.avatarUrl = avatarUrl
     }
 }
 

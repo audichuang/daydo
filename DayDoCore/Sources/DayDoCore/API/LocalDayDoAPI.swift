@@ -153,11 +153,25 @@ public final class LocalDayDoAPI: DayDoAPI {
     }
 
     func resolveUserId(_ db: Database, member: MemberRecord) throws -> String? {
-        if let mapped = try String.fetchOne(db, sql: "SELECT userId FROM memberUser WHERE memberId = ?", arguments: [member.id]) {
+        if let mapped = try String.fetchOne(db, sql: "SELECT userId FROM memberUser WHERE memberId = ?", arguments: [member.id]),
+           !mapped.isEmpty {
             return mapped
         }
         if member.isMe, let uid = try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [SyncEngine.signedInUserIdMetaKey]) {
             return uid
+        }
+        return nil
+    }
+
+    func resolveAvatarUrl(_ db: Database, member: MemberRecord) throws -> String? {
+        if member.isMe,
+           let url = try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [SyncEngine.meAvatarUrlMetaKey]),
+           !url.isEmpty {
+            return url
+        }
+        if let mapped = try String.fetchOne(db, sql: "SELECT avatarUrl FROM memberUser WHERE memberId = ?", arguments: [member.id]),
+           !mapped.isEmpty {
+            return mapped
         }
         return nil
     }
@@ -223,7 +237,8 @@ extension LocalDayDoAPI {
                         initial: $0.initial,
                         color: $0.color,
                         isMe: $0.isMe,
-                        userId: self.resolveUserId(db, member: $0)
+                        userId: self.resolveUserId(db, member: $0),
+                        avatarUrl: self.resolveAvatarUrl(db, member: $0)
                     )
                 }
         }
@@ -264,7 +279,8 @@ extension LocalDayDoAPI {
                 initial: record.initial,
                 color: record.color,
                 isMe: record.isMe,
-                userId: try self.resolveUserId(db, member: record)
+                userId: try self.resolveUserId(db, member: record),
+                avatarUrl: try self.resolveAvatarUrl(db, member: record)
             )
         }
     }
@@ -585,7 +601,8 @@ extension LocalDayDoAPI {
                         color: m.color,
                         isMe: m.isMe,
                         role: pm.role,
-                        userId: try self.resolveUserId(db, member: m)
+                        userId: try self.resolveUserId(db, member: m),
+                        avatarUrl: try self.resolveAvatarUrl(db, member: m)
                     ))
                 }
             }

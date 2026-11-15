@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import DayDoCore
 
 /// Round glass button used in the top toolbar (44×44 hit area).
@@ -48,17 +49,126 @@ struct ListDot: View {
     }
 }
 
+final class AvatarImageCache: @unchecked Sendable {
+    static let shared = AvatarImageCache()
+
+    private let memory = NSCache<NSString, UIImage>()
+    private let session: URLSession
+
+    private init() {
+        memory.countLimit = 128
+        let urlCache = URLCache(memoryCapacity: 16 * 1024 * 1024, diskCapacity: 64 * 1024 * 1024)
+        let config = URLSessionConfiguration.default
+        config.urlCache = urlCache
+        config.requestCachePolicy = .returnCacheDataElseLoad
+        session = URLSession(configuration: config)
+    }
+
+    func cachedImage(for urlString: String) -> UIImage? {
+        memory.object(forKey: urlString as NSString)
+    }
+
+    func loadImage(from urlString: String) async -> UIImage? {
+        if let cached = memory.object(forKey: urlString as NSString) {
+            return cached
+        }
+        guard let url = URL(string: urlString) else { return nil }
+        if url.isFileURL {
+            guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else {
+                return nil
+            }
+            memory.setObject(image, forKey: urlString as NSString)
+            return image
+        }
+        guard url.scheme?.lowercased() == "https" else { return nil }
+        var request = URLRequest(url: url)
+        request.cachePolicy = .returnCacheDataElseLoad
+        guard let (data, response) = try? await session.data(for: request) else {
+            return nil
+        }
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            return nil
+        }
+        guard let image = UIImage(data: data) else { return nil }
+        memory.setObject(image, forKey: urlString as NSString)
+        return image
+    }
+}
+
+struct AvatarView: View {
+    @Environment(\.accent) private var accent
+
+    var member: Member?
+    var size: CGFloat = 32
+    var fallbackColor: String? = nil
+
+    @State private var loadedUrl: String?
+    @State private var loadedImage: UIImage?
+
+    private var urlString: String? {
+        guard let raw = member?.avatarUrl?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        return raw
+    }
+
+    private var resolvedImage: UIImage? {
+        guard let urlString else { return nil }
+        if loadedUrl == urlString, let loadedImage {
+            return loadedImage
+        }
+        return AvatarImageCache.shared.cachedImage(for: urlString)
+    }
+
+    private var fillColor: Color {
+        Color(hex: member?.color ?? fallbackColor ?? accent.hex)
+    }
+
+    var body: some View {
+        Group {
+            if let image = resolvedImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+                    .accessibilityLabel(member?.name ?? "頭像")
+            } else {
+                Text(member?.initial ?? "")
+                    .font(.system(size: max(9, (size * 0.42).rounded()), weight: .bold))
+                    .foregroundStyle(Palette.background)
+                    .frame(width: size, height: size)
+                    .background(Circle().fill(fillColor))
+            }
+        }
+        .frame(width: size, height: size)
+        .task(id: urlString) {
+            guard let urlString else {
+                loadedUrl = nil
+                loadedImage = nil
+                return
+            }
+            if let cached = AvatarImageCache.shared.cachedImage(for: urlString) {
+                loadedUrl = urlString
+                loadedImage = cached
+                return
+            }
+            let image = await AvatarImageCache.shared.loadImage(from: urlString)
+            if !Task.isCancelled {
+                loadedUrl = urlString
+                loadedImage = image
+            }
+        }
+    }
+}
+
 struct AvatarStack: View {
     var members: [Member]
     var size: CGFloat = 18
     var body: some View {
         HStack(spacing: -4) {
             ForEach(members) { m in
-                Text(m.initial)
-                    .font(.system(size: size * 0.5, weight: .bold))
-                    .foregroundStyle(Palette.background)
-                    .frame(width: size, height: size)
-                    .background(Circle().fill(Color(hex: m.color)))
+                AvatarView(member: m, size: size)
                     .overlay(Circle().stroke(Palette.card, lineWidth: 1.5))
             }
         }

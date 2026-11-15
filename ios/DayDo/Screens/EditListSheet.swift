@@ -129,10 +129,10 @@ struct EditListSheet: View {
 
                             Button { openSharing(original.id) } label: {
                                 HStack(spacing: 10) {
-                                    memberAvatar(initial: owner?.initial ?? "", hex: owner?.color ?? accent.hex)
+                                    AvatarView(member: owner, size: 30, fallbackColor: accent.hex)
                                     Rectangle().fill(Palette.separatorSoft).frame(width: 1, height: 20)
                                     ForEach(others) { m in
-                                        memberAvatar(initial: m.initial, hex: m.color)
+                                        AvatarView(member: m, size: 30)
                                     }
                                     Image(systemName: "plus")
                                         .font(.system(size: 13, weight: .semibold))
@@ -270,14 +270,6 @@ struct EditListSheet: View {
         }
     }
 
-    func memberAvatar(initial: String, hex: String) -> some View {
-        Text(initial)
-            .font(.system(size: 12, weight: .bold))
-            .foregroundStyle(Palette.background)
-            .frame(width: 30, height: 30)
-            .background(Circle().fill(Color(hex: hex)))
-    }
-
     func viewOption(_ id: String, _ label: String) -> some View {
         let on = viewMode == id
         let tone = on ? accent.color.opacity(0.65) : Palette.handle
@@ -403,11 +395,7 @@ private struct TransferOwnerSheet: View {
                                 }
                             } label: {
                                 HStack(spacing: 12) {
-                                    Text(member.initial)
-                                        .font(.system(size: 13, weight: .bold))
-                                        .foregroundStyle(Palette.background)
-                                        .frame(width: 32, height: 32)
-                                        .background(Circle().fill(Color(hex: member.color)))
+                                    AvatarView(member: member, size: 32)
                                     Text(member.name).txt(15, .medium).foregroundStyle(Palette.text)
                                     Spacer()
                                     Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textTertiary)

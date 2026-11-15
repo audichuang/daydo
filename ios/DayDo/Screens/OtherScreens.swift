@@ -126,11 +126,7 @@ struct SettingsScreen: View {
                                 } label: {
                                     HStack(spacing: 12) {
                                         let me = model.me
-                                        Text(me?.initial ?? "")
-                                            .font(.system(size: 13, weight: .bold))
-                                            .foregroundStyle(Palette.background)
-                                            .frame(width: 34, height: 34)
-                                            .background(Circle().fill(Color(hex: me?.color ?? accent.hex)))
+                                        AvatarView(member: me, size: 34, fallbackColor: accent.hex)
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(me?.name ?? "").txt(15, .semibold).foregroundStyle(Palette.text)
                                             Text(model.isSyncing ? "正在同步…" : "已登入").txt(12).foregroundStyle(Palette.textSecondary)

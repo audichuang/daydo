@@ -145,6 +145,7 @@ struct AuthRefreshResponse: Decodable, Sendable {
     let hasData: Bool?
     let meMemberId: String?
     let inboxProjectId: String?
+    let avatarUrl: String?
 }
 
 public enum SyncAuthCredential: Sendable, Equatable {
@@ -190,6 +191,7 @@ public struct AuthLoginResponse: Codable, Sendable, Equatable {
     public let hasData: Bool
     public let meMemberId: String?
     public let inboxProjectId: String?
+    public let avatarUrl: String?
 }
 
 // MARK: - Sharing Wire Types

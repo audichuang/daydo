@@ -7,6 +7,22 @@ export interface VerifiedIdentity {
   provider: ProviderName;
   sub: string;
   email: string | null;
+  avatarUrl?: string | null;
+}
+
+export function sanitizeHttpsAvatarUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:' || !parsed.hostname) {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
 }
 
 export type KeySource = JWTVerifyGetKey | CryptoKey;
@@ -105,5 +121,6 @@ export async function verifyGoogleToken(params: {
     provider: 'google',
     sub: payload.sub,
     email: typeof payload.email === 'string' && payload.email.length > 0 ? payload.email : null,
+    avatarUrl: sanitizeHttpsAvatarUrl(payload.picture),
   };
 }

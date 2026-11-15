@@ -215,6 +215,11 @@ public final class AppDatabase: Sendable {
                 t.column("userId", .text).notNull()
             }
         }
+        m.registerMigration("v7") { db in
+            try db.alter(table: "memberUser") { t in
+                t.add(column: "avatarUrl", .text)
+            }
+        }
         return m
     }
 }

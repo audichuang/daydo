@@ -7,6 +7,7 @@ export const user = sqliteTable('user', {
   name: text('name'),
   initial: text('initial'),
   color: text('color'),
+  avatarUrl: text('avatarUrl'),
 });
 
 export const identity = sqliteTable(

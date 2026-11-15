@@ -847,6 +847,35 @@ final class DayDoFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testShareSheetShowsMemberAvatarPhotoAndInitialFallback() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoSeedSharedList", "-DayDoSeedAvatarPhoto"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        let openDrawer = app.buttons["開啟清單抽屜"]
+        XCTAssertTrue(openDrawer.waitForExistence(timeout: 5), app.debugDescription)
+        openDrawer.tap()
+
+        let sharedList = app.buttons["drawer.list.家庭採買"]
+        XCTAssertTrue(sharedList.waitForExistence(timeout: 5), app.debugDescription)
+        sharedList.tap()
+
+        let shareBtn = app.buttons["共享"]
+        XCTAssertTrue(shareBtn.waitForExistence(timeout: 3), app.debugDescription)
+        shareBtn.tap()
+
+        XCTAssertTrue(app.staticTexts["共享清單"].waitForExistence(timeout: 3), app.debugDescription)
+        // Owner has no avatarUrl -> falls back to initial+color label
+        let ownerAvatar = app.staticTexts["share.ownerAvatar"]
+        XCTAssertTrue(ownerAvatar.waitForExistence(timeout: 3), app.debugDescription)
+        // Co-member has bundled file:// DebugAvatar.png -> renders Image
+        let memberPhoto = app.images["share.memberAvatar.debug-other-member-1"]
+        XCTAssertTrue(memberPhoto.waitForExistence(timeout: 3), app.debugDescription)
+        shot("42-share-sheet-avatar-photo")
+    }
+
+    @MainActor
     func testPendingInviteWaitsForMeNamePrompt() {
         // 1. Sign-in path: invite arrives while signed out, sign-in lacks displayName -> name prompt first, then invite confirm.
         app.terminate()

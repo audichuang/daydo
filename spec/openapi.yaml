@@ -440,7 +440,7 @@ components:
       properties: { error: { type: string }, message: { type: string } }
     Member:
       type: object
-      properties: { id: { type: string }, name: { type: string }, initial: { type: string }, color: { type: string }, is_me: { type: boolean } }
+      properties: { id: { type: string }, name: { type: string }, initial: { type: string }, color: { type: string }, is_me: { type: boolean }, avatar_url: { type: string, nullable: true } }
     Folder:
       type: object
       properties: { id: { type: string }, name: { type: string }, sort_key: { type: string } }
@@ -474,6 +474,7 @@ components:
         color: { type: string }
         is_me: { type: boolean }
         role: { type: string, enum: [owner, editor, viewer] }
+        avatar_url: { type: string, nullable: true }
     ProjectInvite:
       type: object
       properties:
