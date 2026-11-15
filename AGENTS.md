@@ -58,7 +58,9 @@ cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
 
 ## 發版（TestFlight）
 
-- App Store Connect app id `6834936769`，bundle id `com.audichuang.daydo`，team `37HFR5V2JJ`，內部群組「自己」。
+- App Store Connect app id `6834936769`，bundle id `com.audichuang.daydo`，team `37HFR5V2JJ`。
+- 群組：內部「自己」（使用者本人）；外部「家人」（使用者與家人，`tf distribute` 一律帶 `--group`）。新 build 只發給「自己」；要發給「家人」必須使用者明說這版已穩定。外部群組每個版本的第一個 build 要過 Apple 的 Beta App Review。
+- 家人用 Google 登入前，要把他的 Gmail 加進 Google Cloud 專案 `daydo-514804` 的 OAuth 測試使用者（測試模式）。
 - 沒有 Xcode Cloud，只有手動上傳：
 
 ```bash
