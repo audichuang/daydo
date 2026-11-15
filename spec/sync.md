@@ -122,8 +122,8 @@
 
 ## 實作順序
 
-1. App：migration `v3`、HLC、op 序列化（都不需要網路，可以先寫單元測試）。
-2. Worker：登入、`/sync/push`、`/sync/pull`、D1 schema，用 Miniflare 測合併規則。
+1. ✓ App：migration `v3`、HLC、op 序列化（2026-11-15 完成）。
+2. ✓ Worker：登入、`/sync/push`、`/sync/pull`、D1 schema（2026-11-15 完成，只在本機跑；真的 Apple／Google token 與部署未測）。
 3. App：登入畫面、SyncEngine（送出、拉取、重送時機）、第一次登入的 id 對應。
 4. DO WebSocket 通知、共享清單、成員指派。
 5. MCP 掛上 Worker。

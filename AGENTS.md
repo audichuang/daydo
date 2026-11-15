@@ -5,7 +5,7 @@
 DayDo 是待辦加日曆的 iPhone App，給自己和家人用，互動對標 TickTick。分三個階段：
 
 1. **單機 App**（已完成，在 TestFlight）：資料只存在手機的 SQLite；今天、清單、任務詳情、日期面板、時間區塊、日曆（清單／年／月／週／3日／日）、搜尋、垃圾桶。
-2. **同步與多人**（下一步）：Cloudflare Worker + D1 + Durable Objects，註冊登入、多裝置同步、共享清單、成員指派。
+2. **同步與多人**（進行中）：Cloudflare Worker + D1 + Durable Objects，註冊登入、多裝置同步、共享清單、成員指派。
 3. **MCP**：掛在 Worker 上，讓 AI 讀寫任務，工具沿用 ticktick-mcp 的名稱與欄位。
 
 另外待做：桌面小工具（設計稿 6a/6b）、macOS 版；提醒超過 60 筆的背景補排、跟隨系統 Dynamic Type、寫入後縮小刷新範圍（目前每次寫入都重讀全部 lookup 並重排提醒）。
@@ -26,7 +26,7 @@ design/      設計稿
 
 - UI 不直接碰資料庫：所有讀寫走 `DayDoAPI`（`LocalDayDoAPI` 是本機實作）。新增功能時先加 API 方法與 `spec/openapi.yaml`，再接 UI。
 - API 名稱與欄位對齊 ticktick-mcp（私有 repo `audichuang/ticktick-mcp` 的 `src/tools.ts`，本機沒有 clone，用 `gh api repos/audichuang/ticktick-mcp/contents/src/tools.ts --jq .content | base64 -d` 讀）：priority 0/1/3/5、status 0/2、`TRIGGER:` 提醒、RRULE、ISO 8601 `start`/`due` + `timezone` + `all_day`。之後的 MCP 直接沿用那套工具名。
-- Schema 為同步預留：id 由 client 產生（UUIDv7），時間戳是 epoch ms，刪除用 `deletedAt` 軟刪除，每次寫入在同一 transaction 寫一筆 `change`（outbox，含變更欄位名）。改 schema 用新的 migration，不改 `v1`（`v2` 加入 `projectInvite` 記錄待同步的共享邀請）。
+- Schema 為同步預留：id 由 client 產生（UUIDv7），時間戳是 epoch ms，刪除用 `deletedAt` 軟刪除，每次寫入在同一 transaction 寫一筆 `change`（outbox，含變更欄位名）。改 schema 用新的 migration，已有的不改（`v2` 是 `projectInvite`，`v3` 是同步用的 outbox 欄位）。
 - 排序鍵用 `SortKey`（fractional index），不要重新編號。
 - 這個 App 目前是測試用：畫面照使用者給的 TickTick 截圖做齊，後端（第二階段同步）還沒好的功能也保留入口，在本機可操作（例如邀請記為「等待同步」）；不放「尚未開放」「僅存於這台裝置」之類的說明文字。共享掛在清單上，不另開分頁。
 - API 回傳的 `schedule` 已換成裝置時區。更新任務時，只有日期或時間真的改了才送 `schedule`，否則會把任務原本的時區改掉（只改提醒也會中招）。
@@ -34,7 +34,7 @@ design/      設計稿
 
 ## 分支與 worktree
 
-worktree 規定照全域規則（目錄 `../ticktick-wt/<名稱>`，`sync-*` 是別的 session 的同步工作）。TestFlight 一律從合併後的 main 打包，不從 worktree 打。
+TestFlight 一律從合併後的 main 打包，不從 worktree 打。
 
 ## 指令
 
@@ -50,7 +50,7 @@ cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
 
 ## 模擬器
 
-代號 `DD`。常駐機：`DD iPhone 18 Pro`（iOS 27.2）。平行任務可臨時建 `DD …`，用完刪掉；不碰其他代號的模擬器。
+代號 `DD`。常駐機：`DD iPhone 18 Pro`（iOS 27.2）。
 
 - Codex 審查與 agy 也會在 DD 常駐機跑 UI 測試；自己跑完整 UI 測試前先 `pgrep -fl xcodebuild`，有別的在跑就等它結束（同時跑會在啟動時失敗：`Failed to send signal 19`）。
 - Xcode 27.2 沒有 Simulator.app，模擬器視窗改由 `Xcode.app/Contents/Applications/DeviceHub.app` 開啟（它也列出其他專案的機器，別按到別人的 Start）。
@@ -72,9 +72,8 @@ cd ios && BUILD_NUMBER=$(~/Project/audi-skill/ios-release/scripts/tf next-build 
 
 ## 第二階段（進行中）
 
-同步協議寫在 `spec/sync.md`，改協議先改那份文件：Sign in with Apple＋Google；每個 op 帶 opId 與 HLC，未 ack 就重送、伺服器靠 opId 去重；逐欄位以 HLC 後寫者贏；D1 存資料與每列遞增的 `serverSeq`，所有 push 交給同一個寫入 DO 依序處理。MCP 掛在 Worker 上，工具名沿用 ticktick-mcp。
+同步協議（含進度與待決事項）寫在 `spec/sync.md`，改協議或改兩端的行為先改那份文件。
 
-- 已做：App 端 migration `v3`（outbox 的 opId／hlc／ackedAt／result）與 HLC；`server/` 的登入（Apple、Google、refresh 輪替）、`/sync/push`、`/sync/pull`。未做：App 的 SyncEngine 與登入畫面、WebSocket 通知、共享清單的權限、第一次登入的 id 對應、部署。
 - `server/` 只在本機跑，還沒有部署設定；不跑 `void deploy`、`void connect` 或 Cloudflare 登入，除非使用者明說。
 - void 固定 1.8.0：npm 設定只裝發布滿 3 天的版本，新版會被拒，不要改 npm 設定繞過。
 - 寫入 DO 一定要自己排隊：DO 等 D1 回應時會接下一個請求，沒有佇列時同時送出的讀改寫全部讀到同一個舊值（本機實測）。`WRITER_QUEUE=off` 只在開發建置有效，用來證明並發測試抓得到競態。
