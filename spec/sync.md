@@ -10,7 +10,7 @@
 以下其餘內容都是提案，尚未確認：
 
 - 時間用 HLC，不直接用手機時鐘。
-- 架構：Cloudflare Worker + D1（存資料）+ 一個 Durable Object（寫入依序處理、WebSocket 通知）。不用 KV 存任務資料或 op 去重：KV 是最終一致，剛寫入的值可能讀不到，同一個 op 會被套用兩次。
+- 架構：Cloudflare Worker + D1（存資料）+ 一個 Durable Object（寫入依序處理、WebSocket 通知），程式在 `server/`，用 Void（Cloudflare 的框架，底層是 Hono）。目前固定 void 1.8.0：npm 設定只裝發布滿 3 天的版本。不用 KV 存任務資料或 op 去重：KV 是最終一致，剛寫入的值可能讀不到，同一個 op 會被套用兩次。
 
 ## 流程
 
@@ -34,13 +34,15 @@
 - **型別**：時間戳是 epoch ms 整數；`Bool` 在 JSON 是 `true`/`false`，D1 存 0/1，pull 回傳時轉回 `true`/`false`；`[String]`（`reminders`、`tags`）整個陣列視為一個值，D1 存 JSON 字串。
 - **`op`**：`upsert` 或 `delete`（硬刪除，`fields` 為空、`row` 為 `{}`）。
 - **合併的欄位群組**：task 的 `startDay`、`startMinute`、`endDay`、`endMinute`、`timeZone` 是同一個時間設定，合併時視為一組，共用 `clocks["schedule"]`：只要 `fields` 含其中任何一個，就整組一起比 HLC、一起寫入（缺的欄位依上一條視為 null）。否則一台改日期、另一台改時區，合併後會變成兩邊都沒設定過的時間。
-- **不同步的欄位**：`member.isMe`（每台裝置、每個使用者各自不同；Worker 不存，pull 時依請求的使用者算出來）、`attachment.localPath` 與 `attachment.originalPath`（裝置上的檔案路徑；附件檔案上傳之後再設計）。
+- **不同步的欄位**：`member.isMe`（每台裝置、每個使用者各自不同；Worker 不存，回傳時依請求的使用者算出來：使用者第一個帶 `isMe: true` 推上來的 member 綁定為他自己）、`attachment.localPath` 與 `attachment.originalPath`（裝置上的檔案路徑；附件檔案上傳之後再設計）。App 套用伺服器資料列時，這些欄位**一律保留本機的值**，不套用「欄位不出現＝null」的規則；`isMe` 在第一次登入的 id 對應完成前也不能拿伺服器的值蓋掉。
+- **tombstone**：伺服器回傳的資料列可能帶 `purgedAt`（硬刪除的時間）。App 收到帶 `purgedAt` 的列，要在本機硬刪除這一列（子列由外鍵連帶刪除），不寫 outbox，也不能把它當一般資料列存回去。對已硬刪除的 id 再送 upsert，伺服器回 `applied`，但不會套用，回傳的仍是 tombstone。
+- **push 回應與 pull 的資料列格式**：每筆是並列的 `row` 與 `clocks`（不是把 `clocks` 放進 `row` 裡）。`row` 只含上面的同步欄位，加上 `purgedAt`（只有 tombstone 才有）和 member 的 `isMe`。
 - **HLC 字串**：`<13 位數 epoch ms，前面補 0>:<4 位數計數，前面補 0>:<deviceId 小寫>`。計數到 9999 時，ms 加 1、計數歸 0。
 - **fixture**：App 端測試會產出一份真實編碼的 op 範例 `spec/fixtures/sync-ops.json`，Worker 端的測試直接讀這份檔案。格式有爭議時，以這份檔案和本節為準。
 
 ## App 端
 
-新增 migration `v2`（不改 `v1`）：
+新增 migration `v3`（不改 `v1`、`v2`；`v2` 是 main 的 `projectInvite`）：
 
 - `change` 加 `opId`（UUIDv7）、`hlc`、`ackedAt`（null 表示還沒送達）、`result`。
 - `meta` 存 `deviceId`、`hlc`（上次用過的時鐘）、`pullCursor`、登入狀態。token 不放 `meta`，存 Keychain。
@@ -49,12 +51,13 @@
 送出與 ack：
 
 - 依 `seq` 順序送，每批最多 200 筆。
-- `applied`（含伺服器之前已套用過的重複 op）與 `rejected` 都寫 `ackedAt`，之後不再送。兩種結果都附上伺服器合併後的整列（含 `clocks`），照下面「套用伺服器資料列」的規則寫回本機。這一步不能省：本機的 op 如果在某個欄位輸給別台較新的修改，伺服器會丟掉這個欄位但仍回 `applied`；本機若只標記已送達，就會一直留著伺服器沒有的值，而那一列的 `server_seq` 不會再變，之後 pull 也拉不到它。
+- `applied`（含伺服器之前已套用過的重複 op）與 `rejected` 都寫 `ackedAt`，之後不再送。兩種結果都附上伺服器合併後的整列和 `clocks`（rejected 時，伺服器上若還沒有這一列，就沒有東西可附），照下面「套用伺服器資料列」的規則寫回本機。這一步不能省：本機的 op 如果在某個欄位輸給別台較新的修改，伺服器會丟掉這個欄位但仍回 `applied`；本機若只標記已送達，就會一直留著伺服器沒有的值，而那一列的 `server_seq` 不會再變，之後 pull 也拉不到它。
 - HTTP 429 或 5xx：整批稍後重送，間隔以指數倍增，最長 5 分鐘。401：先刷新 token 再送。
 - 寫入逾時或沒收到回應時，不知道伺服器有沒有套用：直接重送同一批即可，opId 去重保證只套用一次。
 
 拉取與套用：
 
+- 套用順序：pull 依 `serverSeq` 排序，子列可能比父列先到，跨頁也一樣；App 的外鍵是立即檢查的。所以同一頁的資料列在**同一個 transaction** 裡套用，並開 `PRAGMA defer_foreign_keys = ON`；commit 時父列仍不存在的子列，先放進暫存區，等之後的頁或下一次 pull 拿到父列再套用。
 - 套用伺服器資料列（pull 與 push 回應都適用）：資料列帶 `clocks`。對每個欄位，只有本機有未送達的 op 改了這個欄位、而且它的 HLC 比 `clocks[欄位]` 新時，才保留本機的值；其他情況一律用伺服器的值。
 - 套用遠端資料不寫 `change`（不然會被當成本機修改再送回去）。
 
@@ -103,7 +106,7 @@
 | POST | `/auth/link` | 已登入時連結另一種登入方式 |
 | DELETE | `/account` | 刪除帳號與所有資料 |
 | POST | `/sync/push` | `{deviceId, ops: [{opId, hlc, entity, entityId, op, fields, row}]}` → `{results: [{opId, status, reason?}], serverSeq}` |
-| POST | `/sync/push` 回應的 results | 每筆另含 `row`（合併後的整列，含 `clocks`） |
+| POST | `/sync/push` 回應的 results | 每筆另含並列的 `row`（合併後的整列）與 `clocks` |
 | GET | `/sync/pull?since=<seq>&limit=500` | → `{rows: [{entity, row, clocks, serverSeq}], cursor, hasMore}` |
 | GET | `/sync/ws` | WebSocket，只推送「有新資料」通知，資料一律用 pull 取得 |
 
@@ -114,12 +117,12 @@
 - 資料表和 App 端相同，另加 `clocks`、`server_seq`（建索引）、`purged_at`。
 - 能看到哪些列：自己的資料，加上自己在 `projectMember` 裡的共享清單。
 - `server_seq` 是全域遞增的數字，每寫一個資料列就加 1。游標就是上次拉到的最後一列的 seq，`limit` 怎麼切都不會漏列。
-- 合併要先讀 `clocks`、比較、再寫入。D1 從 Worker 呼叫時沒有互動式 transaction（只有 `batch()` 是原子的），兩個 push 同時改同一列可能交錯，較新的值被較舊的蓋掉。所以所有 push 都交給同一個寫入 DO 依序處理；它負責讀 `clocks`、決定結果、一次 `batch()` 寫入。家人規模的流量用一個 DO 就夠，也不用處理「共享清單跨使用者」要歸哪個 DO 的問題。同一個 DO 也負責 WebSocket 通知（用 hibernation）。DO 呼叫 D1 時要等網路回應，等待期間 DO 仍會接下一個請求（input gate 只擋 DO 自己的 storage 操作），所以 DO 裡要自己用一個佇列，一次只處理一批 push。這個做法實作前要再對一次 Cloudflare 文件；若不可行，改把同步資料放在 DO 自帶的 SQLite（有 `transactionSync`）。
+- 合併要先讀 `clocks`、比較、再寫入。D1 從 Worker 呼叫時沒有互動式 transaction（只有 `batch()` 是原子的），兩個 push 同時改同一列可能交錯，較新的值被較舊的蓋掉。所以所有 push 都交給同一個寫入 DO 依序處理；它負責讀 `clocks`、決定結果、一次 `batch()` 寫入。家人規模的流量用一個 DO 就夠，也不用處理「共享清單跨使用者」要歸哪個 DO 的問題。同一個 DO 也負責 WebSocket 通知（用 hibernation）。DO 呼叫 D1 時要等網路回應，等待期間 DO 仍會接下一個請求（input gate 只擋 DO 自己的 storage 操作），所以 DO 裡要自己用一個佇列，一次只處理一批 push。2026-11-15 在本機（void 1.8.0、workerd）實測證實：沒有佇列時，20 個同時送出的讀改寫全部讀到同一個舊值；加上 promise-chain 佇列後才依序執行。`server/scripts/e2e-sync.mjs` 的 concurrency 情境在 `WRITER_QUEUE=off`（只在開發建置有效）時必須失敗，用來證明測試抓得到競態。
 - 被加入共享清單時，那份清單的舊資料 `server_seq` 比游標小，pull 拉不到。App 收到自己的 `projectMember` 列後，對那份清單另外跑一次 `pull?project=<id>&since=0`。
 
 ## 實作順序
 
-1. App：migration `v2`、HLC、op 序列化（都不需要網路，可以先寫單元測試）。
+1. App：migration `v3`、HLC、op 序列化（都不需要網路，可以先寫單元測試）。
 2. Worker：登入、`/sync/push`、`/sync/pull`、D1 schema，用 Miniflare 測合併規則。
 3. App：登入畫面、SyncEngine（送出、拉取、重送時機）、第一次登入的 id 對應。
 4. DO WebSocket 通知、共享清單、成員指派。
