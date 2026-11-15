@@ -50,7 +50,9 @@ ios/scripts/uitest.sh [iphone|ipad] [xcodebuild 參數…]   # UI 流程測試�
 常駐機：`DD iPhone 18 Pro`（iOS 27.2）；iPad 版面用 `DD iPad Pro 11`。
 
 - UI 測試一律走 `ios/scripts/uitest.sh`：依名稱找機器、等別的 `xcodebuild` 跑完再開始（Codex、agy 和其他 session 共用這兩台，同時跑會在啟動時失敗：`Failed to send signal 19`）、關掉平行測試。
+- 測試與互動驗收結束後，確認沒有其他 session 使用，再以 `xcrun simctl shutdown <UDID>` 關閉本次用過的 DD 常駐機（UDID 用 `xcrun simctl list devices` 查）；`uitest.sh` 不會自動關機。
 - 平行 UI 測試才開臨時機，命名 `DD tmp <任務名>`，用 `ios/scripts/uitest.sh "DD tmp <任務名>"` 跑。
+- DD worktree／暫存 review 專案收尾時，DerivedData 清理依 `~/.agents/AGENTS.md`「做事邊界」的 iOS 模擬器規則執行。
 - Xcode 27.2 沒有 Simulator.app，模擬器視窗改由 `Xcode.app/Contents/Applications/DeviceHub.app` 開啟（它也列出其他專案的機器，別按到別人的 Start）。
 - 互動驗收：跑測試時設 `TEST_RUNNER_DAYDO_SHOTS=<目錄>`，`DayDoUITests` 的 `shot()` 會把截圖寫進去，再和 `design/shots` 或使用者給的參考圖對照。
 
