@@ -1,0 +1,18 @@
+# 發版（TestFlight）
+
+TestFlight 一律從合併後的 main 打包，不從 worktree 打。
+
+- App Store Connect app id `6834936769`，bundle id `com.audichuang.daydo`，team `37HFR5V2JJ`。
+- 群組：內部「自己」（使用者本人）；外部「家人」（使用者與家人，`tf distribute` 一律帶 `--group`）。新 build 只發給「自己」；要發給「家人」必須使用者明說這版已穩定。外部群組每個版本的第一個 build 要過 Apple 的 Beta App Review（審查聯絡資訊與測試說明已在 App Store Connect 設好）。`ios/ExportOptions.plist` 不能加回 `testFlightInternalTestingOnly`，加了上傳的 build 就不能送外部測試。
+- 家人用 Google 登入前，要把他的 Gmail 加進 Google Cloud 專案 `daydo-514804` 的 OAuth 測試使用者（測試模式）。
+- App 連正式環境用的 Access service token 在打包時由 `ios/scripts/gen-secrets.sh` 從 1Password 寫進 `ios/Secrets.xcconfig`（gitignored），`testflight.sh` 會自動跑；模擬器要連正式環境就先手動跑一次。
+- 沒有 Xcode Cloud，只有手動上傳：
+
+```bash
+cd ios && BUILD_NUMBER=$(~/Project/audi-skill/ios-release/scripts/tf next-build --app 6834936769) ./scripts/testflight.sh
+~/Project/audi-skill/ios-release/scripts/tf verify --app 6834936769 --build <N> --group "自己" --wait 20m
+```
+
+- 簽章走 Xcode 已登入的帳號；帶 API key（`-authenticationKey*`）時 Xcode 27.2 回 `Authentication failed: bearer token`。
+- build 號用 `tf next-build` 的流水號，不用時間戳。
+- 上傳後 build 不會自動進「自己」，照 `tf verify` 的 `next=` 跑 `tf distribute`，到 `RESULT READY` 才算發出去。
