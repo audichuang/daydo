@@ -4,6 +4,20 @@ import DayDoCore
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @Namespace private var splashNamespace
+    @State private var splashStart = ContinuousClock.now
+    @State private var splashDismissing = false
+    @State private var splashRemoved = false
+
+    private var holdSplash: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-DayDoHoldSplash")
+#else
+        false
+#endif
+    }
 
     var body: some View {
         @Bindable var model = model
@@ -11,24 +25,59 @@ struct RootView: View {
             Palette.background.ignoresSafeArea()
             if model.ready {
                 if model.isSignedIn {
-                    Group {
-                        switch model.tab {
-                        case .tasks: TaskListScreen(scope: model.scope)
-                        case .calendar: CalendarScreen()
-                        case .search: SearchScreen()
-                        case .settings: SettingsScreen()
+                    ZStack(alignment: .bottom) {
+                        Group {
+                            switch model.tab {
+                            case .tasks: TaskListScreen(scope: model.scope)
+                            case .calendar: CalendarScreen()
+                            case .search: SearchScreen()
+                            case .settings: SettingsScreen()
+                            }
                         }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                        BottomNav(tab: $model.tab, todayDay: model.today.day)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 4)
+
+                        DrawerOverlay(open: $model.drawerOpen)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    BottomNav(tab: $model.tab, todayDay: model.today.day)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 4)
-
-                    DrawerOverlay(open: $model.drawerOpen)
+                    .opacity(splashDismissing || splashRemoved ? 1 : 0)
+                    .scaleEffect(splashDismissing || splashRemoved || reduceMotion ? 1 : 0.98)
                 } else {
-                    SignInView()
+                    SignInView(
+                        logoNamespace: reduceMotion ? nil : splashNamespace,
+                        logoRevealed: reduceMotion || splashDismissing || splashRemoved,
+                        contentRevealed: splashDismissing || splashRemoved
+                    )
                 }
+            }
+
+            if !splashRemoved {
+                SplashOverlay(
+                    namespace: reduceMotion ? nil : splashNamespace,
+                    isSignedIn: model.isSignedIn,
+                    dismissing: splashDismissing,
+                    reduceMotion: reduceMotion
+                )
+                .allowsHitTesting(!splashDismissing)
+            }
+        }
+        .task(id: model.ready) {
+            guard model.ready, !splashRemoved, !holdSplash else { return }
+            let elapsed = splashStart.duration(to: .now)
+            let minDisplay = Duration.seconds(0.35)
+            if elapsed < minDisplay {
+                try? await Task.sleep(for: minDisplay - elapsed)
+            }
+            guard !Task.isCancelled else { return }
+            let animation: Animation = reduceMotion
+                ? .easeOut(duration: 0.25)
+                : (model.isSignedIn ? .easeOut(duration: 0.45) : .spring(duration: 0.45, bounce: 0.1))
+            withAnimation(animation) {
+                splashDismissing = true
+            } completion: {
+                splashRemoved = true
             }
         }
         .sheet(item: Binding(get: { model.detailTaskId.map(TaskRef.init) }, set: { model.detailTaskId = $0?.id }), onDismiss: {
@@ -146,5 +195,51 @@ struct HeaderAction: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+    }
+}
+
+private struct SplashOverlay: View {
+    var namespace: Namespace.ID?
+    var isSignedIn: Bool
+    var dismissing: Bool
+    var reduceMotion: Bool
+
+    var body: some View {
+        ZStack {
+            if isSignedIn || reduceMotion {
+                Color("LaunchBackground")
+                    .ignoresSafeArea()
+                    .opacity(dismissing ? 0 : 1)
+            } else if !dismissing {
+                Color("LaunchBackground")
+                    .ignoresSafeArea()
+                    .transition(.identity)
+            }
+
+            if isSignedIn || reduceMotion || !dismissing {
+                Image("LaunchLogo")
+                    .resizable()
+                    .frame(width: 120, height: 120)
+                    .matchedGeometryIfPresent(id: "launchLogo", in: namespace)
+                    .scaleEffect(!reduceMotion && dismissing && isSignedIn ? 1.15 : 1)
+                    .opacity(isSignedIn || reduceMotion ? (dismissing ? 0 : 1) : 1)
+                    .transition(.identity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea()
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("splash.overlay")
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func matchedGeometryIfPresent<ID: Hashable>(id: ID, in namespace: Namespace.ID?) -> some View {
+        if let namespace {
+            matchedGeometryEffect(id: id, in: namespace)
+        } else {
+            self
+        }
     }
 }

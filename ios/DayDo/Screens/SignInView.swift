@@ -8,7 +8,10 @@ import DayDoCore
 
 struct SignInView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.accent) private var accent
+
+    var logoNamespace: Namespace.ID? = nil
+    var logoRevealed: Bool = true
+    var contentRevealed: Bool = true
 
     @State private var currentRawNonce: String?
     @State private var errorText: String?
@@ -21,26 +24,30 @@ struct SignInView: View {
                 Spacer()
 
                 VStack(spacing: 16) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .fill(accent.soft)
-                            .frame(width: 84, height: 84)
-                        RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .strokeBorder(accent.color.opacity(0.45), lineWidth: 1.5)
-                            .frame(width: 84, height: 84)
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 36, weight: .bold))
-                            .foregroundStyle(accent.color)
+                    Group {
+                        if logoRevealed {
+                            Image("LaunchLogo")
+                                .resizable()
+                                .frame(width: 120, height: 120)
+                                .matchedGeometryIfPresent(id: "launchLogo", in: logoNamespace)
+                                .transition(.identity)
+                        } else {
+                            Color.clear
+                                .frame(width: 120, height: 120)
+                        }
                     }
 
-                    Text("DayDo")
-                        .txt(34, .bold)
-                        .foregroundStyle(Palette.text)
+                    VStack(spacing: 16) {
+                        Text("DayDo")
+                            .txt(34, .bold)
+                            .foregroundStyle(Palette.text)
 
-                    Text("待辦與日曆，跨裝置即時同步")
-                        .txt(15)
-                        .foregroundStyle(Palette.textSecondary)
-                        .multilineTextAlignment(.center)
+                        Text("待辦與日曆，跨裝置即時同步")
+                            .txt(15)
+                            .foregroundStyle(Palette.textSecondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .opacity(contentRevealed ? 1 : 0)
                 }
 
                 Spacer()
@@ -99,6 +106,7 @@ struct SignInView: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 44)
+                .opacity(contentRevealed ? 1 : 0)
             }
 
             if model.isSigningIn {

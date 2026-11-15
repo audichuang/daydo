@@ -506,6 +506,17 @@ final class DayDoFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testLaunchSplashHeld() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoHoldSplash"]
+        app.launch()
+
+        let splash = app.otherElements["splash.overlay"]
+        XCTAssertTrue(splash.waitForExistence(timeout: 5), app.debugDescription)
+        shot("00-splash")
+    }
+
+    @MainActor
     func testSignInScreenShownWhenSignedOut() {
         app.terminate()
         app.launchArguments = ["-DayDoReset"]
