@@ -919,7 +919,8 @@ describe('T5c sharing — invites, membership, permissions, backfill, and purge'
       [uC]: 'editor',
     });
 
-    // After B is removed (removedAt != NULL), accepting the editor invite again grants editor.
+    // After B is removed (removedAt != NULL), an invite created before removal fails (404),
+    // while a new invite created after removal grants the new invite's role (editor).
     await removeProjectMember(h.db, {
       projectId: 'p-1',
       targetUserId: uB,
@@ -927,13 +928,139 @@ describe('T5c sharing — invites, membership, permissions, backfill, and purge'
       getScopeStub: h.getScopeStub,
       nowMs: 1_700_000_006_000,
     });
-    const rejoinB = await acceptInvite(h.db, {
-      code: editorInv.code,
-      userId: uB,
-      getScopeStub: h.getScopeStub,
+    await expect(
+      acceptInvite(h.db, {
+        code: editorInv.code,
+        userId: uB,
+        getScopeStub: h.getScopeStub,
+        nowMs: 1_700_000_007_000,
+      }),
+    ).rejects.toMatchObject({ status: 404, message: 'Invite not found' });
+
+    const newEditorInv = await createInvite(h.db, {
+      userId: uA,
+      projectId: 'p-1',
+      role: 'editor',
       nowMs: 1_700_000_007_000,
     });
+    const rejoinB = await acceptInvite(h.db, {
+      code: newEditorInv.code,
+      userId: uB,
+      getScopeStub: h.getScopeStub,
+      nowMs: 1_700_000_008_000,
+    });
     expect(rejoinB.role).toBe('editor');
+  });
+
+  it('blocks removed or departed members from rejoining via invites created before or at removal, while allowing new invites', async () => {
+    const h = createHarness();
+    const uA = 'user-a';
+    const uB = 'user-b';
+    const uC = 'user-c';
+    await seedUsers(h, [{ id: uA }, { id: uB }, { id: uC }]);
+
+    await h.push(uA, 'dev-a', [
+      makeProjectOp({ opId: 'op-p1', hlc: '1700000000000:0000:dev-a', id: 'p-1', name: 'Shared' }),
+    ]);
+
+    const oldInv = await createInvite(h.db, {
+      userId: uA,
+      projectId: 'p-1',
+      role: 'editor',
+      nowMs: 1_700_000_000_000,
+    });
+    const sameMsInv = await createInvite(h.db, {
+      userId: uA,
+      projectId: 'p-1',
+      role: 'editor',
+      nowMs: 1_700_000_005_000,
+    });
+
+    await acceptInvite(h.db, {
+      code: oldInv.code,
+      userId: uB,
+      getScopeStub: h.getScopeStub,
+      nowMs: 1_700_000_001_000,
+    });
+    await acceptInvite(h.db, {
+      code: oldInv.code,
+      userId: uC,
+      getScopeStub: h.getScopeStub,
+      nowMs: 1_700_000_001_500,
+    });
+
+    // Owner removes B at 1_700_000_005_000; C leaves at 1_700_000_006_000.
+    await removeProjectMember(h.db, {
+      projectId: 'p-1',
+      targetUserId: uB,
+      requesterUserId: uA,
+      getScopeStub: h.getScopeStub,
+      nowMs: 1_700_000_005_000,
+    });
+    await removeProjectMember(h.db, {
+      projectId: 'p-1',
+      targetUserId: uC,
+      requesterUserId: uC,
+      getScopeStub: h.getScopeStub,
+      nowMs: 1_700_000_006_000,
+    });
+
+    // B cannot rejoin with oldInv (createdAt < removedAt) or sameMsInv (createdAt === removedAt).
+    await expect(
+      acceptInvite(h.db, {
+        code: oldInv.code,
+        userId: uB,
+        getScopeStub: h.getScopeStub,
+        nowMs: 1_700_000_007_000,
+      }),
+    ).rejects.toMatchObject({ status: 404, message: 'Invite not found' });
+    await expect(
+      acceptInvite(h.db, {
+        code: sameMsInv.code,
+        userId: uB,
+        getScopeStub: h.getScopeStub,
+        nowMs: 1_700_000_007_100,
+      }),
+    ).rejects.toMatchObject({ status: 404, message: 'Invite not found' });
+
+    // C (who left) cannot rejoin with oldInv either.
+    await expect(
+      acceptInvite(h.db, {
+        code: oldInv.code,
+        userId: uC,
+        getScopeStub: h.getScopeStub,
+        nowMs: 1_700_000_007_200,
+      }),
+    ).rejects.toMatchObject({ status: 404, message: 'Invite not found' });
+
+    // Verify B and C remain removed in D1.
+    const removedRows = await h.db
+      .select({
+        userId: schema.projectMembership.userId,
+        removedAt: schema.projectMembership.removedAt,
+      })
+      .from(schema.projectMembership)
+      .where(eq(schema.projectMembership.projectId, 'p-1'));
+    expect(Object.fromEntries(removedRows.map((r) => [r.userId, r.removedAt]))).toEqual({
+      [uA]: null,
+      [uB]: 1_700_000_005_000,
+      [uC]: 1_700_000_006_000,
+    });
+
+    // A new invite created after removal works normally.
+    const freshInv = await createInvite(h.db, {
+      userId: uA,
+      projectId: 'p-1',
+      role: 'viewer',
+      nowMs: 1_700_000_008_000,
+    });
+    const rejoinedB = await acceptInvite(h.db, {
+      code: freshInv.code,
+      userId: uB,
+      getScopeStub: h.getScopeStub,
+      nowMs: 1_700_000_009_000,
+    });
+    expect(rejoinedB).toEqual({ projectId: 'p-1', scope: `u:${uA}`, role: 'viewer' });
   });
 
   it('projects and reconciles owner projectMember on acceptInvite and new-device backfill for both A and B', async () => {

@@ -205,6 +205,13 @@ export async function acceptInvite(
         SELECT 1 FROM entityHome eh
         WHERE eh.entity = 'project' AND eh.entityId = i.projectId
       )
+      AND NOT EXISTS (
+        SELECT 1 FROM projectMembership pm
+        WHERE pm.projectId = i.projectId
+          AND pm.userId = ${params.userId}
+          AND pm.removedAt IS NOT NULL
+          AND pm.removedAt >= i.createdAt
+      )
     ON CONFLICT (projectId, userId) DO UPDATE SET
       role = CASE
         WHEN projectMembership.role = 'owner' THEN 'owner'

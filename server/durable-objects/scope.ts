@@ -875,31 +875,6 @@ export class ScopeObject extends DurableObject<CloudBindings> {
             continue;
           }
         }
-        const touchesDeletedAt =
-          op.fields.includes('deletedAt') &&
-          (existing
-            ? (Object.hasOwn(op.row, 'deletedAt') ? (op.row.deletedAt ?? null) : null) !==
-              (existing.row.deletedAt ?? null)
-            : Object.hasOwn(op.row, 'deletedAt') &&
-              op.row.deletedAt !== null &&
-              op.row.deletedAt !== undefined);
-        const touchesArchivedAt =
-          op.fields.includes('archivedAt') &&
-          (existing
-            ? (Object.hasOwn(op.row, 'archivedAt') ? (op.row.archivedAt ?? null) : null) !==
-              (existing.row.archivedAt ?? null)
-            : Object.hasOwn(op.row, 'archivedAt') &&
-              op.row.archivedAt !== null &&
-              op.row.archivedAt !== undefined);
-        if (touchesDeletedAt || touchesArchivedAt) {
-          rejectOp(
-            op.opId,
-            'Project deletion/archiving is not allowed via sync',
-            op.entity,
-            op.entityId,
-          );
-          continue;
-        }
         if (purgedSet.has(op.entityId) && op.op !== 'delete') {
           rejectOp(op.opId, 'Project is purged', op.entity, op.entityId);
           continue;
@@ -907,6 +882,26 @@ export class ScopeObject extends DurableObject<CloudBindings> {
         if (op.op === 'upsert') {
           const role = input.memberships[op.entityId];
           if (role !== 'owner' && role !== 'editor') {
+            rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
+            continue;
+          }
+          const touchesDeletedAt =
+            op.fields.includes('deletedAt') &&
+            (existing
+              ? (Object.hasOwn(op.row, 'deletedAt') ? (op.row.deletedAt ?? null) : null) !==
+                (existing.row.deletedAt ?? null)
+              : Object.hasOwn(op.row, 'deletedAt') &&
+                op.row.deletedAt !== null &&
+                op.row.deletedAt !== undefined);
+          const touchesArchivedAt =
+            op.fields.includes('archivedAt') &&
+            (existing
+              ? (Object.hasOwn(op.row, 'archivedAt') ? (op.row.archivedAt ?? null) : null) !==
+                (existing.row.archivedAt ?? null)
+              : Object.hasOwn(op.row, 'archivedAt') &&
+                op.row.archivedAt !== null &&
+                op.row.archivedAt !== undefined);
+          if ((touchesDeletedAt || touchesArchivedAt) && role !== 'owner') {
             rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
             continue;
           }

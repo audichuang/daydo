@@ -519,28 +519,6 @@ export async function executeSyncPush(
         continue;
       }
     }
-    if (
-      op.entity === 'project' &&
-      op.op === 'upsert' &&
-      ((op.fields.includes('deletedAt') &&
-        Object.hasOwn(op.row, 'deletedAt') &&
-        op.row.deletedAt !== null &&
-        op.row.deletedAt !== undefined) ||
-        (op.fields.includes('archivedAt') &&
-          Object.hasOwn(op.row, 'archivedAt') &&
-          op.row.archivedAt !== null &&
-          op.row.archivedAt !== undefined))
-    ) {
-      results[i] = {
-        opId: op.opId,
-        status: 'rejected',
-        reason: 'Project deletion/archiving is not allowed via sync',
-        row: null,
-        clocks: {},
-      };
-      continue;
-    }
-
     knownHome.set(key, pusherScope);
     inBatchNewHome.set(key, {
       entity: op.entity,

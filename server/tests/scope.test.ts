@@ -588,24 +588,34 @@ describe('Scope DO T5a rules', () => {
     expect(res.results[2]).toMatchObject({ opId: 'op-valid-task', status: 'applied' });
   });
 
-  it('rejects projectMember/projectInvite ops, project soft-delete/archive, and non-owner delete; allows owner purge', async () => {
+  it('rejects projectMember/projectInvite ops and non-owner delete/soft-delete/archive; allows owner soft-delete/archive/restore and purge', async () => {
     const h = createHarness();
     const userId = 'u-pol';
     const editorId = 'u-pol-ed';
+    const viewerId = 'u-pol-vw';
     await h.db.insert(schema.user).values([
       { id: userId, createdAt: 1_700_000_000_000 },
       { id: editorId, createdAt: 1_700_000_000_000 },
+      { id: viewerId, createdAt: 1_700_000_000_000 },
     ]);
     const createProj = await h.push(userId, 'dev-a', [
       makeProjectOp({ opId: 'op-p1', hlc: '1700000000000:0000:dev-a', id: 'p-1', name: 'Work' }),
     ]);
     expect(createProj.results[0].status).toBe('applied');
-    await h.db.insert(schema.projectMembership).values({
-      projectId: 'p-1',
-      userId: editorId,
-      role: 'editor',
-      createdAt: 1_700_000_000_000,
-    });
+    await h.db.insert(schema.projectMembership).values([
+      {
+        projectId: 'p-1',
+        userId: editorId,
+        role: 'editor',
+        createdAt: 1_700_000_000_000,
+      },
+      {
+        projectId: 'p-1',
+        userId: viewerId,
+        role: 'viewer',
+        createdAt: 1_700_000_000_000,
+      },
+    ]);
 
     const res = await h.push(userId, 'dev-a', [
       {
@@ -672,17 +682,104 @@ describe('Scope DO T5a rules', () => {
     expect(res.results[0].status).toBe('rejected');
     expect(res.results[1].status).toBe('rejected');
     expect(res.results[2]).toMatchObject({
-      status: 'rejected',
-      row: { id: 'p-1', name: 'Work' },
+      status: 'applied',
+      row: { id: 'p-1', name: 'Work', deletedAt: 2000 },
     });
     expect(res.results[3]).toMatchObject({
-      status: 'rejected',
-      row: { id: 'p-1', name: 'Work' },
+      status: 'applied',
+      row: { id: 'p-1', name: 'Work', deletedAt: 2000, archivedAt: 2000 },
     });
     expect(res.results[4]).toMatchObject({
       status: 'applied',
+      row: { id: 'p-1', name: 'Work Renamed', deletedAt: 2000, archivedAt: 2000 },
+    });
+
+    const edTouch = await h.push(editorId, 'dev-b', [
+      {
+        opId: 'op-p-ed-softdel',
+        hlc: '1700000000006:0001:dev-b',
+        entity: 'project',
+        entityId: 'p-1',
+        op: 'upsert',
+        fields: ['deletedAt'],
+        row: { id: 'p-1', deletedAt: 3000 },
+      },
+      {
+        opId: 'op-p-ed-restore',
+        hlc: '1700000000006:0002:dev-b',
+        entity: 'project',
+        entityId: 'p-1',
+        op: 'upsert',
+        fields: ['deletedAt'],
+        row: { id: 'p-1' },
+      },
+      {
+        opId: 'op-p-ed-unarchive',
+        hlc: '1700000000006:0003:dev-b',
+        entity: 'project',
+        entityId: 'p-1',
+        op: 'upsert',
+        fields: ['archivedAt'],
+        row: { id: 'p-1', archivedAt: null },
+      },
+    ]);
+    for (const r of edTouch.results) {
+      expect(r).toMatchObject({
+        status: 'rejected',
+        reason: 'Forbidden',
+        row: { id: 'p-1', name: 'Work Renamed', deletedAt: 2000, archivedAt: 2000 },
+      });
+    }
+
+    const vwTouch = await h.push(viewerId, 'dev-c', [
+      {
+        opId: 'op-p-vw-archive',
+        hlc: '1700000000006:0004:dev-c',
+        entity: 'project',
+        entityId: 'p-1',
+        op: 'upsert',
+        fields: ['archivedAt'],
+        row: { id: 'p-1', archivedAt: 3000 },
+      },
+    ]);
+    expect(vwTouch.results[0]).toMatchObject({
+      status: 'rejected',
+      reason: 'Forbidden',
+      row: { id: 'p-1', name: 'Work Renamed', deletedAt: 2000, archivedAt: 2000 },
+    });
+
+    // Owner can restore deletedAt and archivedAt back to null (omitted in JSON or explicit null).
+    const ownerRestore = await h.push(userId, 'dev-a', [
+      {
+        opId: 'op-p-restore',
+        hlc: '1700000000006:0005:dev-a',
+        entity: 'project',
+        entityId: 'p-1',
+        op: 'upsert',
+        fields: ['deletedAt', 'archivedAt'],
+        row: { id: 'p-1' },
+      },
+    ]);
+    expect(ownerRestore.results[0]).toMatchObject({
+      status: 'applied',
       row: { id: 'p-1', name: 'Work Renamed' },
     });
+    expect(ownerRestore.results[0].row?.deletedAt).toBeUndefined();
+    expect(ownerRestore.results[0].row?.archivedAt).toBeUndefined();
+
+    // Editor sending unchanged deletedAt: null while renaming is still allowed.
+    const edRename = await h.push(editorId, 'dev-b', [
+      {
+        opId: 'op-p-ed-rename',
+        hlc: '1700000000006:0006:dev-b',
+        entity: 'project',
+        entityId: 'p-1',
+        op: 'upsert',
+        fields: ['name', 'deletedAt'],
+        row: { id: 'p-1', name: 'Work Renamed', deletedAt: null },
+      },
+    ]);
+    expect(edRename.results[0].status).toBe('applied');
 
     const edDel = await h.push(editorId, 'dev-b', [
       {
@@ -716,6 +813,36 @@ describe('Scope DO T5a rules', () => {
       row: { id: 'p-1', name: 'Work Renamed' },
     });
     expect(ownerDel.results[0].row?.purgedAt).toEqual(expect.any(Number));
+  });
+
+  it('allows owner to create a new project with deletedAt and archivedAt already set', async () => {
+    const h = createHarness();
+    const userId = 'u-new-soft';
+    await h.db.insert(schema.user).values({ id: userId, createdAt: 1_700_000_000_000 });
+
+    const base = makeProjectOp({
+      opId: 'op-p-new-soft',
+      hlc: '1700000000000:0000:dev-a',
+      id: 'p-new-soft',
+      name: 'Offline Trashed',
+    });
+    const res = await h.push(userId, 'dev-a', [
+      {
+        ...base,
+        fields: [...base.fields, 'deletedAt', 'archivedAt'],
+        row: { ...base.row, deletedAt: 2500, archivedAt: 2600 },
+      },
+    ]);
+
+    expect(res.results[0]).toMatchObject({
+      status: 'applied',
+      row: {
+        id: 'p-new-soft',
+        name: 'Offline Trashed',
+        deletedAt: 2500,
+        archivedAt: 2600,
+      },
+    });
   });
 
   it('rejects partial upsert to unknown row without creating entityHome, listScopes, or DO row', async () => {
