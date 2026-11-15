@@ -11,7 +11,7 @@
 | 時鐘 | 伺服器把快 5 分鐘以上的 HLC 校正成伺服器時間；push 回應帶 `serverTime`，App 用它推進自己的 HLC，同一台裝置的修改不會被自己蓋掉。 |
 | 多人架構 | 以服務多人為前提：每個使用者一個 Durable Object（**範圍**），他建立的所有資料（包含之後共享出去的清單）都放在那裡，存在 DO 自帶的 SQLite。共享、轉移擁有者只改 D1 的權限，資料不搬家；只有把任務移到別人建立的清單才跨範圍。D1 只存帳號、登入身分、session、裝置、清單歸屬、共享成員與邀請。pull 每個範圍各一個游標。（原本寫「每份共享清單一個 DO」，因為在清單之間移動任務會跨 DO，改成這樣。） |
 | 對外網址 | `https://daydo-api.audichuang.app`，前面加 Cloudflare Access：App 每個請求都帶 service token 的 `CF-Access-Client-Id`／`CF-Access-Client-Secret`；Worker 驗 `Cf-Access-Jwt-Assertion`；關掉 `workers.dev` 與 preview 網址。token 編在 App 裡、拆得出來，只擋亂打的流量，真正的保護是帳號登入。設定照既有的 `OkiBus API (iOS app only)` Access 應用程式，用 `cf` CLI 操作。 |
-| 第一次登入 | 登入回應帶：帳號有沒有資料、伺服器上的「我」與收件匣 id。新裝置（平板、重新安裝）：不建預設資料，直接把全部資料拉下來；帳號沒資料才建預設資料並上傳。已在用的舊版手機（本機有資料）：帳號沒資料就整份上傳；帳號有資料就把本機「我」與收件匣換成伺服器的 id、丟掉沒動過且沒任務的預設清單，其他照常上傳。 |
+| 第一次登入 | 登入回應帶：帳號有沒有資料、伺服器上的「我」與收件匣 id。新裝置（平板、重新安裝）：不建預設資料，直接把全部資料拉下來；帳號沒資料才建預設資料並上傳。已在用的舊版手機（本機有資料）：帳號沒資料就整份上傳；帳號有資料就把本機「我」與收件匣換成伺服器的 id、丟掉沒動過且沒任務的預設清單，其他照常上傳。id 對應要在第一次 push 前、同一個交易裡完成，**連尚未送出的 outbox 一起改**：`row` 裡的引用、`entityId`（含 projectMember 的複合鍵）與 op 的 `projectId`；被丟掉的預設清單，它們的建立 op 一併刪掉。 |
 | 永久刪除與副本 id | App 用 `purgedId` 記住永久刪除過的 id（含套用伺服器 tombstone 時），重複任務副本的確定性 id 已被刪過就改用隨機 id。 |
 | push 批次 | App 每批 50 個 op；伺服器上限維持 200，部署後實測再調。 |
 | 共享清單 | 用邀請連結：擁有者產生連結、用訊息傳給對方，對方登入後加入。`projectInvite.email` 只用來顯示「邀請了誰」。 |
@@ -36,16 +36,31 @@
 
 送出時機：每次寫入後（延遲約 1 秒，把連續的寫入合成一批）、回到前景、網路恢復、開 App。不比對兩邊的 ID 清單：重送所有未收到 ack 的 op，伺服器靠 opId 去重。
 
-## 範圍（scope）
+## 範圍（scope）與權限
 
-- 範圍 id 是 `u:<userId>`，一個使用者一個，對應一個 DO 實例。這個 DO 的 SQLite 存他建立的所有資料列；寫入都在 `transactionSync` 裡做，DO 的 SQLite 是同步呼叫，天然一次只處理一個請求，不需要自己排隊（2026-11-15 在 void 1.8.0 本機實測：20 個同時呼叫依序得到 1 到 20、交易失敗會回滾、兩個 DO 互不影響、dev server 重開資料還在）。
-- **清單歸屬**：D1 的 `projectHome(projectId → homeUserId)` 記錄每份清單住在哪個範圍。清單第一次被推上來時，歸屬設為推送者。共享、轉移擁有者都不改歸屬。
-- **op 怎麼找到範圍**：屬於某份清單的資料（project、task、checklistItem、attachment、comment、projectMember、projectInvite）由 App 在寫入當下把清單 id 記在 op 的 `projectId`；Worker 用它查 `projectHome`。不屬於清單的資料（member、folder、tag）一律進推送者自己的範圍。v5 之前沒有記 `projectId` 的舊 op 都是登入前寫的，進推送者自己的範圍。
-- **權限**：對某份清單的 op，推送者必須是它的歸屬者，或是 D1 `projectMembership` 裡角色為 owner／editor 的成員；viewer 與非成員回 `rejected`（不附資料列）。
-- **看得到什麼**：自己範圍的全部資料，加上別人範圍裡、自己是成員的那幾份清單的資料。範圍 DO 的每一列都存它所屬的 `projectId`（子列存其任務的清單），pull 別人的範圍時只回這些清單的列。
-- **資料列離開共享清單**：任務在同一個範圍內從共享清單移到私人清單時，原清單的其他成員要在本機刪掉它。範圍 DO 在列上記下它最後一個共享清單，pull 給那份清單的成員時回 `{entity, entityId, gone: true}`；App 收到就在本機硬刪除這一列（不寫 outbox，不記 `purgedId`，id 之後還可能回來）。
-- **加入或離開共享清單**：加入時 App 用 pull 的 `backfill: [projectId]` 拿那份清單的全部資料（不受游標限制）；離開或被移除時，pull 回應的成員清單不再有它，App 刪掉本機那份清單的資料。
-- **跨範圍移動**（把任務移到別人建立的清單）：做法在 T5c 定案前不支援，Worker 對 `projectId` 改到另一個範圍的 op 回 `rejected`，原因 `cross-scope move`。
+- **範圍**：id 是 `u:<userId>`，一個使用者一個 DO 實例，存他建立的所有資料列。寫入都在 `transactionSync` 裡做；DO 的 SQLite 是同步呼叫，天然一次只處理一個請求，不需要自己排隊（2026-11-15 在 void 1.8.0 本機實測：20 個同時呼叫依序得到 1 到 20、交易失敗會回滾、兩個 DO 互不影響、dev server 重開資料還在）。
+- **資料不搬家**：一筆資料建立在哪個範圍，就永遠在那裡（之後的共享、轉移擁有者、成員進出都不搬）。D1 的 `projectHome(projectId → homeUserId)` 記錄每份清單住在哪個範圍，只用來**找路**，不代表權限。
+- **權限只看 D1 的成員資格**：`projectMembership(projectId, userId, role)` 是唯一來源，建立者也一樣。清單第一次被推上來時，Worker 在 D1 寫入 `projectHome` 與建立者的 owner 成員資格（重送不重複）。每份清單只有一個 owner。
+
+  | 角色 | 讀 | 寫任務與子項目、清單的顯示欄位 | 刪除／封存清單、成員與邀請、轉移 |
+  |---|---|---|---|
+  | owner | ✓ | ✓ | ✓ |
+  | editor | ✓ | ✓ | ✗ |
+  | viewer | ✓ | ✗ | ✗ |
+
+  member、folder、tag 只屬於自己，只能寫自己範圍裡的。
+
+- **op 的 `projectId` 只是找路的提示**：Worker 依它和 `projectHome` 決定送去哪個範圍，並把推送者在那個範圍的成員資格一起交給 DO。DO 以**資料列目前所在的清單**判斷權限（既有列看它自己的 `projectId`，子列看所屬任務目前的清單），不信 op 自報的值。改了 `projectId` 的 op（移動）要同時有來源清單和目的清單的寫入權。
+- **新建與未知的列**：DO 找不到這一列時，只有 `fields` 涵蓋該 entity 所有必填欄位的 upsert 才算新建；只改部分欄位卻找不到列（例如跨範圍移動、或對方範圍不知道的 id）回 `rejected`，原因 `unknown-row`，不會憑空建出一筆。
+- **跨範圍移動**（任務移到別人建立的清單）：伺服器不支援。App 用 pull 回應的 `memberships` 得知每份清單在哪個範圍；來源和目的不同範圍時，App 在目的清單建一筆新 id 的複本（含子項目），再永久刪除原任務。代價：另一台裝置對原任務尚未送出的修改會被丟掉。`restoreTask` 要把任務改回收件匣時，只能改回同一範圍的清單；原清單在別人範圍且已刪除時不能還原。
+- **任務在範圍內移動**：DO 在同一個交易裡把它的 checklist、附件、留言的清單標記一起改掉，全部給新的 serverSeq，並為離開的清單寫入離開紀錄（下一條）。
+- **離開紀錄（gone）**：DO 另存 `departure(entity, entityId, projectId, serverSeq)`：資料列離開某份清單（移動、清單被永久刪除）時寫一筆。pull 時，對那份清單的成員回 `{entity, entityId, gone: true, serverSeq}`。同一範圍內依 serverSeq 順序套用，所以「離開後又移回來」會先刪再建，最後是在的。App 收到 gone 就在本機硬刪除這一列與它的子列、丟掉它尚未送出的 op（不記 `purgedId`，id 之後還可能回來）。
+- **被拒絕時**：推送者仍讀得到這一列 → `rejected` 附目前的 `row` 與 `clocks`，App 照它覆蓋（例如被降成 viewer 後離線改的標題會被還原）；讀不到了 → `rejected` 附 `gone: true`，App 照上一條處理。
+- **成員與邀請不走一般同步**：projectMember 與 projectInvite 只能由 owner 透過專用 API 改（見 Endpoint），先寫 D1、再由伺服器投影到範圍 DO 的 projectMember 列（給 App 顯示）。投影是冪等的；寫完 D1 但投影失敗時，下一次 pull 該清單前 Worker 會比對 D1 與 DO 補齊。App 送來的 projectMember／projectInvite op 一律 `rejected`（附目前的列）。App 端「等待同步」的邀請在登入且連線後改成呼叫建立邀請的 API。
+- **共享清單需要的其他資料**：
+  - 成員的顯示資料（名字、縮寫、顏色）存在 D1 的 `user`，使用者推送自己的 member 列時 Worker 一併更新 D1。pull 回應的 `members` 帶「與我共享任何一份清單的人」的 member 列（id 是對方的 `meMemberId`），App 照一般資料列套用。
+  - `project.folderId` 是個人分類：只有清單所在範圍的使用者能改。pull 別人範圍的清單時不帶 `folderId`，App 對別人範圍的清單保留本機的 `folderId`，也不送這個欄位。
+- **加入或離開共享清單**：加入時 App 用 pull 的 `backfill: [projectId]` 拿那份清單的全部資料（不受游標限制）；離開、被移除或清單被刪時，pull 回應的 `memberships` 不再有它，App 刪掉本機那份清單的資料與相關的待送 op。
 
 ## 線上格式（App 與 Worker 共用，兩邊各自實作前先以這裡為準）
 
@@ -132,18 +147,21 @@
 | DELETE | `/account` | 刪除帳號與所有資料（之後做，上架前必須有） |
 | POST | `/sync/push` | `{deviceId, ops: [{opId, hlc, entity, entityId, op, fields, row, projectId?}]}`（最多 200）→ `{results: [{opId, status, reason?, row, clocks}], serverTime}`，`results` 與 `ops` 同順序 |
 | POST | `/sync/pull` | `{cursors: {"u:<id>": seq}, backfill?: [projectId], limit?}` → `{scopes: [{scope, rows: [{entity, row, clocks, serverSeq} \| {entity, entityId, gone: true, serverSeq}], cursor, hasMore}], memberships: [{projectId, scope, role}]}`；沒給游標的範圍從 0 開始 |
-| POST | `/invites` | `{projectId, role}`（owner 才能建）→ `{code, url: "daydo://invite/<code>", expiresAt}` |
+| POST | `/invites` | `{projectId, role, email?}`（owner 才能建；email 只用來顯示）→ `{code, url: "daydo://invite/<code>", expiresAt}` |
 | GET | `/invites/<code>` | → `{projectName, inviterName, role, expiresAt}`（讓 App 顯示「誰邀你加入哪份清單」） |
 | POST | `/invites/<code>/accept` | 加入成員，並在歸屬範圍寫入一筆 projectMember → `{projectId, scope, role}` |
 | DELETE | `/invites/<code>` | owner 撤銷邀請 |
+| PUT | `/projects/<id>/members/<userId>` | owner 改角色 `{role}`（editor／viewer） |
+| DELETE | `/projects/<id>/members/<userId>` | owner 移除成員；成員也可以移除自己（離開） |
+| POST | `/projects/<id>/transfer` | `{toUserId, expectedOwnerUserId}`：轉移擁有者，`expectedOwnerUserId` 不符回 409；原 owner 變 editor |
 | GET | `/sync/ws` | WebSocket，只推送「某範圍有新資料」，資料一律用 pull 取得（之後做） |
 
 邀請碼是 128-bit 隨機值（base64url），D1 只存雜湊；7 天內有效，可以多人使用，owner 可撤銷。邀請碼是核心，`daydo://invite/<code>` 只是外殼：iOS、iPadOS、macOS 原生 App 都能註冊這個 scheme；之後做 Web 時加 `https://…/invite/<code>` 網頁，打同一個 API。
 
 ## 儲存
 
-- **D1**：`user`（含 `meMemberId`）、`identity(provider, sub, userId)`、`session`、`device`、`projectHome(projectId, homeUserId)`、`projectMembership(projectId, userId, role, createdAt, removedAt)`、`invite(codeHash, projectId, role, createdBy, expiresAt, revokedAt)`。資料表不放 D1。
-- **範圍 DO 的 SQLite**：各 entity 一張表（欄位同 App，加 `clocks`、`serverSeq`、`purgedAt`、`projectId`、最後共享清單），`opApplied(opId, status, serverSeq)`，`counter`（範圍內的 serverSeq）。
+- **D1**：`user`（含 `meMemberId` 與名字、縮寫、顏色）、`identity(provider, sub, userId)`、`session`、`device`、`projectHome(projectId, homeUserId)`、`projectMembership(projectId, userId, role, createdAt, removedAt)`、`invite(codeHash, projectId, role, createdBy, expiresAt, revokedAt)`。資料表不放 D1。
+- **範圍 DO 的 SQLite**：各 entity 一張表（欄位同 App，加 `clocks`、`serverSeq`、`purgedAt`，子列另存所屬清單），`departure`（離開紀錄），`opApplied(opId, status, serverSeq)`，`counter`（範圍內的 serverSeq）。
 - 舊的單一寫入 DO（`writer`）與 D1 的資料表在 T5a 移除；從未部署過，不用搬資料。
 - 測試要能證明並發被正確處理：e2e 的 concurrency 情境保留；DO SQLite 本身就依序執行，所以改用只在開發建置有效的故障注入（例如在讀 `clocks` 和寫入之間故意 `await`），開啟時該情境必須失敗。
 
@@ -151,9 +169,9 @@
 
 1. ✓ App：migration `v3`、HLC、op 序列化。✓ `v4` `purgedId`。
 2. ✓ Worker 第一版：登入、push、pull（單一寫入 DO＋D1，本機）。
-3. T5a Worker：資料改到範圍 DO（單一使用者，先不做共享），App 端 migration `v5` 的 `change.projectId` 與 fixture 一起改。
+3. T5a Worker：資料改到範圍 DO（單一使用者，先不做共享；範圍內移動要帶子列），「未知的列不憑空建立」規則，App 端 migration `v5` 的 `change.projectId` 與 fixture 一起改。
 4. T5b Worker：`serverTime`、登入回應的 `hasData`／`meMemberId`／`inboxProjectId`、兩台裝置的 e2e。T7 從這裡開始。
-5. T5c Worker：共享成員、邀請碼、`gone`、加入時的 backfill、跨範圍移動的做法。
+5. T5c Worker：成員與邀請 API、權限矩陣、成員投影、`gone` 與離開紀錄、加入時的 backfill、共享清單的 members 與 folderId 規則。
 6. T6：Access 驗證、部署到 `daydo-api.audichuang.app`、對公開網址跑 e2e。
 7. T7 App：同步引擎與兩台裝置收斂測試。T8 App：登入畫面、邀請連結畫面。
 8. WebSocket 通知、MCP。
