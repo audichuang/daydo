@@ -117,12 +117,25 @@ final class AppModel {
     }
 
     func deleteSelectedTask(id: String) {
+        let inTrash = scope == .smart(.trash)
         Task {
-            guard let task = try? await api.getTask(id: id),
-                  !isViewer(projectId: task.projectId) else { return }
+            guard let task = try? await api.getTask(id: id) else {
+                if selectedTaskId == id {
+                    selectedTaskId = nil
+                }
+                return
+            }
             if task.deletedAt != nil {
-                await purgeTask(id: id)
-            } else {
+                if inTrash && scope == .smart(.trash) {
+                    await purgeTask(id: id)
+                } else if selectedTaskId == id {
+                    selectedTaskId = nil
+                }
+            } else if inTrash || scope == .smart(.trash) {
+                if selectedTaskId == id {
+                    selectedTaskId = nil
+                }
+            } else if !isViewer(projectId: task.projectId) {
                 await perform { try await $0.deleteTask(id: id) }
                 if selectedTaskId == id {
                     selectedTaskId = nil
@@ -132,7 +145,9 @@ final class AppModel {
     }
 
     func purgeTask(id: String) async {
-        guard let task = try? await api.getTask(id: id),
+        guard scope == .smart(.trash),
+              let task = try? await api.getTask(id: id),
+              scope == .smart(.trash),
               !isViewer(projectId: task.projectId),
               task.deletedAt != nil else { return }
         await perform { try await $0.purgeTask(id: id) }

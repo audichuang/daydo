@@ -29,6 +29,20 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "A9DA8234155D509E2ED69B50"
+               BuildableName = "DayDoTests.xctest"
+               BlueprintName = "DayDoTests"
+               ReferencedContainer = "container:DayDo.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "28B477599E33BE7FACE645FE"
                BuildableName = "DayDoUITests.xctest"
                BlueprintName = "DayDoUITests"
@@ -53,6 +67,17 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "A9DA8234155D509E2ED69B50"
+               BuildableName = "DayDoTests.xctest"
+               BlueprintName = "DayDoTests"
+               ReferencedContainer = "container:DayDo.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
          <TestableReference
             skipped = "NO"
             parallelizable = "NO">
