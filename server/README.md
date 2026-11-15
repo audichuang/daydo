@@ -106,14 +106,15 @@ node scripts/e2e-sync.mjs --only concurrency
 
 ## Deploy
 
-Set the required production secrets with `void secret put`:
+In a fresh checkout, link this directory to the Cloudflare account first (`.void/` is gitignored, so every new worktree needs this; `void.lock.json` already pins the account, Worker name and D1 database):
 
 ```bash
-npx void secret put JWT_SECRET
-npx void secret put GOOGLE_AUDIENCE
-npx void secret put ACCESS_TEAM_DOMAIN
-npx void secret put ACCESS_AUD
+npx void connect --platform cloudflare
 ```
+
+Production secrets are already set on the Worker. To change one, use `void secret put <NAME>` (reads stdin) or `void secret sync <file outside the repo> --yes`. Required: `JWT_SECRET`, `GOOGLE_AUDIENCE`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`.
+
+Do not run `vite build` or other builds in this directory while `void deploy` is running: a non-deploy build rewrites `dist/` and the deploy refuses the output.
 
 Deploy to Cloudflare Workers (behind Cloudflare Access at `https://daydo-api.audichuang.app`):
 
