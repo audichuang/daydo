@@ -772,7 +772,7 @@ describe('Scope DO T5a rules', () => {
     expect(homeRows).toHaveLength(0);
 
     const pulled = await h.pull(userId);
-    expect(pulled.scopes[0].rows).toHaveLength(1); // Only p-1
+    expect(pulled.scopes[0].rows.filter((r) => r.entity !== 'projectMember')).toHaveLength(1); // Only p-1 (plus owner projectMember)
   });
 
   it('moves task between lists, updates children projectId, bumps serverSeqs, and writes departure rows', async () => {

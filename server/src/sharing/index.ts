@@ -208,6 +208,7 @@ export async function acceptInvite(
     ON CONFLICT (projectId, userId) DO UPDATE SET
       role = CASE
         WHEN projectMembership.role = 'owner' THEN 'owner'
+        WHEN projectMembership.removedAt IS NULL THEN projectMembership.role
         ELSE excluded.role
       END,
       removedAt = NULL
@@ -223,15 +224,27 @@ export async function acceptInvite(
   const role: MembershipRole =
     roleRaw === 'owner' ? 'owner' : roleRaw === 'editor' ? 'editor' : 'viewer';
 
-  const [homeRows, userRows] = (await db.batch([
+  const [homeRows, userRows, ownerRows] = (await db.batch([
     db
       .select({ scope: entityHome.scope })
       .from(entityHome)
       .where(and(eq(entityHome.entity, 'project'), eq(entityHome.entityId, projectId))),
     db.select({ meMemberId: user.meMemberId }).from(user).where(eq(user.id, params.userId)),
+    db
+      .select({ userId: projectMembership.userId, meMemberId: user.meMemberId })
+      .from(projectMembership)
+      .leftJoin(user, eq(projectMembership.userId, user.id))
+      .where(
+        and(
+          eq(projectMembership.projectId, projectId),
+          eq(projectMembership.role, 'owner'),
+          isNull(projectMembership.removedAt),
+        ),
+      ),
   ] as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]])) as [
     Array<{ scope: string }>,
     Array<{ meMemberId: string | null }>,
+    Array<{ userId: string; meMemberId: string | null }>,
   ];
 
   const homeScope = homeRows[0]?.scope;
@@ -239,13 +252,26 @@ export async function acceptInvite(
     throw new SharingError(404, 'Project not found');
   }
 
-  if (role === 'editor' || role === 'viewer') {
-    const memberId = resolveMemberId(params.userId, userRows[0]?.meMemberId ?? null);
+  const projections: Array<{ memberId: string; role: MembershipRole }> = [];
+  const ownerRow = ownerRows[0];
+  if (ownerRow) {
+    projections.push({
+      memberId: resolveMemberId(ownerRow.userId, ownerRow.meMemberId ?? null),
+      role: 'owner',
+    });
+  }
+  if (!ownerRow || ownerRow.userId !== params.userId) {
+    projections.push({
+      memberId: resolveMemberId(params.userId, userRows[0]?.meMemberId ?? null),
+      role,
+    });
+  }
+  for (const proj of projections) {
     try {
       await params.getScopeStub(homeScope).projectMember({
         projectId,
-        memberId,
-        role,
+        memberId: proj.memberId,
+        role: proj.role,
         deleted: false,
         nowMs: now,
       });

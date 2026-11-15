@@ -409,7 +409,12 @@ describe('T5c sharing — invites, membership, permissions, backfill, and purge'
     // Before pull, A's DO has no projectMember row for B.
     const prePullA = await h.pull(uA);
     const scopeA = prePullA.scopes.find((s) => s.scope === `u:${uA}`)!;
-    const projectedRow = scopeA.rows.find((r) => r.entity === 'projectMember');
+    const projectedRow = scopeA.rows.find(
+      (r) =>
+        r.entity === 'projectMember' &&
+        'row' in r &&
+        r.row.memberId === resolveMemberId(uB, null),
+    );
     expect(projectedRow).toMatchObject({
       entity: 'projectMember',
       row: {
@@ -752,5 +757,280 @@ describe('T5c sharing — invites, membership, permissions, backfill, and purge'
       status: 'rejected',
       reason: 'Project is purged',
     });
+  });
+
+  it('executes earlier move ops before permanent-delete purge in the same batch and preserves order for later ops', async () => {
+    const h = createHarness();
+    const uA = 'user-a';
+    await seedUsers(h, [{ id: uA }]);
+
+    const setup = await h.push(uA, 'dev-a', [
+      makeProjectOp({ opId: 'op-p1', hlc: '1700000000000:0000:dev-a', id: 'p-1', name: 'Old' }),
+      makeProjectOp({ opId: 'op-p2', hlc: '1700000000001:0000:dev-a', id: 'p-2', name: 'Keep' }),
+      makeProjectOp({ opId: 'op-p3', hlc: '1700000000002:0000:dev-a', id: 'p-3', name: 'Other' }),
+      makeTaskOp({
+        opId: 'op-t1',
+        hlc: '1700000000003:0000:dev-a',
+        id: 't-1',
+        projectId: 'p-1',
+        title: 'Saved Task',
+      }),
+    ]);
+    expect(setup.results.every((r) => r.status === 'applied')).toBe(true);
+
+    // Batch: [move t-1 to p-2, delete p-1] -> move must run before p-1 is purged.
+    const moveThenDelete = await h.push(uA, 'dev-a', [
+      {
+        opId: 'op-move-t1',
+        hlc: '1700000000010:0000:dev-a',
+        entity: 'task',
+        entityId: 't-1',
+        op: 'upsert',
+        fields: ['projectId', 'updatedAt'],
+        row: { id: 't-1', projectId: 'p-2', updatedAt: 2000 },
+      },
+      {
+        opId: 'op-del-p1',
+        hlc: '1700000000011:0000:dev-a',
+        entity: 'project',
+        entityId: 'p-1',
+        op: 'delete',
+        fields: [],
+        row: {},
+      },
+    ]);
+    expect(moveThenDelete.results[0]).toMatchObject({
+      status: 'applied',
+      row: { id: 't-1', projectId: 'p-2' },
+    });
+    expect(moveThenDelete.results[0].row?.purgedAt).toBeUndefined();
+    expect(moveThenDelete.results[1].status).toBe('applied');
+    expect(moveThenDelete.results[1].row?.purgedAt).toEqual(expect.any(Number));
+
+    // Confirm t-1 survived in p-2 after p-1 purge.
+    const afterPull = await h.pull(uA);
+    const scopeARows = afterPull.scopes.find((s) => s.scope === `u:${uA}`)!.rows;
+    const taskRow = scopeARows.find(
+      (r) => r.entity === 'task' && 'row' in r && r.row.id === 't-1',
+    ) as { row: Record<string, unknown> } | undefined;
+    expect(taskRow?.row.projectId).toBe('p-2');
+    expect(taskRow?.row.purgedAt).toBeUndefined();
+
+    // Reverse order in same batch: [delete p-2, move t-1 (in p-2) to p-3] -> delete runs first, move is rejected.
+    const deleteThenMove = await h.push(uA, 'dev-a', [
+      {
+        opId: 'op-del-p2',
+        hlc: '1700000000020:0000:dev-a',
+        entity: 'project',
+        entityId: 'p-2',
+        op: 'delete',
+        fields: [],
+        row: {},
+      },
+      {
+        opId: 'op-move-t1-late',
+        hlc: '1700000000021:0000:dev-a',
+        entity: 'task',
+        entityId: 't-1',
+        op: 'upsert',
+        fields: ['projectId', 'updatedAt'],
+        row: { id: 't-1', projectId: 'p-3', updatedAt: 3000 },
+      },
+    ]);
+    expect(deleteThenMove.results[0].status).toBe('applied');
+    expect(deleteThenMove.results[1]).toMatchObject({
+      status: 'rejected',
+      reason: 'Project is purged',
+    });
+  });
+
+  it('keeps existing active role when re-accepting an invite or accepting a different-role invite link', async () => {
+    const h = createHarness();
+    const uA = 'user-a';
+    const uB = 'user-b';
+    const uC = 'user-c';
+    await seedUsers(h, [{ id: uA }, { id: uB }, { id: uC }]);
+
+    await h.push(uA, 'dev-a', [
+      makeProjectOp({ opId: 'op-p1', hlc: '1700000000000:0000:dev-a', id: 'p-1', name: 'Family' }),
+    ]);
+
+    const editorInv = await createInvite(h.db, {
+      userId: uA,
+      projectId: 'p-1',
+      role: 'editor',
+      nowMs: 1_700_000_000_000,
+    });
+    const viewerInv = await createInvite(h.db, {
+      userId: uA,
+      projectId: 'p-1',
+      role: 'viewer',
+      nowMs: 1_700_000_000_100,
+    });
+
+    // B accepts editor invite, then owner downgrades B to viewer.
+    await acceptInvite(h.db, {
+      code: editorInv.code,
+      userId: uB,
+      getScopeStub: h.getScopeStub,
+      nowMs: 1_700_000_001_000,
+    });
+    await updateProjectMemberRole(h.db, {
+      projectId: 'p-1',
+      targetUserId: uB,
+      requesterUserId: uA,
+      role: 'viewer',
+      getScopeStub: h.getScopeStub,
+      nowMs: 1_700_000_002_000,
+    });
+
+    // Re-accepting the same editor invite must NOT promote B back to editor.
+    const reAcceptB = await acceptInvite(h.db, {
+      code: editorInv.code,
+      userId: uB,
+      getScopeStub: h.getScopeStub,
+      nowMs: 1_700_000_003_000,
+    });
+    expect(reAcceptB.role).toBe('viewer');
+
+    // C accepts editor invite, then accepts a viewer invite -> must stay editor.
+    await acceptInvite(h.db, {
+      code: editorInv.code,
+      userId: uC,
+      getScopeStub: h.getScopeStub,
+      nowMs: 1_700_000_004_000,
+    });
+    const acceptViewerLinkC = await acceptInvite(h.db, {
+      code: viewerInv.code,
+      userId: uC,
+      getScopeStub: h.getScopeStub,
+      nowMs: 1_700_000_005_000,
+    });
+    expect(acceptViewerLinkC.role).toBe('editor');
+
+    // Verify D1 memberships remain viewer for B and editor for C.
+    const d1Rows = await h.db
+      .select({ userId: schema.projectMembership.userId, role: schema.projectMembership.role })
+      .from(schema.projectMembership)
+      .where(eq(schema.projectMembership.projectId, 'p-1'));
+    expect(Object.fromEntries(d1Rows.map((r) => [r.userId, r.role]))).toEqual({
+      [uA]: 'owner',
+      [uB]: 'viewer',
+      [uC]: 'editor',
+    });
+
+    // After B is removed (removedAt != NULL), accepting the editor invite again grants editor.
+    await removeProjectMember(h.db, {
+      projectId: 'p-1',
+      targetUserId: uB,
+      requesterUserId: uA,
+      getScopeStub: h.getScopeStub,
+      nowMs: 1_700_000_006_000,
+    });
+    const rejoinB = await acceptInvite(h.db, {
+      code: editorInv.code,
+      userId: uB,
+      getScopeStub: h.getScopeStub,
+      nowMs: 1_700_000_007_000,
+    });
+    expect(rejoinB.role).toBe('editor');
+  });
+
+  it('projects and reconciles owner projectMember on acceptInvite and new-device backfill for both A and B', async () => {
+    const h = createHarness();
+    const uA = 'user-a';
+    const uB = 'user-b';
+    await seedUsers(h, [{ id: uA }, { id: uB }]);
+
+    // A pushes meMemberId, shared project p-1, private project p-2, and an App-sent projectMember (rejected).
+    const pushA = await h.push(uA, 'dev-a', [
+      makeMemberOp({ opId: 'op-ma', hlc: '1700000000000:0000:dev-a', id: 'mem-a', name: 'Alice' }),
+      makeProjectOp({ opId: 'op-p1', hlc: '1700000000001:0000:dev-a', id: 'p-1', name: 'Shared' }),
+      makeProjectOp({ opId: 'op-p2', hlc: '1700000000002:0000:dev-a', id: 'p-2', name: 'Private' }),
+      {
+        opId: 'op-pm-app',
+        hlc: '1700000000003:0000:dev-a',
+        entity: 'projectMember',
+        entityId: 'p-1:mem-a',
+        op: 'upsert',
+        fields: ['projectId', 'memberId', 'role', 'createdAt', 'updatedAt'],
+        row: {
+          projectId: 'p-1',
+          memberId: 'mem-a',
+          role: 'owner',
+          createdAt: 1000,
+          updatedAt: 1000,
+        },
+      },
+    ]);
+    expect(pushA.results[0].status).toBe('applied');
+    expect(pushA.results[1].status).toBe('applied');
+    expect(pushA.results[2].status).toBe('applied');
+    expect(pushA.results[3].status).toBe('rejected');
+
+    await h.push(uB, 'dev-b', [
+      makeMemberOp({ opId: 'op-mb', hlc: '1700000000004:0000:dev-b', id: 'mem-b', name: 'Bob' }),
+    ]);
+
+    const inv = await createInvite(h.db, {
+      userId: uA,
+      projectId: 'p-1',
+      role: 'editor',
+      nowMs: 1_700_000_010_000,
+    });
+    await acceptInvite(h.db, {
+      code: inv.code,
+      userId: uB,
+      getScopeStub: h.getScopeStub,
+      nowMs: 1_700_000_011_000,
+    });
+
+    // acceptInvite itself must have projected BOTH owner (mem-a) and editor (mem-b) into A's DO.
+    const directScopePull = await h.getScopeStub(`u:${uA}`).pull({
+      scope: `u:${uA}`,
+      scopeUserId: uA,
+      requesterUserId: uB,
+      since: 0,
+      limit: 100,
+      memberships: { 'p-1': 'editor' },
+      backfillProjectIds: ['p-1'],
+      meMemberId: null,
+    });
+    const directMembers = directScopePull.rows
+      .filter((r) => r.entity === 'projectMember' && 'row' in r)
+      .map((r) => (r as { row: Record<string, unknown> }).row);
+    expect(directMembers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ projectId: 'p-1', memberId: 'mem-a', role: 'owner' }),
+        expect.objectContaining({ projectId: 'p-1', memberId: 'mem-b', role: 'editor' }),
+      ]),
+    );
+
+    // New-device backfill of p-1 for B returns owner (mem-a) and editor (mem-b).
+    const backfillB = await h.pull(uB, { backfill: ['p-1'] });
+    const membersB = backfillB.scopes
+      .find((s) => s.scope === `u:${uA}`)!
+      .rows.filter((r) => r.entity === 'projectMember' && 'row' in r)
+      .map((r) => (r as { row: Record<string, unknown> }).row);
+    expect(membersB).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ projectId: 'p-1', memberId: 'mem-a', role: 'owner' }),
+        expect.objectContaining({ projectId: 'p-1', memberId: 'mem-b', role: 'editor' }),
+      ]),
+    );
+
+    // New-device backfill of p-1 (shared) and p-2 (unshared) for A returns owner row too via reconcile.
+    const backfillA = await h.pull(uA, { backfill: ['p-1', 'p-2'] });
+    const membersA = backfillA.scopes
+      .find((s) => s.scope === `u:${uA}`)!
+      .rows.filter((r) => r.entity === 'projectMember' && 'row' in r)
+      .map((r) => (r as { row: Record<string, unknown> }).row);
+    expect(membersA).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ projectId: 'p-1', memberId: 'mem-a', role: 'owner' }),
+        expect.objectContaining({ projectId: 'p-1', memberId: 'mem-b', role: 'editor' }),
+        expect.objectContaining({ projectId: 'p-2', memberId: 'mem-a', role: 'owner' }),
+      ]),
+    );
   });
 });

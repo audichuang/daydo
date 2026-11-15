@@ -363,12 +363,25 @@ async function runFixtureScenario({ baseUrl, jwks }) {
 
   const expected = computeFixtureExpectedState(fixture.ops);
   const pulledByKey = new Map();
+  const pulledProjectMembers = [];
   for (const item of slice.rows) {
+    if (item.entity === 'projectMember') {
+      pulledProjectMembers.push(item);
+      continue;
+    }
     const eid = item.entity === 'tag' ? item.row.name : item.row.id;
     pulledByKey.set(`${item.entity}:${eid}`, item);
   }
 
   assert.equal(pulledByKey.size, expected.size, 'Pulled row count should match fixture entity count');
+  assert.equal(
+    pulledProjectMembers.length,
+    pullRes.data.memberships.length,
+    'Each owned project must have a projected owner projectMember row',
+  );
+  for (const pm of pulledProjectMembers) {
+    assert.equal(pm.row.role, 'owner');
+  }
 
   for (const [key, exp] of expected) {
     const got = pulledByKey.get(key);
@@ -403,9 +416,9 @@ async function runFixtureScenario({ baseUrl, jwks }) {
   const projectEntities = new Set(backfillSlice.rows.map((r) => r.entity));
   assert.equal(projectEntities.has('member'), false);
   assert.equal(projectEntities.has('tag'), false);
-  assert.equal(projectEntities.has('projectMember'), false);
+  assert.equal(projectEntities.has('projectMember'), true);
   assert.equal(projectEntities.has('projectInvite'), false);
-  assert.equal(backfillSlice.rows.length, 6); // 1 project + 3 tasks + 2 checklistItems
+  assert.equal(backfillSlice.rows.length, 7); // 1 project + 1 owner projectMember + 3 tasks + 2 checklistItems
 }
 
 async function runLwwScenario({ baseUrl, jwks }) {
@@ -639,7 +652,7 @@ async function runReplayScenario({ baseUrl, jwks }) {
   const pull1 = await pullSync(baseUrl, user.token, { cursors: {} });
   assert.equal(pull1.status, 200);
   const slice1 = getScopeSlice(pull1.data, user.scope);
-  assert.equal(slice1.rows.length, 2);
+  assert.equal(slice1.rows.length, 3); // 1 project + 1 task + 1 owner projectMember
   const taskRow1 = slice1.rows.find((r) => r.entity === 'task' && r.row?.id === taskId);
   assert(taskRow1);
   const seq1 = slice1.cursor;
@@ -660,7 +673,7 @@ async function runReplayScenario({ baseUrl, jwks }) {
   const fullPull = await pullSync(baseUrl, user.token, { cursors: {} });
   assert.equal(fullPull.status, 200);
   const fullSlice = getScopeSlice(fullPull.data, user.scope);
-  assert.equal(fullSlice.rows.length, 2);
+  assert.equal(fullSlice.rows.length, 3);
   const fullTask = fullSlice.rows.find((r) => r.entity === 'task' && r.row?.id === taskId);
   assert.equal(fullTask.serverSeq, taskRow1.serverSeq);
 }
@@ -670,7 +683,7 @@ async function runPagingScenario({ baseUrl, jwks }) {
   const projectId = randomUUID();
   const now = Date.now();
   const taskCount = 64;
-  const totalRows = taskCount + 1; // 1 project + 64 tasks = 65 rows
+  const totalRows = taskCount + 2; // 1 project + 1 owner projectMember + 64 tasks = 66 rows
 
   const ops = [
     makeProjectOp({ hlc: makeHlc(now, 0, user.deviceId), projectId, ownerId: user.userId, now }),
@@ -688,7 +701,7 @@ async function runPagingScenario({ baseUrl, jwks }) {
 
   const push = await postJson(baseUrl, '/sync/push', { deviceId: user.deviceId, ops }, user.token);
   assert.equal(push.status, 200);
-  assert.equal(push.data.results.length, totalRows);
+  assert.equal(push.data.results.length, ops.length);
 
   let cursor = 0;
   let hasMore = true;
@@ -709,7 +722,9 @@ async function runPagingScenario({ baseUrl, jwks }) {
       assert(slice.cursor > cursor);
     }
     for (const r of slice.rows) {
-      receivedIds.push(r.row.id);
+      receivedIds.push(
+        r.entity === 'projectMember' ? `${r.row.projectId}:${r.row.memberId}` : r.row.id,
+      );
     }
     cursor = slice.cursor;
     hasMore = slice.hasMore;
@@ -1307,7 +1322,14 @@ function createDeviceReplica({ baseUrl, loginData, deviceId }) {
     outbox: [],
   };
 
-  const rowKey = (entity, row) => `${entity}:${entity === 'tag' ? row.name : row.id}`;
+  const rowKey = (entity, row) =>
+    `${entity}:${
+      entity === 'tag'
+        ? row.name
+        : entity === 'projectMember'
+          ? `${row.projectId}:${row.memberId}`
+          : row.id
+    }`;
 
   const applyServerRow = (entity, row, clocks) => {
     const key = rowKey(entity, row);
@@ -1508,7 +1530,7 @@ async function runTwoDeviceScenario({ baseUrl, jwks }) {
 
   const dev2 = createDeviceReplica({ baseUrl, loginData: login2, deviceId: dev2Id });
   const dev2InitialPull = await dev2.pull();
-  assert.equal(dev2InitialPull.rows.length, 6);
+  assert.equal(dev2InitialPull.rows.length, 8); // 1 member + 2 projects + 2 owner projectMembers + 3 tasks
   assert.deepEqual(dev2.snapshotRows(), dev1.snapshotRows());
   assert.equal(dev2.state.rows.get(`member:${memberId}`).row.isMe, true);
 
@@ -1565,10 +1587,19 @@ async function runTwoDeviceScenario({ baseUrl, jwks }) {
   await dev1.pull();
   await dev2.pull();
 
+  const twoDeviceRowKey = (r) =>
+    `${r.entity}:${
+      r.entity === 'tag'
+        ? r.row.name
+        : r.entity === 'projectMember'
+          ? `${r.row.projectId}:${r.row.memberId}`
+          : r.row.id
+    }`;
+
   const serverCheck1 = await pullSync(baseUrl, dev1.state.token, { cursors: {} });
   const serverRows1 = Object.fromEntries(
     getScopeSlice(serverCheck1.data, dev1.state.scope)
-      .rows.map((r) => [`${r.entity}:${r.row.id}`, r.row])
+      .rows.map((r) => [twoDeviceRowKey(r), r.row])
       .sort(([a], [b]) => a.localeCompare(b)),
   );
 
@@ -1608,7 +1639,7 @@ async function runTwoDeviceScenario({ baseUrl, jwks }) {
   const serverCheck2 = await pullSync(baseUrl, dev2.state.token, { cursors: {} });
   const serverRows2 = Object.fromEntries(
     getScopeSlice(serverCheck2.data, dev2.state.scope)
-      .rows.map((r) => [`${r.entity}:${r.row.id}`, r.row])
+      .rows.map((r) => [twoDeviceRowKey(r), r.row])
       .sort(([a], [b]) => a.localeCompare(b)),
   );
 
@@ -1800,6 +1831,12 @@ async function runSharingScenario({ baseUrl, jwks }) {
   const bProjRow = bSliceA.rows.find((r) => r.entity === 'project' && r.row?.id === sharedList);
   assert(bProjRow, 'Expected sharedList project row in backfill');
   assert.equal(Object.hasOwn(bProjRow.row, 'folderId'), false, 'Non-creator must not receive folderId');
+  assert(
+    bSliceA.rows.some(
+      (r) => r.entity === 'projectMember' && r.row?.projectId === sharedList && r.row?.memberId === meA && r.row?.role === 'owner',
+    ),
+    'Expected owner projectMember row in B backfill',
+  );
   assert(bSliceA.rows.some((r) => r.entity === 'task' && r.row?.id === task1));
   assert(bSliceA.rows.some((r) => r.entity === 'checklistItem' && r.row?.id === child1));
   assert(bSliceA.rows.some((r) => r.entity === 'task' && r.row?.id === task2));

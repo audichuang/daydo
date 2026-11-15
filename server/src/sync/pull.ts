@@ -202,7 +202,10 @@ export async function executeSyncPull(
         updatedAt: r.createdAt,
       });
     }
-    if (relevantSet.has(r.projectId) && (r.role === 'editor' || r.role === 'viewer')) {
+    if (
+      relevantSet.has(r.projectId) &&
+      (r.role === 'owner' || r.role === 'editor' || r.role === 'viewer')
+    ) {
       const home = projectHomeMap.get(r.projectId);
       if (home) {
         const expected = expectedMembersByHomeScope.get(home);

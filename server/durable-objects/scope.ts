@@ -50,13 +50,13 @@ export interface ScopePushResponse {
 
 export interface ExpectedProjectMember {
   memberId: string;
-  role: 'editor' | 'viewer';
+  role: MembershipRole;
 }
 
 export interface ScopeProjectMemberInput {
   projectId: string;
   memberId: string;
-  role: 'editor' | 'viewer';
+  role: MembershipRole;
   deleted: boolean;
   nowMs?: number;
 }
@@ -1437,8 +1437,10 @@ export class ScopeObject extends DurableObject<CloudBindings> {
       }
       for (const [mid, existing] of doMap) {
         if (existing.purgedAt === null && existing.row.deletedAt === null && !expectedMap.has(mid)) {
-          const existingRole =
-            existing.row.role === 'editor' || existing.row.role === 'viewer'
+          const existingRole: MembershipRole =
+            existing.row.role === 'owner' ||
+            existing.row.role === 'editor' ||
+            existing.row.role === 'viewer'
               ? existing.row.role
               : 'viewer';
           changes.push({ projectId: pid, memberId: mid, role: existingRole, deleted: true });

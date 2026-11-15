@@ -772,9 +772,68 @@ export async function executeSyncPush(
     }
   }
 
-  // Permanently delete lists requested by their owners (D1 purge + fan-out to listed scopes).
+  // Execute ops in original batch order: flush scope-grouped ops between owner project deletes
+  // so earlier moves/edits run before a list purge, and later ops observe the purged state.
   const extraServerTimes: string[] = [];
+  const scopeResponses: Array<{
+    scope: string;
+    group: Array<{ index: number; op: unknown }>;
+    response: ScopePushResponse;
+  }> = [];
+  let boundMeMemberId: string | null = null;
+
+  const pushRange = async (startIdx: number, endIdx: number): Promise<void> => {
+    const scopeGroups = new Map<string, Array<{ index: number; op: unknown }>>();
+    for (let i = startIdx; i < endIdx; i += 1) {
+      const scope = opTargetScope[i];
+      if (!scope) continue;
+      let group = scopeGroups.get(scope);
+      if (!group) {
+        group = [];
+        scopeGroups.set(scope, group);
+      }
+      group.push({ index: i, op: ops[i] });
+    }
+    if (scopeGroups.size === 0) return;
+
+    const purgedList = Array.from(purgedSet);
+    const membershipsSnapshot = { ...memberships };
+    const currentMeMemberId = boundMeMemberId ?? meMemberId;
+    const groupEntries = Array.from(scopeGroups.entries());
+    const segmentResponses = await Promise.all(
+      groupEntries.map(async ([scope, group]) => {
+        const scopeUserId = scope.startsWith('u:') ? scope.slice(2) : scope;
+        const stub = getScopeStub(scope);
+        const response = await stub.push({
+          scope,
+          scopeUserId,
+          pusherUserId: userId,
+          deviceId,
+          memberships: membershipsSnapshot,
+          purgedProjects: purgedList,
+          meMemberId: scope === pusherScope ? currentMeMemberId : null,
+          ops: group.map((g) => g.op),
+        });
+        return { scope, group, response };
+      }),
+    );
+
+    for (const entry of segmentResponses) {
+      scopeResponses.push(entry);
+      for (let j = 0; j < entry.group.length; j += 1) {
+        results[entry.group[j].index] = entry.response.results[j];
+      }
+      if (entry.scope === pusherScope && entry.response.boundMeMemberId) {
+        boundMeMemberId = entry.response.boundMeMemberId;
+      }
+    }
+  };
+
+  let segmentStart = 0;
   for (const del of ownerProjectDeletes) {
+    await pushRange(segmentStart, del.opIndex);
+    segmentStart = del.opIndex + 1;
+
     const purgeBatchResults = (await db.batch([
       db
         .insert(purgedProject)
@@ -849,53 +908,7 @@ export async function executeSyncPush(
       clocks: homeResult!.clocks,
     };
   }
-
-  // Group remaining ops by target scope preserving relative order.
-  const scopeGroups = new Map<string, Array<{ index: number; op: unknown }>>();
-  for (let i = 0; i < ops.length; i += 1) {
-    const scope = opTargetScope[i];
-    if (!scope) continue;
-    let group = scopeGroups.get(scope);
-    if (!group) {
-      group = [];
-      scopeGroups.set(scope, group);
-    }
-    group.push({ index: i, op: ops[i] });
-  }
-
-  const purgedList = Array.from(purgedSet);
-  const groupEntries = Array.from(scopeGroups.entries());
-  const scopeResponses: Array<{
-    scope: string;
-    group: Array<{ index: number; op: unknown }>;
-    response: ScopePushResponse;
-  }> = await Promise.all(
-    groupEntries.map(async ([scope, group]) => {
-      const scopeUserId = scope.startsWith('u:') ? scope.slice(2) : scope;
-      const stub = getScopeStub(scope);
-      const response = await stub.push({
-        scope,
-        scopeUserId,
-        pusherUserId: userId,
-        deviceId,
-        memberships,
-        purgedProjects: purgedList,
-        meMemberId: scope === pusherScope ? meMemberId : null,
-        ops: group.map((g) => g.op),
-      });
-      return { scope, group, response };
-    }),
-  );
-
-  let boundMeMemberId: string | null = null;
-  for (const { scope, group, response } of scopeResponses) {
-    for (let j = 0; j < group.length; j += 1) {
-      results[group[j].index] = response.results[j];
-    }
-    if (scope === pusherScope && response.boundMeMemberId) {
-      boundMeMemberId = response.boundMeMemberId;
-    }
-  }
+  await pushRange(segmentStart, ops.length);
 
   const effectiveMeMemberId = boundMeMemberId ?? meMemberId;
   let profileUpdate: { name: string | null; initial: string | null; color: string | null } | null =
