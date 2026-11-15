@@ -184,6 +184,13 @@ public final class AppDatabase: Sendable {
                 t.column("purgedAt", .integer).notNull()
                 t.primaryKey(["entity", "id"])
             }
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO purgedId (entity, id, purgedAt)
+                SELECT entity, entityId, MAX(at)
+                FROM change
+                WHERE op = 'delete'
+                GROUP BY entity, entityId
+                """)
         }
         return m
     }

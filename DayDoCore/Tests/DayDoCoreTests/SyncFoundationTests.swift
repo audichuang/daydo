@@ -187,6 +187,73 @@ import Testing
             #expect(changeCount == 0)
         }
     }
+
+    @Test func migratesV3DatabaseBackfillingPurgedIdAndAvoidingReusedCloneId() async throws {
+        var config = Configuration()
+        config.foreignKeysEnabled = true
+        let queue = try DatabaseQueue(configuration: config)
+        try AppDatabase.migrator.migrate(queue, upTo: "v3")
+
+        let now = noon.epochMillis
+        let purgeAt: EpochMillis = now - 5_000
+        let me = MemberRecord(
+            id: ID.make(), name: "我", initial: "我", color: "#9BB8FF", isMe: true,
+            createdAt: now, updatedAt: now
+        )
+        let inbox = ProjectRecord(
+            id: ID.make(), name: "收件匣", color: nil, icon: "inbox", folderId: nil,
+            viewMode: "list", kind: "TASK", isInbox: true, ownerId: me.id, sortKey: "a0",
+            showInSmart: "all", notifyMode: "all", archivedAt: nil,
+            createdAt: now, updatedAt: now
+        )
+        let master = TaskRecord(
+            id: ID.make(), projectId: inbox.id, title: "吃藥", content: "",
+            priority: 0, status: 0,
+            startDay: "2026-11-15", startMinute: 540, endDay: nil, endMinute: nil, timeZone: "Asia/Taipei",
+            reminders: [], repeatRule: "RRULE:FREQ=DAILY", tags: [], assigneeId: nil,
+            sortKey: "a0", completedAt: nil, sourceRaw: nil, importNote: nil,
+            createdAt: now, updatedAt: now
+        )
+        let purgedCloneId = ID.v5(name: "\(master.id)|2026-11-15|540")
+
+        try await queue.write { db in
+            try me.insert(db)
+            try inbox.insert(db)
+            try master.insert(db)
+            var deleteChange = ChangeRecord(
+                seq: nil, entity: "task", entityId: purgedCloneId,
+                op: "delete", fields: [], row: "{}", at: purgeAt,
+                opId: ID.make(), hlc: HLC(ms: purgeAt, counter: 0, deviceId: "dev-v3").description,
+                ackedAt: purgeAt + 100, result: "applied"
+            )
+            try deleteChange.insert(db)
+        }
+        let changeCountBefore = try await queue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM change") ?? 0
+        }
+
+        let appDB = try AppDatabase(queue)
+
+        let (containsPurgedId, purgedAt, changeCountAfter) = try await appDB.writer.read { db in
+            let contains = try PurgedId.contains(entity: "task", id: purgedCloneId, in: db)
+            let at = try EpochMillis.fetchOne(
+                db,
+                sql: "SELECT purgedAt FROM purgedId WHERE entity = 'task' AND id = ?",
+                arguments: [purgedCloneId]
+            )
+            let changes = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM change") ?? 0
+            return (contains, at, changes)
+        }
+        #expect(containsPurgedId)
+        #expect(purgedAt == purgeAt)
+        #expect(changeCountAfter == changeCountBefore)
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-tests-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: appDB, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        let done = try await api.completeTask(id: master.id)
+        #expect(done.id != purgedCloneId)
+        #expect(done.status == 2)
+    }
 }
 
 @Suite struct SyncFoundationOutboxTests {
