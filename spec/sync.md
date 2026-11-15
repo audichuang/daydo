@@ -2,15 +2,25 @@
 
 目標：每台裝置離線也能寫入，連上網後所有裝置最終看到同一份資料（最終一致）。
 
-使用者已決定（2026-11-15）：
+## 已定的決策（2026-11-15，使用者確認）
 
-- 登入：Sign in with Apple、Google。
-- 衝突：同一欄位以「修改時間」決定，後改的贏。
+| 主題 | 決定 |
+|---|---|
+| 登入 | Sign in with Apple＋Google，**必須登入才能使用** App。Google iOS client：`710830841029-g836eiphrs51fm45f9fgtleg95foohv0.apps.googleusercontent.com`（Google Cloud 專案 `daydo-514804`，測試模式，測試使用者要加進名單）。 |
+| 衝突 | 同一欄位以修改時間決定，後改的贏；時間用 HLC。**伺服器合併後的資料列是唯一正確答案**，App 一律照它覆蓋（只保留本機未送出且較新的欄位）。 |
+| 時鐘 | 伺服器把快 5 分鐘以上的 HLC 校正成伺服器時間；push 回應帶 `serverTime`，App 用它推進自己的 HLC，同一台裝置的修改不會被自己蓋掉。 |
+| 多人架構 | 以服務多人為前提：資料依「範圍」分到不同 Durable Object：每個使用者的個人資料一個、每份共享清單一個，資料存在該 DO 自帶的 SQLite（有 transaction）。D1 只存帳號、登入身分、session、裝置、共享成員與邀請。pull 每個範圍各一個游標。 |
+| 對外網址 | `https://daydo-api.audichuang.app`，前面加 Cloudflare Access：App 每個請求都帶 service token 的 `CF-Access-Client-Id`／`CF-Access-Client-Secret`；Worker 驗 `Cf-Access-Jwt-Assertion`；關掉 `workers.dev` 與 preview 網址。token 編在 App 裡、拆得出來，只擋亂打的流量，真正的保護是帳號登入。設定照既有的 `OkiBus API (iOS app only)` Access 應用程式，用 `cf` CLI 操作。 |
+| 第一次登入 | 登入回應帶：帳號有沒有資料、伺服器上的「我」與收件匣 id。新裝置（平板、重新安裝）：不建預設資料，直接把全部資料拉下來；帳號沒資料才建預設資料並上傳。已在用的舊版手機（本機有資料）：帳號沒資料就整份上傳；帳號有資料就把本機「我」與收件匣換成伺服器的 id、丟掉沒動過且沒任務的預設清單，其他照常上傳。 |
+| 永久刪除與副本 id | App 用 `purgedId` 記住永久刪除過的 id（含套用伺服器 tombstone 時），重複任務副本的確定性 id 已被刪過就改用隨機 id。 |
+| push 批次 | App 每批 50 個 op；伺服器上限維持 200，部署後實測再調。 |
+| 共享清單 | 用邀請連結：擁有者產生連結、用訊息傳給對方，對方登入後加入。`projectInvite.email` 只用來顯示「邀請了誰」。 |
+| 驗收 | 「兩台裝置收斂」的 API 模擬測試：Swift 測試裡兩個各自有資料庫的 App 核心，用本機 JWKS 簽的假 token 登入本機 Worker，交錯修改、刪除、離線重送後，兩邊與伺服器完全一致。 |
+| 之後 | iPad 原生版面、macOS 版（方向已定，這一階段不做）。 |
 
-以下其餘內容都是提案，尚未確認：
+框架：程式在 `server/`，用 Void（Cloudflare 的框架，底層 Hono），固定 void 1.8.0（npm 設定只裝發布滿 3 天的版本）。不用 KV 存任務資料或 op 去重：KV 是最終一致，剛寫入的值可能讀不到。
 
-- 時間用 HLC，不直接用手機時鐘。
-- 架構：Cloudflare Worker + D1（存資料）+ 一個 Durable Object（寫入依序處理、WebSocket 通知），程式在 `server/`，用 Void（Cloudflare 的框架，底層是 Hono）。目前固定 void 1.8.0：npm 設定只裝發布滿 3 天的版本。不用 KV 存任務資料或 op 去重：KV 是最終一致，剛寫入的值可能讀不到，同一個 op 會被套用兩次。
+> 下面「流程」以後各節是第一版（單一寫入 DO＋D1 存全部資料）的寫法；多人架構改寫時一併更新。線上格式、HLC、合併規則、套用規則不變。
 
 ## 流程
 
