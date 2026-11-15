@@ -52,11 +52,10 @@ cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
 
 - Codex 審查與 agy 也會在 DD 常駐機跑 UI 測試；自己跑完整 UI 測試前先 `pgrep -fl xcodebuild`，有別的在跑就等它結束（同時跑會在啟動時失敗：`Failed to send signal 19`）。
 - Xcode 27.2 沒有 Simulator.app，模擬器視窗改由 `Xcode.app/Contents/Applications/DeviceHub.app` 開啟（它也列出其他專案的機器，別按到別人的 Start）。
-- 通用規則（臨時機、收尾）見 `~/.agents/AGENTS.md` 的 iOS 模擬器那條，這裡只補 DD 專屬：
+- 通用規則（臨時機、收尾、DerivedData）見 `~/.agents/AGENTS.md` 的 iOS 模擬器那條，這裡只補 DD 專屬：
   - 臨時機命名 `DD tmp <任務名>`，只在平行 UI 測試才開；用完當下 `xcrun simctl shutdown <UDID>`，worktree 收斂時 `xcrun simctl delete <UDID>`。
   - 沒有開機腳本，直接 `xcrun simctl boot|shutdown <UDID>`。自己跑 `xcodebuild` 一律 `-destination 'platform=iOS Simulator,id=<UDID>' -parallel-testing-enabled NO`，不用 `booted` 別名。
-  - iPhone 常駐機 UDID `E7B3EEDF-4D01-4F18-A6E1-DED6B1535DCA`；iPad 版面測試用 `DD iPad Pro 11`，其餘用 `DD iPhone 18 Pro`。
-  - 移除 worktree 前先刪它的 DerivedData：`~/Library/Developer/Xcode/DerivedData/DayDo-<hash>`，逐個讀 `info.plist` 的 `WorkspacePath`，只刪指向該 worktree 的那個（資料夾名看不出是哪個 worktree）。
+  - iPad 版面測試用 `DD iPad Pro 11`，其餘用 `DD iPhone 18 Pro`；UDID 用 `xcrun simctl list devices` 依名稱查。
 - 互動驗收用 `DayDoUITests`：跑測試時設 `TEST_RUNNER_DAYDO_SHOTS=<目錄>`，`shot()` 會把截圖寫進去，再和 `design/shots` 或使用者給的參考圖對照。
 
 ## 發版（TestFlight）
