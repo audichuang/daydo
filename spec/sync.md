@@ -62,7 +62,7 @@
 - **永久刪除清單**：owner 永久刪除清單時，Worker 用一個 `batch()` 把清單標成已永久刪除並讀出當下的 `listScopes`（之後任何讓資料進入它的寫入都會在登記那步被拒；登記與標記都在 batch 裡，兩者不會交錯出漏網的範圍），再依讀出的範圍通知每個存有它資料的範圍。各範圍 DO 在交易裡記下「這份清單已永久刪除」、把屬於它的任務與子列永久刪除（留 tombstone），之後對這份清單的寫入一律拒絕。通知是冪等的，未完成的記在 D1 由下一次請求或排程重試，全部範圍都確認後才算完成。
 - **成員與邀請不走一般同步**：projectMember 與 projectInvite 只能由 owner 透過專用 API 改（見 Endpoint），先寫 D1、再由伺服器投影到清單建立者範圍的 projectMember 列（給 App 顯示）。投影是冪等的；寫完 D1 但投影失敗時，下一次 pull 該清單前 Worker 會比對 D1 與 DO 補齊。App 送來的 projectMember／projectInvite op 一律 `rejected`（附目前的列）。App 端「等待同步」的邀請在登入且連線後改成呼叫建立邀請的 API。
 - **共享清單需要的其他資料**：
-  - 成員的顯示資料（名字、縮寫、顏色）存在 D1 的 `user`，使用者推送自己的 member 列時 Worker 一併更新 D1。pull 回應的 `members` 帶「與我共享任何一份清單的人」的 member 列（id 是對方的 `meMemberId`），App 照一般資料列套用。
+  - 成員的顯示資料（名字、縮寫、顏色）存在 D1 的 `user`，使用者推送自己的 member 列時 Worker 一併更新 D1。pull 回應的 `members` 帶「與我共享任何一份清單的人」的 member 列（id 是對方的 `meMemberId`），App 照一般資料列套用；members 列另帶 `userId`，供成員管理 API 使用。
   - `project.folderId` 是個人分類：只有清單建立者能改。pull 別人建立的清單時不帶 `folderId`，App 對別人建立的清單保留本機的 `folderId`，也不送這個欄位。
 - **加入或離開共享清單**：加入時 App 用 pull 的 `backfill: [projectId]` 拿那份清單在各範圍的全部資料（不受游標限制）；離開、被移除或清單被刪時，pull 回應的 `memberships` 不再有它，App 刪掉本機那份清單的資料與相關的待送 op。
 - **還原任務**：`restoreTask` 原清單已刪除時改回自己的收件匣；任務仍住在原本的範圍，只改 `projectId`，權限照移動的規則檢查。
@@ -88,7 +88,7 @@
 - **合併的欄位群組**：task 的 `startDay`、`startMinute`、`endDay`、`endMinute`、`timeZone` 是同一個時間設定，合併時視為一組，共用 `clocks["schedule"]`：只要 `fields` 含其中任何一個，就整組一起比 HLC、一起寫入（缺的欄位依上一條視為 null）。否則一台改日期、另一台改時區，合併後會變成兩邊都沒設定過的時間。
 - **不同步的欄位**：`member.isMe`（每台裝置、每個使用者各自不同；Worker 不存，回傳時依請求的使用者算出來：使用者第一個帶 `isMe: true` 推上來的 member 綁定為他自己）、`attachment.localPath` 與 `attachment.originalPath`（裝置上的檔案路徑；附件檔案上傳之後再設計）。App 套用伺服器資料列時，這些欄位**一律保留本機的值**，不套用「欄位不出現＝null」的規則；`isMe` 在第一次登入的 id 對應完成前也不能拿伺服器的值蓋掉。
 - **tombstone**：伺服器回傳的資料列可能帶 `purgedAt`（硬刪除的時間）。App 收到帶 `purgedAt` 的列，要在本機硬刪除這一列（子列由外鍵連帶刪除），不寫 outbox，也不能把它當一般資料列存回去。對已硬刪除的 id 再送 upsert，伺服器回 `applied`，但不會套用，回傳的仍是 tombstone。
-- **push 回應與 pull 的資料列格式**：每筆是並列的 `row` 與 `clocks`（不是把 `clocks` 放進 `row` 裡）。`row` 只含上面的同步欄位，加上 `purgedAt`（只有 tombstone 才有）和 member 的 `isMe`。
+- **push 回應與 pull 的資料列格式**：每筆是並列的 `row` 與 `clocks`（不是把 `clocks` 放進 `row` 裡）。`row` 只含上面的同步欄位，加上 `purgedAt`（只有 tombstone 才有）和 member 的 `isMe`。pull 回應頂層的 `members` 列則另帶 `userId`，供成員管理 API 使用（scope 內的 `member` 列不帶）。
 - **HLC 字串**：`<13 位數 epoch ms，前面補 0>:<4 位數計數，前面補 0>:<deviceId 小寫>`。計數到 9999 時，ms 加 1、計數歸 0。
 - **fixture**：App 端測試會產出一份真實編碼的 op 範例 `spec/fixtures/sync-ops.json`，Worker 端的測試直接讀這份檔案。格式有爭議時，以這份檔案和本節為準。
 
@@ -160,7 +160,7 @@
 | POST | `/auth/link` | 已登入時連結另一種登入方式（之後做） |
 | DELETE | `/account` | 刪除帳號與所有資料（之後做，上架前必須有） |
 | POST | `/sync/push` | `{deviceId, ops: [{opId, hlc, entity, entityId, op, fields, row}]}`（最多 200）→ `{results: [{opId, status, reason?, row, clocks}], serverTime}`，`results` 與 `ops` 同順序；`serverTime` 是 HLC 字串（`<ms>:<counter>:server`） |
-| POST | `/sync/pull` | `{cursors: {"u:<id>": seq}, backfill?: [projectId], limit?}` → `{scopes: [{scope, rows: [{entity, row, clocks, serverSeq} \| {entity, entityId, gone: true, serverSeq}], cursor, hasMore}], memberships: [{projectId, scope, role}], members: [member 列]}`；沒給游標的範圍從 0 開始 |
+| POST | `/sync/pull` | `{cursors: {"u:<id>": seq}, backfill?: [projectId], limit?}` → `{scopes: [{scope, rows: [{entity, row, clocks, serverSeq} \| {entity, entityId, gone: true, serverSeq}], cursor, hasMore}], memberships: [{projectId, scope, role}], members: [member 列（另帶 userId）]}`；沒給游標的範圍從 0 開始 |
 | POST | `/invites` | `{projectId, role, email?}`（owner 才能建；email 只用來顯示）→ `{code, url: "daydo://invite/<code>", expiresAt}` |
 | GET | `/invites/<code>` | → `{projectName, inviterName, role, expiresAt}`（讓 App 顯示「誰邀你加入哪份清單」） |
 | POST | `/invites/<code>/accept` | 加入成員，並投影一筆 projectMember → `{projectId, scope, role}`。D1 用一條「邀請存在、未撤銷、未過期才寫入成員資格」的條件式 INSERT，讀回結果；撤銷與接受同時發生時以 D1 執行順序為準 |
