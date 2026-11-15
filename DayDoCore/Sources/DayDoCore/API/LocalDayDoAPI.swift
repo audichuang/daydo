@@ -75,7 +75,11 @@ public final class LocalDayDoAPI: DayDoAPI {
     }
 
     func recordDelete(_ db: Database, entity: String, id: String) throws {
-        var c = ChangeRecord(seq: nil, entity: entity, entityId: id, op: "delete", fields: [], row: "{}", at: now())
+        let now = now()
+        let hlc = try HLC.tick(in: db, now: now)
+        var c = ChangeRecord(
+            seq: nil, entity: entity, entityId: id, op: "delete", fields: [], row: "{}", at: now,
+            opId: ID.make(), hlc: hlc.description, ackedAt: nil, result: nil)
         try c.insert(db)
     }
 
@@ -642,18 +646,31 @@ extension LocalDayDoAPI {
                 return try self.task(db, t)
             }
             if let rule = t.repeatRule.flatMap(Recurrence.init(rrule:)), let s = t.schedule {
-                var done = t
-                done.id = ID.make()
-                done.status = 2
-                done.completedAt = now
-                done.repeatRule = nil
-                done.createdAt = now
-                done.updatedAt = now
-                try self.saveTask(db, done)
+                let minutePart = s.startMinute.map(String.init) ?? ""
+                let cloneId = ID.v5(name: "\(t.id)|\(s.startDay.description)|\(minutePart)")
+                let existingClone = try TaskRecord.fetchOne(db, key: cloneId)
+                let done: TaskRecord
+                if let existing = existingClone, existing.deletedAt == nil, existing.status == 2 {
+                    done = existing
+                } else {
+                    var copy = t
+                    copy.id = cloneId
+                    copy.status = 2
+                    copy.completedAt = now
+                    copy.repeatRule = nil
+                    copy.createdAt = existingClone?.createdAt ?? now
+                    copy.updatedAt = now
+                    try self.saveTask(db, copy)
+                    done = copy
+                }
                 let items = try ChecklistItemRecord.filter(Column("taskId") == t.id && Column("deletedAt") == nil).fetchAll(db)
                 for var item in items {
-                    let copy = ChecklistItemRecord(id: ID.make(), taskId: done.id, title: item.title, status: item.status, sortKey: item.sortKey, createdAt: now, updatedAt: now)
-                    try Outbox.save(copy, entity: "checklistItem", id: copy.id, in: db, now: now)
+                    let copyId = ID.v5(name: "\(cloneId)|\(item.id)")
+                    let existingItem = try ChecklistItemRecord.fetchOne(db, key: copyId)
+                    if existingItem == nil || existingItem?.deletedAt != nil {
+                        let copy = ChecklistItemRecord(id: copyId, taskId: cloneId, title: item.title, status: item.status, sortKey: item.sortKey, createdAt: existingItem?.createdAt ?? now, updatedAt: now)
+                        try Outbox.save(copy, entity: "checklistItem", id: copy.id, in: db, now: now)
+                    }
                     if item.status != 0 {
                         item.status = 0
                         item.updatedAt = now
@@ -896,6 +913,8 @@ extension LocalDayDoAPI {
 
     /// Outbox entries not yet pushed (phase 2 sync).
     public func pendingChanges(limit: Int = 500) async throws -> [ChangeRecord] {
-        try await writer.read { db in try ChangeRecord.order(Column("seq")).limit(limit).fetchAll(db) }
+        try await writer.read { db in
+            try ChangeRecord.filter(Column("ackedAt") == nil).order(Column("seq")).limit(limit).fetchAll(db)
+        }
     }
 }

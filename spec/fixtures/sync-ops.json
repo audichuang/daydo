@@ -1,0 +1,697 @@
+{
+  "ops" : [
+    {
+      "entity" : "member",
+      "entityId" : "01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+      "fields" : [
+        "color",
+        "createdAt",
+        "id",
+        "initial",
+        "isMe",
+        "name",
+        "updatedAt"
+      ],
+      "hlc" : "1794715200000:0000:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d4-75d2-a245-b6f9bd614eec",
+      "row" : {
+        "color" : "#9BB8FF",
+        "createdAt" : 1794715200000,
+        "id" : "01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+        "initial" : "我",
+        "isMe" : true,
+        "name" : "我",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "project",
+      "entityId" : "01a1dd14-d0d4-7537-9830-45c44251a77f",
+      "fields" : [
+        "createdAt",
+        "icon",
+        "id",
+        "isInbox",
+        "kind",
+        "name",
+        "notifyMode",
+        "ownerId",
+        "showInSmart",
+        "sortKey",
+        "updatedAt",
+        "viewMode"
+      ],
+      "hlc" : "1794715200000:0001:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d5-7602-9fbb-8037b65d5e3c",
+      "row" : {
+        "createdAt" : 1794715200000,
+        "icon" : "inbox",
+        "id" : "01a1dd14-d0d4-7537-9830-45c44251a77f",
+        "isInbox" : true,
+        "kind" : "TASK",
+        "name" : "收件匣",
+        "notifyMode" : "all",
+        "ownerId" : "01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+        "showInSmart" : "all",
+        "sortKey" : "i",
+        "updatedAt" : 1794715200000,
+        "viewMode" : "list"
+      }
+    },
+    {
+      "entity" : "projectMember",
+      "entityId" : "01a1dd14-d0d4-7537-9830-45c44251a77f:01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+      "fields" : [
+        "createdAt",
+        "memberId",
+        "projectId",
+        "role",
+        "updatedAt"
+      ],
+      "hlc" : "1794715200000:0002:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d5-7397-8f2c-cb4f4a720a34",
+      "row" : {
+        "createdAt" : 1794715200000,
+        "memberId" : "01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+        "projectId" : "01a1dd14-d0d4-7537-9830-45c44251a77f",
+        "role" : "owner",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "project",
+      "entityId" : "01a1dd14-d0d5-7138-b8ab-2871885b3b75",
+      "fields" : [
+        "color",
+        "createdAt",
+        "id",
+        "isInbox",
+        "kind",
+        "name",
+        "notifyMode",
+        "ownerId",
+        "showInSmart",
+        "sortKey",
+        "updatedAt",
+        "viewMode"
+      ],
+      "hlc" : "1794715200000:0003:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d6-7b2e-9797-8de9cc0bde1d",
+      "row" : {
+        "color" : "#4AA8E8",
+        "createdAt" : 1794715200000,
+        "id" : "01a1dd14-d0d5-7138-b8ab-2871885b3b75",
+        "isInbox" : false,
+        "kind" : "TASK",
+        "name" : "工作",
+        "notifyMode" : "all",
+        "ownerId" : "01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+        "showInSmart" : "all",
+        "sortKey" : "r",
+        "updatedAt" : 1794715200000,
+        "viewMode" : "list"
+      }
+    },
+    {
+      "entity" : "projectMember",
+      "entityId" : "01a1dd14-d0d5-7138-b8ab-2871885b3b75:01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+      "fields" : [
+        "createdAt",
+        "memberId",
+        "projectId",
+        "role",
+        "updatedAt"
+      ],
+      "hlc" : "1794715200000:0004:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d6-7729-bb29-37a541cf05a8",
+      "row" : {
+        "createdAt" : 1794715200000,
+        "memberId" : "01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+        "projectId" : "01a1dd14-d0d5-7138-b8ab-2871885b3b75",
+        "role" : "owner",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "project",
+      "entityId" : "01a1dd14-d0d6-74b0-b2a3-8e0b49c45b37",
+      "fields" : [
+        "color",
+        "createdAt",
+        "id",
+        "isInbox",
+        "kind",
+        "name",
+        "notifyMode",
+        "ownerId",
+        "showInSmart",
+        "sortKey",
+        "updatedAt",
+        "viewMode"
+      ],
+      "hlc" : "1794715200000:0005:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d6-7601-998e-3c91d4bd68d2",
+      "row" : {
+        "color" : "#E98A5B",
+        "createdAt" : 1794715200000,
+        "id" : "01a1dd14-d0d6-74b0-b2a3-8e0b49c45b37",
+        "isInbox" : false,
+        "kind" : "TASK",
+        "name" : "個人",
+        "notifyMode" : "all",
+        "ownerId" : "01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+        "showInSmart" : "all",
+        "sortKey" : "v",
+        "updatedAt" : 1794715200000,
+        "viewMode" : "list"
+      }
+    },
+    {
+      "entity" : "projectMember",
+      "entityId" : "01a1dd14-d0d6-74b0-b2a3-8e0b49c45b37:01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+      "fields" : [
+        "createdAt",
+        "memberId",
+        "projectId",
+        "role",
+        "updatedAt"
+      ],
+      "hlc" : "1794715200000:0006:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d6-7233-8ecd-3c2cc9c9032d",
+      "row" : {
+        "createdAt" : 1794715200000,
+        "memberId" : "01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+        "projectId" : "01a1dd14-d0d6-74b0-b2a3-8e0b49c45b37",
+        "role" : "owner",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "project",
+      "entityId" : "01a1dd14-d0d6-7c7d-8686-ebb9dfae4e5b",
+      "fields" : [
+        "color",
+        "createdAt",
+        "id",
+        "isInbox",
+        "kind",
+        "name",
+        "notifyMode",
+        "ownerId",
+        "showInSmart",
+        "sortKey",
+        "updatedAt",
+        "viewMode"
+      ],
+      "hlc" : "1794715200000:0007:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d7-7929-b1a7-71ca6034e3cf",
+      "row" : {
+        "color" : "#C77DDB",
+        "createdAt" : 1794715200000,
+        "id" : "01a1dd14-d0d6-7c7d-8686-ebb9dfae4e5b",
+        "isInbox" : false,
+        "kind" : "TASK",
+        "name" : "購物",
+        "notifyMode" : "all",
+        "ownerId" : "01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+        "showInSmart" : "all",
+        "sortKey" : "x",
+        "updatedAt" : 1794715200000,
+        "viewMode" : "list"
+      }
+    },
+    {
+      "entity" : "projectMember",
+      "entityId" : "01a1dd14-d0d6-7c7d-8686-ebb9dfae4e5b:01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+      "fields" : [
+        "createdAt",
+        "memberId",
+        "projectId",
+        "role",
+        "updatedAt"
+      ],
+      "hlc" : "1794715200000:0008:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d7-7b5d-9ef6-444fe2782361",
+      "row" : {
+        "createdAt" : 1794715200000,
+        "memberId" : "01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+        "projectId" : "01a1dd14-d0d6-7c7d-8686-ebb9dfae4e5b",
+        "role" : "owner",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "project",
+      "entityId" : "01a1dd14-d0d7-7cb5-8cc6-d009167593dd",
+      "fields" : [
+        "color",
+        "createdAt",
+        "id",
+        "isInbox",
+        "kind",
+        "name",
+        "notifyMode",
+        "ownerId",
+        "showInSmart",
+        "sortKey",
+        "updatedAt",
+        "viewMode"
+      ],
+      "hlc" : "1794715200000:0009:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d7-7e51-989d-407c3752208f",
+      "row" : {
+        "color" : "#4AA8E8",
+        "createdAt" : 1794715200000,
+        "id" : "01a1dd14-d0d7-7cb5-8cc6-d009167593dd",
+        "isInbox" : false,
+        "kind" : "TASK",
+        "name" : "旅行計畫",
+        "notifyMode" : "all",
+        "ownerId" : "01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+        "showInSmart" : "all",
+        "sortKey" : "y",
+        "updatedAt" : 1794715200000,
+        "viewMode" : "list"
+      }
+    },
+    {
+      "entity" : "projectMember",
+      "entityId" : "01a1dd14-d0d7-7cb5-8cc6-d009167593dd:01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+      "fields" : [
+        "createdAt",
+        "memberId",
+        "projectId",
+        "role",
+        "updatedAt"
+      ],
+      "hlc" : "1794715200000:0010:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d7-78a0-b8c7-504a714b3a11",
+      "row" : {
+        "createdAt" : 1794715200000,
+        "memberId" : "01a1dd14-d0d4-73b2-83f7-5821e76e5bc7",
+        "projectId" : "01a1dd14-d0d7-7cb5-8cc6-d009167593dd",
+        "role" : "owner",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "tag",
+      "entityId" : "讀書",
+      "fields" : [
+        "createdAt",
+        "label",
+        "name",
+        "sortKey",
+        "updatedAt"
+      ],
+      "hlc" : "1794715200000:0011:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d8-70c4-b02f-b6f02537eb77",
+      "row" : {
+        "createdAt" : 1794715200000,
+        "label" : "讀書",
+        "name" : "讀書",
+        "sortKey" : "i",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "task",
+      "entityId" : "01a1dd14-d0d8-76cf-a7a7-11627263cc73",
+      "fields" : [
+        "content",
+        "createdAt",
+        "endDay",
+        "endMinute",
+        "id",
+        "priority",
+        "projectId",
+        "reminders",
+        "repeatRule",
+        "sortKey",
+        "startDay",
+        "startMinute",
+        "status",
+        "tags",
+        "timeZone",
+        "title",
+        "updatedAt"
+      ],
+      "hlc" : "1794715200000:0012:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d8-7741-bebd-793801b4f499",
+      "row" : {
+        "content" : "帶筆記本",
+        "createdAt" : 1794715200000,
+        "endDay" : "2026-11-15",
+        "endMinute" : 1230,
+        "id" : "01a1dd14-d0d8-76cf-a7a7-11627263cc73",
+        "priority" : 3,
+        "projectId" : "01a1dd14-d0d7-7cb5-8cc6-d009167593dd",
+        "reminders" : [
+          "TRIGGER:-PT15M"
+        ],
+        "repeatRule" : "RRULE:FREQ=WEEKLY",
+        "sortKey" : "i",
+        "startDay" : "2026-11-15",
+        "startMinute" : 1140,
+        "status" : 0,
+        "tags" : [
+          "讀書"
+        ],
+        "timeZone" : "Asia/Taipei",
+        "title" : "每週讀書會",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "checklistItem",
+      "entityId" : "01a1dd14-d0d8-790b-ab04-74a9eea6d492",
+      "fields" : [
+        "createdAt",
+        "id",
+        "sortKey",
+        "status",
+        "taskId",
+        "title",
+        "updatedAt"
+      ],
+      "hlc" : "1794715200000:0013:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d8-74f4-818c-74c55768fd8d",
+      "row" : {
+        "createdAt" : 1794715200000,
+        "id" : "01a1dd14-d0d8-790b-ab04-74a9eea6d492",
+        "sortKey" : "i",
+        "status" : 0,
+        "taskId" : "01a1dd14-d0d8-76cf-a7a7-11627263cc73",
+        "title" : "準備章節摘要",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "tag",
+      "entityId" : "重要",
+      "fields" : [
+        "createdAt",
+        "label",
+        "name",
+        "sortKey",
+        "updatedAt"
+      ],
+      "hlc" : "1794715200000:0014:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d9-7cf4-861d-983ea3d3c4e0",
+      "row" : {
+        "createdAt" : 1794715200000,
+        "label" : "重要",
+        "name" : "重要",
+        "sortKey" : "r",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "tag",
+      "entityId" : "重要",
+      "fields" : [
+        "color"
+      ],
+      "hlc" : "1794715200000:0015:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0d9-7190-8b06-1a0866cc0398",
+      "row" : {
+        "color" : "#E98A5B",
+        "createdAt" : 1794715200000,
+        "label" : "重要",
+        "name" : "重要",
+        "sortKey" : "r",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "task",
+      "entityId" : "01a1dd14-d0da-7615-9fc9-b489db47b969",
+      "fields" : [
+        "content",
+        "createdAt",
+        "id",
+        "priority",
+        "projectId",
+        "reminders",
+        "repeatRule",
+        "sortKey",
+        "startDay",
+        "startMinute",
+        "status",
+        "tags",
+        "timeZone",
+        "title",
+        "updatedAt"
+      ],
+      "hlc" : "1794715200000:0016:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0da-728d-8562-1bbef04bf9fc",
+      "row" : {
+        "content" : "",
+        "createdAt" : 1794715200000,
+        "id" : "01a1dd14-d0da-7615-9fc9-b489db47b969",
+        "priority" : 0,
+        "projectId" : "01a1dd14-d0d7-7cb5-8cc6-d009167593dd",
+        "reminders" : [
+
+        ],
+        "repeatRule" : "RRULE:FREQ=DAILY",
+        "sortKey" : "9",
+        "startDay" : "2026-11-16",
+        "startMinute" : 600,
+        "status" : 0,
+        "tags" : [
+
+        ],
+        "timeZone" : "Asia/Taipei",
+        "title" : "待定行程",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "task",
+      "entityId" : "01a1dd14-d0da-7615-9fc9-b489db47b969",
+      "fields" : [
+        "repeatRule"
+      ],
+      "hlc" : "1794715200000:0017:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0da-703a-a722-5ae0db53ea0b",
+      "row" : {
+        "content" : "",
+        "createdAt" : 1794715200000,
+        "id" : "01a1dd14-d0da-7615-9fc9-b489db47b969",
+        "priority" : 0,
+        "projectId" : "01a1dd14-d0d7-7cb5-8cc6-d009167593dd",
+        "reminders" : [
+
+        ],
+        "sortKey" : "9",
+        "startDay" : "2026-11-16",
+        "startMinute" : 600,
+        "status" : 0,
+        "tags" : [
+
+        ],
+        "timeZone" : "Asia/Taipei",
+        "title" : "待定行程",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "task",
+      "entityId" : "01a1dd14-d0da-7615-9fc9-b489db47b969",
+      "fields" : [
+        "startDay",
+        "startMinute",
+        "timeZone"
+      ],
+      "hlc" : "1794715200000:0018:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0db-7965-9efb-362fc5a38a6f",
+      "row" : {
+        "content" : "",
+        "createdAt" : 1794715200000,
+        "id" : "01a1dd14-d0da-7615-9fc9-b489db47b969",
+        "priority" : 0,
+        "projectId" : "01a1dd14-d0d7-7cb5-8cc6-d009167593dd",
+        "reminders" : [
+
+        ],
+        "sortKey" : "9",
+        "status" : 0,
+        "tags" : [
+
+        ],
+        "title" : "待定行程",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "task",
+      "entityId" : "51e2e58a-51ac-567c-bf9f-a097149f2788",
+      "fields" : [
+        "completedAt",
+        "content",
+        "createdAt",
+        "endDay",
+        "endMinute",
+        "id",
+        "priority",
+        "projectId",
+        "reminders",
+        "sortKey",
+        "startDay",
+        "startMinute",
+        "status",
+        "tags",
+        "timeZone",
+        "title",
+        "updatedAt"
+      ],
+      "hlc" : "1794715200000:0019:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0db-74bb-8e03-76dc1e6cd8a7",
+      "row" : {
+        "completedAt" : 1794715200000,
+        "content" : "帶筆記本",
+        "createdAt" : 1794715200000,
+        "endDay" : "2026-11-15",
+        "endMinute" : 1230,
+        "id" : "51e2e58a-51ac-567c-bf9f-a097149f2788",
+        "priority" : 3,
+        "projectId" : "01a1dd14-d0d7-7cb5-8cc6-d009167593dd",
+        "reminders" : [
+          "TRIGGER:-PT15M"
+        ],
+        "sortKey" : "i",
+        "startDay" : "2026-11-15",
+        "startMinute" : 1140,
+        "status" : 2,
+        "tags" : [
+          "讀書"
+        ],
+        "timeZone" : "Asia/Taipei",
+        "title" : "每週讀書會",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "checklistItem",
+      "entityId" : "45652ed6-15ad-53fc-a120-7dea91301351",
+      "fields" : [
+        "createdAt",
+        "id",
+        "sortKey",
+        "status",
+        "taskId",
+        "title",
+        "updatedAt"
+      ],
+      "hlc" : "1794715200000:0020:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0dc-728d-bc65-38d9f45cf9ad",
+      "row" : {
+        "createdAt" : 1794715200000,
+        "id" : "45652ed6-15ad-53fc-a120-7dea91301351",
+        "sortKey" : "i",
+        "status" : 0,
+        "taskId" : "51e2e58a-51ac-567c-bf9f-a097149f2788",
+        "title" : "準備章節摘要",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "task",
+      "entityId" : "01a1dd14-d0d8-76cf-a7a7-11627263cc73",
+      "fields" : [
+        "endDay",
+        "startDay",
+        "updatedAt"
+      ],
+      "hlc" : "1794715200001:0000:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0dc-7e79-90e2-517f60a5e164",
+      "row" : {
+        "content" : "帶筆記本",
+        "createdAt" : 1794715200000,
+        "endDay" : "2026-11-22",
+        "endMinute" : 1230,
+        "id" : "01a1dd14-d0d8-76cf-a7a7-11627263cc73",
+        "priority" : 3,
+        "projectId" : "01a1dd14-d0d7-7cb5-8cc6-d009167593dd",
+        "reminders" : [
+          "TRIGGER:-PT15M"
+        ],
+        "repeatRule" : "RRULE:FREQ=WEEKLY",
+        "sortKey" : "i",
+        "startDay" : "2026-11-22",
+        "startMinute" : 1140,
+        "status" : 0,
+        "tags" : [
+          "讀書"
+        ],
+        "timeZone" : "Asia/Taipei",
+        "title" : "每週讀書會",
+        "updatedAt" : 1794715200001
+      }
+    },
+    {
+      "entity" : "task",
+      "entityId" : "01a1dd14-d0da-7615-9fc9-b489db47b969",
+      "fields" : [
+        "deletedAt"
+      ],
+      "hlc" : "1794715200001:0001:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "upsert",
+      "opId" : "01a1dd14-d0dd-72de-b9ad-4d2e8b8e8e07",
+      "row" : {
+        "content" : "",
+        "createdAt" : 1794715200000,
+        "deletedAt" : 1794715200000,
+        "id" : "01a1dd14-d0da-7615-9fc9-b489db47b969",
+        "priority" : 0,
+        "projectId" : "01a1dd14-d0d7-7cb5-8cc6-d009167593dd",
+        "reminders" : [
+
+        ],
+        "sortKey" : "9",
+        "status" : 0,
+        "tags" : [
+
+        ],
+        "title" : "待定行程",
+        "updatedAt" : 1794715200000
+      }
+    },
+    {
+      "entity" : "task",
+      "entityId" : "01a1dd14-d0da-7615-9fc9-b489db47b969",
+      "fields" : [
+
+      ],
+      "hlc" : "1794715200001:0002:01a1dd14-d0d4-7ae5-919b-125acc244c86",
+      "op" : "delete",
+      "opId" : "01a1dd14-d0dd-7f0e-a50e-1bf7471f7cd8",
+      "row" : {
+
+      }
+    }
+  ]
+}
