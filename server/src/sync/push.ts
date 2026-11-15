@@ -74,7 +74,7 @@ export async function executeSyncPush(
     return { results: [], serverTime: nextServerTime(nowMs) };
   }
 
-  const results: Array<PushOpResult | null> = new Array(ops.length).fill(null);
+  const results: Array<PushOpResult | null> = Array.from({ length: ops.length }, () => null);
 
   // Pre-scan ops to collect D1 lookup keys.
   const lookupPairsMap = new Map<string, { entity: EntityName; entityId: string }>();
@@ -242,7 +242,7 @@ export async function executeSyncPush(
     opId: string;
   }> = [];
   const listScopeTargets: Array<{ opIndex: number; projectId: string; scope: string }> = [];
-  const opTargetScope: Array<string | null> = new Array(ops.length).fill(null);
+  const opTargetScope: Array<string | null> = Array.from({ length: ops.length }, () => null);
 
   for (let i = 0; i < parsedOps.length; i += 1) {
     const { rec, rawOpId, entity, entityId, validated } = parsedOps[i];
@@ -917,7 +917,7 @@ export async function executeSyncPush(
   if (boundMeMemberId !== null) {
     await db
       .update(user)
-      .set({ meMemberId: boundMeMemberId, ...(profileUpdate ?? {}) })
+      .set({ meMemberId: boundMeMemberId, ...profileUpdate })
       .where(and(eq(user.id, userId), isNull(user.meMemberId)));
   } else if (profileUpdate !== null && effectiveMeMemberId !== null) {
     await db

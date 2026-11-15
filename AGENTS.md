@@ -36,7 +36,7 @@ design/      設計稿
 
 ```bash
 cd DayDoCore && swift test                       # 核心單元測試
-cd server && npm ci && npm run check              # 同步後端：型別檢查＋單元測試＋本機 dev server 上的登入與同步 e2e
+cd server && npm ci && npm run check              # 同步後端：lint＋型別檢查＋單元測試＋本機 dev server 上的登入與同步 e2e
 cd ios && xcodegen generate                      # 改了 project.yml 或增刪檔案後
 cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
   -destination 'platform=iOS Simulator,id=<DD 模擬器 UDID>' CODE_SIGNING_ALLOWED=NO   # UI 流程測試
@@ -66,8 +66,5 @@ cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
 
 同步協議（含進度與待決事項）寫在 `spec/sync.md`，改協議或改兩端的行為先改那份文件。
 
-- 正式環境前面是 Cloudflare Access（應用程式「DayDo API (iOS app only)」，只放行 service token）。部署、secrets 與部署後的 smoke 照 `server/README.md` 的 Deploy；service token 與 `JWT_SECRET` 在 1Password `Agent` vault（「DayDo Cloudflare Access service token」「DayDo server JWT_SECRET」）。
-- 改了 D1 schema 的部署會先套 migration 並留還原點；只在使用者要求發版或部署時才 `void deploy`。
-- void 固定 1.8.0：npm 設定只裝發布滿 3 天的版本，新版會被拒，不要改 npm 設定繞過。
-- 每位使用者的 `Scope` DO（`u:<userId>`）用自己的 SQLite 存列資料，寫入包在 `transactionSync` 內同步完成；`SYNC_FAULT=split-txn` 是僅開發建置有效的故障開關，並發測試開啟時必須失敗。
+- 只在使用者要求發版或部署時才 `void deploy`。
 - 改了 App 的 Record 或 outbox 編碼，要用 `DAYDO_WRITE_FIXTURE=1 swift test` 重新產生 `spec/fixtures/sync-ops.json`，再跑 server 的測試。
