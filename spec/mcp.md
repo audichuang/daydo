@@ -514,6 +514,8 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
   - engine 吸收單一來源的錯誤（記在 `lastStatus`），所以 `partial` 不會讓 cron 失敗。只有 run 層級的失敗才 throw，例如 `dueSources` 查詢失敗。
 - 先做一個 spike，證明 cron 裡 `createDb`、`Scope.get` RPC、`env` 都能用。D1 方言下 Void 不包 `withRuntimeEnv`。spike 失敗就回頭調整設計，再做 ICS 其他票。
 
+**M2 spike 結果（Void 1.8.0）**：開發建置（`POST /__void/scheduled`，需 `x-void-dev-trigger` token）下，cron handler 的 `env` 拿得到 `JWT_SECRET`，用 `env.DB` 建 `createDb` 能查 D1 的 `user`，`Scope.get('u:…').getInboxProjectId` 的 DO RPC 也成功，`e2e:ics --only cron_runtime` 斷言 `ics.cron.probe {db:ok,scope:ok,env:ok}` 通過。正式建置只做了靜態檢查，沒有實際執行：`vite build` 產物的 `scheduled()` 入口在 `withRuntimeEnv(env, …)` 內呼叫 handler，只過濾 `__VOID_`／`__PROJECT_` 前綴的內部綁定，`DB`、`SCOPE`、secrets 都保留，`Scope.__bind("SCOPE")` 在同一個 worker entry 執行，`worker.config.json` 有 `*/5 * * * *` 的 scheduled trigger。正式環境的實際 cron 觸發要部署後才看得到。
+
 ## 10. 環境變數與 secrets
 
 | 名稱 | 類型 | 說明 |
