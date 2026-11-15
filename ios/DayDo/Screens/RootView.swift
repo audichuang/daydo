@@ -81,31 +81,38 @@ struct RootView: View {
             }
         }
         .sheet(item: Binding(get: { model.detailTaskId.map(TaskRef.init) }, set: { model.detailTaskId = $0?.id }), onDismiss: {
-            if let next = model.pendingDetailTaskId {
-                model.pendingDetailTaskId = nil
-                model.detailTaskId = next
-            }
+            model.flushPendingPresentations()
         }) { ref in
             TaskDetailSheet(taskId: ref.id)
         }
-        .sheet(item: $model.composing) { req in
+        .sheet(item: $model.composing, onDismiss: {
+            model.flushPendingPresentations()
+        }) { req in
             ComposerSheet(request: req)
         }
-        .sheet(item: Binding(get: { model.editingProjectId.map(TaskRef.init) }, set: { model.editingProjectId = $0?.id })) { ref in
+        .sheet(item: Binding(get: { model.editingProjectId.map(TaskRef.init) }, set: { model.editingProjectId = $0?.id }), onDismiss: {
+            model.flushPendingPresentations()
+        }) { ref in
             EditListSheet(projectId: ref.id == "new" ? nil : ref.id)
         }
-        .sheet(item: Binding(get: { model.sharingProjectId.map(TaskRef.init) }, set: { model.sharingProjectId = $0?.id })) { ref in
+        .sheet(item: Binding(get: { model.sharingProjectId.map(TaskRef.init) }, set: { model.sharingProjectId = $0?.id }), onDismiss: {
+            model.flushPendingPresentations()
+        }) { ref in
             ShareListSheet(projectId: ref.id)
         }
-        .sheet(item: $model.invitePrompt) { prompt in
+        .sheet(item: $model.invitePrompt, onDismiss: {
+            model.flushPendingPresentations()
+        }) { prompt in
             InviteConfirmSheet(prompt: prompt)
         }
         .sheet(isPresented: $model.showingJoinInvite, onDismiss: {
-            model.flushManualInviteIfNeeded()
+            model.flushPendingPresentations()
         }) {
             JoinInviteSheet()
         }
-        .sheet(isPresented: $model.showingMeNamePrompt) {
+        .sheet(isPresented: $model.showingMeNamePrompt, onDismiss: {
+            model.flushPendingPresentations()
+        }) {
             MeProfileSheet(mode: .requiredPrompt)
         }
         .alert("出了點問題", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {

@@ -845,4 +845,48 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertNotEqual(ownerAvatar.value as? String, memberAvatar.value as? String)
         shot("41-share-sheet-two-members")
     }
+
+    @MainActor
+    func testPendingInviteWaitsForMeNamePrompt() {
+        // 1. Sign-in path: invite arrives while signed out, sign-in lacks displayName -> name prompt first, then invite confirm.
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoDebugSignedOut", "-DayDoDebugNoProviderName"]
+        app.launch()
+
+        let googleButton = app.buttons["signIn.google"]
+        XCTAssertTrue(googleButton.waitForExistence(timeout: 5), app.debugDescription)
+        app.open(URL(string: "daydo://invite/slow-ok")!)
+        googleButton.tap()
+        dismissNotificationPrompt()
+
+        XCTAssertTrue(app.staticTexts["你的名字"].waitForExistence(timeout: 5), app.debugDescription)
+        let nameField = app.textFields["meProfile.nameField"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 3), app.debugDescription)
+        nameField.tap()
+        nameField.typeText("阿迪")
+        app.buttons["meProfile.submit"].tap()
+
+        XCTAssertTrue(app.staticTexts["你的名字"].waitForNonExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["小安 邀請你加入「家庭採買」"].waitForExistence(timeout: 6), app.debugDescription)
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(app.staticTexts["清單邀請"].waitForNonExistence(timeout: 3), app.debugDescription)
+
+        // 2. Launch/in-session path: invite arrives while required name prompt is already showing.
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoDebugKeepDefaultName"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        XCTAssertTrue(app.staticTexts["你的名字"].waitForExistence(timeout: 5), app.debugDescription)
+        app.open(URL(string: "daydo://invite/slow-ok")!)
+
+        let secondNameField = app.textFields["meProfile.nameField"]
+        XCTAssertTrue(secondNameField.waitForExistence(timeout: 3), app.debugDescription)
+        secondNameField.tap()
+        secondNameField.typeText("阿迪")
+        app.buttons["meProfile.submit"].tap()
+
+        XCTAssertTrue(app.staticTexts["你的名字"].waitForNonExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["小安 邀請你加入「家庭採買」"].waitForExistence(timeout: 6), app.debugDescription)
+    }
 }

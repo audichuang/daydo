@@ -482,14 +482,15 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         await #expect(throws: DayDoError.self) { try await api.updateMe(name: "   \n\t ", color: nil) }
         await #expect(throws: DayDoError.self) { try await api.updateMe(name: "Audi", color: "   ") }
 
+        let targetColor = try #require(Member.avatarColors.first { $0 != initialMe.color })
         let before = try await api.pendingChanges().count
-        let updatedLatin = try await api.updateMe(name: "  audi chuang  ", color: "#4FC3A1")
+        let updatedLatin = try await api.updateMe(name: "  audi chuang  ", color: targetColor)
         #expect(updatedLatin.name == "audi chuang")
         #expect(updatedLatin.initial == "A")
-        #expect(updatedLatin.color == "#4FC3A1")
+        #expect(updatedLatin.color == targetColor)
 
         // No-op update writes nothing to outbox.
-        let noop = try await api.updateMe(name: "audi chuang", color: "#4FC3A1")
+        let noop = try await api.updateMe(name: "audi chuang", color: targetColor)
         #expect(noop == updatedLatin)
         #expect(try await api.pendingChanges().count == before + 1)
 
@@ -497,7 +498,7 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         let updatedCJK = try await api.updateMe(name: "小安", color: nil)
         #expect(updatedCJK.name == "小安")
         #expect(updatedCJK.initial == "小")
-        #expect(updatedCJK.color == "#4FC3A1")
+        #expect(updatedCJK.color == targetColor)
 
         // Accented Latin & emoji grapheme clusters + 30-char cap.
         let updatedAccented = try await api.updateMe(name: "élan", color: nil)

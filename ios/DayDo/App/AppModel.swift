@@ -84,12 +84,42 @@ final class AppModel {
     /// shown after that sheet is dismissed so unsaved edits are not replaced.
     var pendingDetailTaskId: String?
 
-    /// Opens a task's detail without replacing a detail sheet that is already open.
+    /// Opens a task's detail without replacing a sheet that is already open.
     func openDetailFromNotification(_ id: String) {
-        if let current = detailTaskId, current != id {
+        if detailTaskId == id { return }
+        if hasActiveRootSheet {
             pendingDetailTaskId = id
         } else {
             detailTaskId = id
+        }
+    }
+
+    private var hasActiveRootSheet: Bool {
+        detailTaskId != nil
+            || composing != nil
+            || editingProjectId != nil
+            || sharingProjectId != nil
+            || invitePrompt != nil
+            || showingJoinInvite
+            || showingMeNamePrompt
+    }
+
+    /// Presents the next queued root-level sheet once the current sheet has dismissed.
+    func flushPendingPresentations() {
+        guard !hasActiveRootSheet else { return }
+        if pendingManualInviteCode != nil {
+            flushManualInviteIfNeeded()
+            return
+        }
+        if syncEnabled, isSignedIn, pendingInviteCode != nil {
+            Task { [weak self] in
+                await self?.processPendingInviteIfNeeded()
+            }
+            return
+        }
+        if let next = pendingDetailTaskId {
+            pendingDetailTaskId = nil
+            detailTaskId = next
         }
     }
     var composing: ComposeRequest?
@@ -178,7 +208,7 @@ final class AppModel {
 
 #if DEBUG
         let args = ProcessInfo.processInfo.arguments
-        if args.contains("-DayDoDebugStub") {
+        if args.contains("-DayDoDebugStub"), !args.contains("-DayDoDebugSignedOut") {
             if !((try? await syncEngine.isSignedIn) ?? false) {
                 try? await syncEngine.signIn(with: .apple(identityToken: "debug", nonce: "debug"))
             }
@@ -543,7 +573,7 @@ final class AppModel {
     }
 
     func processPendingInviteIfNeeded() async {
-        guard syncEnabled, isSignedIn, let code = pendingInviteCode else { return }
+        guard syncEnabled, isSignedIn, !hasActiveRootSheet, let code = pendingInviteCode else { return }
         pendingInviteCode = nil
         let prompt = PendingInvitePrompt(code: code, info: nil, isLoading: true, error: nil)
         invitePrompt = prompt
