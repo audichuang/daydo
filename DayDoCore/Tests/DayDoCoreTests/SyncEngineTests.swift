@@ -3548,6 +3548,91 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
             #expect(url == nil)
         }
     }
+
+    @Test func updateMeAvatarSendsAuthorizedPutRefreshesOn401AndPersists() async throws {
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-sync-put-avatar-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+
+        actor CallLog {
+            var calls: [(method: String, path: String, auth: String?, avatarUrl: String?)] = []
+            func append(method: String, path: String, auth: String?, avatarUrl: String?) {
+                calls.append((method, path, auth, avatarUrl))
+            }
+        }
+        let log = CallLog()
+        let tokens = InMemorySyncTokenStore(accessToken: "expired-access", refreshToken: "refresh-1")
+        let targetUrl = "https://lh3.googleusercontent.com/a/me=s256-c"
+
+        let transport = FakeSyncTransport { req, _ in
+            let auth = req.headers["Authorization"]
+            let bodyObj = try? decodeBodyObject(req.body)
+            await log.append(
+                method: req.method,
+                path: req.path,
+                auth: auth,
+                avatarUrl: bodyObj?["avatarUrl"]?.stringValue
+            )
+
+            if req.method == "PUT" && req.path == "/me/avatar" {
+                if auth == "Bearer expired-access" {
+                    return try jsonResponse(401, ["error": "Unauthorized"])
+                }
+                let sentUrl = bodyObj?["avatarUrl"]?.stringValue ?? ""
+                if sentUrl.hasPrefix("http://") {
+                    return try jsonResponse(400, ["error": "Invalid avatarUrl"])
+                }
+                return try jsonResponse(200, ["avatarUrl": sentUrl])
+            }
+            if req.method == "POST" && req.path == "/auth/refresh" {
+                return try jsonResponse(200, [
+                    "accessToken": "fresh-access",
+                    "refreshToken": "refresh-2",
+                    "hasData": true,
+                    "meMemberId": NSNull(),
+                    "inboxProjectId": NSNull(),
+                    "avatarUrl": NSNull(),
+                ])
+            }
+            return try jsonResponse(404, ["error": "Not found"])
+        }
+
+        let engine = SyncEngine(database: db, transport: transport, tokenStore: tokens, clock: .fixed(noon, timeZone: taipei))
+        let stream = await engine.changeNotifications()
+        #expect(try await engine.meAvatarUrl == nil)
+
+        let returned = try await engine.updateMeAvatar(targetUrl)
+        #expect(returned == targetUrl)
+        #expect(try await engine.meAvatarUrl == targetUrl)
+        #expect(try await api.listMembers().first { $0.isMe }?.avatarUrl == targetUrl)
+        #expect(tokens.accessToken == "fresh-access")
+        #expect(tokens.refreshToken == "refresh-2")
+
+        let emitted = await nextEmittedSummary(from: stream)
+        #expect(emitted == SyncSummary(didChangeLocalData: true))
+
+        let calls = await log.calls
+        try #require(calls.count == 3)
+        #expect(calls[0].method == "PUT")
+        #expect(calls[0].path == "/me/avatar")
+        #expect(calls[0].auth == "Bearer expired-access")
+        #expect(calls[0].avatarUrl == targetUrl)
+        #expect(calls[1].method == "POST")
+        #expect(calls[1].path == "/auth/refresh")
+        #expect(calls[2].method == "PUT")
+        #expect(calls[2].path == "/me/avatar")
+        #expect(calls[2].auth == "Bearer fresh-access")
+        #expect(calls[2].avatarUrl == targetUrl)
+
+        do {
+            _ = try await engine.updateMeAvatar("http://insecure.example.com/a.png")
+            Issue.record("Expected HTTP 400 to throw SyncError.protocolError")
+        } catch let SyncError.protocolError(msg) {
+            #expect(msg.contains("400"))
+        }
+        #expect(try await engine.meAvatarUrl == targetUrl)
+    }
 }
 
 private actor PullBodyRecorder {

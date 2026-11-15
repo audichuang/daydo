@@ -99,6 +99,15 @@ public actor SyncEngine {
         }
     }
 
+    /// Stored avatar URL for the currently signed-in user, if any.
+    public var meAvatarUrl: String? {
+        get async throws {
+            try await database.writer.read { db in
+                try Self.loadMeAvatarUrl(in: db)
+            }
+        }
+    }
+
     /// True when a signed-in user id is persisted and auth tokens are present.
     public var isSignedIn: Bool {
         get async throws {
@@ -237,6 +246,25 @@ public actor SyncEngine {
         }
         inFlightSync = task
         return try await task.value
+    }
+
+    /// Updates the signed-in user's avatar URL on the server (`PUT /me/avatar`) and stores the result locally.
+    @discardableResult
+    public func updateMeAvatar(_ avatarUrl: String) async throws -> String {
+        let generation = sessionGeneration
+        let body = try encoder.encode(UpdateMeAvatarRequest(avatarUrl: avatarUrl))
+        let data = try await sendAuthorized(method: "PUT", path: "/me/avatar", body: body)
+        let decoded = try decode(UpdateMeAvatarResponse.self, from: data)
+        guard generation == sessionGeneration else {
+            throw SyncError.signedOut
+        }
+        let didUpdate = try await database.writer.write { db in
+            try Self.saveMeAvatarUrl(decoded.avatarUrl, in: db)
+        }
+        if didUpdate {
+            emitChange(SyncSummary(didChangeLocalData: true))
+        }
+        return decoded.avatarUrl
     }
 
     // MARK: - Sharing
@@ -1040,15 +1068,19 @@ public actor SyncEngine {
         )
     }
 
-    @discardableResult
-    private static func saveMeAvatarUrl(_ url: String?, in db: Database) throws -> Bool {
-        let normalized = (url?.isEmpty == false) ? url : nil
+    private static func loadMeAvatarUrl(in db: Database) throws -> String? {
         let existing = try String.fetchOne(
             db,
             sql: "SELECT value FROM meta WHERE key = ?",
             arguments: [meAvatarUrlMetaKey]
         )
-        let normalizedExisting = (existing?.isEmpty == false) ? existing : nil
+        return (existing?.isEmpty == false) ? existing : nil
+    }
+
+    @discardableResult
+    private static func saveMeAvatarUrl(_ url: String?, in db: Database) throws -> Bool {
+        let normalized = (url?.isEmpty == false) ? url : nil
+        let normalizedExisting = try loadMeAvatarUrl(in: db)
         if let normalized {
             try db.execute(
                 sql: "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -1067,12 +1099,7 @@ public actor SyncEngine {
     public func setMeAvatarUrlIfMissing(_ avatarUrl: String?) async throws {
         guard let avatarUrl, !avatarUrl.isEmpty else { return }
         let didUpdate = try await database.writer.write { db -> Bool in
-            let existing = try String.fetchOne(
-                db,
-                sql: "SELECT value FROM meta WHERE key = ?",
-                arguments: [Self.meAvatarUrlMetaKey]
-            )
-            if existing == nil || existing?.isEmpty == true {
+            if try Self.loadMeAvatarUrl(in: db) == nil {
                 return try Self.saveMeAvatarUrl(avatarUrl, in: db)
             }
             return false

@@ -10,7 +10,9 @@ export interface VerifiedIdentity {
   avatarUrl?: string | null;
 }
 
-export function sanitizeHttpsAvatarUrl(raw: unknown): string | null {
+const MAX_AVATAR_URL_LENGTH = 2048;
+
+function parseHttpsUrl(raw: unknown): URL | null {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -19,10 +21,30 @@ export function sanitizeHttpsAvatarUrl(raw: unknown): string | null {
     if (parsed.protocol !== 'https:' || !parsed.hostname) {
       return null;
     }
-    return parsed.toString();
+    return parsed;
   } catch {
     return null;
   }
+}
+
+export function sanitizeHttpsAvatarUrl(raw: unknown): string | null {
+  return parseHttpsUrl(raw)?.toString() ?? null;
+}
+
+export function sanitizeGoogleAvatarUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw.length > MAX_AVATAR_URL_LENGTH) {
+    return null;
+  }
+  const parsed = parseHttpsUrl(raw);
+  if (!parsed || parsed.username || parsed.password || parsed.port) {
+    return null;
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host !== 'googleusercontent.com' && !host.endsWith('.googleusercontent.com')) {
+    return null;
+  }
+  const normalized = parsed.toString();
+  return normalized.length <= MAX_AVATAR_URL_LENGTH ? normalized : null;
 }
 
 export type KeySource = JWTVerifyGetKey | CryptoKey;
