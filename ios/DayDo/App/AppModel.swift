@@ -402,7 +402,10 @@ final class AppModel {
 
     private func syncGoogleAvatarIfNeeded(_ avatarUrl: String) async {
         guard syncEnabled, isSignedIn else { return }
-        guard let storedAvatarUrl = try? await syncEngine.meAvatarUrl else { return }
+        // A nil stored value is the case this sync exists for (accounts signed in before avatars), so only
+        // a failed read or an identical URL skips the upload.
+        let storedAvatarUrl: String?
+        do { storedAvatarUrl = try await syncEngine.meAvatarUrl } catch { return }
         guard storedAvatarUrl != avatarUrl else { return }
         _ = try? await syncEngine.updateMeAvatar(avatarUrl)
     }
