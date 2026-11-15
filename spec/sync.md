@@ -9,7 +9,7 @@
 | 登入 | Sign in with Apple＋Google，**必須登入才能使用** App。Google iOS client：`710830841029-g836eiphrs51fm45f9fgtleg95foohv0.apps.googleusercontent.com`（Google Cloud 專案 `daydo-514804`，測試模式，測試使用者要加進名單）。 |
 | 衝突 | 同一欄位以修改時間決定，後改的贏；時間用 HLC。**伺服器合併後的資料列是唯一正確答案**，App 一律照它覆蓋（只保留本機未送出且較新的欄位）。 |
 | 時鐘 | 伺服器把快 5 分鐘以上的 HLC 校正成伺服器時間；push 回應帶 `serverTime`，App 用它推進自己的 HLC，同一台裝置的修改不會被自己蓋掉。 |
-| 多人架構 | 以服務多人為前提：資料依「範圍」分到不同 Durable Object：每個使用者的個人資料一個、每份共享清單一個，資料存在該 DO 自帶的 SQLite（有 transaction）。D1 只存帳號、登入身分、session、裝置、共享成員與邀請。pull 每個範圍各一個游標。 |
+| 多人架構 | 以服務多人為前提：每個使用者一個 Durable Object（**範圍**），他建立的所有資料（包含之後共享出去的清單）都放在那裡，存在 DO 自帶的 SQLite。共享、轉移擁有者只改 D1 的權限，資料不搬家；只有把任務移到別人建立的清單才跨範圍。D1 只存帳號、登入身分、session、裝置、清單歸屬、共享成員與邀請。pull 每個範圍各一個游標。（原本寫「每份共享清單一個 DO」，因為在清單之間移動任務會跨 DO，改成這樣。） |
 | 對外網址 | `https://daydo-api.audichuang.app`，前面加 Cloudflare Access：App 每個請求都帶 service token 的 `CF-Access-Client-Id`／`CF-Access-Client-Secret`；Worker 驗 `Cf-Access-Jwt-Assertion`；關掉 `workers.dev` 與 preview 網址。token 編在 App 裡、拆得出來，只擋亂打的流量，真正的保護是帳號登入。設定照既有的 `OkiBus API (iOS app only)` Access 應用程式，用 `cf` CLI 操作。 |
 | 第一次登入 | 登入回應帶：帳號有沒有資料、伺服器上的「我」與收件匣 id。新裝置（平板、重新安裝）：不建預設資料，直接把全部資料拉下來；帳號沒資料才建預設資料並上傳。已在用的舊版手機（本機有資料）：帳號沒資料就整份上傳；帳號有資料就把本機「我」與收件匣換成伺服器的 id、丟掉沒動過且沒任務的預設清單，其他照常上傳。 |
 | 永久刪除與副本 id | App 用 `purgedId` 記住永久刪除過的 id（含套用伺服器 tombstone 時），重複任務副本的確定性 id 已被刪過就改用隨機 id。 |
@@ -20,29 +20,42 @@
 
 框架：程式在 `server/`，用 Void（Cloudflare 的框架，底層 Hono），固定 void 1.8.0（npm 設定只裝發布滿 3 天的版本）。不用 KV 存任務資料或 op 去重：KV 是最終一致，剛寫入的值可能讀不到。
 
-> 下面「流程」以後各節是第一版（單一寫入 DO＋D1 存全部資料）的寫法；多人架構改寫時一併更新。線上格式、HLC、合併規則、套用規則不變。
-
 ## 流程
 
 ```
-裝置寫入 ──► 本機 SQLite + change(opId, hlc)  ← 同一個 transaction
-         ──► push 未送達的 op ──► Worker 轉給寫入 DO：依 opId 去重，逐欄位 LWW
-                                   合併進 D1，每個被改到的資料列各拿一個新 server_seq
-         ◄── 每個 op 的結果（applied / rejected）＋合併後的整列
-其他裝置 ◄── DO 用 WebSocket 通知「有新資料」
-         ──► pull since=<游標> ──► 回傳 server_seq > 游標、且使用者看得到的資料列
+裝置寫入 ──► 本機 SQLite + change(opId, hlc, projectId)  ← 同一個 transaction
+         ──► POST /sync/push（未送達的 op，每批 50）
+             Worker：驗 Access、驗 token，依 op 的 projectId 查 D1 找到它所在的範圍，
+                     檢查權限，把 op 依範圍分組（保持原順序）交給各範圍 DO
+             範圍 DO：transactionSync 裡依 opId 去重、逐欄位 LWW 合併、
+                     每個改到的資料列拿一個新的 serverSeq（每個範圍各自遞增）
+         ◄── 每個 op 的結果（applied / rejected）＋合併後的整列＋serverTime
+其他裝置 ◄── 範圍 DO 用 WebSocket 通知「這個範圍有新資料」（之後做）
+         ──► POST /sync/pull（每個範圍一個游標）──► 回傳各範圍 serverSeq > 游標、且使用者看得到的資料列
 ```
 
 送出時機：每次寫入後（延遲約 1 秒，把連續的寫入合成一批）、回到前景、網路恢復、開 App。不比對兩邊的 ID 清單：重送所有未收到 ack 的 op，伺服器靠 opId 去重。
+
+## 範圍（scope）
+
+- 範圍 id 是 `u:<userId>`，一個使用者一個，對應一個 DO 實例。這個 DO 的 SQLite 存他建立的所有資料列；寫入都在 `transactionSync` 裡做，DO 的 SQLite 是同步呼叫，天然一次只處理一個請求，不需要自己排隊（2026-11-15 在 void 1.8.0 本機實測：20 個同時呼叫依序得到 1 到 20、交易失敗會回滾、兩個 DO 互不影響、dev server 重開資料還在）。
+- **清單歸屬**：D1 的 `projectHome(projectId → homeUserId)` 記錄每份清單住在哪個範圍。清單第一次被推上來時，歸屬設為推送者。共享、轉移擁有者都不改歸屬。
+- **op 怎麼找到範圍**：屬於某份清單的資料（project、task、checklistItem、attachment、comment、projectMember、projectInvite）由 App 在寫入當下把清單 id 記在 op 的 `projectId`；Worker 用它查 `projectHome`。不屬於清單的資料（member、folder、tag）一律進推送者自己的範圍。v5 之前沒有記 `projectId` 的舊 op 都是登入前寫的，進推送者自己的範圍。
+- **權限**：對某份清單的 op，推送者必須是它的歸屬者，或是 D1 `projectMembership` 裡角色為 owner／editor 的成員；viewer 與非成員回 `rejected`（不附資料列）。
+- **看得到什麼**：自己範圍的全部資料，加上別人範圍裡、自己是成員的那幾份清單的資料。範圍 DO 的每一列都存它所屬的 `projectId`（子列存其任務的清單），pull 別人的範圍時只回這些清單的列。
+- **資料列離開共享清單**：任務在同一個範圍內從共享清單移到私人清單時，原清單的其他成員要在本機刪掉它。範圍 DO 在列上記下它最後一個共享清單，pull 給那份清單的成員時回 `{entity, entityId, gone: true}`；App 收到就在本機硬刪除這一列（不寫 outbox，不記 `purgedId`，id 之後還可能回來）。
+- **加入或離開共享清單**：加入時 App 用 pull 的 `backfill: [projectId]` 拿那份清單的全部資料（不受游標限制）；離開或被移除時，pull 回應的成員清單不再有它，App 刪掉本機那份清單的資料。
+- **跨範圍移動**（把任務移到別人建立的清單）：做法在 T5c 定案前不支援，Worker 對 `projectId` 改到另一個範圍的 op 回 `rejected`，原因 `cross-scope move`。
 
 ## 線上格式（App 與 Worker 共用，兩邊各自實作前先以這裡為準）
 
 - **entity 名稱**與 App 的資料表同名：`member`、`folder`、`project`、`projectMember`、`task`、`checklistItem`、`tag`、`attachment`、`comment`。
 - **entityId**：一般是該列的 `id`（UUIDv7，**小寫** hex，`ID.make()` 產生）。`projectMember` 是 `"<projectId>:<memberId>"`；`tag` 是標籤的 `name`。
-- **欄位名**用 App Record 的 Swift 屬性名（camelCase，例如 `startDay`、`deletedAt`），JSON 與 D1 欄位都用同一個名字，不轉 snake_case。
+- **欄位名**用 App Record 的 Swift 屬性名（camelCase，例如 `startDay`、`deletedAt`），JSON 與伺服器的欄位都用同一個名字，不轉 snake_case。
 - **`row`** 是 App `JSONEncoder`（`sortedKeys`）編出的整列。值為 nil 的 optional 欄位**不會出現在 `row` 裡**；所以「欄位在 `fields` 裡、卻不在 `row` 裡」代表把它設成 null。
-- **型別**：時間戳是 epoch ms 整數；`Bool` 在 JSON 是 `true`/`false`，D1 存 0/1，pull 回傳時轉回 `true`/`false`；`[String]`（`reminders`、`tags`）整個陣列視為一個值，D1 存 JSON 字串。
+- **型別**：時間戳是 epoch ms 整數；`Bool` 在 JSON 是 `true`/`false`，伺服器存 0/1，回傳時轉回 `true`/`false`；`[String]`（`reminders`、`tags`）整個陣列視為一個值，伺服器存 JSON 字串。
 - **`op`**：`upsert` 或 `delete`（硬刪除，`fields` 為空、`row` 為 `{}`）。
+- **`projectId`**（op 層級，不在 `row` 裡）：這筆資料在寫入當下屬於哪份清單，用來找範圍；project 是它自己的 id，task 是它的 `projectId`，checklistItem／attachment／comment 是所屬任務的 `projectId`，projectMember／projectInvite 是它的 `projectId`；delete op 也要帶（`purgeTask` 刪之前先讀出來）。member、folder、tag 不帶。
 - **合併的欄位群組**：task 的 `startDay`、`startMinute`、`endDay`、`endMinute`、`timeZone` 是同一個時間設定，合併時視為一組，共用 `clocks["schedule"]`：只要 `fields` 含其中任何一個，就整組一起比 HLC、一起寫入（缺的欄位依上一條視為 null）。否則一台改日期、另一台改時區，合併後會變成兩邊都沒設定過的時間。
 - **不同步的欄位**：`member.isMe`（每台裝置、每個使用者各自不同；Worker 不存，回傳時依請求的使用者算出來：使用者第一個帶 `isMe: true` 推上來的 member 綁定為他自己）、`attachment.localPath` 與 `attachment.originalPath`（裝置上的檔案路徑；附件檔案上傳之後再設計）。App 套用伺服器資料列時，這些欄位**一律保留本機的值**，不套用「欄位不出現＝null」的規則；`isMe` 在第一次登入的 id 對應完成前也不能拿伺服器的值蓋掉。
 - **tombstone**：伺服器回傳的資料列可能帶 `purgedAt`（硬刪除的時間）。App 收到帶 `purgedAt` 的列，要在本機硬刪除這一列（子列由外鍵連帶刪除），不寫 outbox，也不能把它當一般資料列存回去。對已硬刪除的 id 再送 upsert，伺服器回 `applied`，但不會套用，回傳的仍是 tombstone。
@@ -60,7 +73,8 @@
 
 送出與 ack：
 
-- 依 `seq` 順序送，每批最多 200 筆。
+- 依 `seq` 順序送，每批 50 筆（伺服器上限 200）。
+- `change` 在 migration `v5` 加 `projectId` 欄位，每次寫入時填上（見線上格式）。
 - `applied`（含伺服器之前已套用過的重複 op）與 `rejected` 都寫 `ackedAt`，之後不再送。兩種結果都附上伺服器合併後的整列和 `clocks`（rejected 時，伺服器上若還沒有這一列，就沒有東西可附），照下面「套用伺服器資料列」的規則寫回本機。這一步不能省：本機的 op 如果在某個欄位輸給別台較新的修改，伺服器會丟掉這個欄位但仍回 `applied`；本機若只標記已送達，就會一直留著伺服器沒有的值，而那一列的 `server_seq` 不會再變，之後 pull 也拉不到它。
 - HTTP 429 或 5xx：整批稍後重送，間隔以指數倍增，最長 5 分鐘。401：先刷新 token 再送。
 - 寫入逾時或沒收到回應時，不知道伺服器有沒有套用：直接重送同一批即可，opId 去重保證只套用一次。
@@ -70,13 +84,15 @@
 - 套用順序：pull 依 `serverSeq` 排序，子列可能比父列先到，跨頁也一樣；App 的外鍵是立即檢查的。所以同一頁的資料列在**同一個 transaction** 裡套用，並開 `PRAGMA defer_foreign_keys = ON`；commit 時父列仍不存在的子列，先放進暫存區，等之後的頁或下一次 pull 拿到父列再套用。
 - 套用伺服器資料列（pull 與 push 回應都適用）：資料列帶 `clocks`。對每個欄位，只有本機有未送達的 op 改了這個欄位、而且它的 HLC 比 `clocks[欄位]` 新時，才保留本機的值；其他情況一律用伺服器的值。
 - 套用遠端資料不寫 `change`（不然會被當成本機修改再送回去）。
+- 收到帶 `purgedAt` 的列：本機硬刪除，並記進 `purgedId`；收到 `gone: true`：本機硬刪除，不記 `purgedId`。
+- push 回應的 `serverTime` 用來推進本機 HLC（`HLC.receive`）。
 
 ## HLC（混合邏輯時鐘）
 
 格式：`<13 位 epoch ms>:<4 位計數>:<deviceId>`，固定長度，可以直接用字串比大小。
 
 - 本機產生：`ms = max(現在時間, 上次的 ms)`；ms 沒變就計數加 1，否則計數歸 0。
-- 收到伺服器的 HLC：如果比本機新，本機時鐘推進到那個值。這樣手機時鐘慢了，也不會一直輸給別台。
+- 收到伺服器的 HLC 或 push 回應的 `serverTime`：如果比本機新，本機時鐘推進到那個值。這樣手機時鐘慢了，也不會一直輸給別台；時鐘快的手機被伺服器校正後，下一筆修改也會比上一筆新。
 - 計數相同時，比 deviceId 決定勝負，結果固定。
 - 伺服器端上限：op 的 HLC 比伺服器時間快 5 分鐘以上，就改用伺服器目前時間的 HLC。否則一台時鐘設錯（設到未來）的裝置，每次衝突都會贏。
 
@@ -90,13 +106,10 @@
 - 標籤以名稱當主鍵，兩台裝置建立同名標籤時會合併成同一列，這是預期的行為。
 - 一台裝置編輯、另一台同時軟刪除：兩邊都會保留，結果是「已刪除但內容是新的」，從垃圾桶還原就看得到最新內容。
 
-## 要先處理的 App 端問題
+## App 端其他規則
 
-1. **每台裝置各自建立的初始資料**：`bootstrap` 會建「我」、收件匣、預設清單，id 都是隨機的。登入時：
-   - 帳號在伺服器上還沒有資料：整份上傳，這台裝置的 id 就成為正式 id。
-   - 帳號已經有資料：把本機「我」的 member id 和收件匣 id 換成伺服器上的，任務一併改指過去；從未修改、也沒有任務的預設清單直接丟掉；其他資料照常上傳。這一步在上傳前完成，並改寫本機尚未送出的 `change`。
-2. **重複任務完成時建立的副本**：副本 id 改成用 `taskId + 該次的開始時間` 推出來的 UUIDv5，兩台裝置離線時都按完成，只會留下同一筆。
-3. **`completeTask` 的 `ifUpdatedAt`** 只在本機有效，伺服器不另外檢查；兩台裝置都完成同一次重複任務時，靠第 2 點去重。
+- **重複任務完成時建立的副本**：副本 id 是 `taskId + 該次的開始時間` 推出來的 UUIDv5，兩台裝置離線時都按完成只留一筆；這個 id 已在 `purgedId` 裡就改用隨機 id。
+- **`completeTask` 的 `ifUpdatedAt`** 只在本機有效，伺服器不另外檢查。
 
 ## 登入
 
@@ -104,36 +117,43 @@
 - **Google**：App 用 GoogleSignIn SDK 取得 `idToken`。Worker 用 Google JWKS 驗證：`iss` 是 `accounts.google.com` 或 `https://accounts.google.com`，`aud` 等於 iOS OAuth client id。
 - 帳號用 `(provider, sub)` 識別，不用 email 自動合併帳號：Apple 可能給隱藏的轉寄 email。要讓兩種登入方式共用同一個帳號，登入後在設定裡手動連結。
 - Worker 自己發 token：access token 為 JWT，1 小時；refresh token 90 天，每次使用就換一組新的，D1 只存雜湊值。
+- 登入回應另帶 `hasData`（自己的範圍有沒有資料列）、`meMemberId`（綁定的「我」，還沒有就是 null）、`inboxProjectId`（自己範圍裡的收件匣，還沒有就是 null）。App 依「已定的決策」的第一次登入規則處理。
+- **Cloudflare Access**：正式環境每個請求都要通過 Access（App 帶 service token），Worker 再驗 `Cf-Access-Jwt-Assertion`（簽章、`aud` 等於 Access 應用程式的 AUD）。本機開發與 e2e 用環境變數關掉這一層，只在開發建置有效。
 - App Store 規定：可以建立帳號的 App 必須能在 App 裡刪除帳號。刪除時要一併撤銷 Apple 的授權（需要 authorization code 和 client secret）。
 
 ## Endpoint（之後併入 `openapi.yaml`）
 
 | Method | Path | 說明 |
 |---|---|---|
-| POST | `/auth/apple` | `{identityToken, nonce, deviceId}` → `{accessToken, refreshToken, user, isNewAccount}` |
+| POST | `/auth/apple` | `{identityToken, nonce, deviceId}` → `{accessToken, refreshToken, user, isNewAccount, hasData, meMemberId, inboxProjectId}` |
 | POST | `/auth/google` | `{idToken, deviceId}` → 同上 |
 | POST | `/auth/refresh` | `{refreshToken}` → 新的一組 token |
-| POST | `/auth/link` | 已登入時連結另一種登入方式 |
-| DELETE | `/account` | 刪除帳號與所有資料 |
-| POST | `/sync/push` | `{deviceId, ops: [{opId, hlc, entity, entityId, op, fields, row}]}` → `{results: [{opId, status, reason?}], serverSeq}` |
-| POST | `/sync/push` 回應的 results | 每筆另含並列的 `row`（合併後的整列）與 `clocks` |
-| GET | `/sync/pull?since=<seq>&limit=500` | → `{rows: [{entity, row, clocks, serverSeq}], cursor, hasMore}` |
-| GET | `/sync/ws` | WebSocket，只推送「有新資料」通知，資料一律用 pull 取得 |
+| POST | `/auth/link` | 已登入時連結另一種登入方式（之後做） |
+| DELETE | `/account` | 刪除帳號與所有資料（之後做，上架前必須有） |
+| POST | `/sync/push` | `{deviceId, ops: [{opId, hlc, entity, entityId, op, fields, row, projectId?}]}`（最多 200）→ `{results: [{opId, status, reason?, row, clocks}], serverTime}`，`results` 與 `ops` 同順序 |
+| POST | `/sync/pull` | `{cursors: {"u:<id>": seq}, backfill?: [projectId], limit?}` → `{scopes: [{scope, rows: [{entity, row, clocks, serverSeq} \| {entity, entityId, gone: true, serverSeq}], cursor, hasMore}], memberships: [{projectId, scope, role}]}`；沒給游標的範圍從 0 開始 |
+| POST | `/invites` | `{projectId, role}`（owner 才能建）→ `{code, url: "daydo://invite/<code>", expiresAt}` |
+| GET | `/invites/<code>` | → `{projectName, inviterName, role, expiresAt}`（讓 App 顯示「誰邀你加入哪份清單」） |
+| POST | `/invites/<code>/accept` | 加入成員，並在歸屬範圍寫入一筆 projectMember → `{projectId, scope, role}` |
+| DELETE | `/invites/<code>` | owner 撤銷邀請 |
+| GET | `/sync/ws` | WebSocket，只推送「某範圍有新資料」，資料一律用 pull 取得（之後做） |
 
-## D1 schema 草稿
+邀請碼是 128-bit 隨機值（base64url），D1 只存雜湊；7 天內有效，可以多人使用，owner 可撤銷。邀請碼是核心，`daydo://invite/<code>` 只是外殼：iOS、iPadOS、macOS 原生 App 都能註冊這個 scheme；之後做 Web 時加 `https://…/invite/<code>` 網頁，打同一個 API。
 
-- `user`、`identity(provider, sub, user_id)`、`session(refresh_hash, user_id, device_id, expires_at)`、`device`。
-- `op_applied(op_id PRIMARY KEY, user_id, status, server_seq)`：去重用，保留 90 天。
-- 資料表和 App 端相同，另加 `clocks`、`server_seq`（建索引）、`purged_at`。
-- 能看到哪些列：自己的資料，加上自己在 `projectMember` 裡的共享清單。
-- `server_seq` 是全域遞增的數字，每寫一個資料列就加 1。游標就是上次拉到的最後一列的 seq，`limit` 怎麼切都不會漏列。
-- 合併要先讀 `clocks`、比較、再寫入。D1 從 Worker 呼叫時沒有互動式 transaction（只有 `batch()` 是原子的），兩個 push 同時改同一列可能交錯，較新的值被較舊的蓋掉。所以所有 push 都交給同一個寫入 DO 依序處理；它負責讀 `clocks`、決定結果、一次 `batch()` 寫入。家人規模的流量用一個 DO 就夠，也不用處理「共享清單跨使用者」要歸哪個 DO 的問題。同一個 DO 也負責 WebSocket 通知（用 hibernation）。DO 呼叫 D1 時要等網路回應，等待期間 DO 仍會接下一個請求（input gate 只擋 DO 自己的 storage 操作），所以 DO 裡要自己用一個佇列，一次只處理一批 push。2026-11-15 在本機（void 1.8.0、workerd）實測證實：沒有佇列時，20 個同時送出的讀改寫全部讀到同一個舊值；加上 promise-chain 佇列後才依序執行。`server/scripts/e2e-sync.mjs` 的 concurrency 情境在 `WRITER_QUEUE=off`（只在開發建置有效）時必須失敗，用來證明測試抓得到競態。
-- 被加入共享清單時，那份清單的舊資料 `server_seq` 比游標小，pull 拉不到。App 收到自己的 `projectMember` 列後，對那份清單另外跑一次 `pull?project=<id>&since=0`。
+## 儲存
+
+- **D1**：`user`（含 `meMemberId`）、`identity(provider, sub, userId)`、`session`、`device`、`projectHome(projectId, homeUserId)`、`projectMembership(projectId, userId, role, createdAt, removedAt)`、`invite(codeHash, projectId, role, createdBy, expiresAt, revokedAt)`。資料表不放 D1。
+- **範圍 DO 的 SQLite**：各 entity 一張表（欄位同 App，加 `clocks`、`serverSeq`、`purgedAt`、`projectId`、最後共享清單），`opApplied(opId, status, serverSeq)`，`counter`（範圍內的 serverSeq）。
+- 舊的單一寫入 DO（`writer`）與 D1 的資料表在 T5a 移除；從未部署過，不用搬資料。
+- 測試要能證明並發被正確處理：e2e 的 concurrency 情境保留；DO SQLite 本身就依序執行，所以改用只在開發建置有效的故障注入（例如在讀 `clocks` 和寫入之間故意 `await`），開啟時該情境必須失敗。
 
 ## 實作順序
 
-1. ✓ App：migration `v3`、HLC、op 序列化（2026-11-15 完成）。
-2. ✓ Worker：登入、`/sync/push`、`/sync/pull`、D1 schema（2026-11-15 完成，只在本機跑；真的 Apple／Google token 與部署未測）。
-3. App：登入畫面、SyncEngine（送出、拉取、重送時機）、第一次登入的 id 對應。
-4. DO WebSocket 通知、共享清單、成員指派。
-5. MCP 掛上 Worker。
+1. ✓ App：migration `v3`、HLC、op 序列化。✓ `v4` `purgedId`。
+2. ✓ Worker 第一版：登入、push、pull（單一寫入 DO＋D1，本機）。
+3. T5a Worker：資料改到範圍 DO（單一使用者，先不做共享），App 端 migration `v5` 的 `change.projectId` 與 fixture 一起改。
+4. T5b Worker：`serverTime`、登入回應的 `hasData`／`meMemberId`／`inboxProjectId`、兩台裝置的 e2e。T7 從這裡開始。
+5. T5c Worker：共享成員、邀請碼、`gone`、加入時的 backfill、跨範圍移動的做法。
+6. T6：Access 驗證、部署到 `daydo-api.audichuang.app`、對公開網址跑 e2e。
+7. T7 App：同步引擎與兩台裝置收斂測試。T8 App：登入畫面、邀請連結畫面。
+8. WebSocket 通知、MCP。
