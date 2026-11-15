@@ -5,6 +5,7 @@ import {
   folder,
   member,
   project,
+  projectInvite,
   projectMember,
   task,
   tag,
@@ -118,6 +119,8 @@ function singleIdTable(entity: Exclude<EntityName, 'projectMember' | 'tag'>) {
       return folder;
     case 'project':
       return project;
+    case 'projectInvite':
+      return projectInvite;
     case 'task':
       return task;
     case 'checklistItem':
@@ -285,6 +288,21 @@ export async function pullUserRows(
           .limit(fetchLimit),
       },
       {
+        entity: 'projectInvite',
+        query: db
+          .select()
+          .from(projectInvite)
+          .where(
+            and(
+              eq(projectInvite.ownerUserId, userId),
+              eq(projectInvite.projectId, projectId),
+              gt(projectInvite.serverSeq, since),
+            ),
+          )
+          .orderBy(asc(projectInvite.serverSeq))
+          .limit(fetchLimit),
+      },
+      {
         entity: 'task',
         query: db
           .select()
@@ -351,6 +369,7 @@ export async function pullUserRows(
       folder,
       project,
       projectMember,
+      projectInvite,
       task,
       checklistItem,
       tag,

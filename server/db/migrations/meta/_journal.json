@@ -15,6 +15,13 @@
       "when": 1794712828377,
       "tag": "20261115032028_optimal_anthem",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794715176272,
+      "tag": "20261115035936_wealthy_redwing",
+      "breakpoints": true
     }
   ]
 }

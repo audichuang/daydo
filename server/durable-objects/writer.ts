@@ -174,7 +174,26 @@ class WriterObject extends DurableObject<CloudBindings> {
     const dirtyRows = new Map<string, { entity: EntityName; state: StoredEntityState }>();
     const newOpApplied: Array<typeof opApplied.$inferInsert> = [];
     const results: PushOpResult[] = [];
-    const rejectOp = (opId: string, reason: string) => {
+    const resolveCurrentOwnRow = (
+      rec: Record<string, unknown> | null,
+    ): { row: Record<string, unknown> | null; clocks: Record<string, string> } => {
+      if (
+        rec &&
+        isEntityName(rec.entity) &&
+        typeof rec.entityId === 'string' &&
+        parseEntityId(rec.entity, rec.entityId)
+      ) {
+        const state = workingRows.get(stateKey(rec.entity, rec.entityId, userId));
+        if (state && state.ownerUserId === userId) {
+          return {
+            row: serializePublicRow(rec.entity, state.row, state.purgedAt, { meMemberId }),
+            clocks: { ...state.clocks },
+          };
+        }
+      }
+      return { row: null, clocks: {} };
+    };
+    const rejectOp = (opId: string, reason: string, rec: Record<string, unknown> | null) => {
       if (opId.length > 0) {
         seenOpIds.set(opId, {
           userId,
@@ -189,12 +208,13 @@ class WriterObject extends DurableObject<CloudBindings> {
           createdAt: nowMs,
         });
       }
+      const current = resolveCurrentOwnRow(rec);
       results.push({
         opId,
         status: 'rejected',
         reason,
-        row: null,
-        clocks: {},
+        row: current.row,
+        clocks: current.clocks,
       });
     };
 
@@ -218,12 +238,13 @@ class WriterObject extends DurableObject<CloudBindings> {
           continue;
         }
         if (existingOp.status === 'rejected') {
+          const current = resolveCurrentOwnRow(rec);
           results.push({
             opId: rawOpId,
             status: 'rejected',
             reason: 'Previously rejected',
-            row: null,
-            clocks: {},
+            row: current.row,
+            clocks: current.clocks,
           });
           continue;
         }
@@ -274,7 +295,7 @@ class WriterObject extends DurableObject<CloudBindings> {
       try {
         const validated = validateSyncOp(raw);
         if (!validated.ok) {
-          rejectOp(validated.opId, validated.reason);
+          rejectOp(validated.opId, validated.reason, rec);
           continue;
         }
         op = validated.op;
@@ -287,7 +308,7 @@ class WriterObject extends DurableObject<CloudBindings> {
         existing = workingRows.get(key) ?? null;
 
         if (existing && existing.ownerUserId !== userId) {
-          rejectOp(op.opId, 'Forbidden: row owned by another user');
+          rejectOp(op.opId, 'Forbidden: row owned by another user', null);
           continue;
         }
 
@@ -338,6 +359,7 @@ class WriterObject extends DurableObject<CloudBindings> {
         rejectOp(
           rawOpId,
           err instanceof Error ? `Invalid op: ${err.message}` : 'Invalid sync op',
+          rec,
         );
         continue;
       }

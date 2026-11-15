@@ -235,8 +235,13 @@ function computeFixtureExpectedState(ops) {
 }
 
 async function runFixtureScenario({ baseUrl, jwks }) {
-  const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
-  const user = await createUserToken(baseUrl, jwks, 'e2e-sync-fixture-user');
+  const fixtureRaw = readFileSync(fixturePath, 'utf8');
+  const fixture = JSON.parse(fixtureRaw);
+  const user = await createUserToken(
+    baseUrl,
+    jwks,
+    `e2e-sync-fixture-${sha256Hex(fixtureRaw).slice(0, 12)}`,
+  );
 
   const pushRes = await postJson(
     baseUrl,
@@ -290,8 +295,12 @@ async function runFixtureScenario({ baseUrl, jwks }) {
     }
   }
 
-  // Verify ?project=<id> backfills only that project's rows (project, projectMember, tasks, checklistItems)
-  const travelProjectId = '01a1dd14-d0d7-7cb5-8cc6-d009167593dd';
+  // Verify ?project=<id> backfills only that project's rows (project, projectMember, projectInvite, tasks, checklistItems)
+  const travelProjectOp = fixture.ops.find(
+    (op) => op.entity === 'project' && op.row?.name === '旅行計畫',
+  );
+  assert(travelProjectOp, 'Missing 旅行計畫 project in fixture');
+  const travelProjectId = travelProjectOp.entityId;
   const projectPull = await getJson(
     baseUrl,
     `/sync/pull?since=0&limit=500&project=${travelProjectId}`,
@@ -301,7 +310,8 @@ async function runFixtureScenario({ baseUrl, jwks }) {
   const projectEntities = new Set(projectPull.data.rows.map((r) => r.entity));
   assert.equal(projectEntities.has('member'), false);
   assert.equal(projectEntities.has('tag'), false);
-  assert.equal(projectPull.data.rows.length, 7); // 1 project + 1 projectMember + 3 tasks + 2 checklistItems
+  assert.equal(projectEntities.has('projectInvite'), true);
+  assert.equal(projectPull.data.rows.length, 8); // 1 project + 1 projectMember + 1 projectInvite + 3 tasks + 2 checklistItems
 }
 
 async function runLwwScenario({ baseUrl, jwks }) {
@@ -627,6 +637,8 @@ async function runAuthScenario({ baseUrl, jwks }) {
   const projectId = randomUUID();
   const now = Date.now();
 
+  const userAOpId = randomUUID();
+  const userAHlc = makeHlc(now, 0, userA.deviceId);
   const pushA = await postJson(
     baseUrl,
     '/sync/push',
@@ -634,7 +646,8 @@ async function runAuthScenario({ baseUrl, jwks }) {
       deviceId: userA.deviceId,
       ops: [
         makeTaskOp({
-          hlc: makeHlc(now, 0, userA.deviceId),
+          opId: userAOpId,
+          hlc: userAHlc,
           entityId: taskId,
           fields: ['id', 'projectId', 'title', 'sortKey', 'createdAt', 'updatedAt'],
           row: {
@@ -652,6 +665,36 @@ async function runAuthScenario({ baseUrl, jwks }) {
   );
   assert.equal(pushA.status, 200);
   assert.equal(pushA.data.results[0].status, 'applied');
+
+  // User A pushes a validation-failing op on their own existing row -> rejected with current row & clocks.
+  const userABadOp = makeTaskOp({
+    hlc: makeHlc(now + 500, 0, userA.deviceId),
+    entityId: taskId,
+    fields: ['title'],
+    row: { id: taskId, title: null },
+  });
+  const pushABad = await postJson(
+    baseUrl,
+    '/sync/push',
+    { deviceId: userA.deviceId, ops: [userABadOp] },
+    userA.token,
+  );
+  assert.equal(pushABad.status, 200);
+  assert.equal(pushABad.data.results[0].status, 'rejected');
+  assert.deepEqual(pushABad.data.results[0].row, pushA.data.results[0].row);
+  assert.deepEqual(pushABad.data.results[0].clocks, pushA.data.results[0].clocks);
+
+  const replayABad = await postJson(
+    baseUrl,
+    '/sync/push',
+    { deviceId: userA.deviceId, ops: [userABadOp] },
+    userA.token,
+  );
+  assert.equal(replayABad.status, 200);
+  assert.equal(replayABad.data.results[0].status, 'rejected');
+  assert.equal(replayABad.data.results[0].reason, 'Previously rejected');
+  assert.deepEqual(replayABad.data.results[0].row, pushA.data.results[0].row);
+  assert.deepEqual(replayABad.data.results[0].clocks, pushA.data.results[0].clocks);
 
   const pushB = await postJson(
     baseUrl,
@@ -673,6 +716,38 @@ async function runAuthScenario({ baseUrl, jwks }) {
   assert.equal(pushB.data.results[0].status, 'rejected');
   assert.equal(typeof pushB.data.results[0].reason, 'string');
   assert.equal(pushB.data.results[0].row, null);
+  assert.deepEqual(pushB.data.results[0].clocks, {});
+
+  // Cross-user validation-failing op or opId collision must still return row: null, clocks: {}
+  const pushBCrossBad = await postJson(
+    baseUrl,
+    '/sync/push',
+    {
+      deviceId: userB.deviceId,
+      ops: [
+        makeTaskOp({
+          hlc: makeHlc(now + 1001, 0, userB.deviceId),
+          entityId: taskId,
+          fields: ['title'],
+          row: { id: taskId, title: null },
+        }),
+        makeTaskOp({
+          opId: userAOpId,
+          hlc: makeHlc(now + 1002, 0, userB.deviceId),
+          entityId: taskId,
+          fields: ['title'],
+          row: { id: taskId, title: 'Probe' },
+        }),
+      ],
+    },
+    userB.token,
+  );
+  assert.equal(pushBCrossBad.status, 200);
+  for (const r of pushBCrossBad.data.results) {
+    assert.equal(r.status, 'rejected');
+    assert.equal(r.row, null);
+    assert.deepEqual(r.clocks, {});
+  }
 
   const pullB = await getJson(baseUrl, '/sync/pull?since=0&limit=500', userB.token);
   assert.equal(pullB.status, 200);

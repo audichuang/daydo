@@ -71,7 +71,7 @@ public final class LocalDayDoAPI: DayDoAPI {
     }
 
     func saveTask(_ db: Database, _ t: TaskRecord) throws {
-        try Outbox.save(t, entity: "task", id: t.id, in: db, now: t.updatedAt)
+        try Outbox.save(t, entity: "task", id: t.id, in: db, now: now())
     }
 
     func recordDelete(_ db: Database, entity: String, id: String) throws {

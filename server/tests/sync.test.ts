@@ -495,8 +495,9 @@ describe('sync merge', () => {
       });
     }
 
-    // Verify DB serialization round-trip on project (isInbox boolean) and task (arrays)
-    const inbox = stateMap.get('project:01a1dd14-d0d4-7537-9830-45c44251a77f')!;
+    // Verify DB serialization round-trip on project (isInbox boolean), projectInvite, and task (arrays)
+    const entries = Array.from(stateMap.values());
+    const inbox = entries.find((e) => e.entity === 'project' && e.state.row.isInbox === true)!;
     const dbVals = stateToDbValues('project', {
       ...inbox.state,
       ownerUserId: 'u1',
@@ -506,11 +507,28 @@ describe('sync merge', () => {
     const restored = dbRecordToState('project', dbVals);
     expect(serializePublicRow('project', restored.row, restored.purgedAt).isInbox).toBe(true);
 
+    const inviteEntry = entries.find((e) => e.entity === 'projectInvite')!;
+    expect(inviteEntry).toBeDefined();
+    const inviteDbVals = stateToDbValues('projectInvite', {
+      ...inviteEntry.state,
+      ownerUserId: 'u1',
+      serverSeq: 3,
+    });
+    const restoredInvite = dbRecordToState('projectInvite', inviteDbVals);
+    expect(serializePublicRow('projectInvite', restoredInvite.row, restoredInvite.purgedAt)).toMatchObject({
+      email: 'family@example.com',
+      role: 'editor',
+      status: 'pending',
+    });
+
     // Verify recurring task got updated to 2026-11-22 while keeping startMinute/endMinute/timeZone
+    const recurringEntry = entries.find(
+      (e) => e.entity === 'task' && e.state.row.title === '每週讀書會' && e.state.row.status === 0,
+    )!;
     const recurring = serializePublicRow(
       'task',
-      stateMap.get('task:01a1dd14-d0d8-76cf-a7a7-11627263cc73')!.state.row,
-      stateMap.get('task:01a1dd14-d0d8-76cf-a7a7-11627263cc73')!.state.purgedAt,
+      recurringEntry.state.row,
+      recurringEntry.state.purgedAt,
     );
     expect(recurring.startDay).toBe('2026-11-22');
     expect(recurring.endDay).toBe('2026-11-22');
@@ -519,7 +537,9 @@ describe('sync merge', () => {
     expect(recurring.timeZone).toBe('Asia/Taipei');
 
     // Verify cleared + soft-deleted + purged task
-    const purgedEntry = stateMap.get('task:01a1dd14-d0da-7615-9fc9-b489db47b969')!.state;
+    const purgedEntry = entries.find(
+      (e) => e.entity === 'task' && e.state.purgedAt !== null,
+    )!.state;
     const purgedRow = serializePublicRow('task', purgedEntry.row, purgedEntry.purgedAt);
     expect(purgedRow.repeatRule).toBeUndefined();
     expect(purgedRow.startDay).toBeUndefined();
@@ -548,6 +568,7 @@ describe('sync merge', () => {
         'updatedAt',
       ],
       projectMember: ['projectId', 'memberId', 'role', 'createdAt', 'updatedAt'],
+      projectInvite: ['id', 'projectId', 'email', 'role', 'status', 'createdAt', 'updatedAt'],
       task: [
         'id',
         'projectId',

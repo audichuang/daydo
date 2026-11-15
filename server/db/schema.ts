@@ -150,6 +150,23 @@ export const projectMember = sqliteTable(
   ],
 );
 
+export const projectInvite = sqliteTable(
+  'projectInvite',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('projectId').notNull(),
+    email: text('email').notNull(),
+    role: text('role').notNull(),
+    status: text('status').notNull().default('pending'),
+    ...syncMetadataColumns(),
+  },
+  (t) => [
+    index('projectInvite_serverSeq_idx').on(t.serverSeq),
+    index('projectInvite_ownerUserId_idx').on(t.ownerUserId),
+    index('projectInvite_projectId_idx').on(t.projectId),
+  ],
+);
+
 export const task = sqliteTable(
   'task',
   {

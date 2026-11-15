@@ -253,14 +253,55 @@ import Testing
         #expect(allDayDone.id == expectedAllDayCloneId)
     }
 
+    @Test func completingRecurringTaskWithFutureUpdatedAtUsesWallClockForHLCAndChangeAt() async throws {
+        let api = try await makeAPI()
+        let wallNow = noon.epochMillis
+        let t = try await api.createTask(CreateTaskInput(
+            title: "未來時間戳重複任務",
+            start: "2026-11-15",
+            repeat: "RRULE:FREQ=DAILY"
+        ))
+
+        let futureUpdatedAt = wallNow + 30 * 86_400_000
+        try await api.database.writer.write { db in
+            try db.execute(
+                sql: "UPDATE task SET updatedAt = ? WHERE id = ?",
+                arguments: [futureUpdatedAt, t.id]
+            )
+        }
+        let seqBefore = (try await api.pendingChanges(limit: 500).last?.seq) ?? 0
+
+        _ = try await api.completeTask(id: t.id)
+
+        let newChanges = try await api.pendingChanges(limit: 500).filter { ($0.seq ?? 0) > seqBefore }
+        let parentChange = try #require(newChanges.first { $0.entity == "task" && $0.entityId == t.id })
+        let parentHLC = try #require(parentChange.hlc.flatMap(HLC.init))
+        #expect(parentChange.at == wallNow)
+        #expect(parentHLC.ms == wallNow)
+        for change in newChanges {
+            #expect(change.at == wallNow)
+            let hlc = try #require(change.hlc.flatMap(HLC.init))
+            #expect(hlc.ms == wallNow)
+        }
+
+        let updatedTask = try await api.getTask(id: t.id)
+        #expect(updatedTask.updatedAt == futureUpdatedAt + 1)
+
+        let lastMetaHLC = try await api.database.writer.read { db in
+            try HLC.loadLast(in: db)
+        }
+        #expect(lastMetaHLC?.ms == wallNow)
+    }
+
     @Test func generateSyncOpsFixture() async throws {
         let api = try await makeAPI()
 
         // 1. Bootstrap creates member, inbox/default lists, and projectMember rows.
         // (makeAPI already calls bootstrap())
 
-        // 2. Create project.
+        // 2. Create project and invite a collaborator.
         let project = try await api.createProject(CreateProjectInput(name: "旅行計畫", color: "#4AA8E8"))
+        _ = try await api.inviteMember(projectId: project.id, email: "family@example.com", role: "editor")
 
         // 3. Create task with schedule, timezone, reminders, repeat, subtasks, and tag.
         let recurring = try await api.createTask(CreateTaskInput(
@@ -323,6 +364,7 @@ import Testing
         #expect(entities.contains("member"))
         #expect(entities.contains("project"))
         #expect(entities.contains("projectMember"))
+        #expect(entities.contains("projectInvite"))
         #expect(entities.contains("task"))
         #expect(entities.contains("checklistItem"))
         #expect(entities.contains("tag"))

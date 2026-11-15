@@ -733,3 +733,290 @@ describe('Writer prototype-chain field poison batch resilience (Finding 5)', () 
     ]);
   });
 });
+
+describe('Writer rejected result returns server row & clocks for own rows (F4)', () => {
+  it('returns current server row and clocks on validation failure and previously-rejected replay for own row, and null for missing or cross-user rows', async () => {
+    const setup = createTestD1();
+    const userA = 'user-f4-a';
+    const userB = 'user-f4-b';
+    await setup.db.insert(schema.user).values([
+      { id: userA, createdAt: 1_700_000_000_000 },
+      { id: userB, createdAt: 1_700_000_000_000 },
+    ]);
+
+    const writer = makeWriter(setup.d1);
+    const taskId = 'task-f4-1';
+
+    // User A creates a task.
+    const createRes = await writer.push({
+      userId: userA,
+      deviceId: 'dev-a',
+      ops: [
+        {
+          opId: 'op-f4-create',
+          hlc: '1700000000001:0000:dev-a',
+          entity: 'task',
+          entityId: taskId,
+          op: 'upsert',
+          fields: ['id', 'projectId', 'title', 'sortKey', 'createdAt', 'updatedAt'],
+          row: {
+            id: taskId,
+            projectId: 'p-1',
+            title: 'Server Truth',
+            sortKey: 'i',
+            createdAt: 1000,
+            updatedAt: 1000,
+          },
+        },
+      ],
+    });
+    expect(createRes.results[0].status).toBe('applied');
+    const expectedRow = createRes.results[0].row!;
+    const expectedClocks = createRes.results[0].clocks;
+
+    // 1. User A pushes a validation-failing op on the existing own row -> rejected with current row & clocks.
+    const badOp = {
+      opId: 'op-f4-bad-val',
+      hlc: '1700000000002:0000:dev-a',
+      entity: 'task',
+      entityId: taskId,
+      op: 'upsert',
+      fields: ['title'],
+      row: { id: taskId, title: null },
+    };
+    const badRes = await writer.push({
+      userId: userA,
+      deviceId: 'dev-a',
+      ops: [badOp],
+    });
+    expect(badRes.results[0].status).toBe('rejected');
+    expect(badRes.results[0].row).toEqual(expectedRow);
+    expect(badRes.results[0].clocks).toEqual(expectedClocks);
+
+    // 2. Replaying that previously rejected op still returns current row & clocks.
+    const replayBadRes = await writer.push({
+      userId: userA,
+      deviceId: 'dev-a',
+      ops: [badOp],
+    });
+    expect(replayBadRes.results[0].status).toBe('rejected');
+    expect(replayBadRes.results[0].reason).toBe('Previously rejected');
+    expect(replayBadRes.results[0].row).toEqual(expectedRow);
+    expect(replayBadRes.results[0].clocks).toEqual(expectedClocks);
+
+    // 3. Validation-failing op on a non-existent row returns null and {}.
+    const missingRes = await writer.push({
+      userId: userA,
+      deviceId: 'dev-a',
+      ops: [
+        {
+          opId: 'op-f4-missing',
+          hlc: '1700000000003:0000:dev-a',
+          entity: 'task',
+          entityId: 'task-does-not-exist',
+          op: 'upsert',
+          fields: ['title'],
+          row: { title: null },
+        },
+      ],
+    });
+    expect(missingRes.results[0].status).toBe('rejected');
+    expect(missingRes.results[0].row).toBeNull();
+    expect(missingRes.results[0].clocks).toEqual({});
+
+    // 4. Cross-user cases: User B must receive row: null, clocks: {} (no data leak).
+    const crossValidRes = await writer.push({
+      userId: userB,
+      deviceId: 'dev-b',
+      ops: [
+        {
+          opId: 'op-f4-cross-valid',
+          hlc: '1700000000004:0000:dev-b',
+          entity: 'task',
+          entityId: taskId,
+          op: 'upsert',
+          fields: ['title'],
+          row: { id: taskId, title: 'Hijack' },
+        },
+      ],
+    });
+    expect(crossValidRes.results[0].status).toBe('rejected');
+    expect(crossValidRes.results[0].row).toBeNull();
+    expect(crossValidRes.results[0].clocks).toEqual({});
+
+    const crossBadOp = {
+      opId: 'op-f4-cross-bad',
+      hlc: '1700000000005:0000:dev-b',
+      entity: 'task',
+      entityId: taskId,
+      op: 'upsert',
+      fields: ['title'],
+      row: { id: taskId, title: null },
+    };
+    const crossBadRes = await writer.push({
+      userId: userB,
+      deviceId: 'dev-b',
+      ops: [crossBadOp],
+    });
+    expect(crossBadRes.results[0].status).toBe('rejected');
+    expect(crossBadRes.results[0].row).toBeNull();
+    expect(crossBadRes.results[0].clocks).toEqual({});
+
+    const crossReplayBadRes = await writer.push({
+      userId: userB,
+      deviceId: 'dev-b',
+      ops: [crossBadOp],
+    });
+    expect(crossReplayBadRes.results[0].status).toBe('rejected');
+    expect(crossReplayBadRes.results[0].row).toBeNull();
+    expect(crossReplayBadRes.results[0].clocks).toEqual({});
+
+    const crossOpIdRes = await writer.push({
+      userId: userB,
+      deviceId: 'dev-b',
+      ops: [
+        {
+          opId: 'op-f4-create',
+          hlc: '1700000000006:0000:dev-b',
+          entity: 'task',
+          entityId: taskId,
+          op: 'upsert',
+          fields: ['title'],
+          row: { id: taskId, title: 'Probe' },
+        },
+      ],
+    });
+    expect(crossOpIdRes.results[0].status).toBe('rejected');
+    expect(crossOpIdRes.results[0].reason).toBe('opId already used by another user');
+    expect(crossOpIdRes.results[0].row).toBeNull();
+    expect(crossOpIdRes.results[0].clocks).toEqual({});
+  });
+
+  it('includes computed isMe on rejected own member op without binding meMemberId from a rejected op', async () => {
+    const setup = createTestD1();
+    const userId = 'user-f4-member';
+    await setup.db.insert(schema.user).values({ id: userId, createdAt: 1_700_000_000_000 });
+    const writer = makeWriter(setup.d1);
+
+    await writer.push({
+      userId,
+      deviceId: 'dev-a',
+      ops: [
+        {
+          opId: 'op-f4-mem-create',
+          hlc: '1700000000001:0000:dev-a',
+          entity: 'member',
+          entityId: 'mem-1',
+          op: 'upsert',
+          fields: ['id', 'name', 'initial', 'color', 'isMe', 'createdAt', 'updatedAt'],
+          row: {
+            id: 'mem-1',
+            name: 'Alice',
+            initial: 'A',
+            color: '#9BB8FF',
+            isMe: false,
+            createdAt: 1000,
+            updatedAt: 1000,
+          },
+        },
+      ],
+    });
+
+    // Rejected op carrying isMe: true must NOT bind meMemberId, and returns current row with isMe: false.
+    const badMemRes = await writer.push({
+      userId,
+      deviceId: 'dev-a',
+      ops: [
+        {
+          opId: 'op-f4-mem-bad',
+          hlc: '1700000000002:0000:dev-a',
+          entity: 'member',
+          entityId: 'mem-1',
+          op: 'upsert',
+          fields: ['name', 'isMe'],
+          row: { id: 'mem-1', name: null, isMe: true },
+        },
+      ],
+    });
+    expect(badMemRes.results[0].status).toBe('rejected');
+    expect(badMemRes.results[0].row).toMatchObject({ id: 'mem-1', name: 'Alice', isMe: false });
+    expect(badMemRes.results[0].clocks.name).toBe('1700000000001:0000:dev-a');
+  });
+});
+
+describe('Writer projectInvite sync and authorization (M2)', () => {
+  it('supports push/pull for own projectInvite and rejects cross-user access without leaking data', async () => {
+    const setup = createTestD1();
+    const userA = 'user-invite-a';
+    const userB = 'user-invite-b';
+    await setup.db.insert(schema.user).values([
+      { id: userA, createdAt: 1_700_000_000_000 },
+      { id: userB, createdAt: 1_700_000_000_000 },
+    ]);
+
+    const writer = makeWriter(setup.d1);
+    const inviteId = 'inv-1';
+    const projectId = 'proj-1';
+
+    const pushA = await writer.push({
+      userId: userA,
+      deviceId: 'dev-a',
+      ops: [
+        {
+          opId: 'op-inv-1',
+          hlc: '1700000000001:0000:dev-a',
+          entity: 'projectInvite',
+          entityId: inviteId,
+          op: 'upsert',
+          fields: ['id', 'projectId', 'email', 'role', 'status', 'createdAt', 'updatedAt'],
+          row: {
+            id: inviteId,
+            projectId,
+            email: 'family@example.com',
+            role: 'editor',
+            status: 'pending',
+            createdAt: 1000,
+            updatedAt: 1000,
+          },
+        },
+      ],
+    });
+    expect(pushA.results[0].status).toBe('applied');
+    expect(pushA.results[0].row).toEqual({
+      id: inviteId,
+      projectId,
+      email: 'family@example.com',
+      role: 'editor',
+      status: 'pending',
+      createdAt: 1000,
+      updatedAt: 1000,
+    });
+
+    const pullA = await pullUserRows(setup.db, { userId: userA, since: 0, limit: 100 });
+    expect(pullA.rows).toHaveLength(1);
+    expect(pullA.rows[0].entity).toBe('projectInvite');
+    expect(pullA.rows[0].row).toEqual(pushA.results[0].row);
+
+    const pullB = await pullUserRows(setup.db, { userId: userB, since: 0, limit: 100 });
+    expect(pullB.rows).toHaveLength(0);
+
+    const pushB = await writer.push({
+      userId: userB,
+      deviceId: 'dev-b',
+      ops: [
+        {
+          opId: 'op-inv-hijack',
+          hlc: '1700000000002:0000:dev-b',
+          entity: 'projectInvite',
+          entityId: inviteId,
+          op: 'upsert',
+          fields: ['role'],
+          row: { id: inviteId, role: 'viewer' },
+        },
+      ],
+    });
+    expect(pushB.results[0].status).toBe('rejected');
+    expect(pushB.results[0].row).toBeNull();
+    expect(pushB.results[0].clocks).toEqual({});
+  });
+});
