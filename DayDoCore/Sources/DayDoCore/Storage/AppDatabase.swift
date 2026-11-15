@@ -139,6 +139,18 @@ public final class AppDatabase: Sendable {
                 t.column("value", .text).notNull()
             }
         }
+        m.registerMigration("v2") { db in
+            try db.create(table: "projectInvite") { t in
+                t.primaryKey("id", .text)
+                t.column("projectId", .text).notNull().references("project", onDelete: .cascade).indexed()
+                t.column("email", .text).notNull()
+                t.column("role", .text).notNull()
+                t.column("status", .text).notNull().defaults(to: "pending")
+                t.column("createdAt", .integer).notNull()
+                t.column("updatedAt", .integer).notNull()
+                t.column("deletedAt", .integer)
+            }
+        }
         return m
     }
 }

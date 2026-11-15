@@ -41,6 +41,30 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
     public var isShared: Bool { memberIds.count > 1 }
 }
 
+public struct ProjectMemberInfo: Codable, Hashable, Sendable, Identifiable {
+    public var memberId: String
+    public var name: String
+    public var initial: String
+    public var color: String
+    public var isMe: Bool
+    /// owner | editor | viewer
+    public var role: String
+
+    public var id: String { memberId }
+}
+
+public struct ProjectInvite: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var projectId: String
+    public var email: String
+    /// editor | viewer
+    public var role: String
+    /// pending | accepted | declined | expired
+    public var status: String
+    public var createdAt: EpochMillis
+    public var updatedAt: EpochMillis
+}
+
 public struct ChecklistItem: Codable, Hashable, Sendable, Identifiable {
     public var id: String
     public var title: String

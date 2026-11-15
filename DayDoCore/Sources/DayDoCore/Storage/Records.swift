@@ -62,6 +62,20 @@ public struct ProjectMemberRecord: Codable, Hashable, Sendable, FetchableRecord,
     public var deletedAt: EpochMillis?
 }
 
+public struct ProjectInviteRecord: Codable, Hashable, Sendable, FetchableRecord, PersistableRecord {
+    public static let databaseTableName = "projectInvite"
+    public var id: String
+    public var projectId: String
+    public var email: String
+    /// editor | viewer
+    public var role: String
+    /// pending | accepted | declined | expired
+    public var status: String
+    public var createdAt: EpochMillis
+    public var updatedAt: EpochMillis
+    public var deletedAt: EpochMillis?
+}
+
 public struct TaskRecord: Codable, Hashable, Sendable, FetchableRecord, PersistableRecord {
     public static let databaseTableName = "task"
     public var id: String

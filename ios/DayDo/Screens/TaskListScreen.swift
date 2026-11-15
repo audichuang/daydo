@@ -54,16 +54,37 @@ struct TaskListScreen: View {
                 if scope != .smart(.trash) && scope != .smart(.completed) {
                     HeaderAction(systemName: "plus", label: "新增任務", tint: accent.text) { compose() }
                 }
+                if case .project(let id) = scope, !(model.project(id)?.isInbox ?? false) {
+                    HeaderAction(systemName: "person.crop.circle.badge.plus", label: "共享") { model.sharingProjectId = id }
+                }
                 Menu {
                     if case .project(let id) = scope {
+                        let proj = model.project(id)
+                        let currentView = proj?.viewMode ?? "list"
                         Button("編輯", systemImage: "slider.horizontal.3") { model.editingProjectId = id }
+                        Menu("視圖", systemImage: "rectangle.grid.1x2") {
+                            viewMenuItem("列表", mode: "list", current: currentView, projectId: id)
+                            viewMenuItem("看板", mode: "kanban", current: currentView, projectId: id)
+                            viewMenuItem("時間軸", mode: "timeline", current: currentView, projectId: id)
+                        }
                     }
                     Button(model.compact ? "顯示詳情" : "隱藏詳情", systemImage: model.compact ? "eye" : "eye.slash") {
                         withAnimation(.snappy) { model.compact.toggle() }
                     }
                     Button(closed.contains("completed") ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle("completed") }
                     if let overdue = sections.first(where: { $0.id == "overdue" }) {
+                        Divider()
                         Button("全部延到今天", systemImage: "arrow.uturn.forward") { postpone(overdue.tasks.map(\.id)) }
+                    }
+                    if case .project(let id) = scope, let proj = model.project(id), !proj.isInbox {
+                        Divider()
+                        Menu("更多", systemImage: "ellipsis.circle") {
+                            Button("共享協作", systemImage: "person.2") { model.sharingProjectId = id }
+                            ShareLink(item: projectShareText(proj)) {
+                                Label("分享", systemImage: "square.and.arrow.up")
+                            }
+                            Button("複製清單", systemImage: "doc.on.doc") { duplicate(id) }
+                        }
                     }
                 } label: {
                     Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
@@ -111,6 +132,41 @@ struct TaskListScreen: View {
     }
 
     func postpone(_ ids: [String]) { Task { await model.perform { try await $0.postponeOverdue(taskIds: ids) } } }
+
+    @ViewBuilder
+    func viewMenuItem(_ title: String, mode: String, current: String, projectId: String) -> some View {
+        Button {
+            var u = UpdateProjectInput(projectId: projectId)
+            u.viewMode = mode
+            let input = u
+            Task { await model.perform { try await $0.updateProject(input) } }
+        } label: {
+            if current == mode {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
+            }
+        }
+    }
+
+    func duplicate(_ projectId: String) {
+        Task {
+            if let copy = await model.perform({ try await $0.duplicateProject(id: projectId) }) {
+                model.scope = .project(copy.id)
+            }
+        }
+    }
+
+    func projectShareText(_ project: Project) -> String {
+        let active = sections.filter { $0.id != "completed" && $0.id != "trash" }.flatMap(\.tasks)
+        let lines = active.map { t in
+            if let sched = t.schedule {
+                return "□ \(t.title)  \(DateText.taskLine(sched, today: model.today))"
+            }
+            return "□ \(t.title)"
+        }
+        return ([project.name] + lines).joined(separator: "\n")
+    }
 
     func compose() {
         var req = ComposeRequest()

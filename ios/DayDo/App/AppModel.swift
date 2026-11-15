@@ -43,6 +43,7 @@ final class AppModel {
     }
     var composing: ComposeRequest?
     var editingProjectId: String?
+    var sharingProjectId: String?
 
     // Preferences
     var accentHex: String { didSet { UserDefaults.standard.set(accentHex, forKey: "accent") } }

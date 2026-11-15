@@ -152,10 +152,11 @@ final class DayDoFlowTests: XCTestCase {
             sleep(1)
             if mode == "週" || mode == "日" {
                 let hour = Calendar.current.component(.hour, from: Date())
-                if hour <= 14 {
-                    let h08 = app.staticTexts["08"].firstMatch
-                    XCTAssertTrue(h08.waitForExistence(timeout: 3) && h08.isHittable, "\(mode): Hour 08 should be hittable without scrolling")
-                } else {
+                // The grid opens two hours before now (CalendarScreen.initialHour).
+                let first = String(format: "%02d", max(0, hour - 2))
+                let label = app.staticTexts[first].firstMatch
+                XCTAssertTrue(label.waitForExistence(timeout: 3) && label.isHittable, "\(mode): Hour \(first) should be hittable without scrolling")
+                if hour > 14 {
                     let brief = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).firstMatch
                     XCTAssertTrue(brief.waitForExistence(timeout: 3) && brief.isHittable, "\(mode): 18:00 event should be hittable without scrolling")
                 }
@@ -188,7 +189,7 @@ final class DayDoFlowTests: XCTestCase {
         let name = app.textFields["清單名稱"]
         XCTAssertTrue(name.waitForExistence(timeout: 3))
         name.typeText("旅行")
-        shot("17-edit-list")
+        shot("17a-edit-list-new")
         app.buttons["儲存"].tap()
         XCTAssertTrue(app.staticTexts["旅行"].waitForExistence(timeout: 3))
     }
@@ -291,7 +292,7 @@ final class DayDoFlowTests: XCTestCase {
         work.tap()
         app.buttons["更多選項"].tap()
         app.buttons["編輯"].tap()
-        let archiveBtn = app.buttons["封存清單"]
+        let archiveBtn = app.buttons["歸檔清單"]
         XCTAssertTrue(archiveBtn.waitForExistence(timeout: 3))
         archiveBtn.tap()
 
@@ -385,5 +386,139 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(confirm.waitForExistence(timeout: 3), app.debugDescription)
         confirm.tap()
         XCTAssertTrue(study.waitForNonExistence(timeout: 3))
+    }
+
+    @MainActor
+    func testShareListInviteAndEditMembers() {
+        dismissNotificationPrompt()
+        app.buttons["開啟清單抽屜"].tap()
+        XCTAssertTrue(app.staticTexts["我"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.buttons["設定"].exists)
+        shot("34-drawer-header")
+
+        let folder = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '工作與學習'")).firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 3))
+        folder.tap()
+        let work = app.buttons["drawer.list.工作"]
+        XCTAssertTrue(work.waitForExistence(timeout: 3))
+        work.tap()
+
+        // Project ⋯ menu: inspect top-level items + 更多 submenu.
+        app.buttons["更多選項"].tap()
+        XCTAssertTrue(app.buttons["編輯"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.buttons["視圖"].exists)
+        XCTAssertTrue(app.buttons["更多"].exists)
+        shot("32-list-menu")
+        app.buttons["更多"].tap()
+        XCTAssertTrue(app.buttons["共享協作"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.buttons["分享"].exists)
+        XCTAssertTrue(app.buttons["複製清單"].exists)
+        shot("33-list-menu-more")
+        app.buttons["複製清單"].tap()
+        XCTAssertTrue(app.staticTexts["工作 副本"].waitForExistence(timeout: 3), app.debugDescription)
+
+        // Open EditListSheet on existing list (工作 副本): check 清單顏色/視圖類型/成員數量/轉移擁有者/歸檔/刪除.
+        app.buttons["更多選項"].tap()
+        XCTAssertTrue(app.buttons["編輯"].waitForExistence(timeout: 3))
+        app.buttons["編輯"].tap()
+        XCTAssertTrue(app.staticTexts["清單顏色"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["視圖類型"].exists)
+        let membersRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '成員數量'")).firstMatch
+        XCTAssertTrue(membersRow.exists, app.debugDescription)
+        let transferRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '轉移清單擁有者'")).firstMatch
+        XCTAssertTrue(transferRow.exists, app.debugDescription)
+        XCTAssertTrue(app.buttons["歸檔清單"].exists)
+        XCTAssertTrue(app.buttons["刪除清單"].exists)
+        shot("17-edit-list")
+
+        // 轉移清單擁有者 empty state when no other members exist.
+        transferRow.tap()
+        XCTAssertTrue(app.staticTexts["目前沒有其他成員"].waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons.matching(NSPredicate(format: "label == '取消'")).element(boundBy: 1).tap()
+        XCTAssertTrue(app.staticTexts["目前沒有其他成員"].waitForNonExistence(timeout: 3))
+
+        // Edit the list name, open 成員數量 -> ShareListSheet, close sharing, verify draft survives and saves.
+        let nameField = app.textFields.firstMatch
+        XCTAssertTrue(nameField.exists, app.debugDescription)
+        let beforeName = (nameField.value as? String) ?? ""
+        nameField.tap()
+        nameField.typeText("X")
+        let editedName = (nameField.value as? String) ?? ""
+        XCTAssertNotEqual(editedName, beforeName)
+        XCTAssertTrue(editedName.contains("X"), editedName)
+
+        membersRow.tap()
+        XCTAssertTrue(app.staticTexts["共享清單"].waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["完成"].tap()
+        XCTAssertTrue(app.staticTexts["共享清單"].waitForNonExistence(timeout: 3))
+        XCTAssertEqual((nameField.value as? String) ?? "", editedName)
+        app.buttons["儲存"].tap()
+        XCTAssertTrue(app.staticTexts["編輯清單"].waitForNonExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts[editedName].waitForExistence(timeout: 3), app.debugDescription)
+
+        // Open ShareListSheet via toolbar 共享 button.
+        let shareBtn = app.buttons["共享"]
+        XCTAssertTrue(shareBtn.waitForExistence(timeout: 3), app.debugDescription)
+        shareBtn.tap()
+        XCTAssertTrue(app.staticTexts["共享清單"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["所有者"].exists)
+        XCTAssertTrue(app.staticTexts["我"].exists)
+        shot("29-share-sheet")
+
+        // Invite family@example.com with 可編輯 role.
+        app.buttons["新增新成員"].tap()
+        let emailField = app.textFields["電子郵件"]
+        XCTAssertTrue(emailField.waitForExistence(timeout: 3), app.debugDescription)
+        emailField.tap()
+        emailField.typeText("family@example.com")
+        app.buttons["可編輯"].tap()
+        app.buttons["邀請"].tap()
+
+        let inviteRow = app.buttons["shareInvite.family@example.com"].firstMatch
+        XCTAssertTrue(inviteRow.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(inviteRow.label.contains("family@example.com"))
+        XCTAssertTrue(inviteRow.label.contains("等待同步"))
+        shot("30-share-invite")
+
+        // Change role to 唯讀 via row menu.
+        inviteRow.tap()
+        let readOnly = app.buttons["唯讀"]
+        XCTAssertTrue(readOnly.waitForExistence(timeout: 3), app.debugDescription)
+        readOnly.tap()
+        let updatedToRead = NSPredicate { _, _ in inviteRow.exists && inviteRow.label.contains("唯讀") }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: updatedToRead, object: nil)], timeout: 3), .completed)
+
+        // Cancel invite via row menu and verify removal.
+        inviteRow.tap()
+        let cancelBtn = app.buttons["取消邀請"]
+        XCTAssertTrue(cancelBtn.waitForExistence(timeout: 3), app.debugDescription)
+        cancelBtn.tap()
+        XCTAssertTrue(inviteRow.waitForNonExistence(timeout: 3), app.debugDescription)
+
+        // Close ShareListSheet, verify 視圖 submenu updates viewMode, then Drawer gear -> Settings tab.
+        app.buttons["完成"].tap()
+        XCTAssertTrue(app.staticTexts["共享清單"].waitForNonExistence(timeout: 3))
+        app.buttons["更多選項"].tap()
+        let viewMenu = app.buttons["視圖"]
+        XCTAssertTrue(viewMenu.waitForExistence(timeout: 3))
+        viewMenu.tap()
+        let kanbanItem = app.buttons["看板"]
+        XCTAssertTrue(kanbanItem.waitForExistence(timeout: 3))
+        kanbanItem.tap()
+
+        app.buttons["更多選項"].tap()
+        XCTAssertTrue(app.buttons["編輯"].waitForExistence(timeout: 3))
+        app.buttons["編輯"].tap()
+        let kanbanOption = app.buttons["看板"]
+        XCTAssertTrue(kanbanOption.waitForExistence(timeout: 3))
+        XCTAssertTrue(kanbanOption.isSelected)
+        app.buttons["取消"].tap()
+        XCTAssertTrue(kanbanOption.waitForNonExistence(timeout: 3))
+
+        app.buttons["開啟清單抽屜"].tap()
+        let settingsBtn = app.buttons["drawer.settings"]
+        XCTAssertTrue(settingsBtn.waitForExistence(timeout: 3))
+        settingsBtn.tap()
+        XCTAssertTrue(app.buttons["外觀"].waitForExistence(timeout: 3), app.debugDescription)
     }
 }
