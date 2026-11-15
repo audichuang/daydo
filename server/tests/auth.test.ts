@@ -520,4 +520,137 @@ describe('login and refresh state fields (hasData, meMemberId, inboxProjectId)',
       inboxProjectId: null,
     });
   });
+
+  it('keeps the refresh token valid if Scope.getInboxProjectId fails transiently and allows retry on recovery', async () => {
+    const { db } = createTestD1();
+    const database = db as unknown as DatabaseClient;
+    const inboxId = 'proj-inbox-transient';
+
+    const initial = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'transient-refresh-user',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1000,
+    });
+
+    await db.insert(schema.projectMembership).values({
+      projectId: inboxId,
+      userId: initial.user.id,
+      role: 'owner',
+      createdAt: 1001,
+      removedAt: null,
+    });
+
+    const failingScopeStub = () => ({
+      async getInboxProjectId() {
+        throw new Error('DO transient');
+      },
+    });
+    const workingScopeStub = () => ({
+      async getInboxProjectId(input: { readableProjectIds: string[] }) {
+        return input.readableProjectIds.includes(inboxId) ? inboxId : null;
+      },
+    });
+
+    await expect(
+      rotateRefreshToken(database, {
+        refreshToken: initial.refreshToken,
+        jwtSecret,
+        now: 2000,
+        getScopeStub: failingScopeStub,
+      }),
+    ).rejects.toThrow('DO transient');
+
+    const sessionsAfterFailure = await db.select().from(schema.session);
+    expect(sessionsAfterFailure).toHaveLength(1);
+    expect(sessionsAfterFailure[0].revokedAt).toBeNull();
+
+    const recovered = await rotateRefreshToken(database, {
+      refreshToken: initial.refreshToken,
+      jwtSecret,
+      now: 2001,
+      getScopeStub: workingScopeStub,
+    });
+    expect(recovered).not.toBeNull();
+    expect(recovered).toMatchObject({
+      hasData: true,
+      meMemberId: null,
+      inboxProjectId: inboxId,
+    });
+    expect(recovered!.refreshToken).not.toBe(initial.refreshToken);
+
+    const sessionsAfterRecovery = await db.select().from(schema.session);
+    expect(sessionsAfterRecovery).toHaveLength(2);
+    expect(sessionsAfterRecovery.filter((s) => s.revokedAt === null)).toHaveLength(1);
+    expect(sessionsAfterRecovery.filter((s) => s.revokedAt !== null)).toHaveLength(1);
+  });
+
+  it('does not insert an orphaned session row on login if Scope.getInboxProjectId fails transiently', async () => {
+    const { db } = createTestD1();
+    const database = db as unknown as DatabaseClient;
+    const inboxId = 'proj-inbox-login-transient';
+
+    const initial = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'transient-login-user',
+      email: null,
+      deviceId: 'dev-1',
+      jwtSecret,
+      now: 1000,
+    });
+
+    await db.insert(schema.projectMembership).values({
+      projectId: inboxId,
+      userId: initial.user.id,
+      role: 'owner',
+      createdAt: 1001,
+      removedAt: null,
+    });
+
+    const failingScopeStub = () => ({
+      async getInboxProjectId() {
+        throw new Error('DO transient');
+      },
+    });
+    const workingScopeStub = () => ({
+      async getInboxProjectId(input: { readableProjectIds: string[] }) {
+        return input.readableProjectIds.includes(inboxId) ? inboxId : null;
+      },
+    });
+
+    await expect(
+      createSessionForIdentity(database, {
+        provider: 'apple',
+        sub: 'transient-login-user',
+        email: null,
+        deviceId: 'dev-2',
+        jwtSecret,
+        now: 2000,
+        getScopeStub: failingScopeStub,
+      }),
+    ).rejects.toThrow('DO transient');
+
+    const sessionsAfterFailure = await db.select().from(schema.session);
+    expect(sessionsAfterFailure).toHaveLength(1);
+
+    const recovered = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'transient-login-user',
+      email: null,
+      deviceId: 'dev-2',
+      jwtSecret,
+      now: 2001,
+      getScopeStub: workingScopeStub,
+    });
+    expect(recovered).toMatchObject({
+      isNewAccount: false,
+      hasData: true,
+      meMemberId: null,
+      inboxProjectId: inboxId,
+    });
+    const sessionsAfterRecovery = await db.select().from(schema.session);
+    expect(sessionsAfterRecovery).toHaveLength(2);
+  });
 });

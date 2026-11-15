@@ -90,6 +90,45 @@ function buildDeviceAndSessionStatements(
   ] as const;
 }
 
+async function issueSessionForExistingUser(
+  database: DatabaseClient,
+  params: {
+    userId: string;
+    deviceId: string;
+    chainId: string;
+    sessionId: string;
+    refreshToken: string;
+    refreshHash: string;
+    jwtSecret: string;
+    now: number;
+    getScopeStub?: ScopeLookup;
+  },
+): Promise<AuthSessionResult> {
+  // Resolve sync state before writing the session row so a transient DO RPC failure
+  // does not leave an orphaned session in D1.
+  const [accessToken, syncState] = await Promise.all([
+    signAccessToken(params.userId, params.jwtSecret),
+    resolveUserSyncState(database, params.userId, params.getScopeStub),
+  ]);
+  await database.batch([
+    ...buildDeviceAndSessionStatements(database, {
+      userId: params.userId,
+      deviceId: params.deviceId,
+      chainId: params.chainId,
+      sessionId: params.sessionId,
+      refreshHash: params.refreshHash,
+      now: params.now,
+    }),
+  ]);
+  return {
+    accessToken,
+    refreshToken: params.refreshToken,
+    user: { id: params.userId },
+    isNewAccount: false,
+    ...syncState,
+  };
+}
+
 export async function createSessionForIdentity(
   database: DatabaseClient,
   params: {
@@ -114,15 +153,32 @@ export async function createSessionForIdentity(
     .where(and(eq(identity.provider, params.provider), eq(identity.sub, params.sub)))
     .get();
 
-  let userId: string;
-  let isNewAccount: boolean;
-
   if (existing) {
-    userId = existing.userId;
-    isNewAccount = false;
+    return issueSessionForExistingUser(database, {
+      userId: existing.userId,
+      deviceId: params.deviceId,
+      chainId,
+      sessionId,
+      refreshToken,
+      refreshHash,
+      jwtSecret: params.jwtSecret,
+      now,
+      getScopeStub: params.getScopeStub,
+    });
+  }
+
+  const newUserId = crypto.randomUUID();
+  try {
     await database.batch([
+      database.insert(user).values({ id: newUserId, createdAt: now }),
+      database.insert(identity).values({
+        provider: params.provider,
+        sub: params.sub,
+        userId: newUserId,
+        email: params.email,
+      }),
       ...buildDeviceAndSessionStatements(database, {
-        userId,
+        userId: newUserId,
         deviceId: params.deviceId,
         chainId,
         sessionId,
@@ -130,68 +186,36 @@ export async function createSessionForIdentity(
         now,
       }),
     ]);
-  } else {
-    const newUserId = crypto.randomUUID();
-    try {
-      await database.batch([
-        database.insert(user).values({ id: newUserId, createdAt: now }),
-        database.insert(identity).values({
-          provider: params.provider,
-          sub: params.sub,
-          userId: newUserId,
-          email: params.email,
-        }),
-        ...buildDeviceAndSessionStatements(database, {
-          userId: newUserId,
-          deviceId: params.deviceId,
-          chainId,
-          sessionId,
-          refreshHash,
-          now,
-        }),
-      ]);
-      userId = newUserId;
-      isNewAccount = true;
-    } catch (error) {
-      // Handle concurrent first-time login for the same (provider, sub).
-      const raced = await database
-        .select({ userId: identity.userId })
-        .from(identity)
-        .where(and(eq(identity.provider, params.provider), eq(identity.sub, params.sub)))
-        .get();
-      if (!raced) throw error;
-      userId = raced.userId;
-      isNewAccount = false;
-      await database.batch([
-        ...buildDeviceAndSessionStatements(database, {
-          userId,
-          deviceId: params.deviceId,
-          chainId,
-          sessionId,
-          refreshHash,
-          now,
-        }),
-      ]);
-    }
+    const accessToken = await signAccessToken(newUserId, params.jwtSecret);
+    return {
+      accessToken,
+      refreshToken,
+      user: { id: newUserId },
+      isNewAccount: true,
+      hasData: false,
+      meMemberId: null,
+      inboxProjectId: null,
+    };
+  } catch (error) {
+    // Handle concurrent first-time login for the same (provider, sub).
+    const raced = await database
+      .select({ userId: identity.userId })
+      .from(identity)
+      .where(and(eq(identity.provider, params.provider), eq(identity.sub, params.sub)))
+      .get();
+    if (!raced) throw error;
+    return issueSessionForExistingUser(database, {
+      userId: raced.userId,
+      deviceId: params.deviceId,
+      chainId,
+      sessionId,
+      refreshToken,
+      refreshHash,
+      jwtSecret: params.jwtSecret,
+      now,
+      getScopeStub: params.getScopeStub,
+    });
   }
-
-  const [accessToken, syncState] = await Promise.all([
-    signAccessToken(userId, params.jwtSecret),
-    isNewAccount
-      ? Promise.resolve<LoginStateFields>({
-          hasData: false,
-          meMemberId: null,
-          inboxProjectId: null,
-        })
-      : resolveUserSyncState(database, userId, params.getScopeStub),
-  ]);
-  return {
-    accessToken,
-    refreshToken,
-    user: { id: userId },
-    isNewAccount,
-    ...syncState,
-  };
 }
 
 export async function rotateRefreshToken(
@@ -229,6 +253,13 @@ export async function rotateRefreshToken(
     return null;
   }
 
+  // Resolve sync state before rotating so a transient Scope DO RPC failure leaves
+  // the current refresh token valid and avoids triggering reuse detection on retry.
+  const [accessToken, syncState] = await Promise.all([
+    signAccessToken(existing.userId, params.jwtSecret),
+    resolveUserSyncState(database, existing.userId, params.getScopeStub),
+  ]);
+
   const newRefreshToken = generateRefreshToken();
   const newRefreshHash = await sha256Hex(newRefreshToken);
   const newSessionId = crypto.randomUUID();
@@ -261,9 +292,5 @@ export async function rotateRefreshToken(
     return null;
   }
 
-  const [accessToken, syncState] = await Promise.all([
-    signAccessToken(existing.userId, params.jwtSecret),
-    resolveUserSyncState(database, existing.userId, params.getScopeStub),
-  ]);
   return { accessToken, refreshToken: newRefreshToken, ...syncState };
 }

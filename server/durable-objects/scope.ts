@@ -43,6 +43,7 @@ export interface ScopePushResponse {
   results: PushOpResult[];
   serverSeq: number;
   boundMeMemberId: string | null;
+  /** Server HLC string (`<13-digit ms>:<4-digit counter>:server`). */
   serverTime: string;
 }
 

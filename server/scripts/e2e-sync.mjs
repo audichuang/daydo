@@ -326,6 +326,8 @@ async function runFixtureScenario({ baseUrl, jwks }) {
     user.token,
   );
   assert.equal(pushRes.status, 200, `Fixture push failed: ${JSON.stringify(pushRes.data)}`);
+  assert.equal(typeof pushRes.data.serverTime, 'string');
+  assert.match(pushRes.data.serverTime, /^\d{13}:\d{4}:server$/);
   assert.equal(pushRes.data.results.length, fixture.ops.length);
   for (let i = 0; i < fixture.ops.length; i += 1) {
     const op = fixture.ops[i];

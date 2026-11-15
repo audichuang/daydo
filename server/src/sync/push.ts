@@ -52,7 +52,11 @@ export async function executeSyncPush(
     getScopeStub: (scope: string) => ScopeStub;
     clock?: ServerHlcClock;
   },
-): Promise<{ results: PushOpResult[]; serverTime: string }> {
+): Promise<{
+  results: PushOpResult[];
+  /** Server HLC string (`<13-digit ms>:<4-digit counter>:server`). */
+  serverTime: string;
+}> {
   const { userId, deviceId, ops, getScopeStub, clock } = params;
   const nowMs = Date.now();
   const pusherScope = `u:${userId}`;
