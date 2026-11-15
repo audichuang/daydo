@@ -1,6 +1,16 @@
 # DayDo
 
-待辦 App。設計稿在 `design/`（`design/source/*.html` 是原始設計元件，`design/shots/` 是截圖），畫面編號 1a–6b 對應設計板標題。
+## 我們在做什麼
+
+DayDo 是待辦加日曆的 iPhone App，給自己和家人用，互動對標 TickTick。分三個階段：
+
+1. **單機 App**（已完成，在 TestFlight）：資料只存在手機的 SQLite；今天、清單、任務詳情、日期面板、時間區塊、日曆（清單／年／月／週／3日／日）、搜尋、垃圾桶。
+2. **同步與多人**（下一步）：Cloudflare Worker + D1 + Durable Objects，註冊登入、多裝置同步、共享清單、成員指派。
+3. **MCP**：掛在 Worker 上，讓 AI 讀寫任務，工具沿用 ticktick-mcp 的名稱與欄位。
+
+另外待做：桌面小工具（設計稿 6a/6b）、macOS 版。
+
+設計稿在 `design/`（`design/source/*.html` 是原始設計元件，`design/shots/` 是截圖），畫面編號 1a–6b 對應設計板標題；設計稿用的是舊名 Doneday。
 
 ## 結構
 
@@ -14,7 +24,7 @@ design/      設計稿
 ## 規則
 
 - UI 不直接碰資料庫：所有讀寫走 `DayDoAPI`（`LocalDayDoAPI` 是本機實作）。新增功能時先加 API 方法與 `spec/openapi.yaml`，再接 UI。
-- API 名稱與欄位對齊 ticktick-mcp（`ssh ubuntu:~/research/audiskill/ticktick/ticktick-mcp/src/tools.ts`）：priority 0/1/3/5、status 0/2、`TRIGGER:` 提醒、RRULE、ISO 8601 `start`/`due` + `time_zone` + `all_day`。之後的 MCP 直接沿用那套工具名。
+- API 名稱與欄位對齊 ticktick-mcp（作者另一個私有 repo 的 `ticktick-mcp/src/tools.ts`）：priority 0/1/3/5、status 0/2、`TRIGGER:` 提醒、RRULE、ISO 8601 `start`/`due` + `timezone` + `all_day`。之後的 MCP 直接沿用那套工具名。
 - Schema 為同步預留：id 由 client 產生（UUIDv7），時間戳是 epoch ms，刪除用 `deletedAt` 軟刪除，每次寫入在同一 transaction 寫一筆 `change`（outbox，含變更欄位名）。改 schema 用新的 migration，不改 `v1`。
 - 排序鍵用 `SortKey`（fractional index），不要重新編號。
 - 單機階段沒有帳號與成員：UI 不得顯示假的「已同步」、成員或留言數。
@@ -28,11 +38,14 @@ cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
   -destination 'platform=iOS Simulator,id=<DD 模擬器 UDID>' CODE_SIGNING_ALLOWED=NO   # UI 流程測試
 ```
 
-啟動參數（Debug 用）：`-DayDoReset` 清空資料與偏好、`-DayDoDemo` 載入設計稿範例資料、`-DayDoScreen <drawer|detail|date|time|calendar|events|editlist|compose|settings|search|shared>` 直接開到某畫面。
+啟動參數（Debug 用）：`-DayDoReset` 清空資料與偏好、`-DayDoDemo` 載入設計稿範例資料、`-DayDoScreen <drawer|detail|date|calendar|events|week|editlist|compose|settings|search|shared>` 直接開到某畫面。
 
 ## 模擬器
 
 代號 `DD`。常駐機：`DD iPhone 18 Pro`（iOS 27.2）。平行任務可臨時建 `DD …`，用完刪掉；不碰其他代號的模擬器。
+
+- Xcode 27.2 沒有 Simulator.app，模擬器視窗改由 `Xcode.app/Contents/Applications/DeviceHub.app` 開啟（它也列出其他專案的機器，別按到別人的 Start）。
+- 互動驗收用 `DayDoUITests`：跑測試時設 `TEST_RUNNER_DAYDO_SHOTS=<目錄>`，`shot()` 會把截圖寫進去，再和 `design/shots` 或使用者給的參考圖對照。
 
 ## 發版（TestFlight）
 
@@ -46,6 +59,7 @@ cd ios && BUILD_NUMBER=$(~/Project/audi-skill/ios-release/scripts/tf next-build 
 
 - 簽章走 Xcode 已登入的帳號；帶 API key（`-authenticationKey*`）時 Xcode 27.2 回 `Authentication failed: bearer token`。
 - build 號用 `tf next-build` 的流水號，不用時間戳。
+- 上傳後 build 不會自動進「自己」，照 `tf verify` 的 `next=` 跑 `tf distribute`，到 `RESULT READY` 才算發出去。
 
 ## 第二階段（未做）
 
