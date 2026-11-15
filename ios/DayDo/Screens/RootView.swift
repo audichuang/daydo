@@ -1,15 +1,20 @@
 import SwiftUI
+import UIKit
 import DayDoCore
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @Namespace private var splashNamespace
     @State private var splashStart = ContinuousClock.now
     @State private var splashDismissing = false
     @State private var splashRemoved = false
+    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+
+    private var isRegular: Bool { horizontalSizeClass == .regular }
 
     private var holdSplash: Bool {
 #if DEBUG
@@ -25,22 +30,47 @@ struct RootView: View {
             Palette.background.ignoresSafeArea()
             if model.ready {
                 if model.isSignedIn {
-                    ZStack(alignment: .bottom) {
-                        Group {
-                            switch model.tab {
-                            case .tasks: TaskListScreen(scope: model.scope)
-                            case .calendar: CalendarScreen()
-                            case .search: SearchScreen()
-                            case .settings: SettingsScreen()
+                    Group {
+                        if isRegular {
+                            RegularSplitView(columnVisibility: $columnVisibility)
+                        } else {
+                            ZStack(alignment: .bottom) {
+                                Group {
+                                    switch model.tab {
+                                    case .tasks: TaskListScreen(scope: model.scope)
+                                    case .calendar: CalendarScreen()
+                                    case .search: SearchScreen()
+                                    case .settings: SettingsScreen()
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                                BottomNav(tab: $model.tab, todayDay: model.today.day)
+                                    .padding(.horizontal, 16)
+                                    .padding(.bottom, 4)
+
+                                DrawerOverlay(open: $model.drawerOpen)
                             }
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                        BottomNav(tab: $model.tab, todayDay: model.today.day)
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 4)
-
-                        DrawerOverlay(open: $model.drawerOpen)
+                    }
+                    .background {
+                        SelectionShortcutBridge(
+                            active: splashRemoved && model.isSignedIn && !model.hasActiveRootSheet && model.tab == .tasks && model.selectedTaskId != nil,
+                            selectedTaskId: model.selectedTaskId,
+                            onReturn: { id in
+                                if isRegular {
+                                    model.detailFocusTrigger += 1
+                                } else {
+                                    model.detailTaskId = id
+                                }
+                            },
+                            onDelete: { id in
+                                model.deleteSelectedTask(id: id)
+                            }
+                        )
+                        .frame(width: 0, height: 0)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                     }
                     .opacity(splashDismissing || splashRemoved ? 1 : 0)
                     .scaleEffect(splashDismissing || splashRemoved || reduceMotion ? 1 : 0.98)
@@ -63,6 +93,7 @@ struct RootView: View {
                 .allowsHitTesting(!splashDismissing)
             }
         }
+        .environment(\.isRegularWindow, isRegular)
         .task(id: model.ready) {
             guard model.ready, !splashRemoved, !holdSplash else { return }
             let elapsed = splashStart.duration(to: .now)
@@ -204,7 +235,72 @@ struct HeaderAction: View {
                 .frame(width: 44, height: 40).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .hoverEffect(.highlight)
         .accessibilityLabel(label)
+    }
+}
+
+private struct RegularSplitView: View {
+    @Environment(AppModel.self) private var model
+    @Binding var columnVisibility: NavigationSplitViewVisibility
+    @State private var isWide = false
+
+    var body: some View {
+        Group {
+            if model.tab == .tasks {
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    sidebar
+                } content: {
+                    TaskListScreen(scope: model.scope)
+                        .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 460)
+                } detail: {
+                    if let taskId = model.selectedTaskId {
+                        TaskDetailContent(taskId: taskId, isInline: true) {
+                            model.selectedTaskId = nil
+                        }
+                        .id(taskId)
+                    } else {
+                        TaskDetailEmptyState()
+                    }
+                }
+                .navigationSplitViewStyle(.balanced)
+            } else {
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    sidebar
+                } detail: {
+                    switch model.tab {
+                    case .calendar: CalendarScreen()
+                    case .search: SearchScreen()
+                    case .settings: SettingsScreen()
+                    case .tasks: EmptyView()
+                    }
+                }
+                .navigationSplitViewStyle(.balanced)
+            }
+        }
+        .onGeometryChange(for: Bool.self) { proxy in
+            proxy.size.width >= 1100
+        } action: { wide in
+            isWide = wide
+            syncColumnVisibility(wide: wide, isTasks: model.tab == .tasks)
+        }
+        .onChange(of: model.tab == .tasks) { _, isTasks in
+            syncColumnVisibility(wide: isWide, isTasks: isTasks)
+        }
+    }
+
+    private func syncColumnVisibility(wide: Bool, isTasks: Bool) {
+        if wide {
+            columnVisibility = .all
+        } else {
+            columnVisibility = isTasks ? .doubleColumn : .detailOnly
+        }
+    }
+
+    private var sidebar: some View {
+        DrawerView(close: {}, rowDragging: .constant(false), isSidebar: true)
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 300)
     }
 }
 
@@ -251,5 +347,126 @@ extension View {
         } else {
             self
         }
+    }
+}
+
+private struct SelectionShortcutBridge: UIViewControllerRepresentable {
+    var active: Bool
+    var selectedTaskId: String?
+    var onReturn: (String) -> Void
+    var onDelete: (String) -> Void
+
+    struct CaptureState: Equatable {
+        var active: Bool
+        var selectedTaskId: String?
+    }
+
+    final class Coordinator {
+        var lastState: CaptureState?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIViewController(context: Context) -> SelectionShortcutViewController {
+        SelectionShortcutViewController()
+    }
+
+    func updateUIViewController(_ vc: SelectionShortcutViewController, context: Context) {
+        vc.active = active
+        vc.selectedTaskId = selectedTaskId
+        vc.onReturn = onReturn
+        vc.onDelete = onDelete
+
+        let state = CaptureState(active: active, selectedTaskId: selectedTaskId)
+        guard state != context.coordinator.lastState else { return }
+        context.coordinator.lastState = state
+        if active {
+            DispatchQueue.main.async {
+                vc.claimResponderIfNeeded()
+            }
+        } else if vc.isFirstResponder {
+            DispatchQueue.main.async {
+                vc.resignFirstResponder()
+            }
+        }
+    }
+}
+
+@MainActor
+private final class SelectionShortcutViewController: UIViewController {
+    var active = false
+    var selectedTaskId: String?
+    var onReturn: ((String) -> Void)?
+    var onDelete: ((String) -> Void)?
+
+    override func loadView() {
+        let v = UIView()
+        v.backgroundColor = .clear
+        view = v
+    }
+
+    override var canBecomeFirstResponder: Bool { true }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let nc = NotificationCenter.default
+        nc.addObserver(self, selector: #selector(handleTextDidEndEditing), name: UITextField.textDidEndEditingNotification, object: nil)
+        nc.addObserver(self, selector: #selector(handleTextDidEndEditing), name: UITextView.textDidEndEditingNotification, object: nil)
+    }
+
+    @objc private func handleTextDidEndEditing() {
+        DispatchQueue.main.async { [weak self] in
+            self?.claimResponderIfNeeded()
+        }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        DispatchQueue.main.async { [weak self] in
+            self?.claimResponderIfNeeded()
+        }
+    }
+
+    func claimResponderIfNeeded() {
+        guard active,
+              let window = view.window,
+              window.isKeyWindow,
+              !Self.hasActiveTextInput(in: window) else { return }
+        if !isFirstResponder {
+            becomeFirstResponder()
+        }
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard active,
+              let selectedTaskId,
+              let window = view.window,
+              !Self.hasActiveTextInput(in: window) else {
+            super.pressesBegan(presses, with: event)
+            return
+        }
+        var handled = false
+        for press in presses {
+            guard let key = press.key,
+                  key.modifierFlags.intersection([.command, .control, .alternate]).isEmpty else { continue }
+            switch key.keyCode {
+            case .keyboardDeleteOrBackspace, .keyboardDeleteForward:
+                onDelete?(selectedTaskId)
+                handled = true
+            case .keyboardReturnOrEnter:
+                onReturn?(selectedTaskId)
+                handled = true
+            default:
+                break
+            }
+        }
+        if !handled {
+            super.pressesBegan(presses, with: event)
+        }
+    }
+
+    private static func hasActiveTextInput(in view: UIView) -> Bool {
+        if (view is UITextField || view is UITextView) && view.isFirstResponder { return true }
+        return view.subviews.contains { hasActiveTextInput(in: $0) }
     }
 }

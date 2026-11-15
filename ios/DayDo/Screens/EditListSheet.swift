@@ -205,9 +205,7 @@ struct EditListSheet: View {
             }
         }
         .background(Palette.card)
-        .presentationDetents([.large])
-        .presentationBackground(Palette.card)
-        .presentationCornerRadius(28)
+        .adaptiveSheet(detents: [.large])
         .confirmationDialog("刪除「\(name)」？清單內的任務會移到垃圾桶。", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("刪除清單", role: .destructive) {
                 guard let id = original?.id else { return }
@@ -418,8 +416,6 @@ private struct TransferOwnerSheet: View {
             }
         }
         .background(Palette.card)
-        .presentationDetents([.medium])
-        .presentationBackground(Palette.card)
-        .presentationCornerRadius(28)
+        .adaptiveSheet(detents: [.medium])
     }
 }

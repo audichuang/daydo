@@ -8,6 +8,7 @@ struct ComposerSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.isRegularWindow) private var isRegularWindow
     var request: ComposeRequest
 
     @State private var title = ""
@@ -72,16 +73,12 @@ struct ComposerSheet: View {
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
-        .presentationDetents([.height(contentHeight)])
-        .presentationBackground(Palette.card)
-        .presentationCornerRadius(28)
-        .presentationDragIndicator(.hidden)
+        .frame(minHeight: isRegularWindow ? 220 : nil)
+        .adaptiveSheet(detents: [.height(contentHeight)], dragIndicator: .hidden)
         .sheet(isPresented: $showDate) {
             DateEditorFlow(draft: $panelDraft, today: model.today, title: title, excludeTaskId: nil,
                            cancel: { showDate = false }, confirm: { draft = panelDraft; showDate = false })
-                .presentationDetents([.large])
-                .presentationBackground(Palette.card)
-                .presentationCornerRadius(28)
+                .adaptiveSheet(detents: [.large])
                 .onDisappear { focus = .title }
         }
         .alert("新增標籤", isPresented: $addingTag) {
@@ -203,6 +200,7 @@ struct ComposerSheet: View {
                     .background(Circle().fill(canSave ? accent.color : Palette.control))
             }
             .buttonStyle(.plain)
+            .hoverEffect(.highlight)
             .disabled(!canSave)
             .accessibilityLabel("新增")
         }
@@ -243,7 +241,11 @@ struct ComposerSheet: View {
             if openDetail {
                 dismiss()
                 try? await Task.sleep(for: .milliseconds(350))
-                model.detailTaskId = t.id
+                if isRegularWindow && model.tab == .tasks {
+                    model.selectedTaskId = t.id
+                } else {
+                    model.detailTaskId = t.id
+                }
             } else {
                 // Keep the composer open for the next task, like a quick-capture bar.
                 if title == snapTitle { title = "" }

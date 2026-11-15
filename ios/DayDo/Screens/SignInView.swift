@@ -106,6 +106,7 @@ struct SignInView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .hoverEffect(.highlight)
                     .accessibilityIdentifier("signIn.google")
                     .disabled(model.isSigningIn)
                 }
@@ -113,6 +114,7 @@ struct SignInView: View {
                 .padding(.bottom, 44)
                 .opacity(contentRevealed ? 1 : 0)
             }
+            .frame(maxWidth: 420)
 
             if model.isSigningIn {
                 Color.black.opacity(0.45).ignoresSafeArea()

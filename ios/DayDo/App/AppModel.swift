@@ -80,6 +80,9 @@ final class AppModel {
     var scope: TaskScope = .smart(.today)
     var drawerOpen = false
     var detailTaskId: String?
+    var selectedTaskId: String?
+    var searchFocusTrigger = 0
+    var detailFocusTrigger = 0
     /// Task opened from a notification while another detail sheet was open;
     /// shown after that sheet is dismissed so unsaved edits are not replaced.
     var pendingDetailTaskId: String?
@@ -94,7 +97,36 @@ final class AppModel {
         }
     }
 
-    private var hasActiveRootSheet: Bool {
+    func openComposerForCurrentScope() {
+        var req = ComposeRequest()
+        switch scope {
+        case .project(let id):
+            if !isViewer(projectId: id) { req.projectId = id }
+        case .tag(let t): req.tag = t
+        case .smart(.today): req.day = today
+        case .smart(.tomorrow): req.day = today.adding(days: 1)
+        default: break
+        }
+        composing = req
+    }
+
+    func deleteSelectedTask(id: String) {
+        let inTrash = scope == .smart(.trash)
+        Task {
+            guard let task = try? await api.getTask(id: id),
+                  !isViewer(projectId: task.projectId) else { return }
+            if inTrash {
+                await perform { try await $0.purgeTask(id: id) }
+            } else {
+                await perform { try await $0.deleteTask(id: id) }
+            }
+            if selectedTaskId == id {
+                selectedTaskId = nil
+            }
+        }
+    }
+
+    var hasActiveRootSheet: Bool {
         detailTaskId != nil
             || composing != nil
             || editingProjectId != nil
@@ -419,6 +451,7 @@ final class AppModel {
         tab = .tasks
         drawerOpen = false
         detailTaskId = nil
+        selectedTaskId = nil
         pendingDetailTaskId = nil
         composing = nil
         editingProjectId = nil
@@ -612,6 +645,7 @@ final class AppModel {
             tab = .tasks
             drawerOpen = false
             detailTaskId = nil
+            selectedTaskId = nil
             invitePrompt = nil
         } catch let error as SyncError {
             if case .signedOut = error {

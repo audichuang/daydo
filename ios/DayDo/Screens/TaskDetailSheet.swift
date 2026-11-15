@@ -3,14 +3,61 @@ import QuickLook
 import UniformTypeIdentifiers
 import DayDoCore
 
-/// 3a / 3b · Task detail as a half-height sheet that expands to full.
-/// Title and description edits are buffered and committed with 儲存 (which
-/// lights up once something changed); toggles apply immediately.
+/// 3a / 3b · Task detail as a half-height sheet that expands to full on iPhone,
+/// or as an inline editor pane on iPad. Title and description edits are buffered
+/// and committed with 儲存 (which lights up once something changed); toggles apply immediately.
 struct TaskDetailSheet: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.accent) private var accent
     @Environment(\.dismiss) private var dismiss
     var taskId: String
+
+    @State private var detent: PresentationDetent = .fraction(0.56)
+    @State private var dirty = false
+
+    var body: some View {
+        TaskDetailContent(
+            taskId: taskId,
+            isInline: false,
+            isLargeDetent: detent == .large,
+            onToggleDetent: {
+                withAnimation(.snappy) { detent = detent == .large ? .fraction(0.56) : .large }
+            },
+            onExpandForDate: {
+                withAnimation(.snappy) { detent = .large }
+            },
+            onDirtyChange: { dirty = $0 },
+            onClose: { dismiss() }
+        )
+        .interactiveDismissDisabled(dirty)
+        .adaptiveSheet(detents: [.fraction(0.56), .large], selection: $detent, dragIndicator: .visible)
+    }
+}
+
+struct TaskDetailEmptyState: View {
+    var body: some View {
+        ZStack {
+            Palette.card.ignoresSafeArea()
+            VStack(spacing: 12) {
+                Image(systemName: "checkmark.square")
+                    .font(.system(size: 38, weight: .light))
+                    .foregroundStyle(Palette.textFaint)
+                Text("選擇一項任務查看詳情")
+                    .txt(15)
+                    .foregroundStyle(Palette.textSecondary)
+            }
+        }
+    }
+}
+
+struct TaskDetailContent: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.accent) private var accent
+    var taskId: String
+    var isInline: Bool = false
+    var isLargeDetent: Bool = false
+    var onToggleDetent: (() -> Void)? = nil
+    var onExpandForDate: (() -> Void)? = nil
+    var onDirtyChange: ((Bool) -> Void)? = nil
+    var onClose: () -> Void
 
     enum Page { case detail, date, time }
 
@@ -19,7 +66,6 @@ struct TaskDetailSheet: View {
     @State private var titleBaseline = ""
     @State private var content = ""
     @State private var contentBaseline = ""
-    @State private var detent: PresentationDetent = .fraction(0.56)
     @State private var page: Page = .detail
     @State private var draft = DateDraft()
     @State private var newItem = ""
@@ -51,11 +97,14 @@ struct TaskDetailSheet: View {
                                cancel: { page = .detail }, confirm: commitDate)
             }
         }
-        .presentationDetents([.fraction(0.56), .large], selection: $detent)
-        .presentationDragIndicator(.visible)
-        .presentationBackground(Palette.card)
-        .presentationCornerRadius(28)
-        .interactiveDismissDisabled(dirty)
+        .onChange(of: dirty) { _, newValue in
+            onDirtyChange?(newValue)
+        }
+        .onChange(of: model.detailFocusTrigger) { _, _ in
+            guard isInline, let task, !model.isViewer(projectId: task.projectId) else { return }
+            page = .detail
+            focus = .title
+        }
         .task(id: model.revision) { await load() }
         .quickLookPreview($preview)
         .fileImporter(isPresented: $importing, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
@@ -119,17 +168,18 @@ struct TaskDetailSheet: View {
 
     func header(_ task: TodoTask, readOnly: Bool) -> some View {
         HStack(spacing: 8) {
-            Button {
-                withAnimation(.snappy) { detent = detent == .large ? .fraction(0.56) : .large }
-            } label: {
-                Image(systemName: detent == .large ? "chevron.down" : "chevron.up")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Color(hex: "#E6E9E8"))
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Palette.control))
+            if let onToggleDetent {
+                Button(action: onToggleDetent) {
+                    Image(systemName: isLargeDetent ? "chevron.down" : "chevron.up")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color(hex: "#E6E9E8"))
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Palette.control))
+                }
+                .buttonStyle(.plain)
+                .hoverEffect(.highlight)
+                .accessibilityLabel(isLargeDetent ? "收合為半屏" : "展開為全屏")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(detent == .large ? "收合為半屏" : "展開為全屏")
 
             Menu {
                 ForEach(model.editableProjects) { p in
@@ -149,7 +199,9 @@ struct TaskDetailSheet: View {
                 .foregroundStyle(Color(hex: "#E6E9E8"))
                 .frame(height: 40)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
+            .hoverEffect(.highlight)
             .disabled(readOnly)
             .accessibilityLabel("所屬清單：\(model.project(task.projectId)?.name ?? "")" + (readOnly ? "" : "，點擊更換"))
 
@@ -167,7 +219,7 @@ struct TaskDetailSheet: View {
                         let id = task.id
                         Task {
                             await model.perform { try await $0.deleteTask(id: id) }
-                            dismiss()
+                            onClose()
                         }
                     }
                 } label: {
@@ -177,12 +229,13 @@ struct TaskDetailSheet: View {
                         .frame(width: 40, height: 40)
                         .background(Circle().fill(Palette.control))
                 }
+                .hoverEffect(.highlight)
                 .accessibilityLabel("更多選項")
             }
         }
         .padding(.horizontal, 14)
-        .padding(.top, 16)
-        .frame(height: 68)
+        .padding(.top, isInline ? 8 : 16)
+        .frame(height: isInline ? 56 : 68)
     }
 
     func statusRow(_ task: TodoTask, readOnly: Bool) -> some View {
@@ -191,6 +244,7 @@ struct TaskDetailSheet: View {
                 TaskCheckbox(done: task.isCompleted, priority: task.priority, size: 22).frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
+            .hoverEffect(.highlight)
             .disabled(readOnly)
             .accessibilityLabel(task.isCompleted ? "取消完成" : "完成任務")
 
@@ -205,6 +259,7 @@ struct TaskDetailSheet: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .hoverEffect(.highlight)
             .disabled(readOnly)
             .accessibilityLabel("設定日期與時間：\(dateSummary(task))")
 
@@ -218,6 +273,7 @@ struct TaskDetailSheet: View {
                     .foregroundStyle(Palette.priority(task.priority))
                     .frame(width: 36, height: 36)
             }
+            .hoverEffect(.highlight)
             .disabled(readOnly)
             .accessibilityLabel("優先級：\(task.priority.label)")
         }
@@ -236,7 +292,8 @@ struct TaskDetailSheet: View {
                         }
                     }
                     Button("查看此標籤的任務", systemImage: "number") {
-                        model.scope = .tag(name); model.tab = .tasks; dismiss()
+                        model.scope = .tag(name); model.tab = .tasks
+                        if !isInline { onClose() }
                     }
                 } label: {
                     TagChip(name: name, label: tag?.label ?? name, color: tag?.color)
@@ -283,6 +340,7 @@ struct TaskDetailSheet: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .hoverEffect(.highlight)
                     .disabled(readOnly)
                     .accessibilityLabel((item.isDone ? "取消完成：" : "完成：") + item.title)
                     Text(item.title).txt(15).foregroundStyle(item.isDone ? Palette.done : Palette.text)
@@ -329,6 +387,7 @@ struct TaskDetailSheet: View {
                         Label("加入", systemImage: "paperclip").txt(12, .semibold).foregroundStyle(accent.text)
                     }
                     .buttonStyle(.plain)
+                    .hoverEffect(.highlight)
                 }
             }
             ForEach(task.attachments) { a in
@@ -354,6 +413,7 @@ struct TaskDetailSheet: View {
                     .card(12, color: Palette.raised)
                 }
                 .buttonStyle(.plain)
+                .hoverEffect(.highlight)
                 .contextMenu {
                     if !readOnly {
                         Button("移除附件", systemImage: "trash", role: .destructive) {
@@ -402,7 +462,7 @@ struct TaskDetailSheet: View {
         } catch is CancellationError {
             return
         } catch DayDoError.notFound {
-            dismiss()
+            onClose()
             return
         } catch {
             model.errorMessage = error.localizedDescription
@@ -494,8 +554,8 @@ struct TaskDetailSheet: View {
 
     func openDate(_ task: TodoTask) {
         draft = DateDraft(task: task, today: model.today)
+        onExpandForDate?()
         withAnimation(.snappy) {
-            detent = .large
             page = .date
         }
     }

@@ -50,7 +50,9 @@ cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
 
 ## 模擬器
 
-代號 `DD`。常駐機：`DD iPhone 18 Pro`（iOS 27.2）。
+代號 `DD`。常駐機：`DD iPhone 18 Pro`（iOS 27.2）、`DD iPad Pro 11`（`43C3F165-E561-41CB-A39D-84AD902CCF91`）。
+
+- iPad UI 測試：`cd ios && xcodebuild test -project DayDo.xcodeproj -scheme DayDo -destination 'platform=iOS Simulator,id=43C3F165-E561-41CB-A39D-84AD902CCF91' CODE_SIGNING_ALLOWED=NO`
 
 - Codex 審查與 agy 也會在 DD 常駐機跑 UI 測試；自己跑完整 UI 測試前先 `pgrep -fl xcodebuild`，有別的在跑就等它結束（同時跑會在啟動時失敗：`Failed to send signal 19`）。
 - Xcode 27.2 沒有 Simulator.app，模擬器視窗改由 `Xcode.app/Contents/Applications/DeviceHub.app` 開啟（它也列出其他專案的機器，別按到別人的 Start）。

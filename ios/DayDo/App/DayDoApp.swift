@@ -1,5 +1,6 @@
 import GoogleSignIn
 import SwiftUI
+import UIKit
 import UserNotifications
 import DayDoCore
 
@@ -85,6 +86,38 @@ struct DayDoApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
                     if model.ready && model.isSignedIn { Task { await model.reloadData() } }
                 }
+        }
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("新增任務") {
+                    guard model.isSignedIn, !model.hasActiveRootSheet else { return }
+                    model.openComposerForCurrentScope()
+                }
+                .keyboardShortcut("n", modifiers: .command)
+                .disabled(!model.isSignedIn || model.hasActiveRootSheet)
+            }
+            CommandMenu("前往") {
+                Button("任務") { model.tab = .tasks }
+                    .keyboardShortcut("1", modifiers: .command)
+                Button("日曆") { model.tab = .calendar }
+                    .keyboardShortcut("2", modifiers: .command)
+                Button("搜尋") {
+                    guard model.isSignedIn, !model.hasActiveRootSheet else { return }
+                    model.tab = .search
+                    model.searchFocusTrigger += 1
+                }
+                .keyboardShortcut("3", modifiers: .command)
+                .disabled(!model.isSignedIn || model.hasActiveRootSheet)
+                Button("搜尋任務") {
+                    guard model.isSignedIn, !model.hasActiveRootSheet else { return }
+                    model.tab = .search
+                    model.searchFocusTrigger += 1
+                }
+                .keyboardShortcut("f", modifiers: .command)
+                .disabled(!model.isSignedIn || model.hasActiveRootSheet)
+                Button("設定") { model.tab = .settings }
+                    .keyboardShortcut("4", modifiers: .command)
+            }
         }
     }
 }

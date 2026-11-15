@@ -146,9 +146,7 @@ struct MeProfileSheet: View {
             .scrollBounceBehavior(.basedOnSize)
         }
         .background(Palette.card)
-        .presentationDetents([.medium, .large])
-        .presentationBackground(Palette.card)
-        .presentationCornerRadius(28)
+        .adaptiveSheet(detents: [.medium, .large])
         .interactiveDismissDisabled(mode == .requiredPrompt)
         .onAppear {
             let me = model.me

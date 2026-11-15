@@ -25,6 +25,7 @@ enum CalMode: String, CaseIterable, Identifiable {
 struct CalendarScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
+    @Environment(\.isRegularWindow) private var isRegular
 
     @AppStorage("calendarViewMode") private var modeRaw = CalMode.list.rawValue
     @AppStorage("calendarCollapsed") private var collapsed = false
@@ -42,9 +43,16 @@ struct CalendarScreen: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
+            if isRegular {
+                Palette.background.ignoresSafeArea()
+            }
             VStack(spacing: 0) {
-                header
-                if model.members.count > 1 || projectFilter != nil { filters.padding(.horizontal, 16).padding(.bottom, 6) }
+                if !isRegular {
+                    header
+                }
+                if model.members.count > 1 || projectFilter != nil {
+                    filters.padding(.horizontal, 16).padding(.top, isRegular ? 8 : 0).padding(.bottom, 6)
+                }
                 content
             }
             if !model.isViewer(projectId: projectFilter) {
@@ -55,9 +63,24 @@ struct CalendarScreen: View {
                         .shadow(color: .black.opacity(0.35), radius: 10, y: 6)
                 }
                 .buttonStyle(.plain)
-                .padding(.trailing, 18)
-                .padding(.bottom, 92)
+                .hoverEffect(.lift)
+                .padding(.trailing, isRegular ? 24 : 18)
+                .padding(.bottom, isRegular ? 24 : 92)
                 .accessibilityLabel("新增任務")
+            }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if isRegular {
+                ToolbarItem(placement: .topBarLeading) {
+                    modeMenuButton(useGlass: false)
+                }
+                ToolbarItem(placement: .principal) {
+                    titleButton
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    trailingActions
+                }
             }
         }
         .task(id: CalReload(range: range, member: memberFilter, completed: showCompleted, revision: model.revision)) { await load() }
@@ -67,55 +90,12 @@ struct CalendarScreen: View {
 
     var header: some View {
         HStack {
-            Menu {
-                ForEach(CalMode.allCases) { m in
-                    Button {
-                        withAnimation(.snappy) { modeRaw = m.rawValue }
-                    } label: {
-                        if m == mode { Label(m.label, systemImage: "checkmark") } else { Label(m.label, systemImage: m.icon) }
-                    }
-                }
-            } label: {
-                Image(systemName: mode.icon).font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text)
-                    .frame(width: 44, height: 44)
-                    .glassEffect(.regular.interactive(), in: .circle)
-            }
-            .accessibilityLabel("切換檢視：目前\(mode.label)")
-            .accessibilityIdentifier("calendarMode")
+            modeMenuButton(useGlass: true)
             Spacer()
-            Button { goToday() } label: {
-                Text(title).txt(18, .bold).foregroundStyle(Palette.text)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(title + "，點兩下回到今天")
-            .accessibilityIdentifier("calendarTitle")
+            titleButton
             Spacer()
             HStack(spacing: 0) {
-                if mode == .list {
-                    HeaderAction(systemName: timelineStyle ? "list.bullet.rectangle" : "calendar.day.timeline.left", label: timelineStyle ? "切換為卡片清單" : "切換為時間軸清單") {
-                        withAnimation(.snappy) { timelineStyle.toggle() }
-                    }
-                }
-                Menu {
-                    Button("回到今天", systemImage: "arrow.uturn.backward") { goToday() }
-                    Button(showCompleted ? "隱藏已完成" : "顯示已完成", systemImage: "checkmark.circle") { showCompleted.toggle() }
-                    Menu("清單篩選", systemImage: "line.3.horizontal.decrease") {
-                        Button {
-                            projectFilter = nil
-                        } label: { if projectFilter == nil { Label("全部清單", systemImage: "checkmark") } else { Text("全部清單") } }
-                        ForEach(model.projects) { p in
-                            Button {
-                                projectFilter = p.id
-                            } label: { if projectFilter == p.id { Label(p.name, systemImage: "checkmark") } else { Text(p.name) } }
-                        }
-                    }
-                    if mode == .list {
-                        Button(collapsed ? "展開整個月份" : "收合成單週", systemImage: "rectangle.compress.vertical") { withAnimation(.snappy) { collapsed.toggle() } }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
-                }
-                .accessibilityLabel("更多選項")
+                trailingActions
             }
             .padding(.horizontal, 2)
             .frame(height: 44)
@@ -124,6 +104,76 @@ struct CalendarScreen: View {
         .padding(.horizontal, 16)
         .padding(.top, 6)
         .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private func modeMenuButton(useGlass: Bool) -> some View {
+        Menu {
+            ForEach(CalMode.allCases) { m in
+                Button {
+                    withAnimation(.snappy) { modeRaw = m.rawValue }
+                } label: {
+                    if m == mode { Label(m.label, systemImage: "checkmark") } else { Label(m.label, systemImage: m.icon) }
+                }
+            }
+        } label: {
+            if useGlass {
+                Image(systemName: mode.icon).font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text)
+                    .frame(width: 44, height: 44)
+                    .glassEffect(.regular.interactive(), in: .circle)
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: mode.icon).font(.system(size: 16, weight: .medium))
+                    Text(mode.label).txt(14, .semibold)
+                }
+                .foregroundStyle(Palette.text)
+                .padding(.horizontal, 10)
+                .frame(height: 36)
+            }
+        }
+        .hoverEffect(.highlight)
+        .accessibilityLabel("切換檢視：目前\(mode.label)")
+        .accessibilityIdentifier("calendarMode")
+    }
+
+    private var titleButton: some View {
+        Button { goToday() } label: {
+            Text(title).txt(18, .bold).foregroundStyle(Palette.text)
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.highlight)
+        .accessibilityLabel(title + "，點兩下回到今天")
+        .accessibilityIdentifier("calendarTitle")
+    }
+
+    @ViewBuilder
+    private var trailingActions: some View {
+        if mode == .list {
+            HeaderAction(systemName: timelineStyle ? "list.bullet.rectangle" : "calendar.day.timeline.left", label: timelineStyle ? "切換為卡片清單" : "切換為時間軸清單") {
+                withAnimation(.snappy) { timelineStyle.toggle() }
+            }
+        }
+        Menu {
+            Button("回到今天", systemImage: "arrow.uturn.backward") { goToday() }
+            Button(showCompleted ? "隱藏已完成" : "顯示已完成", systemImage: "checkmark.circle") { showCompleted.toggle() }
+            Menu("清單篩選", systemImage: "line.3.horizontal.decrease") {
+                Button {
+                    projectFilter = nil
+                } label: { if projectFilter == nil { Label("全部清單", systemImage: "checkmark") } else { Text("全部清單") } }
+                ForEach(model.projects) { p in
+                    Button {
+                        projectFilter = p.id
+                    } label: { if projectFilter == p.id { Label(p.name, systemImage: "checkmark") } else { Text(p.name) } }
+                }
+            }
+            if mode == .list {
+                Button(collapsed ? "展開整個月份" : "收合成單週", systemImage: "rectangle.compress.vertical") { withAnimation(.snappy) { collapsed.toggle() } }
+            }
+        } label: {
+            Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
+        }
+        .hoverEffect(.highlight)
+        .accessibilityLabel("更多選項")
     }
 
     var title: String {
@@ -253,31 +303,65 @@ struct CalendarScreen: View {
     @ViewBuilder var content: some View {
         switch mode {
         case .list:
-            ScrollView {
-                VStack(spacing: 12) {
-                    dateGrid.gesture(swipe)
-                    if timelineStyle { timelineAgenda } else { cardAgenda }
+            if isRegular {
+                GeometryReader { geo in
+                    if geo.size.width >= 720 {
+                        HStack(alignment: .top, spacing: 20) {
+                            ScrollView {
+                                dateGrid.gesture(swipe)
+                            }
+                            .scrollIndicators(.hidden)
+                            .frame(width: 360)
+
+                            ScrollView {
+                                Group {
+                                    if timelineStyle { timelineAgenda } else { cardAgenda }
+                                }
+                                .padding(.bottom, 32)
+                            }
+                            .scrollIndicators(.hidden)
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.top, 8)
+                    } else {
+                        ScrollView {
+                            VStack(spacing: 12) {
+                                dateGrid.gesture(swipe)
+                                if timelineStyle { timelineAgenda } else { cardAgenda }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 32)
+                        }
+                        .scrollIndicators(.hidden)
+                    }
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 170)
+            } else {
+                ScrollView {
+                    VStack(spacing: 12) {
+                        dateGrid.gesture(swipe)
+                        if timelineStyle { timelineAgenda } else { cardAgenda }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 170)
+                }
+                .scrollIndicators(.hidden)
             }
-            .scrollIndicators(.hidden)
         case .year:
             ScrollView {
-                YearGrid(year: shownMonth.year, today: model.today, busy: busyDays, openMonth: { m in
+                YearGrid(year: shownMonth.year, today: model.today, busy: busyDays, isRegular: isRegular, openMonth: { m in
                     withAnimation(.snappy) { month = m; selected = m; modeRaw = CalMode.list.rawValue; collapsed = false }
                 }, openDay: { d in
                     withAnimation(.snappy) { selected = d; month = d.firstOfMonth; modeRaw = CalMode.day.rawValue }
                 })
-                .padding(.horizontal, 16)
-                .padding(.bottom, 170)
+                .padding(.horizontal, isRegular ? 24 : 16)
+                .padding(.bottom, isRegular ? 32 : 170)
             }
             .gesture(swipe)
         case .month:
-            ScrollView { eventMonth.padding(.horizontal, 8).padding(.bottom, 170) }
+            ScrollView { eventMonth.padding(.horizontal, isRegular ? 16 : 8).padding(.bottom, isRegular ? 32 : 170) }
                 .gesture(swipe)
         case .week, .threeDay, .day:
-            TimeGrid(days: rangeDays, tasks: filtered, today: model.today, selected: sel,
+            TimeGrid(days: rangeDays, tasks: filtered, today: model.today, selected: sel, isRegular: isRegular,
                      openTask: { model.detailTaskId = $0 },
                      tapSlot: { d, m in compose(day: d, minute: m) },
                      tapDay: { d in withAnimation(.snappy) { selected = d; modeRaw = CalMode.day.rawValue } })
@@ -351,6 +435,7 @@ struct CalendarScreen: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .hoverEffect(.highlight)
         .opacity(inMonth ? 1 : 0.38)
         .accessibilityLabel(DateText.full(d) + (colors.isEmpty ? "" : "，有項目"))
         .accessibilityAddTraits(isSel ? .isSelected : [])
@@ -432,6 +517,7 @@ struct AgendaRow: View {
                 TaskCheckbox(done: task.isCompleted, priority: task.priority, size: 22).frame(width: 32, height: 34)
             }
             .buttonStyle(.plain)
+            .hoverEffect(.highlight)
             .disabled(model.isViewer(projectId: task.projectId))
             .accessibilityLabel((task.isCompleted ? "取消完成：" : "完成：") + task.title)
             Button { model.detailTaskId = task.id } label: {
@@ -452,6 +538,7 @@ struct AgendaRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .hoverEffect(.highlight)
         }
         .padding(.leading, 14).padding(.trailing, 16).padding(.vertical, 12)
         .overlay(alignment: .leading) { Rectangle().fill(Palette.listColor(project?.color)).frame(width: 4) }
@@ -530,19 +617,25 @@ struct YearGrid: View {
     var year: Int
     var today: LocalDay
     var busy: Set<LocalDay>
+    var isRegular: Bool = false
     var openMonth: (LocalDay) -> Void
     var openDay: (LocalDay) -> Void
 
     var body: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 3), spacing: 18) {
+        let cols = isRegular ? 4 : 3
+        let dayFontSize: CGFloat = isRegular ? 11 : 8.5
+        let circleSize: CGFloat = isRegular ? 18 : 13
+        let rowHeight: CGFloat = isRegular ? 20 : 14
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: isRegular ? 20 : 14), count: cols), spacing: isRegular ? 22 : 18) {
             ForEach(1...12, id: \.self) { m in
                 let first = LocalDay(year: year, month: m, day: 1)
                 VStack(alignment: .leading, spacing: 4) {
                     Button { openMonth(first) } label: {
-                        Text("\(m)月").txt(15, .bold).foregroundStyle(first.month == today.month && year == today.year ? accent.text : Palette.text)
+                        Text("\(m)月").txt(isRegular ? 16 : 15, .bold).foregroundStyle(first.month == today.month && year == today.year ? accent.text : Palette.text)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .buttonStyle(.plain)
+                    .hoverEffect(.highlight)
                     .accessibilityLabel("\(year) 年 \(m) 月")
 
                     let days = MonthLayout.gridDays(for: first)
@@ -552,18 +645,19 @@ struct YearGrid: View {
                                 let isToday = d == today
                                 Button { openDay(d) } label: {
                                     Text("\(d.day)")
-                                        .font(.system(size: 8.5, weight: isToday ? .bold : .regular))
+                                        .font(.system(size: dayFontSize, weight: isToday ? .bold : .regular))
                                         .foregroundStyle(isToday ? accent.onAccent : (busy.contains(d) ? accent.text : Palette.textSecondary))
-                                        .frame(width: 13, height: 13)
+                                        .frame(width: circleSize, height: circleSize)
                                         .background(Circle().fill(isToday ? accent.color : .clear))
-                                        .frame(maxWidth: .infinity, minHeight: 14)
+                                        .frame(maxWidth: .infinity, minHeight: rowHeight)
                                         .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
+                                .hoverEffect(.highlight)
                                 .accessibilityIdentifier("yearDay.\(d)")
                                 .accessibilityLabel(DateText.full(d))
                             } else {
-                                Color.clear.frame(height: 14)
+                                Color.clear.frame(height: rowHeight)
                             }
                         }
                     }
@@ -660,12 +754,13 @@ struct TimeGrid: View {
     var tasks: [TodoTask]
     var today: LocalDay
     var selected: LocalDay
+    var isRegular: Bool = false
     var openTask: (String) -> Void
     var tapSlot: (LocalDay, Int) -> Void
     var tapDay: (LocalDay) -> Void
 
-    let hourH: CGFloat = 56
-    let gutter: CGFloat = 40
+    var hourH: CGFloat { isRegular ? 64 : 56 }
+    var gutter: CGFloat { isRegular ? 52 : 40 }
 
     var allDayItems: [(TodoTask, Int, Int, Int)] {
         // (task, firstColumn, lastColumn, lane)
@@ -810,7 +905,7 @@ struct TimeGrid: View {
                         }
                         .frame(height: hourH * 24 + 10, alignment: .topLeading)
                         .padding(.top, 8)
-                        .padding(.bottom, 160)
+                        .padding(.bottom, isRegular ? 24 : 160)
                     }
                     .defaultScrollAnchor(UnitPoint(x: 0, y: min(1, CGFloat(initialHour) * hourH / 900)), for: .initialOffset)
                     .scrollIndicators(.hidden)
@@ -852,6 +947,7 @@ struct TimeGrid: View {
             .clipShape(RoundedRectangle(cornerRadius: 3))
         }
         .buttonStyle(.plain)
+        .hoverEffect(.highlight)
     }
 
     func nowLine(colW: CGFloat) -> some View {
@@ -883,6 +979,7 @@ struct TimeGrid: View {
             .clipShape(RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
+        .hoverEffect(.highlight)
         .accessibilityLabel(b.task.title + "，" + (b.task.schedule.map(DateText.range) ?? ""))
     }
 }

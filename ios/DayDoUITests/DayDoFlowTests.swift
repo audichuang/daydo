@@ -43,7 +43,9 @@ final class DayDoFlowTests: XCTestCase {
         if allow.waitForExistence(timeout: 3) { allow.tap() }
     }
 
-    func testTodayCompleteAndDrawer() {
+    @MainActor
+    func testTodayCompleteAndDrawer() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         dismissNotificationPrompt()
         let row = app.buttons["完成：去全聯買菜"]
         XCTAssertTrue(row.waitForExistence(timeout: 5))
@@ -79,7 +81,9 @@ final class DayDoFlowTests: XCTestCase {
         shot("04-list-work")
     }
 
-    func testDetailDateAndTimeBlock() {
+    @MainActor
+    func testDetailDateAndTimeBlock() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         dismissNotificationPrompt()
         let title = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).element(boundBy: 1)
         XCTAssertTrue(title.waitForExistence(timeout: 5))
@@ -137,7 +141,9 @@ final class DayDoFlowTests: XCTestCase {
         shot("10-detail-after-date")
     }
 
-    func testCalendarViews() {
+    @MainActor
+    func testCalendarViews() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         dismissNotificationPrompt()
         app.buttons["日曆"].tap()
         let title = app.buttons["calendarTitle"]
@@ -168,7 +174,9 @@ final class DayDoFlowTests: XCTestCase {
         }
     }
 
-    func testCreateTaskAndEditList() {
+    @MainActor
+    func testCreateTaskAndEditList() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         dismissNotificationPrompt()
         app.buttons["新增任務"].firstMatch.tap()
         let field = app.descendants(matching: .any)["composerTitle"]
@@ -226,7 +234,9 @@ final class DayDoFlowTests: XCTestCase {
         shot("19-task-with-duration")
     }
 
-    func testSearchDeleteAndRestore() {
+    @MainActor
+    func testSearchDeleteAndRestore() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         dismissNotificationPrompt()
         app.buttons["搜尋"].firstMatch.tap()
         let field = app.textFields["搜尋任務、描述、標籤、子任務"]
@@ -252,7 +262,9 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(trashed.waitForNonExistence(timeout: 3))
     }
 
-    func testMultilineComposerYearTapAndArchive() {
+    @MainActor
+    func testMultilineComposerYearTapAndArchive() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         dismissNotificationPrompt()
 
         // 1. Composer with a 3-line wrapping title keeps send button visible.
@@ -325,7 +337,8 @@ final class DayDoFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testSettingsTabAndAppearance() {
+    func testSettingsTabAndAppearance() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         dismissNotificationPrompt()
         app.buttons["設定"].firstMatch.tap()
         let appearance = app.buttons["外觀"].firstMatch
@@ -338,7 +351,8 @@ final class DayDoFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testDrawerSwipePinAndDelete() {
+    func testDrawerSwipePinAndDelete() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         dismissNotificationPrompt()
         app.buttons["開啟清單抽屜"].tap()
         let folder = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '工作與學習'")).firstMatch
@@ -389,7 +403,8 @@ final class DayDoFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testShareListInviteAndEditMembers() {
+    func testShareListInviteAndEditMembers() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         dismissNotificationPrompt()
         app.buttons["開啟清單抽屜"].tap()
         XCTAssertTrue(app.staticTexts["我"].waitForExistence(timeout: 3), app.debugDescription)
@@ -673,7 +688,8 @@ final class DayDoFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testForcedSignOutSwitchAccountAlertCancelAndConfirm() {
+    func testForcedSignOutSwitchAccountAlertCancelAndConfirm() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         app.terminate()
         app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoDebugForcedSignOut"]
         app.launch()
@@ -708,7 +724,8 @@ final class DayDoFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testTaskDetailPerFieldEditPreservesRemoteContentOnSave() {
+    func testTaskDetailPerFieldEditPreservesRemoteContentOnSave() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         app.terminate()
         app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoDebugRemoteContentUpdate"]
         app.launch()
@@ -818,7 +835,8 @@ final class DayDoFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testShareSheetTwoMembersShowsNamesColorsAndYouBadge() {
+    func testShareSheetTwoMembersShowsNamesColorsAndYouBadge() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         app.terminate()
         app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoSeedSharedList"]
         app.launch()
@@ -847,7 +865,8 @@ final class DayDoFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testShareSheetShowsMemberAvatarPhotoAndInitialFallback() {
+    func testShareSheetShowsMemberAvatarPhotoAndInitialFallback() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         app.terminate()
         app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoSeedSharedList", "-DayDoSeedAvatarPhoto"]
         app.launch()

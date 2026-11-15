@@ -18,6 +18,7 @@ struct GlassIconButton: View {
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .circle)
+        .hoverEffect(.highlight)
         .accessibilityLabel(label)
     }
 }
@@ -208,6 +209,7 @@ struct OptionChip: View {
                 .overlay(Capsule().strokeBorder(on ? accent.color : (filled ? .clear : Color(hex: "#33363A")), lineWidth: 1))
         }
         .buttonStyle(.plain)
+        .hoverEffect(.highlight)
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
@@ -229,6 +231,7 @@ struct PillButton: View {
                 .background(Capsule().fill(kind == .primary ? accent.color : (kind == .disabled ? Palette.separator : Palette.control)))
         }
         .buttonStyle(.plain)
+        .hoverEffect(.highlight)
         .disabled(kind == .disabled)
     }
 }
@@ -310,4 +313,101 @@ struct MonthPicker: View {
 
 extension Int64 {
     var byteText: String { ByteCountFormatter.string(fromByteCount: self, countStyle: .file) }
+}
+
+private struct IsRegularWindowKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var isRegularWindow: Bool {
+        get { self[IsRegularWindowKey.self] }
+        set { self[IsRegularWindowKey.self] = newValue }
+    }
+}
+
+private struct AdaptiveSheetModifier: ViewModifier {
+    @Environment(\.isRegularWindow) private var isRegularWindow
+    var detents: Set<PresentationDetent>
+    var selection: Binding<PresentationDetent>?
+    var dragIndicator: Visibility
+
+    func body(content: Content) -> some View {
+        if isRegularWindow {
+            content
+                .presentationSizing(.form)
+                .presentationBackground(Palette.card)
+        } else if let selection {
+            content
+                .presentationDetents(detents, selection: selection)
+                .presentationDragIndicator(dragIndicator)
+                .presentationBackground(Palette.card)
+                .presentationCornerRadius(28)
+        } else {
+            content
+                .presentationDetents(detents)
+                .presentationDragIndicator(dragIndicator)
+                .presentationBackground(Palette.card)
+                .presentationCornerRadius(28)
+        }
+    }
+}
+
+extension View {
+    func adaptiveSheet(
+        detents: Set<PresentationDetent>,
+        selection: Binding<PresentationDetent>? = nil,
+        dragIndicator: Visibility = .automatic
+    ) -> some View {
+        modifier(AdaptiveSheetModifier(detents: detents, selection: selection, dragIndicator: dragIndicator))
+    }
+}
+
+/// Presents `UIActivityViewController` anchored to the host view on iPad so
+/// share actions triggered from menus always have a valid popover source.
+struct ActivityAnchor: UIViewRepresentable {
+    @Binding var text: String?
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        guard let text, !context.coordinator.isPresenting else { return }
+        context.coordinator.isPresenting = true
+        DispatchQueue.main.async {
+            guard let host = uiView.nearestViewController, host.presentedViewController == nil else {
+                self.text = nil
+                context.coordinator.isPresenting = false
+                return
+            }
+            let activity = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+            if let popover = activity.popoverPresentationController {
+                popover.sourceView = uiView
+                popover.sourceRect = uiView.bounds
+            }
+            activity.completionWithItemsHandler = { _, _, _, _ in
+                self.text = nil
+                context.coordinator.isPresenting = false
+            }
+            host.present(activity, animated: true)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    final class Coordinator { var isPresenting = false }
+}
+
+private extension UIView {
+    var nearestViewController: UIViewController? {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let vc = current as? UIViewController { return vc }
+            responder = current.next
+        }
+        return nil
+    }
 }

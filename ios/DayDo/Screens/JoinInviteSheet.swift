@@ -109,9 +109,7 @@ struct JoinInviteSheet: View {
             .accessibilityIdentifier("joinInvite.submit")
         }
         .background(Palette.card)
-        .presentationDetents([.height(310)])
-        .presentationBackground(Palette.card)
-        .presentationCornerRadius(28)
+        .adaptiveSheet(detents: [.height(310)])
         .onAppear {
             if input.isEmpty,
                UIPasteboard.general.hasStrings,

@@ -4,71 +4,81 @@ import DayDoCore
 /// 搜尋: titles, descriptions, tags and subtasks.
 struct SearchScreen: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.isRegularWindow) private var isRegular
     @State private var text = ""
     @State private var activeOnly = false
     @State private var results: [TodoTask] = []
     @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(Palette.textSecondary)
-                    TextField("搜尋任務、描述、標籤、子任務", text: $text)
-                        .txt(16).foregroundStyle(Palette.text)
-                        .focused($focused)
-                        .submitLabel(.search)
-                        .autocorrectionDisabled()
-                    if !text.isEmpty {
-                        Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.textTertiary) }
-                            .buttonStyle(.plain).accessibilityLabel("清除搜尋")
-                    }
-                }
-                .padding(.horizontal, 14)
-                .frame(height: 44)
-                .glassEffect(.regular, in: .capsule)
+        ZStack {
+            if isRegular {
+                Palette.background.ignoresSafeArea()
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 6)
-
-            HStack {
-                OptionChip(label: "全部", on: !activeOnly) { activeOnly = false }
-                OptionChip(label: "只看未完成", on: activeOnly) { activeOnly = true }
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-
-            ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(Array(results.enumerated()), id: \.element.id) { i, t in
-                        TaskRow(task: t, separator: i > 0, sectionId: "search")
+            VStack(spacing: 12) {
+                HStack(spacing: 10) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(Palette.textSecondary)
+                        TextField("搜尋任務、描述、標籤、子任務", text: $text)
+                            .txt(16).foregroundStyle(Palette.text)
+                            .focused($focused)
+                            .submitLabel(.search)
+                            .autocorrectionDisabled()
+                        if !text.isEmpty {
+                            Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.textTertiary) }
+                                .buttonStyle(.plain).hoverEffect(.highlight).accessibilityLabel("清除搜尋")
+                        }
                     }
+                    .padding(.horizontal, 14)
+                    .frame(height: 44)
+                    .glassEffect(.regular, in: .capsule)
                 }
-                .card()
-                .opacity(results.isEmpty ? 0 : 1)
-                if results.isEmpty {
-                    Text(text.isEmpty ? (model.tags.isEmpty ? "輸入關鍵字開始搜尋" : "") : "找不到「\(text)」")
-                        .txt(14).foregroundStyle(Palette.textSecondary).padding(.top, 30)
-                    if text.isEmpty && !model.tags.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("標籤").txt(12, .semibold).foregroundStyle(Palette.textTertiary)
-                            FlowLayout(spacing: 6) {
-                                ForEach(model.tags) { tag in
-                                    Button { model.scope = .tag(tag.name); model.tab = .tasks } label: {
-                                        TagChip(name: tag.name, label: tag.label, color: tag.color)
+                .padding(.horizontal, 16)
+                .padding(.top, isRegular ? 12 : 6)
+
+                HStack {
+                    OptionChip(label: "全部", on: !activeOnly) { activeOnly = false }
+                    OptionChip(label: "只看未完成", on: activeOnly) { activeOnly = true }
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(Array(results.enumerated()), id: \.element.id) { i, t in
+                            TaskRow(task: t, separator: i > 0, sectionId: "search")
+                        }
+                    }
+                    .card()
+                    .opacity(results.isEmpty ? 0 : 1)
+                    if results.isEmpty {
+                        Text(text.isEmpty ? (model.tags.isEmpty ? "輸入關鍵字開始搜尋" : "") : "找不到「\(text)」")
+                            .txt(14).foregroundStyle(Palette.textSecondary).padding(.top, 30)
+                        if text.isEmpty && !model.tags.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("標籤").txt(12, .semibold).foregroundStyle(Palette.textTertiary)
+                                FlowLayout(spacing: 6) {
+                                    ForEach(model.tags) { tag in
+                                        Button { model.scope = .tag(tag.name); model.tab = .tasks } label: {
+                                            TagChip(name: tag.name, label: tag.label, color: tag.color)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .hoverEffect(.highlight)
                                     }
-                                    .buttonStyle(.plain)
                                 }
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
+                .padding(.horizontal, 16)
+                .contentMargins(.bottom, isRegular ? 32 : 140, for: .scrollContent)
+                .scrollDismissesKeyboard(.immediately)
             }
-            .padding(.horizontal, 16)
-            .contentMargins(.bottom, 140, for: .scrollContent)
-            .scrollDismissesKeyboard(.immediately)
+            .frame(maxWidth: isRegular ? 760 : .infinity)
         }
+        .navigationTitle("搜尋")
+        .navigationBarTitleDisplayMode(.inline)
         .task(id: SearchKey(text: text, activeOnly: activeOnly, revision: model.revision)) {
             do {
                 try await Task.sleep(for: .milliseconds(180))
@@ -82,6 +92,7 @@ struct SearchScreen: View {
             }
         }
         .onAppear { if text.isEmpty { focused = true } }
+        .onChange(of: model.searchFocusTrigger) { _, _ in focused = true }
     }
 }
 
@@ -91,6 +102,7 @@ struct SearchKey: Hashable { var text: String; var activeOnly: Bool; var revisio
 struct SettingsScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
+    @Environment(\.isRegularWindow) private var isRegular
     @State private var archivedProjects: [Project] = []
     @State private var confirmSignOut = false
     @State private var unsyncedCount = 0
@@ -111,117 +123,18 @@ struct SettingsScreen: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Palette.background.ignoresSafeArea()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("設定").txt(30, .bold).foregroundStyle(Palette.text)
-                            .padding(.horizontal, 4)
-
-                        if showAccountSection {
-                            VStack(spacing: 0) {
-                                Button {
-                                    editingMeProfile = true
-                                } label: {
-                                    HStack(spacing: 12) {
-                                        let me = model.me
-                                        AvatarView(member: me, size: 34, fallbackColor: accent.hex)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(me?.name ?? "").txt(15, .semibold).foregroundStyle(Palette.text)
-                                            Text(model.isSyncing ? "正在同步…" : "已登入").txt(12).foregroundStyle(Palette.textSecondary)
-                                        }
-                                        Spacer()
-                                        Image(systemName: "chevron.right")
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundStyle(Palette.textTertiary)
-                                    }
-                                    .padding(.horizontal, 14)
-                                    .frame(minHeight: 58)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityIdentifier("settings.accountRow")
-
-                                divider
-
-                                Button {
-                                    model.showingJoinInvite = true
-                                } label: {
-                                    row(icon: "person.badge.plus", title: "加入共享清單")
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityIdentifier("settings.joinInvite")
-
-                                divider
-
-                                Button {
-                                    Task {
-                                        unsyncedCount = await model.unsyncedChangeCount()
-                                        confirmSignOut = true
-                                    }
-                                } label: {
-                                    HStack(spacing: 12) {
-                                        Image(systemName: "rectangle.portrait.and.arrow.right")
-                                            .font(.system(size: 17, weight: .medium))
-                                            .foregroundStyle(Palette.danger)
-                                            .frame(width: 24)
-                                        Text("登出").txt(15, .medium).foregroundStyle(Palette.danger)
-                                        Spacer()
-                                    }
-                                    .padding(.horizontal, 14)
-                                    .frame(minHeight: 52)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityIdentifier("settings.signOut")
-                            }
-                            .card()
-                        }
-
-                        VStack(spacing: 0) {
-                            NavigationLink {
-                                AppearanceSettingsView()
-                            } label: {
-                                row(icon: "paintpalette", title: "外觀")
-                            }
-                            .buttonStyle(.plain)
-
-                            if !archivedProjects.isEmpty {
-                                divider
-                                NavigationLink {
-                                    ArchivedProjectsView()
-                                } label: {
-                                    row(icon: "archivebox", title: "已封存的清單", value: "\(archivedProjects.count)")
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .card()
-
-                        VStack(spacing: 0) {
-                            NavigationLink {
-                                DataSettingsView()
-                            } label: {
-                                row(icon: "externaldrive", title: "資料")
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .card()
-
-                        VStack(spacing: 0) {
-                            row(icon: "info.circle", title: "關於", value: versionText, chevron: false)
-                        }
-                        .card()
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
-                    .padding(.bottom, 140)
+        Group {
+            if isRegular {
+                settingsContent
+                    .navigationTitle("設定")
+                    .navigationBarTitleDisplayMode(.inline)
+            } else {
+                NavigationStack {
+                    settingsContent
+                        .navigationTitle("設定")
+                        .toolbar(.hidden, for: .navigationBar)
                 }
-                .scrollIndicators(.hidden)
             }
-            .navigationTitle("設定")
-            .toolbar(.hidden, for: .navigationBar)
         }
         .task(id: model.revision) {
             do {
@@ -248,6 +161,127 @@ struct SettingsScreen: View {
         }
         .sheet(isPresented: $editingMeProfile) {
             MeProfileSheet(mode: .edit)
+        }
+    }
+
+    private var settingsContent: some View {
+        ZStack {
+            Palette.background.ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if !isRegular {
+                        Text("設定").txt(30, .bold).foregroundStyle(Palette.text)
+                            .padding(.horizontal, 4)
+                    }
+
+                    if showAccountSection {
+                        VStack(spacing: 0) {
+                            Button {
+                                editingMeProfile = true
+                            } label: {
+                                HStack(spacing: 12) {
+                                    let me = model.me
+                                    AvatarView(member: me, size: 34, fallbackColor: accent.hex)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(me?.name ?? "").txt(15, .semibold).foregroundStyle(Palette.text)
+                                        Text(model.isSyncing ? "正在同步…" : "已登入").txt(12).foregroundStyle(Palette.textSecondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(Palette.textTertiary)
+                                }
+                                .padding(.horizontal, 14)
+                                .frame(minHeight: 58)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .hoverEffect(.highlight)
+                            .accessibilityIdentifier("settings.accountRow")
+
+                            divider
+
+                            Button {
+                                model.showingJoinInvite = true
+                            } label: {
+                                row(icon: "person.badge.plus", title: "加入共享清單")
+                            }
+                            .buttonStyle(.plain)
+                            .hoverEffect(.highlight)
+                            .accessibilityIdentifier("settings.joinInvite")
+
+                            divider
+
+                            Button {
+                                Task {
+                                    unsyncedCount = await model.unsyncedChangeCount()
+                                    confirmSignOut = true
+                                }
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "rectangle.portrait.and.arrow.right")
+                                        .font(.system(size: 17, weight: .medium))
+                                        .foregroundStyle(Palette.danger)
+                                        .frame(width: 24)
+                                    Text("登出").txt(15, .medium).foregroundStyle(Palette.danger)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 14)
+                                .frame(minHeight: 52)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .hoverEffect(.highlight)
+                            .accessibilityIdentifier("settings.signOut")
+                        }
+                        .card()
+                    }
+
+                    VStack(spacing: 0) {
+                        NavigationLink {
+                            AppearanceSettingsView()
+                        } label: {
+                            row(icon: "paintpalette", title: "外觀")
+                        }
+                        .buttonStyle(.plain)
+                        .hoverEffect(.highlight)
+
+                        if !archivedProjects.isEmpty {
+                            divider
+                            NavigationLink {
+                                ArchivedProjectsView()
+                            } label: {
+                                row(icon: "archivebox", title: "已封存的清單", value: "\(archivedProjects.count)")
+                            }
+                            .buttonStyle(.plain)
+                            .hoverEffect(.highlight)
+                        }
+                    }
+                    .card()
+
+                    VStack(spacing: 0) {
+                        NavigationLink {
+                            DataSettingsView()
+                        } label: {
+                            row(icon: "externaldrive", title: "資料")
+                        }
+                        .buttonStyle(.plain)
+                        .hoverEffect(.highlight)
+                    }
+                    .card()
+
+                    VStack(spacing: 0) {
+                        row(icon: "info.circle", title: "關於", value: versionText, chevron: false)
+                    }
+                    .card()
+                }
+                .frame(maxWidth: isRegular ? 680 : .infinity)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, isRegular ? 32 : 140)
+                .frame(maxWidth: .infinity)
+            }
+            .scrollIndicators(.hidden)
         }
     }
 
@@ -280,6 +314,7 @@ struct SettingsScreen: View {
 
 private struct AppearanceSettingsView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.isRegularWindow) private var isRegular
 
     var body: some View {
         ZStack {
@@ -295,6 +330,7 @@ private struct AppearanceSettingsView: View {
                                         .overlay(Circle().strokeBorder(model.accentHex == hex ? Palette.text : .clear, lineWidth: 2))
                                 }
                                 .buttonStyle(.plain)
+                                .hoverEffect(.highlight)
                                 .accessibilityAddTraits(model.accentHex == hex ? .isSelected : [])
                             }
                             Spacer()
@@ -330,9 +366,11 @@ private struct AppearanceSettingsView: View {
                         .padding(.vertical, 12)
                     }
                 }
+                .frame(maxWidth: isRegular ? 680 : .infinity)
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
-                .padding(.bottom, 140)
+                .padding(.bottom, isRegular ? 32 : 140)
+                .frame(maxWidth: .infinity)
             }
             .scrollIndicators(.hidden)
         }
@@ -351,6 +389,7 @@ private struct AppearanceSettingsView: View {
 private struct ArchivedProjectsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
+    @Environment(\.isRegularWindow) private var isRegular
     @State private var archivedProjects: [Project] = []
 
     var body: some View {
@@ -384,6 +423,7 @@ private struct ArchivedProjectsView: View {
                                     .txt(14, .semibold)
                                     .foregroundStyle(accent.text)
                                     .buttonStyle(.plain)
+                                    .hoverEffect(.highlight)
                                 }
                                 .padding(.horizontal, 14)
                                 .frame(minHeight: 52)
@@ -392,9 +432,11 @@ private struct ArchivedProjectsView: View {
                         .card()
                     }
                 }
+                .frame(maxWidth: isRegular ? 680 : .infinity)
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
-                .padding(.bottom, 140)
+                .padding(.bottom, isRegular ? 32 : 140)
+                .frame(maxWidth: .infinity)
             }
             .scrollIndicators(.hidden)
         }
@@ -417,6 +459,7 @@ private struct ArchivedProjectsView: View {
 private struct DataSettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
+    @Environment(\.isRegularWindow) private var isRegular
     @AppStorage("demoLoaded") private var demoLoaded = false
     @State private var exporting: URL?
 
@@ -440,6 +483,7 @@ private struct DataSettingsView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .hoverEffect(.highlight)
                     .disabled(demoLoaded)
 
                     Rectangle().fill(Palette.separatorSoft).frame(height: 1).padding(.leading, 14)
@@ -456,6 +500,7 @@ private struct DataSettingsView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .hoverEffect(.highlight)
                     } else {
                         Button {
                             Task { exporting = await export() }
@@ -469,12 +514,15 @@ private struct DataSettingsView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .hoverEffect(.highlight)
                     }
                 }
                 .card()
+                .frame(maxWidth: isRegular ? 680 : .infinity)
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
-                .padding(.bottom, 140)
+                .padding(.bottom, isRegular ? 32 : 140)
+                .frame(maxWidth: .infinity)
             }
             .scrollIndicators(.hidden)
         }

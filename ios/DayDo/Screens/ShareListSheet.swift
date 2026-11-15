@@ -152,6 +152,7 @@ struct ShareListSheet: View {
                                                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(accent.color))
                                             }
                                             .buttonStyle(.plain)
+                                            .hoverEffect(.highlight)
                                             .accessibilityIdentifier("share.shareLink")
 
                                             Button {
@@ -166,6 +167,7 @@ struct ShareListSheet: View {
                                                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.chip))
                                             }
                                             .buttonStyle(.plain)
+                                            .hoverEffect(.highlight)
                                             .accessibilityIdentifier("share.copyLink")
                                         }
 
@@ -207,6 +209,7 @@ struct ShareListSheet: View {
                                         .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
+                                    .hoverEffect(.highlight)
                                     .disabled(creatingInvite)
                                     .accessibilityIdentifier("share.createInviteLink")
                                 }
@@ -237,9 +240,7 @@ struct ShareListSheet: View {
             }
         }
         .background(Palette.card)
-        .presentationDetents([.large])
-        .presentationBackground(Palette.card)
-        .presentationCornerRadius(28)
+        .adaptiveSheet(detents: [.large])
         .sheet(item: $editingMember) { member in
             MemberDetailSheet(projectId: projectId, member: member) {
                 Task {
@@ -444,9 +445,7 @@ private struct MemberDetailSheet: View {
             .padding(.horizontal, 16)
         }
         .background(Palette.card)
-        .presentationDetents([.height(300)])
-        .presentationBackground(Palette.card)
-        .presentationCornerRadius(28)
+        .adaptiveSheet(detents: [.height(300)])
     }
 
     private func setRole(_ newRole: String) {
