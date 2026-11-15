@@ -41,7 +41,7 @@
 - **範圍**：id 是 `u:<userId>`，一個使用者一個 DO 實例。寫入都在 `transactionSync` 裡做；DO 的 SQLite 是同步呼叫，天然一次只處理一個請求，不需要自己排隊（2026-11-15 在 void 1.8.0 本機實測：20 個同時呼叫依序得到 1 到 20、交易失敗會回滾、兩個 DO 互不影響、dev server 重開資料還在）。
 - **資料永遠不搬家**：每筆資料住在建立它的人的範圍；checklistItem、附件、留言住在所屬任務的範圍（不論是誰加的）。D1 的 `entityHome(entity, entityId → scope)` 在第一次建立時寫入、之後不變（衝突以先寫入的為準），Worker 找路只看它；新建時：任務、清單等住推送者的範圍，子列住其任務的範圍。已綁定到別的範圍的 id 再送新建，回 `rejected`，原因 `id-in-other-scope`。標籤不做全域綁定：每個人的標籤以 `(推送者範圍, name)` 為鍵，住推送者自己的範圍，彼此同名也不衝突。
 - **「在哪份清單」只是欄位**：task 的 `projectId` 可以指向任何清單，包括別人建立的共享清單；子列跟著它的任務。移動任務＝在任務的範圍裡改 `projectId`，DO 在**同一個交易**裡把它的子列清單標記一起改掉、全部給新的 serverSeq，並為離開的清單寫離開紀錄。沒有跨 DO 的兩步驟，所以沒有中間空檔。
-- **哪些範圍存有某份清單的資料**：D1 的 `listScopes(projectId, scope)`。DO 回報每個被寫到的資料列目前的清單，Worker 一併記下（重送不重複）。看一份共享清單時，從這些範圍各拿屬於它的列。
+- **哪些範圍存有某份清單的資料**：D1 的 `listScopes(projectId, scope)`。**寫入前先登記**：op 會讓資料列進入某份清單（新建、移動）時，Worker 先在 D1 的同一個交易裡確認這份清單還沒被永久刪除，並寫入 `listScopes`（重送不重複），才交給 DO；清單已永久刪除就回 `rejected`。看一份共享清單時，從這些範圍各拿屬於它的列。
 - **權限只看 D1 的成員資格**：`projectMembership(projectId, userId, role)` 是唯一來源，建立者也一樣。清單第一次被推上來時，Worker 在 D1 寫入建立者的 owner 成員資格（重送不重複）。每份清單只有一個 owner。
 
   | 角色 | 讀 | 寫任務與子項目、清單的顯示欄位 | 刪除／封存清單、成員與邀請、轉移 |
@@ -57,7 +57,7 @@
 - **新建與未知的列**：DO 找不到這一列時，只有 `fields` 涵蓋該 entity 所有必填欄位的 upsert 才算新建；只改部分欄位卻找不到列，回 `rejected`，原因 `unknown-row`，不會憑空建出一筆。
 - **離開紀錄（gone）**：DO 另存 `departure(entity, entityId, projectId, serverSeq)`：資料列離開某份清單（移動、清單被永久刪除）時寫一筆。pull 時，只對**現在已經看不到這一列**的使用者（是原清單成員、但不是資料列目前所在清單的成員）回 `{entity, entityId, gone: true, serverSeq}`；仍看得到的人會在同一範圍拿到移動後的列（serverSeq 較新），本機未送出的修改照常保留。App 收到 gone 就在本機硬刪除這一列與它的子列、丟掉它尚未送出的 op（不記 `purgedId`，id 之後還可能回來）。
 - **被拒絕時**：推送者仍讀得到這一列 → `rejected` 附目前的 `row` 與 `clocks`，App 照它覆蓋（例如被降成 viewer 後離線改的標題會被還原）；讀不到了 → `rejected` 附 `gone: true`，App 照上一條處理。
-- **永久刪除清單**：owner 永久刪除清單時，Worker 依 `listScopes` 通知每個存有它資料的範圍，把屬於它的任務與子列一起永久刪除（留 tombstone）。通知是冪等的，未完成的記在 D1 由下一次請求或排程重試。
+- **永久刪除清單**：owner 永久刪除清單時，Worker 先在 D1 把清單標成已永久刪除（之後任何讓資料進入它的寫入都會在登記那步被拒），再依 `listScopes` 通知每個存有它資料的範圍。各範圍 DO 在交易裡記下「這份清單已永久刪除」、把屬於它的任務與子列永久刪除（留 tombstone），之後對這份清單的寫入一律拒絕。通知是冪等的，未完成的記在 D1 由下一次請求或排程重試，全部範圍都確認後才算完成。
 - **成員與邀請不走一般同步**：projectMember 與 projectInvite 只能由 owner 透過專用 API 改（見 Endpoint），先寫 D1、再由伺服器投影到清單建立者範圍的 projectMember 列（給 App 顯示）。投影是冪等的；寫完 D1 但投影失敗時，下一次 pull 該清單前 Worker 會比對 D1 與 DO 補齊。App 送來的 projectMember／projectInvite op 一律 `rejected`（附目前的列）。App 端「等待同步」的邀請在登入且連線後改成呼叫建立邀請的 API。
 - **共享清單需要的其他資料**：
   - 成員的顯示資料（名字、縮寫、顏色）存在 D1 的 `user`，使用者推送自己的 member 列時 Worker 一併更新 D1。pull 回應的 `members` 帶「與我共享任何一份清單的人」的 member 列（id 是對方的 `meMemberId`），App 照一般資料列套用。
