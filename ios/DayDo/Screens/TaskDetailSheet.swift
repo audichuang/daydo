@@ -51,6 +51,7 @@ struct TaskDetailEmptyState: View {
 struct TaskDetailContent: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
+    @Environment(\.scenePhase) private var scenePhase
     var taskId: String
     var isInline: Bool = false
     var isLargeDetent: Bool = false
@@ -76,6 +77,7 @@ struct TaskDetailContent: View {
     @State private var preview: URL?
     @State private var savedFlash = false
     @State private var isSavingText = false
+    @State private var isDeleting = false
     @FocusState private var focus: Field?
     enum Field { case title, content, item }
 
@@ -99,6 +101,14 @@ struct TaskDetailContent: View {
         }
         .onChange(of: dirty) { _, newValue in
             onDirtyChange?(newValue)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if isInline && phase == .background {
+                saveText(auto: true)
+            }
+        }
+        .onDisappear {
+            saveText(auto: true)
         }
         .onChange(of: model.detailFocusTrigger) { _, _ in
             guard isInline, let task, !model.isViewer(projectId: task.projectId) else { return }
@@ -217,9 +227,14 @@ struct TaskDetailContent: View {
                     Button("複製任務", systemImage: "plus.square.on.square") { duplicate(task) }
                     Button("刪除", systemImage: "trash", role: .destructive) {
                         let id = task.id
+                        isDeleting = true
                         Task {
-                            await model.perform { try await $0.deleteTask(id: id) }
-                            onClose()
+                            let deleted = await model.perform { try await $0.deleteTask(id: id) } != nil
+                            if deleted {
+                                onClose()
+                            } else {
+                                isDeleting = false
+                            }
                         }
                     }
                 } label: {
@@ -486,9 +501,11 @@ struct TaskDetailContent: View {
         }
     }
 
-    func saveText() {
-        guard let task, !isSavingText else { return }
-        let saveTitle = titleDirty
+    func saveText(auto: Bool = false) {
+        guard let task, !isSavingText, !isDeleting else { return }
+        if auto && task.deletedAt != nil { return }
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let saveTitle = titleDirty && (!auto || !trimmedTitle.isEmpty)
         let saveContent = contentDirty
         guard saveTitle || saveContent, !model.isViewer(projectId: task.projectId) else { return }
         let t = title, c = content
@@ -496,10 +513,14 @@ struct TaskDetailContent: View {
         if saveTitle { input.title = t }
         if saveContent { input.content = c }
         let finalInput = input
-        focus = nil
+        if !auto { focus = nil }
         isSavingText = true
         Task {
             defer { isSavingText = false }
+            if auto {
+                guard let current = try? await model.api.getTask(id: finalInput.taskId),
+                      current.deletedAt == nil else { return }
+            }
             if await model.perform({ try await $0.updateTask(finalInput) }) != nil {
                 if saveTitle { titleBaseline = t }
                 if saveContent { contentBaseline = c }

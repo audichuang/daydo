@@ -185,4 +185,149 @@ final class DayDoIPadTests: XCTestCase {
         XCTAssertTrue(app.buttons["signIn.apple"].waitForExistence(timeout: 3))
         shot("ipad-landscape-signin")
     }
+
+    // MARK: - Regression tests for iPad layout fixes
+
+    @MainActor
+    func testTrashScopeDeleteDoesNotPurgeNonDeletedTask() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "iPad only")
+        launchDemo(orientation: .landscapeLeft)
+
+        let taskRow = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).element(boundBy: 1)
+        XCTAssertTrue(taskRow.waitForExistence(timeout: 5), app.debugDescription)
+        taskRow.tap()
+
+        let titleField = app.descendants(matching: .any)["taskTitleField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 3))
+
+        // Switch to 垃圾桶 in sidebar; selection should clear and Return/Delete must NOT act on Today's task.
+        app.buttons["垃圾桶"].tap()
+        XCTAssertTrue(app.staticTexts["刪除的任務可在這裡還原"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(titleField.exists, "Changing scope to 垃圾桶 should clear selectedTaskId")
+
+        app.typeKey(XCUIKeyboardKey(rawValue: "\n"), modifierFlags: [])
+        XCTAssertFalse(titleField.exists, "Return should not focus Today's task after scope change")
+
+        // Switch back to 今天 and confirm the task is still there.
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH '今天'")).firstMatch.tap()
+        let preservedTask = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).element(boundBy: 1)
+        XCTAssertTrue(preservedTask.waitForExistence(timeout: 3), "Non-deleted task must not be purged by Trash scope")
+
+        // Soft-delete the task via context menu, open 垃圾桶, and verify permanent purge from Trash works.
+        preservedTask.press(forDuration: 1.0)
+        app.buttons["刪除"].tap()
+        XCTAssertTrue(preservedTask.waitForNonExistence(timeout: 3))
+
+        app.buttons["垃圾桶"].tap()
+        let trashedRow = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).element(boundBy: 1)
+        XCTAssertTrue(trashedRow.waitForExistence(timeout: 3), app.debugDescription)
+        trashedRow.press(forDuration: 1.0)
+        app.buttons["永久刪除"].tap()
+        XCTAssertTrue(trashedRow.waitForNonExistence(timeout: 3), "Soft-deleted task in 垃圾桶 should purge cleanly")
+    }
+
+    @MainActor
+    func testInlineDetailAutoSavesOnTaskAndTabSwitch() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "iPad only")
+        launchDemo(orientation: .landscapeLeft)
+
+        let taskA = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).element(boundBy: 1)
+        XCTAssertTrue(taskA.waitForExistence(timeout: 5), app.debugDescription)
+        taskA.tap()
+
+        let titleField = app.descendants(matching: .any)["taskTitleField"]
+        let contentField = app.descendants(matching: .any)["taskContentField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 3))
+        titleField.tap()
+        titleField.typeText(" [草稿1]")
+        contentField.tap()
+        contentField.typeText(" [描述草稿]")
+
+        // Switch to another task without tapping 儲存.
+        let taskB = app.buttons.matching(NSPredicate(format: "label CONTAINS '去全聯買菜'")).element(boundBy: 1)
+        XCTAssertTrue(taskB.waitForExistence(timeout: 3))
+        taskB.tap()
+
+        // Re-select task A and verify title and description were auto-saved.
+        let updatedTaskA = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報' AND label CONTAINS '[草稿1]'")).element(boundBy: 1)
+        XCTAssertTrue(updatedTaskA.waitForExistence(timeout: 3), app.debugDescription)
+        updatedTaskA.tap()
+        XCTAssertTrue(titleField.waitForExistence(timeout: 3))
+        XCTAssertTrue(((titleField.value as? String) ?? "").contains("[草稿1]"))
+        XCTAssertTrue(((contentField.value as? String) ?? "").contains("[描述草稿]"))
+
+        // Edit again and switch tab with ⌘2, then return with ⌘1.
+        titleField.tap()
+        titleField.typeText(" [切頁]")
+        app.typeKey("2", modifierFlags: .command)
+        XCTAssertTrue(app.buttons["calendarMode"].waitForExistence(timeout: 3))
+        app.typeKey("1", modifierFlags: .command)
+
+        XCTAssertTrue(titleField.waitForExistence(timeout: 3))
+        XCTAssertTrue(((titleField.value as? String) ?? "").contains("[切頁]"), "Tab switch should auto-save dirty inline title")
+    }
+
+    @MainActor
+    func testSettingsSubpageDoesNotCoverOtherTabs() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "iPad only")
+        launchDemo(orientation: .landscapeLeft)
+
+        app.buttons["sidebar.settings"].tap()
+        let appearanceBtn = app.buttons["外觀"]
+        XCTAssertTrue(appearanceBtn.waitForExistence(timeout: 3), app.debugDescription)
+        appearanceBtn.tap()
+        XCTAssertTrue(app.staticTexts["主題色"].waitForExistence(timeout: 3), app.debugDescription)
+
+        // Switch to Calendar and Search; AppearanceSettingsView must not cover them.
+        app.buttons["sidebar.calendar"].tap()
+        XCTAssertTrue(app.buttons["calendarMode"].waitForExistence(timeout: 3), "Calendar should be visible after Settings sub-page")
+        XCTAssertFalse(app.staticTexts["主題色"].exists)
+
+        app.buttons["sidebar.search"].tap()
+        XCTAssertTrue(app.textFields["搜尋任務、描述、標籤、子任務"].waitForExistence(timeout: 3), "Search should be visible after Settings sub-page")
+
+        // Switch back to Settings; should reset to Settings root, not stay on AppearanceSettingsView.
+        app.buttons["sidebar.settings"].tap()
+        XCTAssertTrue(appearanceBtn.waitForExistence(timeout: 3), "Settings should reset to root after tab switch")
+
+        // Verify Portrait mode still shows sidebar toggle and Settings/Calendar navigation works.
+        XCUIDevice.shared.orientation = .portrait
+        appearanceBtn.tap()
+        XCTAssertTrue(app.staticTexts["主題色"].waitForExistence(timeout: 3))
+        let sidebarToggle = app.buttons["顯示側邊欄"]
+        XCTAssertTrue(sidebarToggle.waitForExistence(timeout: 3), app.debugDescription)
+        sidebarToggle.tap()
+        XCTAssertTrue(app.buttons["sidebar.calendar"].waitForExistence(timeout: 3))
+        app.buttons["sidebar.calendar"].tap()
+        XCTAssertTrue(app.buttons["calendarMode"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["主題色"].exists)
+    }
+
+    @MainActor
+    func testRootSheetsInheritIsRegularWindow() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "iPad only")
+        launchDemo(orientation: .landscapeLeft)
+
+        let windowWidth = app.windows.firstMatch.frame.width
+
+        // Open ComposerSheet via ⌘N; with isRegularWindow == true it gets .presentationSizing(.form)
+        // (narrower than full window) and "新增並開啟詳細設定" selects inline instead of opening a sheet.
+        app.typeKey("n", modifierFlags: .command)
+        let composer = app.descendants(matching: .any)["composerTitle"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 3))
+        composer.tap()
+        composer.typeText("表單環境測試")
+
+        app.buttons["composerMore"].tap()
+        let openDetail = app.buttons["新增並開啟詳細設定"]
+        XCTAssertTrue(openDetail.waitForExistence(timeout: 3))
+        openDetail.tap()
+
+        // Inline detail should open (no phone full-screen toggle) and show the newly created task.
+        let titleField = app.descendants(matching: .any)["taskTitleField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 4), app.debugDescription)
+        XCTAssertFalse(app.buttons["展開為全屏"].exists, "ComposerSheet should see isRegularWindow == true and open inline detail")
+        XCTAssertEqual(titleField.value as? String, "表單環境測試")
+        XCTAssertLessThan(titleField.frame.width, windowWidth * 0.7)
+    }
 }

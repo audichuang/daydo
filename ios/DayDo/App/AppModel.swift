@@ -77,7 +77,13 @@ final class AppModel {
 
     // Navigation
     var tab: MainTab = .tasks
-    var scope: TaskScope = .smart(.today)
+    var scope: TaskScope = .smart(.today) {
+        didSet {
+            if oldValue != scope {
+                selectedTaskId = nil
+            }
+        }
+    }
     var drawerOpen = false
     var detailTaskId: String?
     var selectedTaskId: String?
@@ -111,18 +117,27 @@ final class AppModel {
     }
 
     func deleteSelectedTask(id: String) {
-        let inTrash = scope == .smart(.trash)
         Task {
             guard let task = try? await api.getTask(id: id),
                   !isViewer(projectId: task.projectId) else { return }
-            if inTrash {
-                await perform { try await $0.purgeTask(id: id) }
+            if task.deletedAt != nil {
+                await purgeTask(id: id)
             } else {
                 await perform { try await $0.deleteTask(id: id) }
+                if selectedTaskId == id {
+                    selectedTaskId = nil
+                }
             }
-            if selectedTaskId == id {
-                selectedTaskId = nil
-            }
+        }
+    }
+
+    func purgeTask(id: String) async {
+        guard let task = try? await api.getTask(id: id),
+              !isViewer(projectId: task.projectId),
+              task.deletedAt != nil else { return }
+        await perform { try await $0.purgeTask(id: id) }
+        if selectedTaskId == id {
+            selectedTaskId = nil
         }
     }
 

@@ -93,7 +93,6 @@ struct RootView: View {
                 .allowsHitTesting(!splashDismissing)
             }
         }
-        .environment(\.isRegularWindow, isRegular)
         .task(id: model.ready) {
             guard model.ready, !splashRemoved, !holdSplash else { return }
             let elapsed = splashStart.duration(to: .now)
@@ -151,6 +150,7 @@ struct RootView: View {
         } message: {
             Text(model.errorMessage ?? "")
         }
+        .environment(\.isRegularWindow, isRegular)
     }
 }
 
@@ -244,6 +244,8 @@ private struct RegularSplitView: View {
     @Environment(AppModel.self) private var model
     @Binding var columnVisibility: NavigationSplitViewVisibility
     @State private var isWide = false
+    @State private var calendarPath = NavigationPath()
+    @State private var searchPath = NavigationPath()
 
     var body: some View {
         Group {
@@ -269,14 +271,26 @@ private struct RegularSplitView: View {
                     sidebar
                 } detail: {
                     switch model.tab {
-                    case .calendar: CalendarScreen()
-                    case .search: SearchScreen()
-                    case .settings: SettingsScreen()
-                    case .tasks: EmptyView()
+                    case .calendar:
+                        NavigationStack(path: $calendarPath) {
+                            CalendarScreen()
+                        }
+                    case .search:
+                        NavigationStack(path: $searchPath) {
+                            SearchScreen()
+                        }
+                    case .settings:
+                        SettingsScreen()
+                    case .tasks:
+                        EmptyView()
                     }
                 }
                 .navigationSplitViewStyle(.balanced)
             }
+        }
+        .onChange(of: model.tab) { _, tab in
+            if tab != .calendar { calendarPath = NavigationPath() }
+            if tab != .search { searchPath = NavigationPath() }
         }
         .onGeometryChange(for: Bool.self) { proxy in
             proxy.size.width >= 1100

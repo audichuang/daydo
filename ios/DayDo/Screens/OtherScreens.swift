@@ -98,11 +98,18 @@ struct SearchScreen: View {
 
 struct SearchKey: Hashable { var text: String; var activeOnly: Bool; var revision: Int }
 
+private enum SettingsRoute: Hashable {
+    case appearance
+    case archivedProjects
+    case data
+}
+
 /// Appearance and data settings.
 struct SettingsScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
     @Environment(\.isRegularWindow) private var isRegular
+    @State private var path: [SettingsRoute] = []
     @State private var archivedProjects: [Project] = []
     @State private var confirmSignOut = false
     @State private var unsyncedCount = 0
@@ -123,17 +130,22 @@ struct SettingsScreen: View {
     }
 
     var body: some View {
-        Group {
-            if isRegular {
-                settingsContent
-                    .navigationTitle("設定")
-                    .navigationBarTitleDisplayMode(.inline)
-            } else {
-                NavigationStack {
-                    settingsContent
-                        .navigationTitle("設定")
-                        .toolbar(.hidden, for: .navigationBar)
+        NavigationStack(path: $path) {
+            settingsContent
+                .navigationTitle("設定")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar(isRegular ? .visible : .hidden, for: .navigationBar)
+                .navigationDestination(for: SettingsRoute.self) { route in
+                    switch route {
+                    case .appearance: AppearanceSettingsView()
+                    case .archivedProjects: ArchivedProjectsView()
+                    case .data: DataSettingsView()
+                    }
                 }
+        }
+        .onChange(of: model.tab) { _, tab in
+            if tab != .settings && !path.isEmpty {
+                path.removeAll()
             }
         }
         .task(id: model.revision) {
@@ -238,9 +250,7 @@ struct SettingsScreen: View {
                     }
 
                     VStack(spacing: 0) {
-                        NavigationLink {
-                            AppearanceSettingsView()
-                        } label: {
+                        NavigationLink(value: SettingsRoute.appearance) {
                             row(icon: "paintpalette", title: "外觀")
                         }
                         .buttonStyle(.plain)
@@ -248,9 +258,7 @@ struct SettingsScreen: View {
 
                         if !archivedProjects.isEmpty {
                             divider
-                            NavigationLink {
-                                ArchivedProjectsView()
-                            } label: {
+                            NavigationLink(value: SettingsRoute.archivedProjects) {
                                 row(icon: "archivebox", title: "已封存的清單", value: "\(archivedProjects.count)")
                             }
                             .buttonStyle(.plain)
@@ -260,9 +268,7 @@ struct SettingsScreen: View {
                     .card()
 
                     VStack(spacing: 0) {
-                        NavigationLink {
-                            DataSettingsView()
-                        } label: {
+                        NavigationLink(value: SettingsRoute.data) {
                             row(icon: "externaldrive", title: "資料")
                         }
                         .buttonStyle(.plain)

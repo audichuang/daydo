@@ -387,7 +387,7 @@ struct TaskRow: View {
         if inTrash {
             if !isViewer {
                 Button("還原", systemImage: "arrow.uturn.backward") { Task { await model.perform { try await $0.restoreTask(id: id) } } }
-                Button("永久刪除", systemImage: "trash", role: .destructive) { Task { await model.perform { try await $0.purgeTask(id: id) } } }
+                Button("永久刪除", systemImage: "trash", role: .destructive) { Task { await model.purgeTask(id: id) } }
             }
         } else if !isViewer {
             Menu("優先級", systemImage: "flag") {
@@ -406,7 +406,12 @@ struct TaskRow: View {
                 Button("下週一") { setDay(nextMonday) }
                 Button("清除日期") { model.updateTask(id) { $0.schedule = .clear } }
             }
-            Button("刪除", systemImage: "trash", role: .destructive) { Task { await model.perform { try await $0.deleteTask(id: id) } } }
+            Button("刪除", systemImage: "trash", role: .destructive) {
+                Task {
+                    await model.perform { try await $0.deleteTask(id: id) }
+                    if model.selectedTaskId == id { model.selectedTaskId = nil }
+                }
+            }
         }
     }
 
