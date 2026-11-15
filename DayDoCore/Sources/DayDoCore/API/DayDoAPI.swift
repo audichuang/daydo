@@ -64,7 +64,7 @@ public protocol DayDoAPI: Sendable {
     func deleteTag(name: String) async throws
 
     // Attachments
-    func addAttachment(taskId: String, fileName: String, data: Data, mimeType: String, originalPath: String?) async throws -> Attachment
+    func uploadAttachment(taskId: String, fileName: String, data: Data, mimeType: String, originalPath: String?) async throws -> Attachment
     func deleteAttachment(id: String) async throws
     func attachmentURL(_ attachment: Attachment) -> URL?
 

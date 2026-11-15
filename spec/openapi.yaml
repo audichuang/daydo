@@ -361,7 +361,7 @@ paths:
   /tasks/{task_id}/attachments:
     parameters: [{ $ref: "#/components/parameters/TaskId" }]
     post:
-      operationId: add_attachment
+      operationId: upload_attachment
       requestBody:
         required: true
         content:

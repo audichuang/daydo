@@ -439,7 +439,7 @@ struct TaskDetailSheet: View {
                 let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
                 let name = url.lastPathComponent
                 let path = url.path
-                await model.perform { try await $0.addAttachment(taskId: id, fileName: name, data: data, mimeType: mime, originalPath: path) }
+                await model.perform { try await $0.uploadAttachment(taskId: id, fileName: name, data: data, mimeType: mime, originalPath: path) }
             }
         }
     }
