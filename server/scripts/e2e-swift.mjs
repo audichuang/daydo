@@ -168,16 +168,25 @@ async function main() {
 
     const sub = `google-swift-${randomUUID()}`;
     const googleToken = await jwks.signGoogleToken(sub);
+    const firstLoginSub = `google-first-login-${randomUUID()}`;
+    const firstLoginGoogleToken = await jwks.signGoogleToken(firstLoginSub);
 
     const exitCode = await runCommand(
       'swift',
-      ['test', '--package-path', path.resolve(serverDir, '../DayDoCore'), '--filter', 'TwoDeviceConvergence'],
+      [
+        'test',
+        '--package-path',
+        path.resolve(serverDir, '../DayDoCore'),
+        '--filter',
+        'TwoDeviceConvergence|FirstLogin',
+      ],
       {
         cwd: serverDir,
         env: {
           ...env,
           DAYDO_SYNC_BASE_URL: baseUrl,
           DAYDO_SYNC_GOOGLE_ID_TOKEN: googleToken,
+          DAYDO_SYNC_FIRST_LOGIN_GOOGLE_ID_TOKEN: firstLoginGoogleToken,
         },
       },
     );

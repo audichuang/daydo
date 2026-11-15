@@ -27,6 +27,7 @@ public struct SyncSummary: Sendable, Equatable {
 /// Coordinates push/pull synchronization and token refresh for one signed-in user.
 public actor SyncEngine {
     public static let pullCursorsMetaKey = "pullCursors"
+    public static let signedInUserIdMetaKey = "signedInUserId"
 
     public let database: AppDatabase
     private let transport: any SyncTransport
@@ -41,6 +42,7 @@ public actor SyncEngine {
     private var rerunRequested: Bool = false
     private var inFlightRefresh: Task<String, Error>?
     private var consecutiveRetryableFailures: Int = 0
+    private var sessionGeneration: UInt64 = 0
     private var continuations: [UUID: AsyncStream<SyncSummary>.Continuation] = [:]
 
     private let encoder = Outbox.encoder
@@ -87,6 +89,127 @@ public actor SyncEngine {
         }
     }
 
+    /// Currently signed-in account user id persisted in `meta`, if any.
+    public var signedInUserId: String? {
+        get async throws {
+            try await database.writer.read { db in
+                try Self.loadSignedInUserId(in: db)
+            }
+        }
+    }
+
+    /// True when a signed-in user id is persisted and auth tokens are present.
+    public var isSignedIn: Bool {
+        get async throws {
+            guard let userId = try await signedInUserId, !userId.isEmpty else {
+                return false
+            }
+            return hasStoredTokens()
+        }
+    }
+
+    /// Signs in with Google or Apple, runs first-login reconciliation once in a single write
+    /// transaction before the first push, and runs `syncNow()`.
+    @discardableResult
+    public func signIn(with credential: SyncAuthCredential) async throws -> SyncSummary {
+        let generation = sessionGeneration
+        let deviceId = try await database.writer.write { db in
+            try HLC.ensureDeviceId(in: db)
+        }
+
+        let path: String
+        let requestBody: Data
+        switch credential {
+        case let .google(idToken):
+            path = "/auth/google"
+            requestBody = try encoder.encode(AuthGoogleRequest(idToken: idToken, deviceId: deviceId))
+        case let .apple(identityToken, nonce):
+            path = "/auth/apple"
+            requestBody = try encoder.encode(AuthAppleRequest(identityToken: identityToken, nonce: nonce, deviceId: deviceId))
+        }
+
+        let response = try await sendWithNetworkRetryable(
+            method: "POST",
+            path: path,
+            headers: [:],
+            body: requestBody
+        )
+        let data = try validateHTTPResponse(response)
+        let auth = try decode(AuthLoginResponse.self, from: data)
+
+        guard generation == sessionGeneration else {
+            throw SyncError.signedOut
+        }
+
+        if let existingUserId = try await signedInUserId, existingUserId != auth.user.id {
+            throw SyncError.protocolError("Already signed in as a different user; sign out first")
+        }
+
+        tokenStore.refreshToken = auth.refreshToken
+        tokenStore.accessToken = auth.accessToken
+        consecutiveRetryableFailures = 0
+
+        let now = clock.now().epochMillis
+        let didChangeInReconcile = try await database.writer.write { db -> Bool in
+            if try Self.loadSignedInUserId(in: db) != nil {
+                return false
+            }
+            let changed = try Self.reconcileFirstLogin(auth: auth, in: db, now: now)
+            try Self.saveSignedInUserId(auth.user.id, in: db)
+            return changed
+        }
+
+        let summary = try await syncNow()
+        if didChangeInReconcile && !summary.didChangeLocalData {
+            let combined = SyncSummary(
+                pushedCount: summary.pushedCount,
+                appliedCount: summary.appliedCount,
+                rejectedCount: summary.rejectedCount,
+                pulledCount: summary.pulledCount,
+                didChangeLocalData: true
+            )
+            emitChange(combined)
+            return combined
+        }
+        return summary
+    }
+
+    /// Clears stored tokens and wipes all local synced tables, outbox, purgedId, staging,
+    /// pull cursors, and signed-in userId while keeping `deviceId` and `hlc`.
+    public func signOut() async throws {
+        sessionGeneration &+= 1
+        inFlightSync?.cancel()
+        inFlightRefresh?.cancel()
+        tokenStore.accessToken = nil
+        tokenStore.refreshToken = nil
+        consecutiveRetryableFailures = 0
+
+        try await database.writer.write { db in
+            try db.execute(sql: "PRAGMA defer_foreign_keys = ON")
+            for table in [
+                "comment",
+                "attachment",
+                "checklistItem",
+                "task",
+                "projectInvite",
+                "projectMember",
+                "project",
+                "folder",
+                "member",
+                "tag",
+                "change",
+                "purgedId",
+                "syncStaging",
+            ] {
+                try db.execute(sql: "DELETE FROM \"\(table)\"")
+            }
+            try db.execute(
+                sql: "DELETE FROM meta WHERE key IN (?, ?)",
+                arguments: [Self.pullCursorsMetaKey, Self.signedInUserIdMetaKey]
+            )
+        }
+    }
+
     /// Runs push followed by pull. Concurrent callers join the in-flight run and request one coalesced rerun.
     @discardableResult
     public func syncNow() async throws -> SyncSummary {
@@ -94,14 +217,15 @@ public actor SyncEngine {
             rerunRequested = true
             return try await existing.value
         }
+        let generation = sessionGeneration
         let task = Task {
-            try await self.runSyncLoop()
+            try await self.runSyncLoop(generation: generation)
         }
         inFlightSync = task
         return try await task.value
     }
 
-    private func runSyncLoop() async throws -> SyncSummary {
+    private func runSyncLoop(generation: UInt64) async throws -> SyncSummary {
         defer {
             inFlightSync = nil
             rerunRequested = false
@@ -109,8 +233,11 @@ public actor SyncEngine {
 
         var total = SyncSummary()
         while true {
+            guard generation == sessionGeneration else {
+                throw SyncError.signedOut
+            }
             rerunRequested = false
-            let cycle = try await performSyncCycle()
+            let cycle = try await performSyncCycle(generation: generation)
             total = SyncSummary(
                 pushedCount: total.pushedCount + cycle.pushedCount,
                 appliedCount: total.appliedCount + cycle.appliedCount,
@@ -124,7 +251,7 @@ public actor SyncEngine {
         }
     }
 
-    private func performSyncCycle() async throws -> SyncSummary {
+    private func performSyncCycle(generation: UInt64) async throws -> SyncSummary {
         var pushProgress = PushProgress()
         var pullProgress = PullProgress()
         defer {
@@ -134,8 +261,8 @@ public actor SyncEngine {
             }
         }
 
-        try await performPush(&pushProgress)
-        try await performPull(&pullProgress)
+        try await performPush(&pushProgress, generation: generation)
+        try await performPull(&pullProgress, generation: generation)
 
         consecutiveRetryableFailures = 0
 
@@ -161,10 +288,13 @@ public actor SyncEngine {
         var didChangeLocalData: Bool = false
     }
 
-    private func performPush(_ progress: inout PushProgress) async throws {
+    private func performPush(_ progress: inout PushProgress, generation: UInt64) async throws {
         let batchLimit = pushBatchSize
 
         while true {
+            guard generation == sessionGeneration else {
+                throw SyncError.signedOut
+            }
             let (deviceId, batch) = try await database.writer.write { db -> (String, [ChangeRecord]) in
                 let devId = try HLC.ensureDeviceId(in: db)
                 let rows = try ChangeRecord
@@ -198,6 +328,9 @@ public actor SyncEngine {
 
             let requestData = try encoder.encode(SyncPushRequest(deviceId: deviceId, ops: ops))
             let responseData = try await sendAuthorized(method: "POST", path: "/sync/push", body: requestData)
+            guard generation == sessionGeneration else {
+                throw SyncError.signedOut
+            }
             let response = try decode(SyncPushResponse.self, from: responseData)
 
             guard response.results.count == batch.count else {
@@ -276,14 +409,20 @@ public actor SyncEngine {
         var didChangeLocalData: Bool = false
     }
 
-    private func performPull(_ progress: inout PullProgress) async throws {
+    private func performPull(_ progress: inout PullProgress, generation: UInt64) async throws {
         var cursors = try await database.writer.read { db in
             try Self.loadPullCursors(in: db)
         }
 
         while true {
+            guard generation == sessionGeneration else {
+                throw SyncError.signedOut
+            }
             let requestData = try encoder.encode(SyncPullRequest(cursors: cursors, limit: pullLimit))
             let responseData = try await sendAuthorized(method: "POST", path: "/sync/pull", body: requestData)
+            guard generation == sessionGeneration else {
+                throw SyncError.signedOut
+            }
             let response = try decode(SyncPullResponse.self, from: responseData)
 
             let now = clock.now().epochMillis
@@ -534,6 +673,281 @@ public actor SyncEngine {
             return try decoder.decode(type, from: data)
         } catch {
             throw SyncError.protocolError("Failed to decode \(T.self): \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - First-Login Reconciliation
+
+    private func hasStoredTokens() -> Bool {
+        let hasAccess = !(tokenStore.accessToken ?? "").isEmpty
+        let hasRefresh = !(tokenStore.refreshToken ?? "").isEmpty
+        return hasAccess || hasRefresh
+    }
+
+    private static func loadSignedInUserId(in db: Database) throws -> String? {
+        try String.fetchOne(
+            db,
+            sql: "SELECT value FROM meta WHERE key = ?",
+            arguments: [signedInUserIdMetaKey]
+        )
+    }
+
+    private static func saveSignedInUserId(_ userId: String, in db: Database) throws {
+        try db.execute(
+            sql: "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            arguments: [signedInUserIdMetaKey, userId]
+        )
+    }
+
+    private static func reconcileFirstLogin(
+        auth: AuthLoginResponse,
+        in db: Database,
+        now: EpochMillis
+    ) throws -> Bool {
+        let localMe = try MemberRecord.filter(Column("isMe") == true).fetchOne(db)
+
+        switch (localMe != nil, auth.hasData) {
+        case (false, false):
+            try LocalDayDoAPI.bootstrap(in: db, now: now)
+            return true
+
+        case (false, true):
+            return false
+
+        case (true, false):
+            return false
+
+        case (true, true):
+            guard let localMe else { return false }
+            let localInbox = try ProjectRecord
+                .filter(Column("isInbox") == true)
+                .order(Column("createdAt"))
+                .fetchOne(db)
+
+            let oldMeId = localMe.id
+            let newMeId = auth.meMemberId.flatMap { $0.isEmpty ? nil : $0 }
+            let oldInboxId = localInbox?.id
+            let newInboxId = auth.inboxProjectId.flatMap { $0.isEmpty ? nil : $0 }
+
+            let remapMe: (from: String, to: String)? = newMeId.flatMap {
+                $0 != oldMeId ? (oldMeId, $0) : nil
+            }
+            let remapInbox: (from: String, to: String)? = oldInboxId.flatMap { oldId in
+                newInboxId.flatMap { $0 != oldId ? (oldId, $0) : nil }
+            }
+
+            try db.execute(sql: "PRAGMA defer_foreign_keys = ON")
+
+            if let remapMe {
+                try db.execute(sql: "UPDATE member SET id = ? WHERE id = ?", arguments: [remapMe.to, remapMe.from])
+                try db.execute(sql: "UPDATE project SET ownerId = ? WHERE ownerId = ?", arguments: [remapMe.to, remapMe.from])
+                try db.execute(sql: "UPDATE projectMember SET memberId = ? WHERE memberId = ?", arguments: [remapMe.to, remapMe.from])
+                try db.execute(sql: "UPDATE task SET assigneeId = ? WHERE assigneeId = ?", arguments: [remapMe.to, remapMe.from])
+                try db.execute(sql: "UPDATE comment SET authorId = ? WHERE authorId = ?", arguments: [remapMe.to, remapMe.from])
+            }
+
+            if let remapInbox {
+                try db.execute(sql: "UPDATE project SET id = ? WHERE id = ?", arguments: [remapInbox.to, remapInbox.from])
+                try db.execute(sql: "UPDATE projectMember SET projectId = ? WHERE projectId = ?", arguments: [remapInbox.to, remapInbox.from])
+                try db.execute(sql: "UPDATE projectInvite SET projectId = ? WHERE projectId = ?", arguments: [remapInbox.to, remapInbox.from])
+                try db.execute(sql: "UPDATE task SET projectId = ? WHERE projectId = ?", arguments: [remapInbox.to, remapInbox.from])
+            }
+
+            if remapMe != nil || remapInbox != nil {
+                try remapUnackedChanges(remapMe: remapMe, remapInbox: remapInbox, in: db)
+            }
+
+            let droppedAny = try dropUntouchedDefaultLists(in: db)
+
+            if let newMeId {
+                try deleteCreateOps(entity: "member", entityId: newMeId, in: db)
+            }
+            if let newInboxId {
+                try deleteCreateOps(entity: "project", entityId: newInboxId, in: db)
+            }
+
+            return remapMe != nil || remapInbox != nil || droppedAny
+        }
+    }
+
+    private static func remapUnackedChanges(
+        remapMe: (from: String, to: String)?,
+        remapInbox: (from: String, to: String)?,
+        in db: Database
+    ) throws {
+        let decoder = JSONDecoder()
+        let unacked = try ChangeRecord
+            .filter(Column("ackedAt") == nil)
+            .order(Column("seq"))
+            .fetchAll(db)
+
+        for change in unacked {
+            guard let seq = change.seq else { continue }
+
+            var newEntityId = change.entityId
+            switch change.entity {
+            case "member":
+                if let remapMe, newEntityId == remapMe.from {
+                    newEntityId = remapMe.to
+                }
+            case "project":
+                if let remapInbox, newEntityId == remapInbox.from {
+                    newEntityId = remapInbox.to
+                }
+            case "projectMember":
+                let parts = newEntityId.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+                if parts.count == 2 {
+                    var pid = String(parts[0])
+                    var mid = String(parts[1])
+                    if let remapInbox, pid == remapInbox.from { pid = remapInbox.to }
+                    if let remapMe, mid == remapMe.from { mid = remapMe.to }
+                    newEntityId = "\(pid):\(mid)"
+                }
+            default:
+                break
+            }
+
+            var newRowJSON = change.row
+            var rowChanged = false
+            if var rowDict = try? decoder.decode([String: SyncJSONValue].self, from: Data(change.row.utf8)), !rowDict.isEmpty {
+                if let remapMe {
+                    let meKeys: [String]
+                    switch change.entity {
+                    case "member": meKeys = ["id"]
+                    case "project": meKeys = ["ownerId"]
+                    case "projectMember": meKeys = ["memberId"]
+                    case "task": meKeys = ["assigneeId"]
+                    case "comment": meKeys = ["authorId"]
+                    default: meKeys = []
+                    }
+                    for key in meKeys where rowDict[key]?.stringValue == remapMe.from {
+                        rowDict[key] = .string(remapMe.to)
+                        rowChanged = true
+                    }
+                }
+                if let remapInbox {
+                    let inboxKeys: [String]
+                    switch change.entity {
+                    case "project": inboxKeys = ["id"]
+                    case "projectMember", "projectInvite", "task": inboxKeys = ["projectId"]
+                    default: inboxKeys = []
+                    }
+                    for key in inboxKeys where rowDict[key]?.stringValue == remapInbox.from {
+                        rowDict[key] = .string(remapInbox.to)
+                        rowChanged = true
+                    }
+                }
+                if rowChanged {
+                    let encoded = try Outbox.encoder.encode(rowDict)
+                    newRowJSON = String(data: encoded, encoding: .utf8)!
+                }
+            }
+
+            if newEntityId != change.entityId || rowChanged {
+                try db.execute(
+                    sql: "UPDATE change SET entityId = ?, row = ? WHERE seq = ?",
+                    arguments: [newEntityId, newRowJSON, seq]
+                )
+            }
+        }
+    }
+
+    private static func dropUntouchedDefaultLists(in db: Database) throws -> Bool {
+        let decoder = JSONDecoder()
+        let projects = try ProjectRecord
+            .filter(Column("isInbox") == false && Column("deletedAt") == nil)
+            .fetchAll(db)
+
+        var referencedProjectIds = Set(
+            try String.fetchAll(db, sql: "SELECT DISTINCT projectId FROM task")
+        )
+        let taskChanges = try ChangeRecord
+            .filter(Column("entity") == "task")
+            .fetchAll(db)
+        for tc in taskChanges {
+            if let rowDict = try? decoder.decode([String: SyncJSONValue].self, from: Data(tc.row.utf8)),
+               let pid = rowDict["projectId"]?.stringValue {
+                referencedProjectIds.insert(pid)
+            }
+        }
+
+        let allProjectMemberChanges = try ChangeRecord
+            .filter(Column("entity") == "projectMember")
+            .fetchAll(db)
+
+        var droppedAny = false
+        for project in projects {
+            let matchesDefault = LocalDayDoAPI.defaultLists.contains { name, color in
+                project.name == name && project.color == color
+            }
+            guard matchesDefault else { continue }
+            guard !referencedProjectIds.contains(project.id) else { continue }
+
+            let projectChanges = try ChangeRecord
+                .filter(Column("entity") == "project" && Column("entityId") == project.id)
+                .order(Column("seq"))
+                .fetchAll(db)
+            guard projectChanges.count == 1, isCreateOp(projectChanges[0]) else { continue }
+
+            let prefix = "\(project.id):"
+            let pmChanges = allProjectMemberChanges.filter { $0.entityId.hasPrefix(prefix) }
+            if pmChanges.count > 1 || pmChanges.contains(where: { !isCreateOp($0) }) {
+                continue
+            }
+
+            let inviteCount = try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM projectInvite WHERE projectId = ?",
+                arguments: [project.id]
+            ) ?? 0
+            if inviteCount > 0 {
+                continue
+            }
+
+            try db.execute(
+                sql: "DELETE FROM change WHERE entity = 'project' AND entityId = ? AND ackedAt IS NULL",
+                arguments: [project.id]
+            )
+            for pmc in pmChanges where pmc.ackedAt == nil {
+                if let seq = pmc.seq {
+                    try db.execute(sql: "DELETE FROM change WHERE seq = ?", arguments: [seq])
+                }
+            }
+            try db.execute(
+                sql: "DELETE FROM projectMember WHERE projectId = ?",
+                arguments: [project.id]
+            )
+            try db.execute(
+                sql: "DELETE FROM project WHERE id = ?",
+                arguments: [project.id]
+            )
+            droppedAny = true
+        }
+
+        return droppedAny
+    }
+
+    private static func isCreateOp(_ change: ChangeRecord) -> Bool {
+        guard change.op == "upsert", change.fields.contains("createdAt") else { return false }
+        switch change.entity {
+        case "projectMember":
+            return change.fields.contains("projectId") && change.fields.contains("memberId")
+        case "tag":
+            return change.fields.contains("name")
+        default:
+            return change.fields.contains("id")
+        }
+    }
+
+    private static func deleteCreateOps(entity: String, entityId: String, in db: Database) throws {
+        let ops = try ChangeRecord
+            .filter(Column("entity") == entity && Column("entityId") == entityId && Column("ackedAt") == nil)
+            .order(Column("seq"))
+            .fetchAll(db)
+        for op in ops where isCreateOp(op) {
+            if let seq = op.seq {
+                try db.execute(sql: "DELETE FROM change WHERE seq = ?", arguments: [seq])
+            }
         }
     }
 

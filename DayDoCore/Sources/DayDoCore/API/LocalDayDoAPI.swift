@@ -26,22 +26,26 @@ public final class LocalDayDoAPI: DayDoAPI {
     public func bootstrap(meName: String = "我") async throws {
         let now = now()
         try await writer.write { db in
-            if try MemberRecord.filter(Column("isMe") == true).fetchOne(db) != nil { return }
-            let me = MemberRecord(id: ID.make(), name: meName, initial: String(meName.prefix(1)), color: "#9BB8FF", isMe: true, createdAt: now, updatedAt: now)
-            try Outbox.save(me, entity: "member", id: me.id, in: db, now: now)
-            var key: String? = nil
-            func project(_ name: String, _ color: String?, inbox: Bool) throws {
-                key = SortKey.after(key)
-                let p = ProjectRecord(id: ID.make(), name: name, color: color, icon: inbox ? "inbox" : nil, folderId: nil, viewMode: "list", kind: "TASK",
-                                      isInbox: inbox, ownerId: me.id, sortKey: key!, showInSmart: "all", notifyMode: "all",
-                                      archivedAt: nil, createdAt: now, updatedAt: now)
-                try Outbox.save(p, entity: "project", id: p.id, in: db, now: now)
-                let pm = ProjectMemberRecord(projectId: p.id, memberId: me.id, role: "owner", createdAt: now, updatedAt: now)
-                try Outbox.save(pm, entity: "projectMember", id: "\(p.id):\(me.id)", key: ["projectId": p.id, "memberId": me.id], in: db, now: now)
-            }
-            try project("收件匣", nil, inbox: true)
-            for (n, c) in Self.defaultLists { try project(n, c, inbox: false) }
+            try Self.bootstrap(meName: meName, in: db, now: now)
         }
+    }
+
+    static func bootstrap(meName: String = "我", in db: Database, now: EpochMillis) throws {
+        if try MemberRecord.filter(Column("isMe") == true).fetchOne(db) != nil { return }
+        let me = MemberRecord(id: ID.make(), name: meName, initial: String(meName.prefix(1)), color: "#9BB8FF", isMe: true, createdAt: now, updatedAt: now)
+        try Outbox.save(me, entity: "member", id: me.id, in: db, now: now)
+        var key: String? = nil
+        func project(_ name: String, _ color: String?, inbox: Bool) throws {
+            key = SortKey.after(key)
+            let p = ProjectRecord(id: ID.make(), name: name, color: color, icon: inbox ? "inbox" : nil, folderId: nil, viewMode: "list", kind: "TASK",
+                                  isInbox: inbox, ownerId: me.id, sortKey: key!, showInSmart: "all", notifyMode: "all",
+                                  archivedAt: nil, createdAt: now, updatedAt: now)
+            try Outbox.save(p, entity: "project", id: p.id, in: db, now: now)
+            let pm = ProjectMemberRecord(projectId: p.id, memberId: me.id, role: "owner", createdAt: now, updatedAt: now)
+            try Outbox.save(pm, entity: "projectMember", id: "\(p.id):\(me.id)", key: ["projectId": p.id, "memberId": me.id], in: db, now: now)
+        }
+        try project("收件匣", nil, inbox: true)
+        for (n, c) in Self.defaultLists { try project(n, c, inbox: false) }
     }
 
     // MARK: Helpers (run inside a transaction)

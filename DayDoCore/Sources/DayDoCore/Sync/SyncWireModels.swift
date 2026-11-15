@@ -140,12 +140,29 @@ struct AuthRefreshResponse: Decodable, Sendable {
     let inboxProjectId: String?
 }
 
+public enum SyncAuthCredential: Sendable, Equatable {
+    case google(idToken: String)
+    case apple(identityToken: String, nonce: String)
+}
+
 public struct AuthGoogleRequest: Codable, Sendable {
     public let idToken: String
     public let deviceId: String
 
     public init(idToken: String, deviceId: String) {
         self.idToken = idToken
+        self.deviceId = deviceId
+    }
+}
+
+public struct AuthAppleRequest: Codable, Sendable {
+    public let identityToken: String
+    public let nonce: String
+    public let deviceId: String
+
+    public init(identityToken: String, nonce: String, deviceId: String) {
+        self.identityToken = identityToken
+        self.nonce = nonce
         self.deviceId = deviceId
     }
 }

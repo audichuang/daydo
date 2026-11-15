@@ -1895,4 +1895,698 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         #expect(await gate.pushCount == 2)
         #expect(await gate.pullCount == 2)
     }
+
+    @Test func firstLoginEmptyNoServerDataBootstraps() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs, counter: 0, deviceId: "server").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-sync-tests-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        let tokens = InMemorySyncTokenStore()
+
+        let pushed = PushOpRecorder()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/auth/google" {
+                let body = try decodeJSONObject(req.body)
+                #expect(body["idToken"] as? String == "google-id-token")
+                #expect((body["deviceId"] as? String)?.isEmpty == false)
+                return try jsonResponse(200, [
+                    "accessToken": "acc-new",
+                    "refreshToken": "ref-new",
+                    "user": ["id": "user-1"],
+                    "isNewAccount": true,
+                    "hasData": false,
+                    "meMemberId": NSNull(),
+                    "inboxProjectId": NSNull(),
+                ])
+            }
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                await pushed.append(ops)
+                return try jsonResponse(200, [
+                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "applied", "row": NSNull(), "clocks": [:]] },
+                    "serverTime": serverTime,
+                ])
+            }
+            return try jsonResponse(200, ["scopes": [], "memberships": [], "members": []])
+        }
+
+        let engine = SyncEngine(database: db, transport: transport, tokenStore: tokens, clock: .fixed(noon, timeZone: taipei))
+        #expect(try await !engine.isSignedIn)
+
+        let summary = try await engine.signIn(with: .google(idToken: "google-id-token"))
+        #expect(summary.pushedCount == 9)
+        #expect(try await engine.isSignedIn)
+        #expect(try await engine.signedInUserId == "user-1")
+        #expect(tokens.accessToken == "acc-new")
+        #expect(tokens.refreshToken == "ref-new")
+
+        let members = try await api.listMembers()
+        let projects = try await api.listProjects(includeArchived: false)
+        #expect(members.filter(\.isMe).count == 1)
+        #expect(projects.filter(\.isInbox).count == 1)
+        #expect(projects.map(\.name) == ["收件匣", "工作", "個人", "購物"])
+        #expect(await pushed.ops.count == 9)
+
+        let unacked = try await db.writer.read { db in
+            try ChangeRecord.filter(Column("ackedAt") == nil).fetchCount(db)
+        }
+        #expect(unacked == 0)
+    }
+
+    @Test func firstLoginEmptyWithServerDataPullsWithoutBootstrap() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "other-dev").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-sync-tests-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        let tokens = InMemorySyncTokenStore()
+
+        let serverMeId = ID.make()
+        let otherMemberId = ID.make()
+        let serverInboxId = ID.make()
+        let serverWorkId = ID.make()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/auth/apple" {
+                let body = try decodeJSONObject(req.body)
+                #expect(body["identityToken"] as? String == "apple-id-token")
+                #expect(body["nonce"] as? String == "apple-nonce")
+                #expect((body["deviceId"] as? String)?.isEmpty == false)
+                return try jsonResponse(200, [
+                    "accessToken": "acc-apple",
+                    "refreshToken": "ref-apple",
+                    "user": ["id": "user-existing"],
+                    "isNewAccount": false,
+                    "hasData": true,
+                    "meMemberId": serverMeId,
+                    "inboxProjectId": serverInboxId,
+                ])
+            }
+            if req.path == "/sync/push" {
+                Issue.record("Should not push when local is empty and server hasData=true")
+                return try jsonResponse(200, ["results": [], "serverTime": serverHLC])
+            }
+            return try jsonResponse(200, [
+                "scopes": [[
+                    "scope": "u:user-existing",
+                    "rows": [
+                        [
+                            "entity": "member",
+                            "row": [
+                                "id": serverMeId,
+                                "name": "我",
+                                "initial": "我",
+                                "color": "#9BB8FF",
+                                "isMe": true,
+                                "createdAt": nowMs,
+                                "updatedAt": nowMs,
+                            ],
+                            "clocks": ["name": serverHLC],
+                            "serverSeq": 1,
+                        ],
+                        [
+                            "entity": "project",
+                            "row": [
+                                "id": serverInboxId,
+                                "name": "收件匣",
+                                "icon": "inbox",
+                                "viewMode": "list",
+                                "kind": "TASK",
+                                "isInbox": true,
+                                "ownerId": serverMeId,
+                                "sortKey": "a0",
+                                "showInSmart": "all",
+                                "notifyMode": "all",
+                                "createdAt": nowMs,
+                                "updatedAt": nowMs,
+                            ],
+                            "clocks": ["name": serverHLC],
+                            "serverSeq": 2,
+                        ],
+                        [
+                            "entity": "project",
+                            "row": [
+                                "id": serverWorkId,
+                                "name": "工作",
+                                "color": "#4AA8E8",
+                                "viewMode": "list",
+                                "kind": "TASK",
+                                "isInbox": false,
+                                "ownerId": serverMeId,
+                                "sortKey": "a1",
+                                "showInSmart": "all",
+                                "notifyMode": "all",
+                                "createdAt": nowMs,
+                                "updatedAt": nowMs,
+                            ],
+                            "clocks": ["name": serverHLC],
+                            "serverSeq": 3,
+                        ],
+                    ],
+                    "cursor": 3,
+                    "hasMore": false,
+                ]],
+                "memberships": [],
+                "members": [[
+                    "id": otherMemberId,
+                    "name": "家人",
+                    "initial": "家",
+                    "color": "#FFB89B",
+                    "isMe": false,
+                    "createdAt": nowMs,
+                    "updatedAt": nowMs,
+                ]],
+            ])
+        }
+
+        let engine = SyncEngine(database: db, transport: transport, tokenStore: tokens, clock: .fixed(noon, timeZone: taipei))
+        let summary = try await engine.signIn(with: .apple(identityToken: "apple-id-token", nonce: "apple-nonce"))
+        #expect(summary.pushedCount == 0)
+        #expect(summary.pulledCount == 3)
+        #expect(try await engine.isSignedIn)
+        #expect(try await engine.signedInUserId == "user-existing")
+
+        let members = try await api.listMembers()
+        let meMembers = members.filter(\.isMe)
+        #expect(meMembers.count == 1)
+        #expect(meMembers.first?.id == serverMeId)
+        #expect(members.first(where: { $0.id == otherMemberId })?.isMe == false)
+
+        let projects = try await api.listProjects(includeArchived: false)
+        #expect(projects.map(\.id) == [serverInboxId, serverWorkId])
+        let paths = await transport.capturedRequests().map(\.path)
+        #expect(paths == ["/auth/apple", "/sync/pull"])
+    }
+
+    @Test func firstLoginLocalDataNoServerDataUploadsAll() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs + 100, counter: 0, deviceId: "server").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-sync-tests-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+        let localMeBefore = try #require(try await api.listMembers().first(where: \.isMe))
+        let localInboxBefore = try #require(try await api.listProjects(includeArchived: false).first(where: \.isInbox))
+        let localTask = try await api.createTask(CreateTaskInput(projectId: localInboxBefore.id, title: "登入前任務"))
+
+        let pushed = PushOpRecorder()
+        let tokens = InMemorySyncTokenStore()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/auth/google" {
+                return try jsonResponse(200, [
+                    "accessToken": "acc-1",
+                    "refreshToken": "ref-1",
+                    "user": ["id": "user-new"],
+                    "isNewAccount": true,
+                    "hasData": false,
+                    "meMemberId": NSNull(),
+                    "inboxProjectId": NSNull(),
+                ])
+            }
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                await pushed.append(ops)
+                return try jsonResponse(200, [
+                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "applied", "row": NSNull(), "clocks": [:]] },
+                    "serverTime": serverTime,
+                ])
+            }
+            return try jsonResponse(200, ["scopes": [], "memberships": [], "members": []])
+        }
+
+        let engine = SyncEngine(database: db, transport: transport, tokenStore: tokens, clock: .fixed(noon, timeZone: taipei))
+        let summary = try await engine.signIn(with: .google(idToken: "g-tok"))
+        #expect(summary.pushedCount == 10)
+        #expect(try await engine.isSignedIn)
+
+        let localMeAfter = try #require(try await api.listMembers().first(where: \.isMe))
+        let localInboxAfter = try #require(try await api.listProjects(includeArchived: false).first(where: \.isInbox))
+        #expect(localMeAfter.id == localMeBefore.id)
+        #expect(localInboxAfter.id == localInboxBefore.id)
+        let entityIds = await pushed.ops.compactMap { $0["entityId"]?.stringValue }
+        #expect(entityIds.contains(localMeBefore.id))
+        #expect(entityIds.contains(localInboxBefore.id))
+        #expect(entityIds.contains(localTask.id))
+    }
+
+    @Test func firstLoginRemapsMeAndInboxInRowsAndOutbox() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs + 1000, counter: 0, deviceId: "server").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-sync-tests-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+
+        let localMe = try #require(try await api.listMembers().first(where: \.isMe))
+        let localInbox = try #require(try await api.listProjects(includeArchived: false).first(where: \.isInbox))
+
+        // Task in local inbox assigned to me, created before sign-in.
+        let localTask = try await api.createTask(CreateTaskInput(
+            projectId: localInbox.id,
+            title: "收件匣待辦",
+            assigneeId: localMe.id
+        ))
+        // Unacked edit to the inbox after creation.
+        var inboxEdit = UpdateProjectInput(projectId: localInbox.id)
+        inboxEdit.name = "我的收件匣"
+        _ = try await api.updateProject(inboxEdit)
+        // Add a comment and a projectInvite referencing me/inbox to verify every FK column is remapped.
+        let commentId = ID.make()
+        let inviteId = ID.make()
+        try await db.writer.write { db in
+            let comment = CommentRecord(id: commentId, taskId: localTask.id, authorId: localMe.id, body: "備註", createdAt: nowMs, updatedAt: nowMs)
+            try Outbox.save(comment, entity: "comment", id: commentId, in: db, now: nowMs)
+            let invite = ProjectInviteRecord(id: inviteId, projectId: localInbox.id, email: "a@example.test", role: "viewer", status: "pending", createdAt: nowMs, updatedAt: nowMs)
+            try Outbox.save(invite, entity: "projectInvite", id: inviteId, in: db, now: nowMs)
+        }
+
+        let serverMeId = ID.make()
+        let serverInboxId = ID.make()
+
+        let pushed = PushOpRecorder()
+        let tokens = InMemorySyncTokenStore()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/auth/google" {
+                return try jsonResponse(200, [
+                    "accessToken": "acc-remap",
+                    "refreshToken": "ref-remap",
+                    "user": ["id": "user-remap"],
+                    "isNewAccount": false,
+                    "hasData": true,
+                    "meMemberId": serverMeId,
+                    "inboxProjectId": serverInboxId,
+                ])
+            }
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                await pushed.append(ops)
+                return try jsonResponse(200, [
+                    "results": ops.map { op -> [String: Any] in
+                        let entity = op["entity"]?.stringValue
+                        let status = (entity == "projectMember" || entity == "projectInvite") ? "rejected" : "applied"
+                        return ["opId": op["opId"]?.stringValue ?? "", "status": status, "row": NSNull(), "clocks": [:]]
+                    },
+                    "serverTime": serverTime,
+                ])
+            }
+            return try jsonResponse(200, ["scopes": [], "memberships": [], "members": []])
+        }
+
+        let engine = SyncEngine(database: db, transport: transport, tokenStore: tokens, clock: .fixed(noon, timeZone: taipei))
+        _ = try await engine.signIn(with: .google(idToken: "g-tok"))
+
+        // Verify SQLite table rows were remapped.
+        let (meRow, inboxRow, pmRow, taskRow, commentRow, inviteRow) = try await db.writer.read { db in
+            (
+                try MemberRecord.fetchOne(db, key: serverMeId),
+                try ProjectRecord.fetchOne(db, key: serverInboxId),
+                try ProjectMemberRecord.fetchOne(db, key: ["projectId": serverInboxId, "memberId": serverMeId]),
+                try TaskRecord.fetchOne(db, key: localTask.id),
+                try CommentRecord.fetchOne(db, key: commentId),
+                try ProjectInviteRecord.fetchOne(db, key: inviteId)
+            )
+        }
+        #expect(meRow?.isMe == true)
+        #expect(inboxRow?.ownerId == serverMeId)
+        #expect(inboxRow?.name == "我的收件匣")
+        #expect(pmRow?.role == "owner")
+        #expect(taskRow?.projectId == serverInboxId)
+        #expect(taskRow?.assigneeId == serverMeId)
+        #expect(commentRow?.authorId == serverMeId)
+        #expect(inviteRow?.projectId == serverInboxId)
+
+        // Verify old local IDs are completely gone from tables.
+        let oldCounts = try await db.writer.read { db in
+            (
+                try MemberRecord.filter(Column("id") == localMe.id).fetchCount(db),
+                try ProjectRecord.filter(Column("id") == localInbox.id).fetchCount(db)
+            )
+        }
+        #expect(oldCounts.0 == 0 && oldCounts.1 == 0)
+
+        // Verify pushed ops:
+        // - no member create op (and no ops referencing old IDs)
+        // - no inbox create op, YES remapped inbox edit op
+        // - remapped projectMember composite key "<serverInboxId>:<serverMeId>"
+        // - remapped task, comment, projectInvite
+        let ops = await pushed.ops
+        #expect(!ops.contains { $0["entity"]?.stringValue == "member" })
+        let projectOps = ops.filter { $0["entity"]?.stringValue == "project" }
+        #expect(projectOps.count == 1)
+        #expect(projectOps[0]["entityId"]?.stringValue == serverInboxId)
+        let projectFields = projectOps[0]["fields"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        #expect(!projectFields.contains("id"))
+        let projectRow = projectOps[0]["row"]?.objectValue
+        #expect(projectRow?["id"]?.stringValue == serverInboxId)
+        #expect(projectRow?["ownerId"]?.stringValue == serverMeId)
+        #expect(projectRow?["name"]?.stringValue == "我的收件匣")
+
+        let pmOp = try #require(ops.first { $0["entity"]?.stringValue == "projectMember" })
+        #expect(pmOp["entityId"]?.stringValue == "\(serverInboxId):\(serverMeId)")
+        let pmRowDict = pmOp["row"]?.objectValue
+        #expect(pmRowDict?["projectId"]?.stringValue == serverInboxId)
+        #expect(pmRowDict?["memberId"]?.stringValue == serverMeId)
+
+        let taskOp = try #require(ops.first { $0["entity"]?.stringValue == "task" })
+        let taskRowDict = taskOp["row"]?.objectValue
+        #expect(taskRowDict?["projectId"]?.stringValue == serverInboxId)
+        #expect(taskRowDict?["assigneeId"]?.stringValue == serverMeId)
+
+        let commentOp = try #require(ops.first { $0["entity"]?.stringValue == "comment" })
+        #expect(commentOp["row"]?.objectValue?["authorId"]?.stringValue == serverMeId)
+
+        let inviteOp = try #require(ops.first { $0["entity"]?.stringValue == "projectInvite" })
+        #expect(inviteOp["row"]?.objectValue?["projectId"]?.stringValue == serverInboxId)
+    }
+
+    @Test func firstLoginNullMeMemberIdSkipsMemberRemap() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs + 100, counter: 0, deviceId: "server").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-sync-tests-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+
+        let localMe = try #require(try await api.listMembers().first(where: \.isMe))
+        let localInbox = try #require(try await api.listProjects(includeArchived: false).first(where: \.isInbox))
+        _ = try await api.createTask(CreateTaskInput(projectId: localInbox.id, title: "無 meMemberId 任務", assigneeId: localMe.id))
+        let serverInboxId = ID.make()
+
+        let pushed = PushOpRecorder()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/auth/google" {
+                return try jsonResponse(200, [
+                    "accessToken": "acc-1",
+                    "refreshToken": "ref-1",
+                    "user": ["id": "user-null-me"],
+                    "isNewAccount": false,
+                    "hasData": true,
+                    "meMemberId": NSNull(),
+                    "inboxProjectId": serverInboxId,
+                ])
+            }
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                await pushed.append(ops)
+                return try jsonResponse(200, [
+                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "applied", "row": NSNull(), "clocks": [:]] },
+                    "serverTime": serverTime,
+                ])
+            }
+            return try jsonResponse(200, ["scopes": [], "memberships": [], "members": []])
+        }
+
+        let engine = SyncEngine(database: db, transport: transport, tokenStore: InMemorySyncTokenStore(), clock: .fixed(noon, timeZone: taipei))
+        _ = try await engine.signIn(with: .google(idToken: "g-tok"))
+
+        let meAfter = try #require(try await api.listMembers().first(where: \.isMe))
+        #expect(meAfter.id == localMe.id)
+        let inboxAfter = try #require(try await api.listProjects(includeArchived: false).first(where: \.isInbox))
+        #expect(inboxAfter.id == serverInboxId)
+
+        // Member create op is NOT deleted when meMemberId is null; inbox create op IS deleted.
+        let ops = await pushed.ops
+        #expect(ops.contains { $0["entity"]?.stringValue == "member" && $0["entityId"]?.stringValue == localMe.id })
+        #expect(!ops.contains { $0["entity"]?.stringValue == "project" })
+        let pmOp = try #require(ops.first { $0["entity"]?.stringValue == "projectMember" })
+        #expect(pmOp["entityId"]?.stringValue == "\(serverInboxId):\(localMe.id)")
+    }
+
+    @Test func firstLoginDropsUntouchedDefaultListsAndTheirOps() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "other-dev").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-sync-tests-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+
+        let localProjectsBefore = try await api.listProjects(includeArchived: false)
+        let localDefaultIds = Set(localProjectsBefore.filter { !$0.isInbox }.map(\.id))
+        #expect(localDefaultIds.count == 3)
+
+        let serverMeId = ID.make()
+        let serverInboxId = ID.make()
+        let serverWorkId = ID.make()
+
+        let pushed = PushOpRecorder()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/auth/google" {
+                return try jsonResponse(200, [
+                    "accessToken": "acc-1",
+                    "refreshToken": "ref-1",
+                    "user": ["id": "user-1"],
+                    "isNewAccount": false,
+                    "hasData": true,
+                    "meMemberId": serverMeId,
+                    "inboxProjectId": serverInboxId,
+                ])
+            }
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                await pushed.append(ops)
+                return try jsonResponse(200, [
+                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "rejected", "row": NSNull(), "clocks": [:]] },
+                    "serverTime": serverHLC,
+                ])
+            }
+            return try jsonResponse(200, [
+                "scopes": [[
+                    "scope": "u:user-1",
+                    "rows": [
+                        [
+                            "entity": "member",
+                            "row": ["id": serverMeId, "name": "我", "initial": "我", "color": "#9BB8FF", "isMe": true, "createdAt": nowMs, "updatedAt": nowMs],
+                            "clocks": ["name": serverHLC],
+                            "serverSeq": 1,
+                        ],
+                        [
+                            "entity": "project",
+                            "row": ["id": serverInboxId, "name": "收件匣", "icon": "inbox", "viewMode": "list", "kind": "TASK", "isInbox": true, "ownerId": serverMeId, "sortKey": "a0", "showInSmart": "all", "notifyMode": "all", "createdAt": nowMs, "updatedAt": nowMs],
+                            "clocks": ["name": serverHLC],
+                            "serverSeq": 2,
+                        ],
+                        [
+                            "entity": "project",
+                            "row": ["id": serverWorkId, "name": "工作", "color": "#4AA8E8", "viewMode": "list", "kind": "TASK", "isInbox": false, "ownerId": serverMeId, "sortKey": "a1", "showInSmart": "all", "notifyMode": "all", "createdAt": nowMs, "updatedAt": nowMs],
+                            "clocks": ["name": serverHLC],
+                            "serverSeq": 3,
+                        ],
+                    ],
+                    "cursor": 3,
+                    "hasMore": false,
+                ]],
+                "memberships": [],
+                "members": [],
+            ])
+        }
+
+        let engine = SyncEngine(database: db, transport: transport, tokenStore: InMemorySyncTokenStore(), clock: .fixed(noon, timeZone: taipei))
+        _ = try await engine.signIn(with: .google(idToken: "g-tok"))
+
+        // None of the local untouched default lists or their projectMember ops were pushed.
+        let ops = await pushed.ops
+        for localId in localDefaultIds {
+            #expect(!ops.contains { $0["entityId"]?.stringValue == localId })
+            #expect(!ops.contains { $0["entityId"]?.stringValue?.hasPrefix("\(localId):") == true })
+        }
+
+        let remainingProjects = try await api.listProjects(includeArchived: false)
+        #expect(remainingProjects.map(\.id) == [serverInboxId, serverWorkId])
+
+        let (orphanedPMs, unacked) = try await db.writer.read { db in
+            (
+                try ProjectMemberRecord.filter(localDefaultIds.contains(Column("projectId"))).fetchCount(db),
+                try ChangeRecord.filter(Column("ackedAt") == nil).fetchCount(db)
+            )
+        }
+        #expect(orphanedPMs == 0)
+        #expect(unacked == 0)
+    }
+
+    @Test func firstLoginKeepsDefaultListWithTasksOrEdits() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs + 100, counter: 0, deviceId: "server").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-sync-tests-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+
+        let projects = try await api.listProjects(includeArchived: false)
+        let work = try #require(projects.first(where: { $0.name == "工作" }))
+        let personal = try #require(projects.first(where: { $0.name == "個人" }))
+        let shopping = try #require(projects.first(where: { $0.name == "購物" }))
+
+        // 1. "工作" has an active task.
+        _ = try await api.createTask(CreateTaskInput(projectId: work.id, title: "工作任務"))
+
+        // 2. "個人" had a task created and then purged (no row in `task`, only history in `change`).
+        let purgedTask = try await api.createTask(CreateTaskInput(projectId: personal.id, title: "已清除的個人任務"))
+        try await api.purgeTask(id: purgedTask.id)
+
+        // 3. "購物" was edited (name/color changed or reordered after creation).
+        var editShopping = UpdateProjectInput(projectId: shopping.id)
+        editShopping.color = .set("#00AA88")
+        _ = try await api.updateProject(editShopping)
+
+        let serverMeId = ID.make()
+        let serverInboxId = ID.make()
+
+        let pushed = PushOpRecorder()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/auth/google" {
+                return try jsonResponse(200, [
+                    "accessToken": "acc-1",
+                    "refreshToken": "ref-1",
+                    "user": ["id": "user-1"],
+                    "isNewAccount": false,
+                    "hasData": true,
+                    "meMemberId": serverMeId,
+                    "inboxProjectId": serverInboxId,
+                ])
+            }
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                await pushed.append(ops)
+                return try jsonResponse(200, [
+                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "applied", "row": NSNull(), "clocks": [:]] },
+                    "serverTime": serverTime,
+                ])
+            }
+            return try jsonResponse(200, ["scopes": [], "memberships": [], "members": []])
+        }
+
+        let engine = SyncEngine(database: db, transport: transport, tokenStore: InMemorySyncTokenStore(), clock: .fixed(noon, timeZone: taipei))
+        _ = try await engine.signIn(with: .google(idToken: "g-tok"))
+
+        let remainingIds = Set(try await api.listProjects(includeArchived: false).map(\.id))
+        #expect(remainingIds == [serverInboxId, work.id, personal.id, shopping.id])
+
+        let ops = await pushed.ops
+        for keptId in [work.id, personal.id, shopping.id] {
+            let projectCreate = try #require(ops.first { $0["entity"]?.stringValue == "project" && $0["entityId"]?.stringValue == keptId })
+            #expect(projectCreate["row"]?.objectValue?["ownerId"]?.stringValue == serverMeId)
+            let pmOp = try #require(ops.first { $0["entity"]?.stringValue == "projectMember" && $0["entityId"]?.stringValue == "\(keptId):\(serverMeId)" })
+            #expect(pmOp["row"]?.objectValue?["memberId"]?.stringValue == serverMeId)
+        }
+    }
+
+    @Test func signOutWipesLocalDataAndTokens() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs + 100, counter: 0, deviceId: "server").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-sync-tests-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        let tokens = InMemorySyncTokenStore()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/auth/google" {
+                return try jsonResponse(200, [
+                    "accessToken": "acc-1",
+                    "refreshToken": "ref-1",
+                    "user": ["id": "user-A"],
+                    "isNewAccount": true,
+                    "hasData": false,
+                    "meMemberId": NSNull(),
+                    "inboxProjectId": NSNull(),
+                ])
+            }
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                return try jsonResponse(200, [
+                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "applied", "row": NSNull(), "clocks": [:]] },
+                    "serverTime": serverTime,
+                ])
+            }
+            return try jsonResponse(200, [
+                "scopes": [["scope": "u:user-A", "rows": [], "cursor": 7, "hasMore": false]],
+                "memberships": [],
+                "members": [],
+            ])
+        }
+
+        let engine = SyncEngine(database: db, transport: transport, tokenStore: tokens, clock: .fixed(noon, timeZone: taipei))
+        _ = try await engine.signIn(with: .google(idToken: "g-tok"))
+
+        // Populate remaining synced tables (folder, task, checklistItem, tag, attachment, comment, invite, purgedId, syncStaging).
+        let folder = try await api.createFolder(name: "資料夾")
+        let project = try await api.createProject(CreateProjectInput(name: "測試清單", folderId: folder.id))
+        let task = try await api.createTask(CreateTaskInput(projectId: project.id, title: "測試任務", subtasks: ["子項目"], tags: ["#標籤"]))
+        _ = try await api.uploadAttachment(taskId: task.id, fileName: "a.txt", data: Data("hi".utf8), mimeType: "text/plain", originalPath: nil)
+        _ = try await api.inviteMember(projectId: project.id, email: "x@example.test", role: "editor")
+        let me = try #require(try await api.listMembers().first(where: \.isMe))
+        try await db.writer.write { db in
+            let c = CommentRecord(id: ID.make(), taskId: task.id, authorId: me.id, body: "hi", createdAt: nowMs, updatedAt: nowMs)
+            try c.insert(db)
+            try PurgedId.record(entity: "task", id: ID.make(), purgedAt: nowMs, in: db)
+            try SyncApplier.stageRow(entity: "task", entityId: ID.make(), row: [:], clocks: [:], serverSeq: 1, now: nowMs, in: db)
+        }
+
+        let (deviceIdBefore, hlcBefore) = try await db.writer.read { db in
+            (
+                try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [HLC.deviceIdMetaKey]),
+                try HLC.loadLast(in: db)
+            )
+        }
+        #expect(deviceIdBefore != nil)
+        #expect(hlcBefore != nil)
+        #expect(try await engine.isSignedIn)
+
+        try await engine.signOut()
+
+        #expect(try await !engine.isSignedIn)
+        #expect(try await engine.signedInUserId == nil)
+        #expect(tokens.accessToken == nil)
+        #expect(tokens.refreshToken == nil)
+
+        try await db.writer.read { db in
+            for table in [
+                "member", "folder", "project", "projectMember", "projectInvite",
+                "task", "checklistItem", "tag", "attachment", "comment",
+                "change", "purgedId", "syncStaging",
+            ] {
+                let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \"\(table)\"") ?? -1
+                #expect(count == 0, "Expected \(table) to be empty after signOut")
+            }
+            let cursors = try SyncEngine.loadPullCursors(in: db)
+            #expect(cursors.isEmpty)
+            let userIdMeta = try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [SyncEngine.signedInUserIdMetaKey])
+            #expect(userIdMeta == nil)
+            let deviceIdAfter = try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [HLC.deviceIdMetaKey])
+            let hlcAfter = try HLC.loadLast(in: db)
+            #expect(deviceIdAfter == deviceIdBefore)
+            #expect(hlcAfter == hlcBefore)
+        }
+    }
+}
+
+private actor PushOpRecorder {
+    var ops: [[String: SyncJSONValue]] = []
+    func append(_ items: [[String: SyncJSONValue]]) {
+        ops.append(contentsOf: items)
+    }
+}
+
+private func decodePushOps(_ data: Data?) throws -> [[String: SyncJSONValue]] {
+    guard let data else { return [] }
+    let root = try JSONDecoder().decode([String: SyncJSONValue].self, from: data)
+    return root["ops"]?.arrayValue?.compactMap(\.objectValue) ?? []
+}
+
+private extension SyncJSONValue {
+    var arrayValue: [SyncJSONValue]? {
+        if case let .array(a) = self { return a }
+        return nil
+    }
+
+    var objectValue: [String: SyncJSONValue]? {
+        if case let .object(o) = self { return o }
+        return nil
+    }
 }

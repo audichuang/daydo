@@ -7,7 +7,7 @@ private let convergenceBaseURL = ProcessInfo.processInfo.environment["DAYDO_SYNC
 private let convergenceGoogleIdToken = ProcessInfo.processInfo.environment["DAYDO_SYNC_GOOGLE_ID_TOKEN"]
 private let convergenceEnabled = convergenceBaseURL != nil && convergenceGoogleIdToken != nil
 
-private final class MutableClock: @unchecked Sendable {
+final class MutableClock: @unchecked Sendable {
     private let lock = NSLock()
     private var currentMs: EpochMillis
 
@@ -36,7 +36,7 @@ private final class MutableClock: @unchecked Sendable {
     }
 }
 
-private struct DatabaseSnapshot: Equatable {
+struct DatabaseSnapshot: Equatable {
     struct SyncedAttachment: Equatable, Hashable {
         let id: String
         let taskId: String
@@ -323,7 +323,7 @@ private func loginWithGoogle(
     return decoded
 }
 
-private func syncUntilQuiet(_ syncA: SyncEngine, _ syncB: SyncEngine, maxRounds: Int = 8) async throws {
+func syncUntilQuiet(_ syncA: SyncEngine, _ syncB: SyncEngine, maxRounds: Int = 8) async throws {
     for _ in 0..<maxRounds {
         let a = try await syncA.syncNow()
         let b = try await syncB.syncNow()
@@ -334,7 +334,7 @@ private func syncUntilQuiet(_ syncA: SyncEngine, _ syncB: SyncEngine, maxRounds:
     Issue.record("Did not reach quiet convergence within \(maxRounds) rounds")
 }
 
-private func snapshot(of database: AppDatabase) async throws -> DatabaseSnapshot {
+func snapshot(of database: AppDatabase) async throws -> DatabaseSnapshot {
     try await database.writer.read { db in
         let members = try MemberRecord.order(Column("id")).fetchAll(db)
         let folders = try FolderRecord.order(Column("id")).fetchAll(db)
@@ -377,7 +377,7 @@ private func snapshot(of database: AppDatabase) async throws -> DatabaseSnapshot
     }
 }
 
-private func fetchServerSnapshot(transport: HTTPSyncTransport, accessToken: String) async throws -> DatabaseSnapshot {
+func fetchServerSnapshot(transport: HTTPSyncTransport, accessToken: String) async throws -> DatabaseSnapshot {
     let memDB = try AppDatabase.inMemory()
     let encoder = Outbox.encoder
     let decoder = JSONDecoder()
