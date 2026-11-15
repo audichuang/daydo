@@ -180,9 +180,9 @@
 
 1. ✓ App：migration `v3`、HLC、op 序列化。✓ `v4` `purgedId`。
 2. ✓ Worker 第一版：登入、push、pull（單一寫入 DO＋D1，本機）。
-3. T5a Worker：資料改到範圍 DO（單一使用者，先不做共享）：`entityHome`、移動帶子列、「未知的列不憑空建立」、子列 `taskId` 不可改、讀取依成員資格過濾。
-4. T5b Worker：`serverTime`、登入回應的 `hasData`／`meMemberId`／`inboxProjectId`、兩台裝置的 e2e。T7 從這裡開始。
-5. T5c Worker：成員與邀請 API、權限矩陣、成員投影、`listScopes` 與多範圍 pull、`gone` 與離開紀錄、加入時的 backfill、共享清單的 members 與 folderId 規則、永久刪除清單的通知。
-6. T6：Access 驗證、部署到 `daydo-api.audichuang.app`、對公開網址跑 e2e。
+3. ✓ T5a Worker：資料改到範圍 DO（單一使用者，先不做共享）：`entityHome`、移動帶子列、「未知的列不憑空建立」、子列 `taskId` 不可改、讀取依成員資格過濾。
+4. ✓ T5b Worker：`serverTime`、登入回應的 `hasData`／`meMemberId`／`inboxProjectId`、兩台裝置的 e2e。T7 從這裡開始。
+5. ✓ T5c Worker：成員與邀請 API、權限矩陣、成員投影、`listScopes` 與多範圍 pull、`gone` 與離開紀錄、加入時的 backfill、共享清單的 members 與 folderId 規則、永久刪除清單的通知。
+6. ✓ T6：Access 驗證、部署到 `daydo-api.audichuang.app`、對公開網址跑冒煙測試（`npm run smoke:prod`：Access 擋未帶 token 的請求、假 token 登入被拒）。完整登入與同步要真的 Apple／Google token，留到 T8 在手機上驗。
 7. T7 App：同步引擎與兩台裝置收斂測試。T8 App：登入畫面、邀請連結畫面。
 8. WebSocket 通知、MCP。
