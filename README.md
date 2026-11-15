@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="docs/images/icon.png" width="112" alt="DayDo app icon">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/icon-dark.png">
+    <img src="docs/images/icon.png" width="112" alt="DayDo app icon">
+  </picture>
 </p>
 
 <h1 align="center">DayDo</h1>
