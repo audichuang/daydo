@@ -31,6 +31,15 @@ design/      設計稿
 - API 回傳的 `schedule` 已換成裝置時區。更新任務時，只有日期或時間真的改了才送 `schedule`，否則會把任務原本的時區改掉（只改提醒也會中招）。
 - 牆鐘時間用該時區的年月日時分組件建立，不用「當天午夜＋分鐘數」：夏令時間切換日會差一小時。第二階段的 Worker 也照這條。
 
+## 分支與 worktree
+
+這個 repo 常有多個 session 同時在做，`ticktick/` 這個 main checkout 只用來合併與發版，不直接改：
+
+- 每個需求（連文件、小修）先開 worktree：`git worktree add ../ticktick-wt/<名稱> -b <名稱> main`，之後所有改檔、測試、commit 都在那個目錄。
+- 做完在 worktree 先併入最新 main、跑過測試，再回 main checkout `git merge <名稱>`、push；合併成功後 `git worktree remove ../ticktick-wt/<名稱>`、`git branch -d <名稱>`。
+- TestFlight 從合併後的 main 打包。
+- 別的 session 的 worktree 與分支（例如 `sync-*`）不動、不合併、不刪，要動先問使用者。
+
 ## 指令
 
 ```bash
