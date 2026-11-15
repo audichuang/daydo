@@ -2477,6 +2477,114 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         }
     }
 
+    @Test func firstLoginKeepsUserCreatedListMatchingDefaultNameAndColor() async throws {
+        let nowMs = noon.epochMillis
+        let serverTime = HLC(ms: nowMs + 5000, counter: 0, deviceId: "server").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-sync-tests-\(UUID().uuidString)")
+        let clock = MutableClock(startMs: nowMs)
+        let api = LocalDayDoAPI(database: db, clock: clock.clock, attachmentsDirectory: dir)
+        try await api.bootstrap()
+
+        let bootstrapDefaults = try await api.listProjects(includeArchived: false).filter { !$0.isInbox }
+        #expect(bootstrapDefaults.count == 3)
+
+        clock.advance(by: 1000)
+        let userWork = try await api.createProject(CreateProjectInput(name: "工作", color: "#4AA8E8"))
+
+        let serverMeId = ID.make()
+        let serverInboxId = ID.make()
+        let pushed = PushOpRecorder()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/auth/google" {
+                return try jsonResponse(200, [
+                    "accessToken": "acc-1",
+                    "refreshToken": "ref-1",
+                    "user": ["id": "user-1"],
+                    "isNewAccount": false,
+                    "hasData": true,
+                    "meMemberId": serverMeId,
+                    "inboxProjectId": serverInboxId,
+                ])
+            }
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                await pushed.append(ops)
+                return try jsonResponse(200, [
+                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "applied", "row": NSNull(), "clocks": [:]] },
+                    "serverTime": serverTime,
+                ])
+            }
+            return try jsonResponse(200, ["scopes": [], "memberships": [], "members": []])
+        }
+
+        let engine = SyncEngine(database: db, transport: transport, tokenStore: InMemorySyncTokenStore(), clock: clock.clock)
+        _ = try await engine.signIn(with: .google(idToken: "g-tok"))
+
+        let remainingIds = Set(try await api.listProjects(includeArchived: false).map(\.id))
+        #expect(remainingIds == [serverInboxId, userWork.id])
+
+        let ops = await pushed.ops
+        for dropped in bootstrapDefaults {
+            #expect(!ops.contains { $0["entityId"]?.stringValue == dropped.id })
+        }
+        let projectCreate = try #require(ops.first { $0["entity"]?.stringValue == "project" && $0["entityId"]?.stringValue == userWork.id })
+        #expect(projectCreate["row"]?.objectValue?["ownerId"]?.stringValue == serverMeId)
+        let pmOp = try #require(ops.first { $0["entity"]?.stringValue == "projectMember" && $0["entityId"]?.stringValue == "\(userWork.id):\(serverMeId)" })
+        #expect(pmOp["row"]?.objectValue?["memberId"]?.stringValue == serverMeId)
+    }
+
+    @Test func firstLoginReconcileEmitsChangeEvenWhenFirstSyncFails() async throws {
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-sync-tests-\(UUID().uuidString)")
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+
+        let serverMeId = ID.make()
+        let serverInboxId = ID.make()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/auth/google" {
+                return try jsonResponse(200, [
+                    "accessToken": "acc-1",
+                    "refreshToken": "ref-1",
+                    "user": ["id": "user-1"],
+                    "isNewAccount": false,
+                    "hasData": true,
+                    "meMemberId": serverMeId,
+                    "inboxProjectId": serverInboxId,
+                ])
+            }
+            return SyncHTTPResponse(status: 500, body: Data("first sync failed".utf8))
+        }
+
+        let engine = SyncEngine(database: db, transport: transport, tokenStore: InMemorySyncTokenStore(), clock: .fixed(noon, timeZone: taipei))
+        let stream = await engine.changeNotifications()
+
+        var thrownError: SyncError?
+        do {
+            _ = try await engine.signIn(with: .google(idToken: "g-tok"))
+            Issue.record("Expected signIn() to throw when first syncNow() fails with 500")
+        } catch let error as SyncError {
+            thrownError = error
+        }
+
+        guard case .retryable(_, let statusCode, _) = thrownError else {
+            Issue.record("Expected retryable error, got \(String(describing: thrownError))")
+            return
+        }
+        #expect(statusCode == 500)
+        #expect(try await engine.isSignedIn)
+        #expect(try await engine.signedInUserId == "user-1")
+
+        let remainingProjects = try await api.listProjects(includeArchived: false)
+        #expect(remainingProjects.map(\.id) == [serverInboxId])
+
+        let emitted = await nextEmittedSummary(from: stream)
+        #expect(emitted == SyncSummary(didChangeLocalData: true))
+    }
+
     @Test func signOutWipesLocalDataAndTokens() async throws {
         let nowMs = noon.epochMillis
         let serverTime = HLC(ms: nowMs + 100, counter: 0, deviceId: "server").description

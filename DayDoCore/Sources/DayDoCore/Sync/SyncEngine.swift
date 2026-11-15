@@ -159,7 +159,15 @@ public actor SyncEngine {
             return changed
         }
 
-        let summary = try await syncNow()
+        let summary: SyncSummary
+        do {
+            summary = try await syncNow()
+        } catch {
+            if didChangeInReconcile {
+                emitChange(SyncSummary(didChangeLocalData: true))
+            }
+            throw error
+        }
         if didChangeInReconcile && !summary.didChangeLocalData {
             let combined = SyncSummary(
                 pushedCount: summary.pushedCount,
@@ -853,6 +861,17 @@ public actor SyncEngine {
     }
 
     private static func dropUntouchedDefaultLists(in db: Database) throws -> Bool {
+        let meId = try MemberRecord.filter(Column("isMe") == true).fetchOne(db)?.id
+        let meCreateAt = try meId.flatMap { id in
+            try ChangeRecord
+                .filter(Column("entity") == "member" && Column("entityId") == id)
+                .order(Column("seq"))
+                .fetchAll(db)
+                .first(where: { isCreateOp($0) })?
+                .at
+        }
+        guard let bootstrapAt = meCreateAt else { return false }
+
         let decoder = JSONDecoder()
         let projects = try ProjectRecord
             .filter(Column("isInbox") == false && Column("deletedAt") == nil)
@@ -887,7 +906,9 @@ public actor SyncEngine {
                 .filter(Column("entity") == "project" && Column("entityId") == project.id)
                 .order(Column("seq"))
                 .fetchAll(db)
-            guard projectChanges.count == 1, isCreateOp(projectChanges[0]) else { continue }
+            guard projectChanges.count == 1,
+                  isCreateOp(projectChanges[0]),
+                  projectChanges[0].at == bootstrapAt else { continue }
 
             let prefix = "\(project.id):"
             let pmChanges = allProjectMemberChanges.filter { $0.entityId.hasPrefix(prefix) }
