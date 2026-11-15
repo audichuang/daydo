@@ -4,6 +4,7 @@ TestFlight 一律從合併後的 main 打包，不從 worktree 打。
 
 - App Store Connect app id `6834936769`，bundle id `com.audichuang.daydo`，team `37HFR5V2JJ`。
 - 群組：內部「自己」（使用者本人）；外部「家人」（使用者與家人，`tf distribute` 一律帶 `--group`）。新 build 只發給「自己」；要發給「家人」必須使用者明說這版已穩定。外部群組每個版本的第一個 build 要過 Apple 的 Beta App Review（審查聯絡資訊與測試說明已在 App Store Connect 設好）。`ios/ExportOptions.plist` 不能加回 `testFlightInternalTestingOnly`，加了上傳的 build 就不能送外部測試。
+- 外部群組送審：`tf` 只管內部群組，「家人」用 `asc builds add-groups --build-id <id> --group <家人群組 id> --submit --confirm`。同一個版本一次只能有一個 build 在 Beta App Review，而且送出後撤不回；前一個還在排隊時送下一個會回 `Another build in the same train is already in beta review`，要等它審完再送（可以先把新 build 加進群組、不帶 `--submit`）。
 - 家人用 Google 登入前，要把他的 Gmail 加進 Google Cloud 專案 `daydo-514804` 的 OAuth 測試使用者（測試模式）。
 - App 連正式環境用的 Access service token 在打包時由 `ios/scripts/gen-secrets.sh` 從 1Password 寫進 `ios/Secrets.xcconfig`（gitignored），`testflight.sh` 會自動跑；模擬器要連正式環境就先手動跑一次。
 - 沒有 Xcode Cloud，只有手動上傳：
