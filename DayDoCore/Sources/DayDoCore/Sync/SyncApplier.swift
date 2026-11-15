@@ -226,12 +226,16 @@ enum SyncApplier {
         }
 
         let existingDict = try fetchLocalDict(entity: entity, entityId: entityId, in: db)
+        let meMemberId: String? = (entity == "project")
+            ? try String.fetchOne(db, sql: "SELECT id FROM member WHERE isMe = 1 AND deletedAt IS NULL")
+            : nil
         let mergedDict = mergeRowFields(
             spec: spec,
             existingDict: existingDict,
             serverRow: row,
             clocks: clocks,
-            unackedOps: unackedOps
+            unackedOps: unackedOps,
+            meMemberId: meMemberId
         )
 
         if try hasMissingParent(entity: entity, row: mergedDict, in: db) {
@@ -353,7 +357,8 @@ enum SyncApplier {
         existingDict: [String: SyncJSONValue]?,
         serverRow: [String: SyncJSONValue],
         clocks: [String: String],
-        unackedOps: [ChangeRecord]
+        unackedOps: [ChangeRecord],
+        meMemberId: String? = nil
     ) -> [String: SyncJSONValue] {
         var maxLocalHLCByField: [String: HLC] = [:]
         for op in unackedOps where op.op == "upsert" {
@@ -374,6 +379,12 @@ enum SyncApplier {
             keepLocalSchedule = shouldKeepLocal(localHLC: maxScheduleLocal, serverClock: serverScheduleClock)
         }
 
+        var keepLocalFolderId = false
+        if spec.name == "project" {
+            let rowOwnerId = serverRow["ownerId"]?.stringValue ?? existingDict?["ownerId"]?.stringValue
+            keepLocalFolderId = (meMemberId == nil || rowOwnerId != meMemberId)
+        }
+
         var merged: [String: SyncJSONValue] = [:]
         for fieldSpec in spec.fields {
             let name = fieldSpec.name
@@ -387,6 +398,8 @@ enum SyncApplier {
                 } else {
                     chosen = nil
                 }
+            } else if spec.name == "project", name == "folderId", keepLocalFolderId {
+                chosen = existingDict?[name]
             } else if spec.name == "task", scheduleFields.contains(name) {
                 if keepLocalSchedule {
                     chosen = existingDict?[name]

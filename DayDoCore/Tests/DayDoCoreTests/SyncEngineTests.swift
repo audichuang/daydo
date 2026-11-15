@@ -2259,8 +2259,16 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         let commentOp = try #require(ops.first { $0["entity"]?.stringValue == "comment" })
         #expect(commentOp["row"]?.objectValue?["authorId"]?.stringValue == serverMeId)
 
-        let inviteOp = try #require(ops.first { $0["entity"]?.stringValue == "projectInvite" })
-        #expect(inviteOp["row"]?.objectValue?["projectId"]?.stringValue == serverInboxId)
+        // Local projectInvite ops stay local (never pushed), and their outbox payload was remapped.
+        #expect(!ops.contains { $0["entity"]?.stringValue == "projectInvite" })
+        let localInviteChange = try await db.writer.read { db in
+            try ChangeRecord
+                .filter(Column("entity") == "projectInvite" && Column("entityId") == inviteId && Column("ackedAt") == nil)
+                .fetchOne(db)
+        }
+        let remappedChange = try #require(localInviteChange)
+        let remappedChangeRow = try JSONDecoder().decode([String: SyncJSONValue].self, from: Data(remappedChange.row.utf8))
+        #expect(remappedChangeRow["projectId"]?.stringValue == serverInboxId)
     }
 
     @Test func firstLoginNullMeMemberIdSkipsMemberRemap() async throws {
@@ -2657,7 +2665,7 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
             for table in [
                 "member", "folder", "project", "projectMember", "projectInvite",
                 "task", "checklistItem", "tag", "attachment", "comment",
-                "change", "purgedId", "syncStaging",
+                "change", "purgedId", "syncStaging", "projectMembership", "memberUser",
             ] {
                 let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \"\(table)\"") ?? -1
                 #expect(count == 0, "Expected \(table) to be empty after signOut")
@@ -2672,6 +2680,584 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
             #expect(hlcAfter == hlcBefore)
         }
     }
+
+    @Test func membershipAppearsTriggersBackfillOnce() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+        let sharedId = ID.make()
+        let ownerId = ID.make()
+        let taskId = ID.make()
+
+        let pullBodies = PullBodyRecorder()
+        let (_, db, _, _, engine) = try await makeSyncSetup { req, _ in
+            if req.path == "/sync/push" {
+                return try jsonResponse(200, ["results": [], "serverTime": serverHLC])
+            }
+            let bodyObj = try decodeBodyObject(req.body)
+            await pullBodies.append(bodyObj)
+            let backfillIds = bodyObj["backfill"]?.arrayValue?.compactMap(\.stringValue)
+            if backfillIds == [sharedId] {
+                return try jsonResponse(200, [
+                    "scopes": [[
+                        "scope": "u:owner-a",
+                        "rows": [
+                            [
+                                "entity": "project",
+                                "row": [
+                                    "id": sharedId,
+                                    "name": "共享清單",
+                                    "viewMode": "list",
+                                    "kind": "TASK",
+                                    "isInbox": false,
+                                    "ownerId": ownerId,
+                                    "sortKey": "z0",
+                                    "showInSmart": "all",
+                                    "notifyMode": "all",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["name": serverHLC],
+                                "serverSeq": 1,
+                            ],
+                            [
+                                "entity": "task",
+                                "row": [
+                                    "id": taskId,
+                                    "projectId": sharedId,
+                                    "title": "回補任務",
+                                    "content": "",
+                                    "priority": 0,
+                                    "status": 0,
+                                    "reminders": [],
+                                    "tags": [],
+                                    "sortKey": "a0",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["title": serverHLC],
+                                "serverSeq": 2,
+                            ],
+                        ],
+                        "cursor": 2,
+                        "hasMore": false,
+                    ]],
+                    "memberships": [
+                        ["projectId": sharedId, "scope": "u:owner-a", "role": "editor"],
+                    ],
+                    "members": [],
+                ])
+            }
+            return try jsonResponse(200, [
+                "scopes": [],
+                "memberships": [
+                    ["projectId": sharedId, "scope": "u:owner-a", "role": "editor"],
+                ],
+                "members": [],
+            ])
+        }
+        try await ackAllChanges(in: db)
+
+        // First pull discovers the new shared membership.
+        _ = try await engine.syncNow()
+        // Second sync triggers backfill once, then third sync runs normal pull without backfill.
+        _ = try await engine.syncNow()
+        _ = try await engine.syncNow()
+
+        let pulls = await pullBodies.bodies
+        let backfillPulls = pulls.filter { $0["backfill"] != nil }
+        #expect(backfillPulls.count == 1)
+        #expect(backfillPulls[0]["backfill"]?.arrayValue?.compactMap(\.stringValue) == [sharedId])
+        #expect(pulls.last?["backfill"] == nil)
+
+        let task = try await db.writer.read { db in try TaskRecord.fetchOne(db, key: taskId) }
+        #expect(task?.title == "回補任務")
+    }
+
+    @Test func membershipDisappearsDeletesSharedListLocally() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+        let sharedId = ID.make()
+        let ownerId = ID.make()
+        let taskId = ID.make()
+        let checkId = ID.make()
+
+        let dbSlot = DBBox()
+        let (api, db, _, _, engine) = try await makeSyncSetup { req, _ in
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                return try jsonResponse(200, [
+                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "applied"] },
+                    "serverTime": serverHLC,
+                ])
+            }
+            // Simulate a concurrent offline edit created while pull HTTP is in flight (unacked at pull apply).
+            if let db = await dbSlot.get() {
+                try await db.writer.write { db in
+                    if var edited = try TaskRecord.fetchOne(db, key: taskId) {
+                        edited.title = "編輯到一半"
+                        edited.updatedAt = nowMs + 200
+                        try Outbox.save(edited, entity: "task", id: taskId, in: db, now: nowMs + 200)
+                    }
+                }
+            }
+            return try jsonResponse(200, [
+                "scopes": [],
+                "memberships": [],
+                "members": [],
+            ])
+        }
+        await dbSlot.set(db)
+        try await ackAllChanges(in: db)
+
+        let me = try #require(try await api.listMembers().first { $0.isMe })
+        let inbox = try #require(try await api.listProjects(includeArchived: false).first { $0.isInbox })
+        try await db.writer.write { db in
+            try MemberRecord(id: ownerId, name: "Owner", initial: "O", color: "#112233", isMe: false, createdAt: nowMs, updatedAt: nowMs).insert(db)
+            let p = ProjectRecord(id: sharedId, name: "共享", viewMode: "list", kind: "TASK", isInbox: false, ownerId: ownerId, sortKey: "z1", showInSmart: "all", notifyMode: "all", createdAt: nowMs, updatedAt: nowMs)
+            try p.insert(db)
+            try ProjectMemberRecord(projectId: sharedId, memberId: ownerId, role: "owner", createdAt: nowMs, updatedAt: nowMs).insert(db)
+            try ProjectMemberRecord(projectId: sharedId, memberId: me.id, role: "editor", createdAt: nowMs, updatedAt: nowMs).insert(db)
+            let t = TaskRecord(id: taskId, projectId: sharedId, title: "子任務之父", content: "", priority: 0, status: 0, reminders: [], tags: [], sortKey: "a0", createdAt: nowMs, updatedAt: nowMs)
+            try t.insert(db)
+            let c = ChecklistItemRecord(id: checkId, taskId: taskId, title: "步驟", status: 0, sortKey: "a0", createdAt: nowMs, updatedAt: nowMs)
+            try c.insert(db)
+            try db.execute(
+                sql: "INSERT INTO projectMembership (projectId, scope, role, needsBackfill) VALUES (?, ?, ?, 0)",
+                arguments: [sharedId, "u:owner-a", "editor"]
+            )
+        }
+
+        _ = try await engine.syncNow()
+
+        let counts = try await db.writer.read { db in
+            (
+                projectExists: try ProjectRecord.fetchOne(db, key: sharedId) != nil,
+                taskExists: try TaskRecord.fetchOne(db, key: taskId) != nil,
+                checkExists: try ChecklistItemRecord.fetchOne(db, key: checkId) != nil,
+                pmCount: try ProjectMemberRecord.filter(Column("projectId") == sharedId).fetchCount(db),
+                membershipCount: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM projectMembership WHERE projectId = ?", arguments: [sharedId]) ?? -1,
+                unackedProject: try ChangeRecord.filter(Column("entityId") == sharedId && Column("ackedAt") == nil).fetchCount(db),
+                unackedTask: try ChangeRecord.filter(Column("entityId") == taskId && Column("ackedAt") == nil).fetchCount(db),
+                unackedCheck: try ChangeRecord.filter(Column("entityId") == checkId && Column("ackedAt") == nil).fetchCount(db),
+                purgedCount: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM purgedId") ?? -1,
+                inboxExists: try ProjectRecord.fetchOne(db, key: inbox.id) != nil
+            )
+        }
+        #expect(!counts.projectExists)
+        #expect(!counts.taskExists)
+        #expect(!counts.checkExists)
+        #expect(counts.pmCount == 0)
+        #expect(counts.membershipCount == 0)
+        #expect(counts.unackedProject == 0)
+        #expect(counts.unackedTask == 0)
+        #expect(counts.unackedCheck == 0)
+        #expect(counts.purgedCount == 0)
+        #expect(counts.inboxExists)
+    }
+
+    @Test func ownListNeverDeletedOnMissingMembership() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+
+        let (api, db, _, _, engine) = try await makeSyncSetup { req, _ in
+            if req.path == "/sync/push" {
+                return try jsonResponse(200, ["results": [], "serverTime": serverHLC])
+            }
+            return try jsonResponse(200, [
+                "scopes": [],
+                "memberships": [],
+                "members": [],
+            ])
+        }
+
+        let ownList = try await api.createProject(CreateProjectInput(name: "自己的清單"))
+        let ownTask = try await api.createTask(CreateTaskInput(projectId: ownList.id, title: "自己任務"))
+        try await ackAllChanges(in: db)
+        try await db.writer.write { db in
+            try db.execute(
+                sql: "INSERT INTO projectMembership (projectId, scope, role, needsBackfill) VALUES (?, ?, ?, 0)",
+                arguments: [ownList.id, "u:me", "owner"]
+            )
+        }
+
+        _ = try await engine.syncNow()
+
+        let remainingProject = try await db.writer.read { db in try ProjectRecord.fetchOne(db, key: ownList.id) }
+        let remainingTask = try await db.writer.read { db in try TaskRecord.fetchOne(db, key: ownTask.id) }
+        #expect(remainingProject?.name == "自己的清單")
+        #expect(remainingTask?.title == "自己任務")
+    }
+
+    @Test func membersRowsApplied() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+        let otherMemberId = ID.make()
+
+        let (api, db, _, _, engine) = try await makeSyncSetup { req, _ in
+            if req.path == "/sync/push" {
+                return try jsonResponse(200, ["results": [], "serverTime": serverHLC])
+            }
+            return try jsonResponse(200, [
+                "scopes": [],
+                "memberships": [],
+                "members": [[
+                    "id": otherMemberId,
+                    "name": "家人 B",
+                    "initial": "B",
+                    "color": "#44AA66",
+                    "isMe": true,
+                    "userId": "user-b",
+                    "createdAt": nowMs,
+                    "updatedAt": nowMs,
+                ]],
+            ])
+        }
+        try await ackAllChanges(in: db)
+
+        _ = try await engine.syncNow()
+
+        let members = try await api.listMembers()
+        let meCount = members.filter(\.isMe).count
+        let appliedOther = try #require(members.first { $0.id == otherMemberId })
+        #expect(meCount == 1)
+        #expect(appliedOther.name == "家人 B")
+        #expect(appliedOther.isMe == false)
+        #expect(appliedOther.userId == "user-b")
+    }
+
+    @Test func nonCreatorFolderIdKeptLocal() async throws {
+        let nowMs = noon.epochMillis
+        let olderHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+        let newerHLC = HLC(ms: nowMs + 500, counter: 0, deviceId: "srv").description
+        let sharedId = ID.make()
+        let ownerId = ID.make()
+
+        let (api, db, _, _, engine) = try await makeSyncSetup { req, _ in
+            if req.path == "/sync/push" {
+                return try jsonResponse(200, ["results": [], "serverTime": newerHLC])
+            }
+            return try jsonResponse(200, [
+                "scopes": [[
+                    "scope": "u:owner-a",
+                    "rows": [[
+                        "entity": "project",
+                        "row": [
+                            "id": sharedId,
+                            "name": "改名後共享",
+                            "viewMode": "list",
+                            "kind": "TASK",
+                            "isInbox": false,
+                            "ownerId": ownerId,
+                            "sortKey": "z0",
+                            "showInSmart": "all",
+                            "notifyMode": "all",
+                            "createdAt": nowMs,
+                            "updatedAt": nowMs + 500,
+                        ],
+                        "clocks": ["name": newerHLC, "folderId": newerHLC],
+                        "serverSeq": 1,
+                    ]],
+                    "cursor": 1,
+                    "hasMore": false,
+                ]],
+                "memberships": [["projectId": sharedId, "scope": "u:owner-a", "role": "editor"]],
+                "members": [],
+            ])
+        }
+
+        let localFolder = try await api.createFolder(name: "我的資料夾")
+        try await db.writer.write { db in
+            try MemberRecord(id: ownerId, name: "Owner", initial: "O", color: "#112233", isMe: false, createdAt: nowMs, updatedAt: nowMs).insert(db)
+            try ProjectRecord(
+                id: sharedId,
+                name: "原本共享",
+                folderId: localFolder.id,
+                viewMode: "list",
+                kind: "TASK",
+                isInbox: false,
+                ownerId: ownerId,
+                sortKey: "z0",
+                showInSmart: "all",
+                notifyMode: "all",
+                createdAt: nowMs,
+                updatedAt: nowMs
+            ).insert(db)
+        }
+        _ = olderHLC
+        try await ackAllChanges(in: db)
+
+        _ = try await engine.syncNow()
+
+        let updated = try #require(try await api.listProjects(includeArchived: false).first { $0.id == sharedId })
+        #expect(updated.name == "改名後共享")
+        #expect(updated.folderId == localFolder.id)
+    }
+
+    @Test func myRoleExposed() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+        let editorProjectId = ID.make()
+        let viewerProjectId = ID.make()
+        let ownerId = ID.make()
+
+        let (api, db, _, _, engine) = try await makeSyncSetup { req, _ in
+            if req.path == "/sync/push" {
+                return try jsonResponse(200, ["results": [], "serverTime": serverHLC])
+            }
+            return try jsonResponse(200, [
+                "scopes": [[
+                    "scope": "u:owner-a",
+                    "rows": [
+                        [
+                            "entity": "project",
+                            "row": [
+                                "id": editorProjectId,
+                                "name": "可編輯清單",
+                                "viewMode": "list",
+                                "kind": "TASK",
+                                "isInbox": false,
+                                "ownerId": ownerId,
+                                "sortKey": "z1",
+                                "showInSmart": "all",
+                                "notifyMode": "all",
+                                "createdAt": nowMs,
+                                "updatedAt": nowMs,
+                            ],
+                            "clocks": ["name": serverHLC],
+                            "serverSeq": 1,
+                        ],
+                        [
+                            "entity": "project",
+                            "row": [
+                                "id": viewerProjectId,
+                                "name": "唯讀清單",
+                                "viewMode": "list",
+                                "kind": "TASK",
+                                "isInbox": false,
+                                "ownerId": ownerId,
+                                "sortKey": "z2",
+                                "showInSmart": "all",
+                                "notifyMode": "all",
+                                "createdAt": nowMs,
+                                "updatedAt": nowMs,
+                            ],
+                            "clocks": ["name": serverHLC],
+                            "serverSeq": 2,
+                        ],
+                    ],
+                    "cursor": 2,
+                    "hasMore": false,
+                ]],
+                "memberships": [
+                    ["projectId": editorProjectId, "scope": "u:owner-a", "role": "editor"],
+                    ["projectId": viewerProjectId, "scope": "u:owner-a", "role": "viewer"],
+                ],
+                "members": [["id": ownerId, "name": "Owner", "initial": "O", "color": "#112233", "isMe": false, "createdAt": nowMs, "updatedAt": nowMs]],
+            ])
+        }
+
+        let localOnly = try await api.createProject(CreateProjectInput(name: "本地清單"))
+        #expect(localOnly.myRole == "owner")
+        try await ackAllChanges(in: db)
+
+        _ = try await engine.syncNow()
+
+        let projects = try await api.listProjects(includeArchived: false)
+        #expect(projects.first { $0.id == localOnly.id }?.myRole == "owner")
+        #expect(projects.first { $0.id == editorProjectId }?.myRole == "editor")
+        #expect(projects.first { $0.id == viewerProjectId }?.myRole == "viewer")
+    }
+
+    @Test func acceptInviteSyncsWithBackfill() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+        let sharedId = ID.make()
+        let ownerId = ID.make()
+        let taskId = ID.make()
+
+        let pullBodies = PullBodyRecorder()
+        let (api, db, _, transport, engine) = try await makeSyncSetup { req, _ in
+            if req.path == "/invites/INV-CODE/accept" && req.method == "POST" {
+                return try jsonResponse(200, [
+                    "projectId": sharedId,
+                    "scope": "u:owner-a",
+                    "role": "editor",
+                ])
+            }
+            if req.path == "/sync/push" {
+                return try jsonResponse(200, ["results": [], "serverTime": serverHLC])
+            }
+            if req.path == "/sync/pull" {
+                let bodyObj = try decodeBodyObject(req.body)
+                await pullBodies.append(bodyObj)
+                if bodyObj["backfill"]?.arrayValue?.compactMap(\.stringValue) == [sharedId] {
+                    return try jsonResponse(200, [
+                        "scopes": [[
+                            "scope": "u:owner-a",
+                            "rows": [
+                                [
+                                    "entity": "project",
+                                    "row": [
+                                        "id": sharedId,
+                                        "name": "受邀清單",
+                                        "viewMode": "list",
+                                        "kind": "TASK",
+                                        "isInbox": false,
+                                        "ownerId": ownerId,
+                                        "sortKey": "z0",
+                                        "showInSmart": "all",
+                                        "notifyMode": "all",
+                                        "createdAt": nowMs,
+                                        "updatedAt": nowMs,
+                                    ],
+                                    "clocks": ["name": serverHLC],
+                                    "serverSeq": 1,
+                                ],
+                                [
+                                    "entity": "task",
+                                    "row": [
+                                        "id": taskId,
+                                        "projectId": sharedId,
+                                        "title": "受邀任務",
+                                        "content": "",
+                                        "priority": 0,
+                                        "status": 0,
+                                        "reminders": [],
+                                        "tags": [],
+                                        "sortKey": "a0",
+                                        "createdAt": nowMs,
+                                        "updatedAt": nowMs,
+                                    ],
+                                    "clocks": ["title": serverHLC],
+                                    "serverSeq": 2,
+                                ],
+                            ],
+                            "cursor": 2,
+                            "hasMore": false,
+                        ]],
+                        "memberships": [["projectId": sharedId, "scope": "u:owner-a", "role": "editor"]],
+                        "members": [["id": ownerId, "name": "Owner", "initial": "O", "color": "#112233", "isMe": false, "createdAt": nowMs, "updatedAt": nowMs]],
+                    ])
+                }
+                return try jsonResponse(200, [
+                    "scopes": [],
+                    "memberships": [["projectId": sharedId, "scope": "u:owner-a", "role": "editor"]],
+                    "members": [],
+                ])
+            }
+            return try jsonResponse(404, ["error": "Unexpected path"])
+        }
+        try await ackAllChanges(in: db)
+
+        let accepted = try await engine.acceptInvite(code: "INV-CODE")
+        #expect(accepted.projectId == sharedId)
+        #expect(accepted.role == "editor")
+
+        let captured = await transport.capturedRequests()
+        #expect(captured.contains { $0.path == "/invites/INV-CODE/accept" && $0.method == "POST" })
+
+        let pulls = await pullBodies.bodies
+        let backfillPulls = pulls.filter { $0["backfill"] != nil }
+        #expect(backfillPulls.count == 1)
+        #expect(backfillPulls[0]["backfill"]?.arrayValue?.compactMap(\.stringValue) == [sharedId])
+
+        let projects = try await api.listProjects(includeArchived: false)
+        let syncedProject = try #require(projects.first { $0.id == sharedId })
+        #expect(syncedProject.name == "受邀清單")
+        #expect(syncedProject.myRole == "editor")
+        let tasks = try await api.listTasks(TaskQuery(projectId: sharedId))
+        #expect(tasks.map(\.title) == ["受邀任務"])
+    }
+
+    @Test func inviteUrlParsing() {
+        #expect(SyncEngine.parseInviteCode(from: "daydo://invite/abc_123-XYZ") == "abc_123-XYZ")
+        #expect(SyncEngine.parseInviteCode(from: "  daydo://invite/code99/\n") == "code99")
+        #expect(SyncEngine.parseInviteCode(from: URL(string: "daydo://invite/token1")!) == "token1")
+        #expect(SyncEngine.parseInviteCode(from: "https://daydo.app/invite/abc") == nil)
+        #expect(SyncEngine.parseInviteCode(from: "daydo://project/abc") == nil)
+        #expect(SyncEngine.parseInviteCode(from: "daydo://invite/") == nil)
+        #expect(SyncEngine.parseInviteCode(from: "daydo://invite/a/b") == nil)
+        #expect(SyncEngine.parseInviteCode(from: "daydo://invite/abc?x=1") == nil)
+        #expect(SyncEngine.parseInviteCode(from: "") == nil)
+    }
+
+    @Test func sharingErrorsMapped() async throws {
+        let nowMs = noon.epochMillis
+        let (_, db, tokens, _, engine) = try await makeSyncSetup { req, _ in
+            if req.path == "/auth/refresh" {
+                return try jsonResponse(200, [
+                    "accessToken": "access-refreshed",
+                    "refreshToken": "refresh-2",
+                ])
+            }
+            if req.path == "/invites" && req.method == "POST" {
+                if req.headers["Authorization"] == "Bearer access-1" {
+                    return try jsonResponse(401, ["error": "expired"])
+                }
+                return try jsonResponse(200, [
+                    "code": "c1",
+                    "url": "daydo://invite/c1",
+                    "expiresAt": nowMs + 3600_000,
+                ])
+            }
+            if req.path == "/invites/forbidden-code" && req.method == "DELETE" {
+                return try jsonResponse(403, ["error": "Only the owner can revoke"])
+            }
+            if req.path == "/invites/missing-code" && req.method == "GET" {
+                return try jsonResponse(404, ["error": "Invite not found"])
+            }
+            if req.path == "/projects/p1/members/u2" && req.method == "PUT" {
+                return try jsonResponse(409, ["error": "Conflict updating role"])
+            }
+            if req.path == "/projects/p1/members/user-self" && req.method == "DELETE" {
+                return try jsonResponse(400, ["error": "Cannot remove owner"])
+            }
+            return try jsonResponse(500, ["error": "unexpected"])
+        }
+        try await db.writer.write { db in
+            try db.execute(
+                sql: "INSERT INTO meta (key, value) VALUES (?, ?)",
+                arguments: [SyncEngine.signedInUserIdMetaKey, "user-self"]
+            )
+        }
+
+        // 401 -> refresh -> retry succeeds.
+        let created = try await engine.createInvite(projectId: "p1", role: "editor")
+        #expect(created.code == "c1")
+        #expect(created.url == "daydo://invite/c1")
+        #expect(tokens.accessToken == "access-refreshed")
+
+        await #expect(throws: SharingError.forbidden("Only the owner can revoke")) {
+            try await engine.revokeInvite(code: "forbidden-code")
+        }
+        await #expect(throws: SharingError.notFound("Invite not found")) {
+            _ = try await engine.inviteInfo(code: "missing-code")
+        }
+        await #expect(throws: SharingError.conflict("Conflict updating role")) {
+            try await engine.changeMemberRole(projectId: "p1", userId: "u2", role: "viewer")
+        }
+        await #expect(throws: SharingError.badRequest("Cannot remove owner")) {
+            try await engine.leaveProject(projectId: "p1")
+        }
+    }
+}
+
+private actor PullBodyRecorder {
+    var bodies: [[String: SyncJSONValue]] = []
+    func append(_ obj: [String: SyncJSONValue]) {
+        bodies.append(obj)
+    }
+}
+
+private actor DBBox {
+    var db: AppDatabase?
+    func set(_ db: AppDatabase) { self.db = db }
+    func get() -> AppDatabase? { db }
+}
+
+private func decodeBodyObject(_ data: Data?) throws -> [String: SyncJSONValue] {
+    guard let data else { return [:] }
+    return try JSONDecoder().decode([String: SyncJSONValue].self, from: data)
 }
 
 private actor PushOpRecorder {

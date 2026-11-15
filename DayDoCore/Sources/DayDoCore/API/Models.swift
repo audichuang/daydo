@@ -11,6 +11,17 @@ public struct Member: Codable, Hashable, Sendable, Identifiable {
     public var initial: String
     public var color: String
     public var isMe: Bool
+    /// Server account userId for sharing role/removal calls, when known.
+    public var userId: String?
+
+    public init(id: String, name: String, initial: String, color: String, isMe: Bool, userId: String? = nil) {
+        self.id = id
+        self.name = name
+        self.initial = initial
+        self.color = color
+        self.isMe = isMe
+        self.userId = userId
+    }
 }
 
 public struct Folder: Codable, Hashable, Sendable, Identifiable {
@@ -35,10 +46,73 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
     public var archived: Bool
     public var memberIds: [String]
     public var activeCount: Int
+    public var myRole: String
     public var createdAt: EpochMillis
     public var updatedAt: EpochMillis
 
     public var isShared: Bool { memberIds.count > 1 }
+
+    public init(
+        id: String,
+        name: String,
+        color: String? = nil,
+        icon: String? = nil,
+        folderId: String? = nil,
+        viewMode: String,
+        kind: String,
+        isInbox: Bool,
+        ownerId: String,
+        sortKey: String,
+        showInSmart: String,
+        notifyMode: String,
+        archived: Bool,
+        memberIds: [String],
+        activeCount: Int,
+        myRole: String = "owner",
+        createdAt: EpochMillis,
+        updatedAt: EpochMillis
+    ) {
+        self.id = id
+        self.name = name
+        self.color = color
+        self.icon = icon
+        self.folderId = folderId
+        self.viewMode = viewMode
+        self.kind = kind
+        self.isInbox = isInbox
+        self.ownerId = ownerId
+        self.sortKey = sortKey
+        self.showInSmart = showInSmart
+        self.notifyMode = notifyMode
+        self.archived = archived
+        self.memberIds = memberIds
+        self.activeCount = activeCount
+        self.myRole = myRole
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        color = try c.decodeIfPresent(String.self, forKey: .color)
+        icon = try c.decodeIfPresent(String.self, forKey: .icon)
+        folderId = try c.decodeIfPresent(String.self, forKey: .folderId)
+        viewMode = try c.decode(String.self, forKey: .viewMode)
+        kind = try c.decode(String.self, forKey: .kind)
+        isInbox = try c.decode(Bool.self, forKey: .isInbox)
+        ownerId = try c.decode(String.self, forKey: .ownerId)
+        sortKey = try c.decode(String.self, forKey: .sortKey)
+        showInSmart = try c.decode(String.self, forKey: .showInSmart)
+        notifyMode = try c.decode(String.self, forKey: .notifyMode)
+        archived = try c.decode(Bool.self, forKey: .archived)
+        memberIds = try c.decode([String].self, forKey: .memberIds)
+        activeCount = try c.decode(Int.self, forKey: .activeCount)
+        myRole = try c.decodeIfPresent(String.self, forKey: .myRole) ?? "owner"
+        createdAt = try c.decode(EpochMillis.self, forKey: .createdAt)
+        updatedAt = try c.decode(EpochMillis.self, forKey: .updatedAt)
+    }
 }
 
 public struct ProjectMemberInfo: Codable, Hashable, Sendable, Identifiable {
@@ -49,8 +123,20 @@ public struct ProjectMemberInfo: Codable, Hashable, Sendable, Identifiable {
     public var isMe: Bool
     /// owner | editor | viewer
     public var role: String
+    /// Server account userId for sharing role/removal calls, when known.
+    public var userId: String?
 
     public var id: String { memberId }
+
+    public init(memberId: String, name: String, initial: String, color: String, isMe: Bool, role: String, userId: String? = nil) {
+        self.memberId = memberId
+        self.name = name
+        self.initial = initial
+        self.color = color
+        self.isMe = isMe
+        self.role = role
+        self.userId = userId
+    }
 }
 
 public struct ProjectInvite: Codable, Hashable, Sendable, Identifiable {

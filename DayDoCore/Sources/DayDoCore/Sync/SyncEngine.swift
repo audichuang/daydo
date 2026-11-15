@@ -208,6 +208,8 @@ public actor SyncEngine {
                 "change",
                 "purgedId",
                 "syncStaging",
+                "projectMembership",
+                "memberUser",
             ] {
                 try db.execute(sql: "DELETE FROM \"\(table)\"")
             }
@@ -231,6 +233,102 @@ public actor SyncEngine {
         }
         inFlightSync = task
         return try await task.value
+    }
+
+    // MARK: - Sharing
+
+    public static func parseInviteCode(from url: URL) -> String? {
+        guard url.scheme?.lowercased() == "daydo",
+              url.host?.lowercased() == "invite",
+              url.query == nil else {
+            return nil
+        }
+        let segments = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
+        guard segments.count == 1 else {
+            return nil
+        }
+        return segments[0]
+    }
+
+    public static func parseInviteCode(from urlString: String) -> String? {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let url = URL(string: trimmed) else {
+            return nil
+        }
+        return parseInviteCode(from: url)
+    }
+
+    public func createInvite(projectId: String, role: String, email: String? = nil) async throws -> CreatedInvite {
+        let body = try encoder.encode(CreateInviteRequest(projectId: projectId, role: role, email: email))
+        let data = try await sendAuthorizedSharing(method: "POST", path: "/invites", body: body)
+        return try decode(CreatedInvite.self, from: data)
+    }
+
+    public func inviteInfo(code: String) async throws -> InviteInfo {
+        let encoded = Self.percentEncodePathComponent(code)
+        let data = try await sendAuthorizedSharing(method: "GET", path: "/invites/\(encoded)", body: nil)
+        return try decode(InviteInfo.self, from: data)
+    }
+
+    @discardableResult
+    public func acceptInvite(code: String) async throws -> AcceptedInvite {
+        let encoded = Self.percentEncodePathComponent(code)
+        let data = try await sendAuthorizedSharing(method: "POST", path: "/invites/\(encoded)/accept", body: nil)
+        let accepted = try decode(AcceptedInvite.self, from: data)
+        try await database.writer.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO projectMembership (projectId, scope, role, needsBackfill)
+                    VALUES (?, ?, ?, 1)
+                    ON CONFLICT(projectId) DO UPDATE SET
+                        scope = excluded.scope,
+                        role = excluded.role,
+                        needsBackfill = 1
+                    """,
+                arguments: [accepted.projectId, accepted.scope, accepted.role]
+            )
+        }
+        _ = try await syncNow()
+        return accepted
+    }
+
+    public func revokeInvite(code: String) async throws {
+        let encoded = Self.percentEncodePathComponent(code)
+        _ = try await sendAuthorizedSharing(method: "DELETE", path: "/invites/\(encoded)", body: nil)
+    }
+
+    public func changeMemberRole(projectId: String, userId: String, role: String) async throws {
+        let body = try encoder.encode(ChangeMemberRoleRequest(role: role))
+        let encodedProject = Self.percentEncodePathComponent(projectId)
+        let encodedUser = Self.percentEncodePathComponent(userId)
+        _ = try await sendAuthorizedSharing(
+            method: "PUT",
+            path: "/projects/\(encodedProject)/members/\(encodedUser)",
+            body: body
+        )
+    }
+
+    public func removeMember(projectId: String, userId: String) async throws {
+        let encodedProject = Self.percentEncodePathComponent(projectId)
+        let encodedUser = Self.percentEncodePathComponent(userId)
+        _ = try await sendAuthorizedSharing(
+            method: "DELETE",
+            path: "/projects/\(encodedProject)/members/\(encodedUser)",
+            body: nil
+        )
+    }
+
+    public func leaveProject(projectId: String) async throws {
+        guard let myUserId = try await signedInUserId, !myUserId.isEmpty else {
+            throw SyncError.signedOut
+        }
+        try await removeMember(projectId: projectId, userId: myUserId)
+    }
+
+    private static func percentEncodePathComponent(_ value: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
     private func runSyncLoop(generation: UInt64) async throws -> SyncSummary {
@@ -306,7 +404,7 @@ public actor SyncEngine {
             let (deviceId, batch) = try await database.writer.write { db -> (String, [ChangeRecord]) in
                 let devId = try HLC.ensureDeviceId(in: db)
                 let rows = try ChangeRecord
-                    .filter(Column("ackedAt") == nil)
+                    .filter(Column("ackedAt") == nil && Column("entity") != "projectInvite")
                     .order(Column("seq"))
                     .limit(batchLimit)
                     .fetchAll(db)
@@ -418,6 +516,50 @@ public actor SyncEngine {
     }
 
     private func performPull(_ progress: inout PullProgress, generation: UInt64) async throws {
+        let pendingBackfill = try await database.writer.read { db in
+            try String.fetchAll(
+                db,
+                sql: "SELECT projectId FROM projectMembership WHERE needsBackfill = 1 ORDER BY projectId"
+            )
+        }
+        if !pendingBackfill.isEmpty {
+            var backfillCursors: [String: Int64] = [:]
+            while true {
+                guard generation == sessionGeneration else {
+                    throw SyncError.signedOut
+                }
+                let requestData = try encoder.encode(
+                    SyncPullRequest(cursors: backfillCursors, limit: pullLimit, backfill: pendingBackfill)
+                )
+                let responseData = try await sendAuthorized(method: "POST", path: "/sync/pull", body: requestData)
+                guard generation == sessionGeneration else {
+                    throw SyncError.signedOut
+                }
+                let response = try decode(SyncPullResponse.self, from: responseData)
+                let (pageRowCount, pageChanged, updatedBackfillCursors) = try await applyPullResponsePage(
+                    response,
+                    isBackfill: true,
+                    fallbackCursors: backfillCursors
+                )
+                backfillCursors = updatedBackfillCursors
+                progress.pulledCount += pageRowCount
+                if pageChanged {
+                    progress.didChangeLocalData = true
+                }
+                if !response.scopes.contains(where: { $0.hasMore }) {
+                    break
+                }
+            }
+            try await database.writer.write { db in
+                for pid in pendingBackfill {
+                    try db.execute(
+                        sql: "UPDATE projectMembership SET needsBackfill = 0 WHERE projectId = ?",
+                        arguments: [pid]
+                    )
+                }
+            }
+        }
+
         var cursors = try await database.writer.read { db in
             try Self.loadPullCursors(in: db)
         }
@@ -432,120 +574,11 @@ public actor SyncEngine {
                 throw SyncError.signedOut
             }
             let response = try decode(SyncPullResponse.self, from: responseData)
-
-            let now = clock.now().epochMillis
-            let (pageRowCount, pageChanged, updatedCursors) = try await database.writer.write { db -> (Int, Bool, [String: Int64]) in
-                try db.execute(sql: "PRAGMA defer_foreign_keys = ON")
-
-                var rowCount = 0
-                var changed = false
-                var nextCursors = try Self.loadPullCursors(in: db)
-                var maxSeenHLC: HLC?
-
-                struct PendingUpsert {
-                    let entity: String
-                    let entityId: String
-                    let row: [String: SyncJSONValue]
-                    let clocks: [String: String]
-                    let serverSeq: Int64
-                }
-                var deferredUpserts: [PendingUpsert] = []
-
-                if let members = response.members {
-                    for memberRow in members {
-                        guard let entityId = SyncApplier.entityId(for: "member", row: memberRow) else { continue }
-                        let outcome = try SyncApplier.applyRow(
-                            entity: "member",
-                            entityId: entityId,
-                            row: memberRow,
-                            clocks: [:],
-                            in: db
-                        )
-                        if outcome.didChangeLocalData {
-                            changed = true
-                        }
-                    }
-                }
-
-                for scopeSlice in response.scopes {
-                    nextCursors[scopeSlice.scope] = max(nextCursors[scopeSlice.scope] ?? 0, scopeSlice.cursor)
-
-                    for item in scopeSlice.rows {
-                        rowCount += 1
-                        guard SyncApplier.isKnownEntity(item.entity) else { continue }
-
-                        if item.gone == true {
-                            guard let entityId = item.entityId, !entityId.isEmpty else {
-                                throw SyncError.protocolError("Pull gone row missing entityId for \(item.entity)")
-                            }
-                            if try SyncApplier.applyGone(entity: item.entity, entityId: entityId, in: db) {
-                                changed = true
-                            }
-                            continue
-                        }
-
-                        guard let row = item.row,
-                              let entityId = SyncApplier.entityId(for: item.entity, row: row) else {
-                            throw SyncError.protocolError("Pull row missing row payload or id for \(item.entity)")
-                        }
-                        let clocks = item.clocks ?? [:]
-                        if let pageHLC = clocks.values.compactMap(HLC.init).max() {
-                            if let currentMax = maxSeenHLC {
-                                if pageHLC > currentMax { maxSeenHLC = pageHLC }
-                            } else {
-                                maxSeenHLC = pageHLC
-                            }
-                        }
-
-                        let outcome = try SyncApplier.applyRow(
-                            entity: item.entity,
-                            entityId: entityId,
-                            row: row,
-                            clocks: clocks,
-                            in: db
-                        )
-                        if outcome.staged {
-                            deferredUpserts.append(PendingUpsert(
-                                entity: item.entity,
-                                entityId: entityId,
-                                row: row,
-                                clocks: clocks,
-                                serverSeq: item.serverSeq
-                            ))
-                        } else {
-                            try SyncApplier.deleteStagedRow(entity: item.entity, entityId: entityId, in: db)
-                            if outcome.didChangeLocalData {
-                                changed = true
-                            }
-                        }
-                    }
-                }
-
-                // Retry deferred rows from this page (parents may have arrived later in the same page)
-                // and persist any still-blocked rows to `syncStaging`.
-                for pending in deferredUpserts {
-                    try SyncApplier.stageRow(
-                        entity: pending.entity,
-                        entityId: pending.entityId,
-                        row: pending.row,
-                        clocks: pending.clocks,
-                        serverSeq: pending.serverSeq,
-                        now: now,
-                        in: db
-                    )
-                }
-
-                if try SyncApplier.retryStagedRows(in: db) {
-                    changed = true
-                }
-
-                if let maxSeenHLC {
-                    try HLC.receive(maxSeenHLC, in: db, now: now)
-                }
-
-                try Self.savePullCursors(nextCursors, in: db)
-                return (rowCount, changed, nextCursors)
-            }
+            let (pageRowCount, pageChanged, updatedCursors) = try await applyPullResponsePage(
+                response,
+                isBackfill: false,
+                fallbackCursors: cursors
+            )
 
             cursors = updatedCursors
             progress.pulledCount += pageRowCount
@@ -559,9 +592,230 @@ public actor SyncEngine {
         }
     }
 
+    private func applyPullResponsePage(
+        _ response: SyncPullResponse,
+        isBackfill: Bool,
+        fallbackCursors: [String: Int64]
+    ) async throws -> (Int, Bool, [String: Int64]) {
+        let now = clock.now().epochMillis
+        return try await database.writer.write { db -> (Int, Bool, [String: Int64]) in
+            try db.execute(sql: "PRAGMA defer_foreign_keys = ON")
+
+            var rowCount = 0
+            var changed = false
+            var nextCursors = isBackfill ? fallbackCursors : try Self.loadPullCursors(in: db)
+            var maxSeenHLC: HLC?
+
+            struct PendingUpsert {
+                let entity: String
+                let entityId: String
+                let row: [String: SyncJSONValue]
+                let clocks: [String: String]
+                let serverSeq: Int64
+            }
+            var deferredUpserts: [PendingUpsert] = []
+
+            if let members = response.members {
+                for memberRow in members {
+                    guard let entityId = SyncApplier.entityId(for: "member", row: memberRow) else { continue }
+                    let existingIsMe = try Bool.fetchOne(
+                        db,
+                        sql: "SELECT isMe FROM member WHERE id = ?",
+                        arguments: [entityId]
+                    ) ?? false
+                    if existingIsMe {
+                        continue
+                    }
+                    if let uid = memberRow["userId"]?.stringValue, !uid.isEmpty {
+                        try db.execute(
+                            sql: """
+                                INSERT INTO memberUser (memberId, userId) VALUES (?, ?)
+                                ON CONFLICT(memberId) DO UPDATE SET userId = excluded.userId
+                                """,
+                            arguments: [entityId, uid]
+                        )
+                    }
+                    var sanitizedRow = memberRow
+                    sanitizedRow["isMe"] = .bool(false)
+                    let outcome = try SyncApplier.applyRow(
+                        entity: "member",
+                        entityId: entityId,
+                        row: sanitizedRow,
+                        clocks: [:],
+                        in: db
+                    )
+                    if outcome.didChangeLocalData {
+                        changed = true
+                    }
+                }
+            }
+
+            for scopeSlice in response.scopes {
+                nextCursors[scopeSlice.scope] = max(nextCursors[scopeSlice.scope] ?? 0, scopeSlice.cursor)
+
+                for item in scopeSlice.rows {
+                    rowCount += 1
+                    guard SyncApplier.isKnownEntity(item.entity) else { continue }
+
+                    if item.gone == true {
+                        guard let entityId = item.entityId, !entityId.isEmpty else {
+                            throw SyncError.protocolError("Pull gone row missing entityId for \(item.entity)")
+                        }
+                        if try SyncApplier.applyGone(entity: item.entity, entityId: entityId, in: db) {
+                            changed = true
+                        }
+                        if item.entity == "project" {
+                            try db.execute(
+                                sql: "DELETE FROM projectMembership WHERE projectId = ?",
+                                arguments: [entityId]
+                            )
+                        }
+                        continue
+                    }
+
+                    guard let row = item.row,
+                          let entityId = SyncApplier.entityId(for: item.entity, row: row) else {
+                        throw SyncError.protocolError("Pull row missing row payload or id for \(item.entity)")
+                    }
+                    let clocks = item.clocks ?? [:]
+                    if let pageHLC = clocks.values.compactMap(HLC.init).max() {
+                        if let currentMax = maxSeenHLC {
+                            if pageHLC > currentMax { maxSeenHLC = pageHLC }
+                        } else {
+                            maxSeenHLC = pageHLC
+                        }
+                    }
+
+                    let outcome = try SyncApplier.applyRow(
+                        entity: item.entity,
+                        entityId: entityId,
+                        row: row,
+                        clocks: clocks,
+                        in: db
+                    )
+                    if outcome.staged {
+                        deferredUpserts.append(PendingUpsert(
+                            entity: item.entity,
+                            entityId: entityId,
+                            row: row,
+                            clocks: clocks,
+                            serverSeq: item.serverSeq
+                        ))
+                    } else {
+                        try SyncApplier.deleteStagedRow(entity: item.entity, entityId: entityId, in: db)
+                        if outcome.didChangeLocalData {
+                            changed = true
+                        }
+                    }
+                }
+            }
+
+            // Retry deferred rows from this page (parents may have arrived later in the same page)
+            // and persist any still-blocked rows to `syncStaging`.
+            for pending in deferredUpserts {
+                try SyncApplier.stageRow(
+                    entity: pending.entity,
+                    entityId: pending.entityId,
+                    row: pending.row,
+                    clocks: pending.clocks,
+                    serverSeq: pending.serverSeq,
+                    now: now,
+                    in: db
+                )
+            }
+
+            if try SyncApplier.retryStagedRows(in: db) {
+                changed = true
+            }
+
+            if let memberships = response.memberships {
+                if try Self.reconcileMemberships(memberships, in: db) {
+                    changed = true
+                }
+            }
+
+            if let maxSeenHLC {
+                try HLC.receive(maxSeenHLC, in: db, now: now)
+            }
+
+            if !isBackfill {
+                try Self.savePullCursors(nextCursors, in: db)
+            }
+            return (rowCount, changed, nextCursors)
+        }
+    }
+
+    private static func reconcileMemberships(_ memberships: [SyncPullMembership], in db: Database) throws -> Bool {
+        var changed = false
+        let meMemberId = try String.fetchOne(db, sql: "SELECT id FROM member WHERE isMe = 1 AND deletedAt IS NULL")
+
+        struct ExistingMembership {
+            let projectId: String
+            let role: String
+        }
+        let existingRows = try Row.fetchAll(db, sql: "SELECT projectId, role FROM projectMembership").map { row in
+            ExistingMembership(projectId: row["projectId"], role: row["role"])
+        }
+        let existingIds = Set(existingRows.map(\.projectId))
+        let incomingIds = Set(memberships.map(\.projectId))
+
+        for m in memberships {
+            if existingIds.contains(m.projectId) {
+                try db.execute(
+                    sql: "UPDATE projectMembership SET scope = ?, role = ? WHERE projectId = ?",
+                    arguments: [m.scope, m.role, m.projectId]
+                )
+            } else {
+                let localOwnerId = try String.fetchOne(
+                    db,
+                    sql: "SELECT ownerId FROM project WHERE id = ?",
+                    arguments: [m.projectId]
+                )
+                let isMine = (m.role == "owner") || (meMemberId != nil && localOwnerId == meMemberId)
+                let needsBackfill = !isMine
+                try db.execute(
+                    sql: """
+                        INSERT INTO projectMembership (projectId, scope, role, needsBackfill)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                    arguments: [m.projectId, m.scope, m.role, needsBackfill]
+                )
+            }
+        }
+
+        for old in existingRows where !incomingIds.contains(old.projectId) {
+            let localOwnerId = try String.fetchOne(
+                db,
+                sql: "SELECT ownerId FROM project WHERE id = ?",
+                arguments: [old.projectId]
+            )
+            let isMine = (meMemberId != nil && localOwnerId == meMemberId) || old.role == "owner"
+            guard !isMine else { continue }
+            if try SyncApplier.applyGone(entity: "project", entityId: old.projectId, in: db) {
+                changed = true
+            }
+            try db.execute(
+                sql: "DELETE FROM projectMembership WHERE projectId = ?",
+                arguments: [old.projectId]
+            )
+        }
+
+        return changed
+    }
+
     // MARK: - Authorized HTTP + Refresh
 
     private func sendAuthorized(method: String, path: String, body: Data?) async throws -> Data {
+        let response = try await sendAuthorizedResponse(method: method, path: path, body: body)
+        return try validateHTTPResponse(response)
+    }
+
+    private func sendAuthorizedSharing(method: String, path: String, body: Data?) async throws -> Data {
+        let response = try await sendAuthorizedResponse(method: method, path: path, body: body)
+        return try validateSharingResponse(response)
+    }
+
+    private func sendAuthorizedResponse(method: String, path: String, body: Data?) async throws -> SyncHTTPResponse {
         let initialToken: String
         if let access = tokenStore.accessToken, !access.isEmpty {
             initialToken = access
@@ -591,10 +845,10 @@ public actor SyncEngine {
                 tokenStore.refreshToken = nil
                 throw SyncError.signedOut
             }
-            return try validateHTTPResponse(retryResponse)
+            return retryResponse
         }
 
-        return try validateHTTPResponse(firstResponse)
+        return firstResponse
     }
 
     private func refreshAccessToken(failedAccessToken: String?) async throws -> String {
@@ -667,6 +921,38 @@ public actor SyncEngine {
             throw nextRetryableError(statusCode: response.status, message: bodyText)
         }
         throw SyncError.protocolError("HTTP \(response.status): \(bodyText)")
+    }
+
+    private struct SharingErrorBody: Decodable {
+        let error: String?
+    }
+
+    private func validateSharingResponse(_ response: SyncHTTPResponse) throws -> Data {
+        if (200...299).contains(response.status) {
+            return response.body
+        }
+        let message: String = {
+            if let parsed = try? decoder.decode(SharingErrorBody.self, from: response.body),
+               let err = parsed.error, !err.isEmpty {
+                return err
+            }
+            let raw = String(data: response.body, encoding: .utf8) ?? ""
+            return raw.isEmpty ? "HTTP \(response.status)" : raw
+        }()
+        switch response.status {
+        case 400:
+            throw SharingError.badRequest(message)
+        case 403:
+            throw SharingError.forbidden(message)
+        case 404:
+            throw SharingError.notFound(message)
+        case 409:
+            throw SharingError.conflict(message)
+        case 429, 500...599:
+            throw nextRetryableError(statusCode: response.status, message: message)
+        default:
+            throw SyncError.protocolError("HTTP \(response.status): \(message)")
+        }
     }
 
     private func nextRetryableError(statusCode: Int?, message: String) -> SyncError {

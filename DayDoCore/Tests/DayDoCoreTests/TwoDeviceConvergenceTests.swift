@@ -384,6 +384,7 @@ func fetchServerSnapshot(transport: HTTPSyncTransport, accessToken: String) asyn
 
     var cursors: [String: Int64] = [:]
     var latestRows: [String: (entity: String, entityId: String, row: [String: SyncJSONValue])] = [:]
+    var sharedMembers: [String: [String: SyncJSONValue]] = [:]
 
     while true {
         let reqData = try encoder.encode(SyncPullRequest(cursors: cursors, limit: 1000))
@@ -398,10 +399,21 @@ func fetchServerSnapshot(transport: HTTPSyncTransport, accessToken: String) asyn
         )
         #expect(res.status == 200)
         let pulled = try decoder.decode(SyncPullResponse.self, from: res.body)
+        for memberRow in pulled.members ?? [] {
+            guard let eid = SyncApplier.entityId(for: "member", row: memberRow) else { continue }
+            var sanitized = memberRow
+            sanitized["isMe"] = .bool(false)
+            sharedMembers[eid] = sanitized
+        }
         for slice in pulled.scopes {
             cursors[slice.scope] = max(cursors[slice.scope] ?? 0, slice.cursor)
             for item in slice.rows {
-                if item.gone == true { continue }
+                if item.gone == true {
+                    if let eid = item.entityId {
+                        latestRows.removeValue(forKey: "\(item.entity):\(eid)")
+                    }
+                    continue
+                }
                 guard let row = item.row,
                       let eid = SyncApplier.entityId(for: item.entity, row: row) else { continue }
                 latestRows["\(item.entity):\(eid)"] = (item.entity, eid, row)
@@ -417,8 +429,18 @@ func fetchServerSnapshot(transport: HTTPSyncTransport, accessToken: String) asyn
     let sorted = latestRows.values.sorted {
         (order.firstIndex(of: $0.entity) ?? 99) < (order.firstIndex(of: $1.entity) ?? 99)
     }
+    let memberSnapshot = sharedMembers
     try await memDB.writer.write { db in
-        for entry in sorted {
+        for entry in sorted where entry.entity == "member" {
+            _ = try SyncApplier.applyRow(entity: entry.entity, entityId: entry.entityId, row: entry.row, clocks: [:], in: db)
+        }
+        for (eid, memberRow) in memberSnapshot {
+            let existingIsMe = try Bool.fetchOne(db, sql: "SELECT isMe FROM member WHERE id = ?", arguments: [eid]) ?? false
+            if !existingIsMe {
+                _ = try SyncApplier.applyRow(entity: "member", entityId: eid, row: memberRow, clocks: [:], in: db)
+            }
+        }
+        for entry in sorted where entry.entity != "member" {
             _ = try SyncApplier.applyRow(entity: entry.entity, entityId: entry.entityId, row: entry.row, clocks: [:], in: db)
         }
     }

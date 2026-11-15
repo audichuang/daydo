@@ -114,3 +114,21 @@ public enum SyncError: Error, LocalizedError, Sendable, Equatable {
         }
     }
 }
+
+/// Errors surfaced by `SyncEngine` sharing API calls.
+public enum SharingError: Error, LocalizedError, Sendable, Equatable {
+    case badRequest(String)
+    case forbidden(String)
+    case notFound(String)
+    case conflict(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .badRequest(message),
+             let .forbidden(message),
+             let .notFound(message),
+             let .conflict(message):
+            return message
+        }
+    }
+}

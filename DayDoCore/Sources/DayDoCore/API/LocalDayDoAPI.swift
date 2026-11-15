@@ -120,9 +120,38 @@ public final class LocalDayDoAPI: DayDoAPI {
     func project(_ db: Database, _ p: ProjectRecord) throws -> Project {
         let members = try String.fetchAll(db, sql: "SELECT memberId FROM projectMember WHERE projectId = ? AND deletedAt IS NULL ORDER BY createdAt", arguments: [p.id])
         let active = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM task WHERE projectId = ? AND deletedAt IS NULL AND status = 0", arguments: [p.id]) ?? 0
+        let myRole = try resolveMyRole(db, project: p)
         return Project(id: p.id, name: p.name, color: p.color, icon: p.icon, folderId: p.folderId, viewMode: p.viewMode, kind: p.kind,
                        isInbox: p.isInbox, ownerId: p.ownerId, sortKey: p.sortKey, showInSmart: p.showInSmart, notifyMode: p.notifyMode,
-                       archived: p.archivedAt != nil, memberIds: members, activeCount: active, createdAt: p.createdAt, updatedAt: p.updatedAt)
+                       archived: p.archivedAt != nil, memberIds: members, activeCount: active, myRole: myRole, createdAt: p.createdAt, updatedAt: p.updatedAt)
+    }
+
+    func resolveMyRole(_ db: Database, project p: ProjectRecord) throws -> String {
+        if let role = try String.fetchOne(db, sql: "SELECT role FROM projectMembership WHERE projectId = ?", arguments: [p.id]) {
+            return role
+        }
+        if let meId = try String.fetchOne(db, sql: "SELECT id FROM member WHERE isMe = 1 AND deletedAt IS NULL"),
+           let role = try String.fetchOne(
+               db,
+               sql: "SELECT role FROM projectMember WHERE projectId = ? AND memberId = ? AND deletedAt IS NULL",
+               arguments: [p.id, meId]
+           ) {
+            return role
+        }
+        return "owner"
+    }
+
+    func resolveUserId(_ db: Database, member: MemberRecord) throws -> String? {
+        if let mapped = try String.fetchOne(db, sql: "SELECT userId FROM memberUser WHERE memberId = ?", arguments: [member.id]) {
+            return mapped
+        }
+        if member.isMe, let uid = try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [SyncEngine.signedInUserIdMetaKey]) {
+            return uid
+        }
+        if member.id.hasPrefix("u-") {
+            return String(member.id.dropFirst(2))
+        }
+        return nil
     }
 
     /// Live (not deleted, not archived) project ids, optionally only those
@@ -179,7 +208,16 @@ extension LocalDayDoAPI {
     public func listMembers() async throws -> [Member] {
         try await writer.read { db in
             try MemberRecord.filter(Column("deletedAt") == nil).order(Column("createdAt")).fetchAll(db)
-                .map { Member(id: $0.id, name: $0.name, initial: $0.initial, color: $0.color, isMe: $0.isMe) }
+                .map {
+                    try Member(
+                        id: $0.id,
+                        name: $0.name,
+                        initial: $0.initial,
+                        color: $0.color,
+                        isMe: $0.isMe,
+                        userId: self.resolveUserId(db, member: $0)
+                    )
+                }
         }
     }
 
@@ -498,7 +536,8 @@ extension LocalDayDoAPI {
                         initial: m.initial,
                         color: m.color,
                         isMe: m.isMe,
-                        role: pm.role
+                        role: pm.role,
+                        userId: try self.resolveUserId(db, member: m)
                     ))
                 }
             }

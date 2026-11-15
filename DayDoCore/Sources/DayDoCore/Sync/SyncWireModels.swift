@@ -96,6 +96,13 @@ struct SyncPushOpResult: Decodable, Sendable {
 struct SyncPullRequest: Encodable, Sendable {
     let cursors: [String: Int64]
     let limit: Int
+    let backfill: [String]?
+
+    init(cursors: [String: Int64], limit: Int, backfill: [String]? = nil) {
+        self.cursors = cursors
+        self.limit = limit
+        self.backfill = backfill
+    }
 }
 
 struct SyncPullResponse: Decodable, Sendable {
@@ -183,4 +190,54 @@ public struct AuthLoginResponse: Codable, Sendable, Equatable {
     public let hasData: Bool
     public let meMemberId: String?
     public let inboxProjectId: String?
+}
+
+// MARK: - Sharing Wire Types
+
+struct CreateInviteRequest: Encodable, Sendable {
+    let projectId: String
+    let role: String
+    let email: String?
+}
+
+struct ChangeMemberRoleRequest: Encodable, Sendable {
+    let role: String
+}
+
+public struct CreatedInvite: Codable, Sendable, Equatable {
+    public let code: String
+    public let url: String
+    public let expiresAt: EpochMillis
+
+    public init(code: String, url: String, expiresAt: EpochMillis) {
+        self.code = code
+        self.url = url
+        self.expiresAt = expiresAt
+    }
+}
+
+public struct InviteInfo: Codable, Sendable, Equatable {
+    public let projectName: String
+    public let inviterName: String
+    public let role: String
+    public let expiresAt: EpochMillis
+
+    public init(projectName: String, inviterName: String, role: String, expiresAt: EpochMillis) {
+        self.projectName = projectName
+        self.inviterName = inviterName
+        self.role = role
+        self.expiresAt = expiresAt
+    }
+}
+
+public struct AcceptedInvite: Codable, Sendable, Equatable {
+    public let projectId: String
+    public let scope: String
+    public let role: String
+
+    public init(projectId: String, scope: String, role: String) {
+        self.projectId = projectId
+        self.scope = scope
+        self.role = role
+    }
 }

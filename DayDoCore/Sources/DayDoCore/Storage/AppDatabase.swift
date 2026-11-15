@@ -203,6 +203,18 @@ public final class AppDatabase: Sendable {
                 t.primaryKey(["entity", "entityId"])
             }
         }
+        m.registerMigration("v6") { db in
+            try db.create(table: "projectMembership") { t in
+                t.column("projectId", .text).primaryKey()
+                t.column("scope", .text).notNull()
+                t.column("role", .text).notNull()
+                t.column("needsBackfill", .boolean).notNull().defaults(to: false)
+            }
+            try db.create(table: "memberUser") { t in
+                t.column("memberId", .text).primaryKey()
+                t.column("userId", .text).notNull()
+            }
+        }
         return m
     }
 }

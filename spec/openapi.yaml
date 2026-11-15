@@ -446,6 +446,7 @@ components:
         archived: { type: boolean }
         member_ids: { type: array, items: { type: string } }
         active_count: { type: integer }
+        my_role: { type: string, enum: [owner, editor, viewer] }
         created_at: { type: integer }
         updated_at: { type: integer }
     ProjectMemberInfo:

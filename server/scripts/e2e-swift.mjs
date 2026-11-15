@@ -170,6 +170,10 @@ async function main() {
     const googleToken = await jwks.signGoogleToken(sub);
     const firstLoginSub = `google-first-login-${randomUUID()}`;
     const firstLoginGoogleToken = await jwks.signGoogleToken(firstLoginSub);
+    const sharedUserASub = `google-shared-a-${randomUUID()}`;
+    const sharedUserAToken = await jwks.signGoogleToken(sharedUserASub);
+    const sharedUserBSub = `google-shared-b-${randomUUID()}`;
+    const sharedUserBToken = await jwks.signGoogleToken(sharedUserBSub);
 
     const exitCode = await runCommand(
       'swift',
@@ -178,7 +182,7 @@ async function main() {
         '--package-path',
         path.resolve(serverDir, '../DayDoCore'),
         '--filter',
-        'TwoDeviceConvergence|FirstLogin',
+        'TwoDeviceConvergence|FirstLogin|SharedList',
       ],
       {
         cwd: serverDir,
@@ -187,6 +191,8 @@ async function main() {
           DAYDO_SYNC_BASE_URL: baseUrl,
           DAYDO_SYNC_GOOGLE_ID_TOKEN: googleToken,
           DAYDO_SYNC_FIRST_LOGIN_GOOGLE_ID_TOKEN: firstLoginGoogleToken,
+          DAYDO_SYNC_SHARED_USER_A_GOOGLE_ID_TOKEN: sharedUserAToken,
+          DAYDO_SYNC_SHARED_USER_B_GOOGLE_ID_TOKEN: sharedUserBToken,
         },
       },
     );
