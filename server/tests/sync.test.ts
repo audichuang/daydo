@@ -19,6 +19,8 @@ import {
   parseHlc,
 } from '../src/sync/hlc';
 import { mergeOp, type MergeExistingState } from '../src/sync/merge';
+import { parsePushBatch } from '../src/sync/push/parse';
+import { planPushBatch, type PlanPushContext } from '../src/sync/push/plan';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturePath = path.resolve(__dirname, '../../spec/fixtures/sync-ops.json');
@@ -682,5 +684,224 @@ describe('sync merge', () => {
       });
       expect(inRowOnly.ok).toBe(true);
     }
+  });
+});
+
+describe('sync push plan (pure)', () => {
+  const hlc1 = '1700000000001:0000:dev-a';
+  const taskRequiredFields = [
+    'id',
+    'projectId',
+    'title',
+    'content',
+    'priority',
+    'status',
+    'reminders',
+    'tags',
+    'sortKey',
+    'createdAt',
+    'updatedAt',
+  ];
+  const checklistRequiredFields = [
+    'id',
+    'taskId',
+    'title',
+    'status',
+    'sortKey',
+    'createdAt',
+    'updatedAt',
+  ];
+
+  function makeNewTaskOp(opId: string, taskId: string, projectId: string) {
+    return {
+      opId,
+      hlc: hlc1,
+      entity: 'task',
+      entityId: taskId,
+      op: 'upsert',
+      fields: taskRequiredFields,
+      row: {
+        id: taskId,
+        projectId,
+        title: 'Task',
+        content: '',
+        priority: 0,
+        status: 0,
+        reminders: [],
+        tags: [],
+        sortKey: 'a',
+        createdAt: 1000,
+        updatedAt: 1000,
+      },
+    };
+  }
+
+  function makeNewChecklistOp(opId: string, itemId: string, taskId: string) {
+    return {
+      opId,
+      hlc: hlc1,
+      entity: 'checklistItem',
+      entityId: itemId,
+      op: 'upsert',
+      fields: checklistRequiredFields,
+      row: {
+        id: itemId,
+        taskId,
+        title: 'Subitem',
+        status: 0,
+        sortKey: 'a',
+        createdAt: 1000,
+        updatedAt: 1000,
+      },
+    };
+  }
+
+  function makeContext(overrides: Partial<PlanPushContext> = {}): PlanPushContext {
+    return {
+      knownHome: new Map<string, string>(),
+      purgedSet: new Set<string>(),
+      memberships: {},
+      removedOwnerProjects: new Set<string>(),
+      ...overrides,
+    };
+  }
+
+  it('rejects viewer write on a new task and does not bind entityHome', () => {
+    const parsed = parsePushBatch([makeNewTaskOp('op-1', 't-view', 'p1')]);
+    const context = makeContext({
+      knownHome: new Map([['project:p1', 'u:owner']]),
+      memberships: { p1: 'viewer' },
+    });
+
+    const plan = planPushBatch({
+      pusherScope: 'u:viewer',
+      parsedOps: parsed.ops,
+      context,
+    });
+
+    expect(plan.opTargetScope).toEqual([null]);
+    expect(plan.results[0]).toEqual({
+      opId: 'op-1',
+      status: 'rejected',
+      reason: 'Forbidden',
+      row: null,
+      clocks: {},
+    });
+    expect(plan.inBatchNewHome.size).toBe(0);
+    expect(plan.listScopeTargets).toEqual([]);
+  });
+
+  it('accepts editor write on a new task and in-batch child without mutating context', () => {
+    const parsed = parsePushBatch([
+      makeNewTaskOp('op-1', 't-edit', 'p1'),
+      makeNewChecklistOp('op-2', 'c-edit', 't-edit'),
+    ]);
+    const originalHome = new Map([['project:p1', 'u:owner']]);
+    const context = makeContext({
+      knownHome: originalHome,
+      memberships: { p1: 'editor' },
+    });
+
+    const plan = planPushBatch({
+      pusherScope: 'u:editor',
+      parsedOps: parsed.ops,
+      context,
+    });
+
+    expect(plan.results).toEqual([null, null]);
+    expect(plan.opTargetScope).toEqual(['u:editor', 'u:editor']);
+    expect(plan.inBatchNewHome.get('task:t-edit')).toEqual({
+      entity: 'task',
+      entityId: 't-edit',
+      desiredScope: 'u:editor',
+    });
+    expect(plan.inBatchNewHome.get('checklistItem:c-edit')).toEqual({
+      entity: 'checklistItem',
+      entityId: 'c-edit',
+      desiredScope: 'u:editor',
+      parentTaskId: 't-edit',
+    });
+    expect(plan.listScopeTargets).toEqual([{ opIndex: 0, projectId: 'p1', scope: 'u:editor' }]);
+    // Pure planning must not mutate caller's context.knownHome
+    expect(originalHome.size).toBe(1);
+    expect(originalHome.has('task:t-edit')).toBe(false);
+  });
+
+  it('rejects in-batch child when parent task is rejected (Forbidden or id-in-other-scope)', () => {
+    // 1. Parent rejected as viewer Forbidden -> child inherits Forbidden
+    const viewerBatch = parsePushBatch([
+      makeNewTaskOp('op-t-forbid', 't-forbid', 'p1'),
+      makeNewChecklistOp('op-c-forbid', 'c-forbid', 't-forbid'),
+    ]);
+    const viewerPlan = planPushBatch({
+      pusherScope: 'u:viewer',
+      parsedOps: viewerBatch.ops,
+      context: makeContext({
+        knownHome: new Map([['project:p1', 'u:owner']]),
+        memberships: { p1: 'viewer' },
+      }),
+    });
+    expect(viewerPlan.opTargetScope).toEqual([null, null]);
+    expect(viewerPlan.results.map((r) => r?.reason)).toEqual(['Forbidden', 'Forbidden']);
+    expect(viewerPlan.inBatchNewHome.size).toBe(0);
+
+    // 2. Existing parent full-upsert in another scope -> child inherits id-in-other-scope
+    const collisionBatch = parsePushBatch([
+      makeNewTaskOp('op-t-collide', 't-existing', 'p1'),
+      makeNewChecklistOp('op-c-collide', 'c-new', 't-existing'),
+    ]);
+    const collisionPlan = planPushBatch({
+      pusherScope: 'u:editor',
+      parsedOps: collisionBatch.ops,
+      context: makeContext({
+        knownHome: new Map([
+          ['project:p1', 'u:owner'],
+          ['task:t-existing', 'u:owner'],
+        ]),
+        memberships: { p1: 'editor' },
+      }),
+    });
+    expect(collisionPlan.opTargetScope).toEqual([null, null]);
+    expect(collisionPlan.results.map((r) => r?.reason)).toEqual([
+      'id-in-other-scope',
+      'id-in-other-scope',
+    ]);
+  });
+
+  it('separates owner project delete into ownerProjectDeletes while routing non-owner delete to homeScope', () => {
+    const deleteOp = {
+      opId: 'op-del',
+      hlc: hlc1,
+      entity: 'project',
+      entityId: 'p1',
+      op: 'delete',
+      fields: [],
+      row: {},
+    };
+    const parsed = parsePushBatch([deleteOp]);
+
+    const ownerPlan = planPushBatch({
+      pusherScope: 'u:owner',
+      parsedOps: parsed.ops,
+      context: makeContext({
+        knownHome: new Map([['project:p1', 'u:owner']]),
+        memberships: { p1: 'owner' },
+      }),
+    });
+    expect(ownerPlan.opTargetScope).toEqual([null]);
+    expect(ownerPlan.ownerProjectDeletes).toEqual([
+      { opIndex: 0, projectId: 'p1', homeScope: 'u:owner', opId: 'op-del' },
+    ]);
+
+    const editorPlan = planPushBatch({
+      pusherScope: 'u:editor',
+      parsedOps: parsed.ops,
+      context: makeContext({
+        knownHome: new Map([['project:p1', 'u:owner']]),
+        memberships: { p1: 'editor' },
+      }),
+    });
+    expect(editorPlan.opTargetScope).toEqual(['u:owner']);
+    expect(editorPlan.ownerProjectDeletes).toEqual([]);
   });
 });
