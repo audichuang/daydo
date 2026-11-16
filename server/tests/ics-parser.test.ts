@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { eventToTaskDraft, parseIcs } from '../src/ics/parser';
+import { eventToTaskDraft, parseIcs, seriesSignatures } from '../src/ics/parser';
 import { IcsError, type ParsedEvent } from '../src/ics/types';
 
 const wrap = (vevents: string) =>
@@ -369,6 +369,25 @@ describe('parseIcs time zone parameter', () => {
 
   it('throws IcsError for malformed input', () => {
     expect(() => parseIcs('not a calendar')).toThrow(IcsError);
+  });
+});
+
+describe('seriesSignatures', () => {
+  const vevent = (uid: string, lines: string[]) => ['BEGIN:VEVENT', `UID:${uid}`, 'SUMMARY:x', ...lines, 'END:VEVENT'].join('\r\n');
+
+  it('matches the signature parseIcs stamps on slots, for recurring masters only', () => {
+    const ics = wrap(
+      [
+        vevent('bare-date', ['DTSTART:20260105', 'RRULE:FREQ=WEEKLY;COUNT=2']),
+        vevent('zoned', ['DTSTART;TZID=America/New_York:20260105T090000', 'RRULE:FREQ=DAILY;COUNT=2']),
+        vevent('rdate', ['DTSTART:20260105T010000Z', 'RDATE:20260110T010000Z']),
+        vevent('single', ['DTSTART:20260105T010000Z']),
+      ].join('\r\n'),
+    );
+    const fromSlots = new Map(parseIcs(ics, { from: 0, to: Date.parse('2027-01-01') }).map((e) => [e.uid, e.seriesSignature]));
+    const signatures = seriesSignatures(ics);
+    expect([...signatures.keys()].sort()).toEqual(['bare-date', 'rdate', 'zoned']);
+    for (const [uid, signature] of signatures) expect(signature).toBe(fromSlots.get(uid));
   });
 });
 

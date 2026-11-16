@@ -3,7 +3,6 @@
 // so a lost response or a restart retries the same id. A mapping's fingerprint is committed only after
 // the push response row shows every intended field applied; a removed event's mapping is deleted only
 // after its task is confirmed in the trash.
-import ICAL from 'ical.js';
 import { scheduleToAPI, type Schedule } from '../domain/schedule';
 import { before } from '../domain/sortKey';
 import { uuidv7 } from '../domain/uuid';
@@ -13,7 +12,7 @@ import type { ServerHlcClock } from '../sync/hlc';
 import type { AppDb, ScopeStub } from '../sync/push';
 import { fetchIcs, type FetchIcsOptions } from './fetch';
 import { applyFilter } from './filters';
-import { eventToTaskDraft, parseIcs } from './parser';
+import { eventToTaskDraft, parseIcs, seriesSignatures } from './parser';
 import {
   IcsLeaseLostError,
   LEASE_TTL_MS,
@@ -35,6 +34,8 @@ const CANCELLED_PREFIX = '[已取消] ';
 const MASS_DELETE_RATIO = 0.5;
 const MASS_DELETE_MIN = 5;
 const PROJECT_PURGED = 'Project is purged';
+const SINGLE_TO_SERIES = 'A single event became a recurring series; review before writing (original task preserved)';
+const SERIES_REDEFINED = 'Recurring series definition changed; review correspondence before writing';
 
 export interface IcsEngineDeps {
   store: IcsStore;
@@ -100,18 +101,15 @@ function seriesCore(signature: string): string {
 }
 
 /**
- * UIDs whose master carries RRULE or RDATE. Their mapped slots may sit beyond the current expansion
- * window, so a missing slot is not a source deletion. Called only after parseIcs accepted the text.
+ * UTC instant of a slot's original start, from its occurrenceId (`UTC:`, `DATE:` or `FLOAT:`).
+ * Date and floating slots are read as UTC; callers allow a day of slack. NaN when unrecognised.
  */
-function recurringUids(text: string): Set<string> {
-  // ICAL.parse throws on a byte-order mark; fetchIcs's TextDecoder already drops it.
-  const root = new ICAL.Component(ICAL.parse(text));
-  return new Set(
-    root
-      .getAllSubcomponents('vevent')
-      .filter((c) => !c.hasProperty('recurrence-id') && (c.hasProperty('rrule') || c.hasProperty('rdate')))
-      .map((c) => String(c.getFirstPropertyValue('uid'))),
-  );
+function slotInstant(occurrenceId: string): number {
+  const [kind, value] = [occurrenceId.slice(0, occurrenceId.indexOf(':')), occurrenceId.slice(occurrenceId.indexOf(':') + 1)];
+  if (kind === 'UTC') return Date.parse(value);
+  if (kind === 'DATE') return Date.parse(`${value}T00:00:00Z`);
+  if (kind === 'FLOAT') return Date.parse(`${value}Z`);
+  return NaN;
 }
 
 /** The feed carries an earlier revision than the one already recorded. */
@@ -371,40 +369,50 @@ export async function syncSource(
     const byUid = new Map<string, IcsMapping[]>();
     for (const m of mappings) byUid.set(m.icsUid, [...(byUid.get(m.icsUid) ?? []), m]);
     const text = await fetchIcs(source.url, deps.fetchOptions);
+    const expandTo = nowMs + futureDays * DAY_MS;
     const parsed = parseIcs(
       text,
-      { from: nowMs - pastDays * DAY_MS, to: nowMs + futureDays * DAY_MS, includeIdentities: new Set(existing.keys()) },
+      { from: nowMs - pastDays * DAY_MS, to: expandTo, includeIdentities: new Set(existing.keys()) },
       zone,
     );
     const sourceIdentities = new Set(parsed.map((e) => identity(e.uid, e.occurrenceId)));
-    const seriesUids = recurringUids(text);
+    // Read from each master, not from the slots parsed in the window.
+    const series = seriesSignatures(text, zone);
+
+    // Refuse, per UID, a single event turned recurring and a redefined rule (anything but the series
+    // end): their slots cannot be matched safely. Nothing of a refused UID is written or removed;
+    // the other events of the source still sync.
+    const refused = new Map<string, string>();
+    for (const [uid, signature] of series) {
+      if (existing.has(identity(uid))) refused.set(uid, SINGLE_TO_SERIES);
+      else if ((byUid.get(uid) ?? []).some((m) => m.seriesSignature && seriesCore(m.seriesSignature) !== seriesCore(signature))) {
+        refused.set(uid, SERIES_REDEFINED);
+      }
+    }
+    // An exception of a single event that is still mapped, with no recurring master in the feed.
+    for (const e of parsed) {
+      if (e.occurrenceId && !refused.has(e.uid) && existing.has(identity(e.uid))) refused.set(e.uid, SINGLE_TO_SERIES);
+    }
+    for (const [uid, reason] of refused) {
+      stats.errors++;
+      stats.lastError = `${reason} (UID ${uid})`;
+      stats.changes?.push({ uid, occurrenceId: '', action: 'error', reason });
+      for (const m of byUid.get(uid) ?? []) {
+        if (!dryRun && m.state !== 'purged') commits.push({ ...m, state: m.state, lastError: reason });
+      }
+    }
+
     // The date window limits new imports (parseIcs); identities already imported still update when
     // moved outside it. Keyword exclusions apply to live events only: a cancellation always lands.
+    const accepted = parsed.filter((e) => !refused.has(e.uid));
     const events = [
       ...applyFilter(
-        parsed.filter((e) => !e.cancelled),
+        accepted.filter((e) => !e.cancelled),
         { ...source.filter, futureDays: undefined, pastDays: undefined },
         nowMs,
       ),
-      ...parsed.filter((e) => e.cancelled),
+      ...accepted.filter((e) => e.cancelled),
     ];
-
-    // Fail before any write on a single event turned recurring, or on a redefined rule. Moving only
-    // the series end (UNTIL/COUNT) is safe while every mapped slot still exists.
-    for (const event of events) {
-      if (event.occurrenceId && existing.has(identity(event.uid))) {
-        throw new IcsError('A single event became a recurring series; review before writing (original task preserved)');
-      }
-      if (!event.seriesSignature) continue;
-      const series = byUid.get(event.uid) ?? [];
-      for (const m of series) {
-        if (!m.seriesSignature || m.seriesSignature === event.seriesSignature) continue;
-        const slotsKept = series.every((o) => sourceIdentities.has(identity(o.icsUid, o.occurrenceId)));
-        if (!slotsKept || seriesCore(m.seriesSignature) !== seriesCore(event.seriesSignature)) {
-          throw new IcsError('Recurring series definition changed; review correspondence before writing');
-        }
-      }
-    }
     // A bare cancelled UID cancels its mapped slots without inventing new tasks.
     const slotCancels = events
       .filter((e) => e.cancelled && !e.occurrenceId)
@@ -413,11 +421,16 @@ export async function syncSource(
       );
     const all = [...events, ...slotCancels];
 
-    // A validated full snapshot controls existence as well as event fields. Keyword exclusions and
-    // recurring slots outside the expansion window are not source deletions.
+    // A validated full snapshot controls existence as well as event fields. Keyword exclusions are
+    // not source deletions. parseIcs visits every slot of a series that starts before expandTo, so a
+    // mapped slot missing from there was dropped (an earlier UNTIL or COUNT, a removed RDATE). Slots
+    // that may lie later stay; the day of slack covers floating slots read as UTC.
     const eventKeys = new Set(all.map((e) => identity(e.uid, e.occurrenceId)));
+    const keepSlot = (m: IcsMapping) =>
+      refused.has(m.icsUid) ||
+      (!!m.occurrenceId && series.has(m.icsUid) && !(slotInstant(m.occurrenceId) < expandTo - DAY_MS));
     const removedMappings = [...existing]
-      .filter(([k, m]) => !(eventKeys.has(k) || sourceIdentities.has(k) || (m.occurrenceId && seriesUids.has(m.icsUid))))
+      .filter(([k, m]) => !(eventKeys.has(k) || sourceIdentities.has(k) || keepSlot(m)))
       .map(([, m]) => m);
     if (
       removedMappings.length >= MASS_DELETE_MIN &&

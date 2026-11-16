@@ -339,12 +339,12 @@ describe('M15b cancellation', () => {
     }
   });
 
-  it('cancels every mapped slot when a bare cancelled master without DTSTART replaces the series', async () => {
+  it.each([[], ['RRULE:FREQ=WEEKLY;COUNT=3']])('cancels every mapped slot when a bare cancelled master without DTSTART replaces the series %j', async (...rule: string[]) => {
     const h = createHarness(calendar(event(['RRULE:FREQ=WEEKLY;COUNT=3'])));
     const source = await seedSource(h);
     await sync(h, 'u-a', source.id);
     expect(await h.store.listMappings('u-a', source.id)).toHaveLength(3);
-    h.setFeed(calendar(['BEGIN:VEVENT', 'UID:meeting-a', 'STATUS:CANCELLED', 'END:VEVENT'].join('\r\n')));
+    h.setFeed(calendar(['BEGIN:VEVENT', 'UID:meeting-a', 'STATUS:CANCELLED', ...rule, 'END:VEVENT'].join('\r\n')));
     expect(await sync(h, 'u-a', source.id)).toMatchObject({ deleted: 3, created: 0, errors: 0 });
     const tasks = pulledTasks(await h.pull('u-a'));
     expect(tasks).toHaveLength(3);
@@ -575,18 +575,177 @@ describe('M15b redefinition guard', () => {
     expect(h2.icsPushes()).toBe(pushes2);
   });
 
-  it('accepts a series whose end moved while every mapped slot remains, and blocks one that drops a slot', async () => {
+  it('accepts a series whose end moved later, and trashes the slots a shorter end drops', async () => {
     const h = createHarness(calendar(event(['RRULE:FREQ=WEEKLY;COUNT=3'])));
     const source = await seedSource(h);
     expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 3, errors: 0 });
     h.setFeed(calendar(event(['RRULE:FREQ=WEEKLY;UNTIL=20261023T010000Z'])));
     expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 1, skipped: 3, errors: 0 });
     expect(new Set((await h.store.listMappings('u-a', source.id)).map((m) => m.seriesSignature)).size).toBe(1);
+    h.setFeed(calendar(event(['RRULE:FREQ=WEEKLY;COUNT=2'])));
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ errors: 0, deleted: 2, skipped: 2 });
+    expect(await liveTasks(h)).toHaveLength(2);
+    expect((await h.store.listMappings('u-a', source.id)).map((m) => m.occurrenceId).sort()).toEqual([
+      'UTC:2026-10-02T01:00:00Z',
+      'UTC:2026-10-09T01:00:00Z',
+    ]);
+  });
+
+  it('trashes the slot of a removed RDATE', async () => {
+    const h = createHarness(calendar(event(['RRULE:FREQ=WEEKLY;COUNT=2', 'RDATE:20261020T010000Z'])));
+    const source = await seedSource(h);
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 3, errors: 0 });
+    const extra = (await h.store.listMappings('u-a', source.id)).find((m) => m.occurrenceId === 'UTC:2026-10-20T01:00:00Z')!;
+    h.setFeed(calendar(event(['RRULE:FREQ=WEEKLY;COUNT=2'])));
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ deleted: 1, skipped: 2, errors: 0 });
+    expect(await taskOf(h, extra.taskId)).toMatchObject({ deletedAt: NOW });
+    expect(await liveTasks(h)).toHaveLength(2);
+  });
+
+  it('trashes only the slots an earlier UNTIL drops, and keeps the rest of the series and the source syncing', async () => {
+    const other = (summary: string) => event([], 'other').replace('SUMMARY:Meeting', `SUMMARY:${summary}`);
+    const h = createHarness(calendar(event(['RRULE:FREQ=WEEKLY;COUNT=4']), other('Other')));
+    const source = await seedSource(h);
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 5, errors: 0 });
+    const slots = await h.store.listMappings('u-a', source.id);
+    const slotTask = (occurrenceId: string) => slots.find((m) => m.occurrenceId === occurrenceId)!.taskId;
+    const kept = ['UTC:2026-10-02T01:00:00Z', 'UTC:2026-10-09T01:00:00Z'].map(slotTask);
+    const dropped = ['UTC:2026-10-16T01:00:00Z', 'UTC:2026-10-23T01:00:00Z'].map(slotTask);
+
+    // "This and following" in a calendar app: the series ends earlier and the rest moves to a new UID.
+    const shortened = event(['RRULE:FREQ=WEEKLY;UNTIL=20261009T010000Z']);
+    const following = event(['RRULE:FREQ=WEEKLY;COUNT=2'], 'meeting-b').replaceAll('20261002', '20261016');
+    h.setFeed(calendar(shortened, following, other('Other renamed')));
+    const preview = await sync(h, 'u-a', source.id, { dryRun: true });
+    expect(preview).toMatchObject({ deleted: 2, created: 2, updated: 1, errors: 0 });
+
+    const stats = await sync(h, 'u-a', source.id, { includeChanges: true });
+    expect(stats).toMatchObject({ deleted: 2, created: 2, updated: 1, skipped: 2, errors: 0 });
+    expect(new Set(stats.changes?.filter((c) => c.action === 'delete').map((c) => c.taskId))).toEqual(new Set(dropped));
+    for (const id of dropped) expect(await taskOf(h, id)).toMatchObject({ deletedAt: NOW });
+    const live = await liveTasks(h);
+    expect(live.map((t) => t.title).sort()).toEqual(['Meeting', 'Meeting', 'Meeting', 'Meeting', 'Other renamed']);
+    for (const id of kept) expect(live.some((t) => t.id === id)).toBe(true);
+    expect((await h.store.getSource('u-a', source.id))?.lastStatus).toBe('success');
+
+    const mappings = await h.store.listMappings('u-a', source.id);
+    expect(mappings).toHaveLength(5);
+    expect(new Set(mappings.filter((m) => m.icsUid === 'meeting-a').map((m) => m.seriesSignature)).size).toBe(1);
+    const pushes = h.icsPushes();
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 0, updated: 0, deleted: 0, errors: 0 });
+    expect(h.icsPushes()).toBe(pushes);
+  });
+
+  it('keeps vanished series slots under the mass-delete guard', async () => {
+    const h = createHarness(calendar(event(['RRULE:FREQ=WEEKLY;COUNT=10'])));
+    const source = await seedSource(h);
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 10, errors: 0 });
     const pushes = h.icsPushes();
     h.setFeed(calendar(event(['RRULE:FREQ=WEEKLY;COUNT=2'])));
-    expect(await sync(h, 'u-a', source.id)).toMatchObject({ errors: 1, deleted: 0 });
+    const refused = await sync(h, 'u-a', source.id);
+    expect(refused).toMatchObject({ deleted: 0, errors: 1 });
+    expect(refused.lastError).toContain('safety check');
     expect(h.icsPushes()).toBe(pushes);
-    expect(await liveTasks(h)).toHaveLength(4);
+    expect(await liveTasks(h)).toHaveLength(10);
+    expect(await sync(h, 'u-a', source.id, { allowMassDelete: true })).toMatchObject({ deleted: 8, errors: 0 });
+    expect(await liveTasks(h)).toHaveLength(2);
+  });
+
+  it('refuses only the redefined UID and keeps syncing the other events of the source', async () => {
+    const other = (summary: string) => event([], 'other').replace('SUMMARY:Meeting', `SUMMARY:${summary}`);
+    const h = createHarness(calendar(event(['RRULE:FREQ=WEEKLY;COUNT=3']), other('Other')));
+    const source = await seedSource(h);
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 4, errors: 0 });
+    const series = (await h.store.listMappings('u-a', source.id)).filter((m) => m.icsUid === 'meeting-a');
+
+    const redefined = event(['RRULE:FREQ=DAILY;COUNT=3']).replace('SUMMARY:Meeting', 'SUMMARY:Daily now');
+    h.setFeed(calendar(redefined, other('Other renamed'), event([], 'fresh')));
+    const preview = await sync(h, 'u-a', source.id, { dryRun: true, includeChanges: true });
+    expect(preview).toMatchObject({ errors: 1, updated: 1, created: 1, deleted: 0 });
+    expect(preview.lastError).toMatch(/series definition changed/i);
+
+    const stats = await sync(h, 'u-a', source.id, { includeChanges: true });
+    expect(stats).toMatchObject({ errors: 1, updated: 1, created: 1, deleted: 0 });
+    expect(stats.lastError).toMatch(/series definition changed/i);
+    expect(stats.changes?.filter((c) => c.action === 'error').map((c) => c.uid)).toEqual(['meeting-a']);
+    expect((await h.store.getSource('u-a', source.id))?.lastStatus).toBe('partial');
+    const live = await liveTasks(h);
+    expect(live).toHaveLength(5);
+    for (const m of series) expect(live.find((t) => t.id === m.taskId)).toMatchObject({ title: 'Meeting' });
+    expect(live.filter((t) => t.title === 'Other renamed')).toHaveLength(1);
+    const after = await h.store.listMappings('u-a', source.id);
+    for (const m of after.filter((x) => x.icsUid === 'meeting-a')) {
+      expect(m.lastError).toMatch(/series definition changed/i);
+      expect(m.fingerprint).toBe(series.find((s) => s.occurrenceId === m.occurrenceId)!.fingerprint);
+    }
+    expect(after.filter((x) => x.icsUid === 'meeting-a')).toHaveLength(3);
+  });
+
+  it('detects a single event turned series and a redefined series outside the window, writing nothing to them', async () => {
+    const later = NOW + 30 * 86_400_000;
+    const fresh = event([], 'fresh').replaceAll('20261002', '20261105');
+    const h = createHarness(calendar(event(), event(['RRULE:FREQ=WEEKLY;COUNT=2'], 'series-b')));
+    const source = await seedSource(h);
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 3, errors: 0 });
+    const before = await h.store.listMappings('u-a', source.id);
+    const single = before.find((m) => m.icsUid === 'meeting-a')!;
+
+    // Both changes sit before the window a month later; only the new meeting is inside it.
+    h.setFeed(calendar(event(['RRULE:FREQ=WEEKLY;COUNT=2']), event(['RRULE:FREQ=DAILY;COUNT=2'], 'series-b'), fresh));
+    const preview = await sync(h, 'u-a', source.id, { dryRun: true }, later);
+    expect(preview).toMatchObject({ errors: 2, deleted: 0, created: 1 });
+
+    const stats = await sync(h, 'u-a', source.id, { includeChanges: true }, later);
+    expect(stats).toMatchObject({ errors: 2, deleted: 0, created: 1 });
+    expect(new Set(stats.changes?.filter((c) => c.action === 'error').map((c) => c.uid))).toEqual(new Set(['meeting-a', 'series-b']));
+    expect((await h.store.getSource('u-a', source.id))?.lastStatus).toBe('partial');
+    const tasks = pulledTasks(await h.pull('u-a'));
+    expect(tasks).toHaveLength(4);
+    expect(tasks.every(isLive)).toBe(true);
+    const after = await h.store.listMappings('u-a', source.id);
+    expect(after.find((m) => m.icsUid === 'meeting-a')).toMatchObject({ occurrenceId: '', taskId: single.taskId });
+    expect(after.find((m) => m.icsUid === 'meeting-a')?.lastError).toMatch(/single event became a recurring series/i);
+    expect(after.filter((m) => m.icsUid === 'series-b')).toHaveLength(2);
+  });
+
+  it('refuses an exception that replaces a mapped single event without trashing the task', async () => {
+    const h = createHarness();
+    const source = await seedSource(h);
+    await sync(h, 'u-a', source.id);
+    const { taskId } = await onlyMapping(h, source.id);
+    h.setFeed(calendar(event(['RECURRENCE-ID:20261002T010000Z'])));
+    const stats = await sync(h, 'u-a', source.id);
+    expect(stats).toMatchObject({ errors: 1, created: 0, deleted: 0 });
+    expect(stats.lastError).toMatch(/single event became a recurring series/i);
+    expect((await liveTasks(h)).map((t) => t.id)).toEqual([taskId]);
+    expect(await onlyMapping(h, source.id)).toMatchObject({ occurrenceId: '', taskId });
+  });
+
+  it('keeps a floating slot that a narrower window ends just before, in a zone behind UTC', async () => {
+    // 20:00 in Los Angeles is 03:00Z the next day; the slot's id reads 20:00 as UTC.
+    const floating = event(['RRULE:FREQ=WEEKLY;COUNT=3'])
+      .replace('DTSTART:20261002T010000Z', 'DTSTART:20261002T200000')
+      .replace('DTEND:20261002T020000Z', 'DTEND:20261002T210000');
+    const h = createHarness(calendar(floating));
+    await seedSource(h);
+    const source = await h.store.addSource('u-a', { name: 'LA', url: FEED_URL, projectId: 'p1', timezone: 'America/Los_Angeles' });
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 3, errors: 0 });
+    // The window now ends at 2026-10-10T00:00Z: after 2026-10-09T20:00 read as UTC, before the real start.
+    const narrowed = { ...(await h.store.getSource('u-a', source.id))!, filter: { futureDays: 9 } };
+    vi.spyOn(h.store, 'getSource').mockResolvedValue(narrowed);
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ deleted: 0, errors: 0 });
+    expect(await h.store.listMappings('u-a', source.id)).toHaveLength(3);
+  });
+
+  it('trashes the slots a shorter series drops even when none of it is inside the window', async () => {
+    const later = NOW + 30 * 86_400_000;
+    const h = createHarness(calendar(event(['RRULE:FREQ=WEEKLY;COUNT=3'])));
+    const source = await seedSource(h);
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 3, errors: 0 });
+    const first = (await h.store.listMappings('u-a', source.id)).find((m) => m.occurrenceId === 'UTC:2026-10-02T01:00:00Z')!;
+    h.setFeed(calendar(event(['RRULE:FREQ=WEEKLY;UNTIL=20261002T010000Z'])));
+    expect(await sync(h, 'u-a', source.id, {}, later)).toMatchObject({ deleted: 2, errors: 0 });
+    expect((await liveTasks(h)).map((t) => t.id)).toEqual([first.taskId]);
   });
 });
 

@@ -471,9 +471,11 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 4. **來源清單必須存在且可寫**（role 為 owner／editor）。不可寫時整輪記一次 `error` 就停，什麼都不寫。這涵蓋清單被刪、被降成 viewer、被移出。
 5. 依序執行：
    - `fetchIcs` → `parseIcs` → 只套關鍵字的 filter。
-   - 重新定義防護。
-   - `removed` 計算。
-   - 大量刪除防護：≥5 筆且超過已匯入數的一半時整輪拒絕，什麼都不寫。cron 永不傳 `allowMassDelete`。
+   - 重新定義防護，**以 UID 為單位**：依各 UID 的 master（不看時間窗內展開出哪些 slot）判斷，下列情況該 UID 記一次錯誤、在它的 mapping 留 `lastError`，不寫入也不刪除它的任務，同一來源的其他事件照常同步。
+     - 單一事件變成重複系列：master 現在有 RRULE／RDATE，而 mapping 裡有 `occurrenceId=''` 的那筆；或只剩一個 RECURRENCE-ID 例外取代了已匯入的單一事件。
+     - 規則被改：去掉 UNTIL／COUNT 後的 `seriesSignature`（DTSTART 與 RRULE）和 mapping 存的不同，例如改了 FREQ、BYDAY、DTSTART。
+   - `removed` 計算：關鍵字排除的事件不算刪除。重複系列只改了結尾（UNTIL／COUNT 提前、行事曆的「這次及以後」拆成新 UID、拿掉 RDATE）時，展開範圍內（slot 的原始時間早於時間窗結尾減一天）已匯入、但來源已沒有的 slot 算來源刪除，走第 9 點的軟刪除；可能落在時間窗之後的 slot 保留。
+   - 大量刪除防護：≥5 筆且超過已匯入數的一半時整輪拒絕，什麼都不寫。cron 永不傳 `allowMassDelete`。系列縮短刪掉的 slot 也算在內。
 6. **新事件**（沒有 mapping）：
    - 先 `reserveMappings`，給每個 key 一個 UUIDv7 taskId，狀態 `pending`。
    - 然後用一次（或切塊）push 送出完整的建立 op。
@@ -574,7 +576,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 - DCR 依 IP 限速，攻擊者換很多 IP 仍可灌入 client 列（只會讓表變大，不影響已連線的使用者）。`/token` 與 `/authorize` 沒有限速：code 與 state 都是 256-bit 隨機值。
 - MCP 與 ICS 寫入要等 App 下次 pull 才看得到（沒有推播）。
 - 重複任務的副本與原任務若落在不同範圍（共享清單），兩邊的更新不是原子的，與 App 相同。
-- 在同一份來源中重新定義重複系列時，ICS 拒絕寫入，需要人工處理，與 REF 相同。
+- 在同一份來源中重新定義重複系列（改 FREQ、BYDAY、DTSTART，或單一事件改成重複）時，ICS 不寫入該 UID，每輪記一次錯誤，需要人工處理；同一來源的其他事件照常同步。只改結尾時刪掉的 slot 會移到垃圾桶。
 - ICS 任務被移到使用者看不到的清單時，該 mapping 每輪記一次錯誤，不重建。
 - ICS 的 `CATEGORIES` 不轉成標籤。
 

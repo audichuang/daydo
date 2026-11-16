@@ -91,16 +91,10 @@ function validateEnvelope(text: string): string {
 }
 
 /**
- * Expand RFC recurrence slots, applying exceptions independently of feed order.
- * `zone` is the IANA zone floating times are read in (the source's timezone).
+ * Validated calendar as each UID's winning revision per slot ('' is the master, others are
+ * RECURRENCE-ID identities), with TZIDs resolved. `zone` reads floating times.
  */
-export function parseIcs(
-  text: string,
-  window: ParseWindow = { from: -Infinity, to: Date.now() + 90 * 86400000 },
-  zone: string = FALLBACK_TIMEZONE,
-): ParsedEvent[] {
-  requireValid(isValidTimeZone(zone), `Unknown time zone: ${zone}`);
-  requireValid(window.from < window.to && Number.isFinite(window.to), 'Invalid ICS expansion window');
+function readRevisions(text: string, zone: string): Map<string, Map<string, Component>> {
   const root = new ICAL.Component(ICAL.parse(validateEnvelope(text)));
   requireValid(root.name === 'vcalendar' && root.getFirstPropertyValue('version') === '2.0', 'Expected VCALENDAR VERSION:2.0');
   const groups = new Map<string, Component[]>();
@@ -125,8 +119,7 @@ export function parseIcs(
     group.push(component);
     groups.set(uid, group);
   }
-  const output = new Map<string, ParsedEvent>();
-  let iterations = 0;
+  const out = new Map<string, Map<string, Component>>();
   for (const [uid, components] of groups) {
     const revisions = new Map<string, Component>();
     for (const component of components) {
@@ -138,10 +131,49 @@ export function parseIcs(
       if (!previous || seq > oldSeq || seq === oldSeq && stamp > oldStamp) revisions.set(slot, component);
       else if (seq === oldSeq && stamp === oldStamp) requireValid(component.toString() === previous.toString(), 'Conflicting ICS revisions');
     }
+    out.set(uid, revisions);
+  }
+  return out;
+}
+
+/** DTSTART plus the RRULEs of a master that recurs (RRULE or RDATE); undefined otherwise. */
+function seriesSignature(master: Component | undefined): string | undefined {
+  return master && new ICAL.Event(master, { exceptions: [] }).isRecurring()
+    ? JSON.stringify([master.getFirstProperty('dtstart')?.toICALString(), ...master.getAllProperties('rrule').map(p => p.toICALString()).sort()]) : undefined;
+}
+
+/**
+ * The `seriesSignature` of every UID whose master (with DTSTART) recurs, read from the master
+ * itself, so it does not depend on which slots fall inside an expansion window.
+ */
+export function seriesSignatures(text: string, zone: string = FALLBACK_TIMEZONE): Map<string, string> {
+  requireValid(isValidTimeZone(zone), `Unknown time zone: ${zone}`);
+  const out = new Map<string, string>();
+  for (const [uid, revisions] of readRevisions(text, zone)) {
+    const master = revisions.get('');
+    const signature = master?.hasProperty('dtstart') ? seriesSignature(master) : undefined;
+    if (signature !== undefined) out.set(uid, signature);
+  }
+  return out;
+}
+
+/**
+ * Expand RFC recurrence slots, applying exceptions independently of feed order.
+ * `zone` is the IANA zone floating times are read in (the source's timezone).
+ */
+export function parseIcs(
+  text: string,
+  window: ParseWindow = { from: -Infinity, to: Date.now() + 90 * 86400000 },
+  zone: string = FALLBACK_TIMEZONE,
+): ParsedEvent[] {
+  requireValid(isValidTimeZone(zone), `Unknown time zone: ${zone}`);
+  requireValid(window.from < window.to && Number.isFinite(window.to), 'Invalid ICS expansion window');
+  const output = new Map<string, ParsedEvent>();
+  let iterations = 0;
+  for (const [uid, revisions] of readRevisions(text, zone)) {
     const master = revisions.get('');
     const exceptions = [...revisions].filter(([slot]) => slot !== '').map(([, c]) => c);
-    const signature = master && new ICAL.Event(master, { exceptions: [] }).isRecurring()
-      ? JSON.stringify([master.getFirstProperty('dtstart')?.toICALString(), ...master.getAllProperties('rrule').map(p => p.toICALString()).sort()]) : undefined;
+    const signature = seriesSignature(master);
     const emit = (item: InstanceType<typeof ICAL.Event>, start: IcalTime, end: IcalTime, recurrence?: IcalTime, excluded = false) => {
       const cancelled = excluded || String(item.component.getFirstPropertyValue('status')).toUpperCase() === 'CANCELLED';
       const startIso = iso(start, zone);
