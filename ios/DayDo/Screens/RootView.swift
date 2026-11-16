@@ -64,8 +64,8 @@ struct RootView: View {
                                             edgeDrawerDrag = max(0, tx)
                                         },
                                         onEnded: { tx, vx in
-                                            let drawerW = min(rootWidth * 0.82, 340)
-                                            let shouldOpen = tx > drawerW * 0.5 || (vx > 500 && tx > 12)
+                                            let drawerW = DrawerMetrics.width(for: rootWidth)
+                                            let shouldOpen = DrawerMetrics.shouldOpen(translationX: tx, velocityX: vx, drawerWidth: drawerW)
                                             if shouldOpen {
                                                 withAnimation(Motion.drawer(reduceMotion)) {
                                                     model.drawerOpen = true
@@ -221,9 +221,7 @@ struct BottomNav: View {
         let on = tab == t
         return Button {
             if tab != t {
-                withAnimation(Motion.tab(reduceMotion)) {
-                    tab = t
-                }
+                tab = t
             }
             if !reduceMotion {
                 bounceCount[t, default: 0] += 1

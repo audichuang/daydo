@@ -37,6 +37,7 @@ struct CalendarScreen: View {
     @State private var memberFilter: String?
     @State private var projectFilter: String?
     @State private var tasks: [TodoTask] = []
+    @State private var loadedQuery: CalQueryKey?
     @State private var hDragOffset: CGFloat = 0
     @State private var collapseDragY: CGFloat = 0
     @State private var shiftDir = 0
@@ -108,6 +109,7 @@ struct CalendarScreen: View {
         projectFilter = nil
         selected = day
         month = day.firstOfMonth
+        // Direct jump without animation or haptic on deep-link navigation.
         shiftDir = 0
         pageSequence += 1
         if mode == .year {
@@ -278,11 +280,20 @@ struct CalendarScreen: View {
     }
 
     func load() async {
+        let currentQuery = CalQueryKey(range: range, member: memberFilter, completed: showCompleted)
         let q = TaskQuery(from: range.lowerBound, to: range.upperBound, includeCompleted: showCompleted, memberId: memberFilter)
         do {
             let loaded = try await model.api.listTasks(q)
             guard !Task.isCancelled else { return }
-            tasks = loaded
+            if loadedQuery == currentQuery {
+                withAnimation(Motion.layout(reduceMotion)) {
+                    tasks = loaded
+                    loadedQuery = currentQuery
+                }
+            } else {
+                tasks = loaded
+                loadedQuery = currentQuery
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -295,13 +306,36 @@ struct CalendarScreen: View {
         return tasks.filter { $0.projectId == projectFilter }
     }
 
+    private enum PageHaptic {
+        case none, selection, pageShift
+    }
+
+    /// Sets `shiftDir` before entering `withAnimation` so `pageTransition` reads the target direction.
+    private func shiftPage(
+        direction: Int,
+        token: MotionToken = Motion.toggle,
+        haptic: PageHaptic = .selection,
+        bumpPage: Bool = true,
+        update: () -> Void
+    ) {
+        shiftDir = direction
+        switch haptic {
+        case .none: break
+        case .selection: dateSelectionHaptic += 1
+        case .pageShift: pageShiftHaptic += 1
+        }
+        withAnimation(token(reduceMotion)) {
+            update()
+            if bumpPage {
+                pageSequence += 1
+            }
+        }
+    }
+
     func goToday() {
-        dateSelectionHaptic += 1
-        shiftDir = 0
-        withAnimation(Motion.toggle(reduceMotion)) {
+        shiftPage(direction: 0) {
             selected = model.today
             month = model.today.firstOfMonth
-            pageSequence += 1
         }
     }
 
@@ -322,11 +356,8 @@ struct CalendarScreen: View {
     }
 
     func shift(_ dir: Int) {
-        shiftDir = dir
-        pageShiftHaptic += 1
-        withAnimation(Motion.page(reduceMotion)) {
+        shiftPage(direction: dir, token: Motion.page, haptic: .pageShift) {
             applyShift(dir)
-            pageSequence += 1
         }
     }
 
@@ -348,11 +379,8 @@ struct CalendarScreen: View {
         let projected = tx + vx * 0.12
         if abs(tx) > 70 || (abs(vx) > 450 && abs(projected) > 40) {
             let dir = projected < 0 ? 1 : -1
-            shiftDir = dir
-            pageShiftHaptic += 1
-            withAnimation(Motion.page(reduceMotion)) {
+            shiftPage(direction: dir, token: Motion.page, haptic: .pageShift) {
                 applyShift(dir)
-                pageSequence += 1
                 hDragOffset = 0
             }
         } else {
@@ -431,23 +459,17 @@ struct CalendarScreen: View {
                 ScrollView {
                     ZStack {
                         YearGrid(year: shownMonth.year, today: model.today, busy: busyDays, isRegular: isRegular, openMonth: { m in
-                            dateSelectionHaptic += 1
-                            shiftDir = 0
-                            withAnimation(Motion.toggle(reduceMotion)) {
+                            shiftPage(direction: 0) {
                                 month = m
                                 selected = m
                                 modeRaw = CalMode.list.rawValue
                                 collapsed = false
-                                pageSequence += 1
                             }
                         }, openDay: { d in
-                            dateSelectionHaptic += 1
-                            shiftDir = 0
-                            withAnimation(Motion.toggle(reduceMotion)) {
+                            shiftPage(direction: 0) {
                                 selected = d
                                 month = d.firstOfMonth
                                 modeRaw = CalMode.day.rawValue
-                                pageSequence += 1
                             }
                         })
                         .id("year-\(pageSequence)")
@@ -478,12 +500,9 @@ struct CalendarScreen: View {
                              openTask: { model.openTask($0, inlineAvailable: false) },
                              tapSlot: { d, m in compose(day: d, minute: m) },
                              tapDay: { d in
-                                dateSelectionHaptic += 1
-                                shiftDir = 0
-                                withAnimation(Motion.toggle(reduceMotion)) {
+                                shiftPage(direction: 0) {
                                     selected = d
                                     modeRaw = CalMode.day.rawValue
-                                    pageSequence += 1
                                 }
                              })
                         .id("\(mode.rawValue)-\(pageSequence)")
@@ -495,6 +514,7 @@ struct CalendarScreen: View {
             }
         }
         .onChange(of: modeRaw) { _, _ in
+            // Non-animated cleanup when mode changes.
             hDragOffset = 0
             collapseDragY = 0
             shiftDir = 0
@@ -604,16 +624,12 @@ struct CalendarScreen: View {
             if !colors.contains(c) { colors.append(c) }
         }
         return Button {
-            dateSelectionHaptic += 1
             let monthChanged = d.month != shownMonth.month
-            if monthChanged {
-                shiftDir = d > shownMonth ? 1 : -1
-            }
-            withAnimation(Motion.toggle(reduceMotion)) {
+            let dir = monthChanged ? (d > shownMonth ? 1 : -1) : shiftDir
+            shiftPage(direction: dir, bumpPage: monthChanged) {
                 selected = d
                 if monthChanged {
                     month = d.firstOfMonth
-                    pageSequence += 1
                 }
             }
         } label: {
@@ -656,12 +672,22 @@ struct CalendarScreen: View {
         }
     }
 
+    private var agendaContext: CalAgendaContext {
+        CalAgendaContext(day: sel, member: memberFilter, project: projectFilter, completed: showCompleted)
+    }
+
     var cardAgenda: some View {
         let items = dayItems
         return VStack(alignment: .leading, spacing: 0) {
             Text(dayTitle).txt(19, .bold).foregroundStyle(Palette.text).padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 6)
-            if items.isEmpty { emptyDay }
-            ForEach(items) { t in AgendaRow(task: t, day: sel) }
+            Group {
+                if items.isEmpty { emptyDay }
+                ForEach(items) { t in
+                    AgendaRow(task: t, day: sel)
+                        .transition(Motion.rowTransition(reduceMotion))
+                }
+            }
+            .id(agendaContext)
             Spacer().frame(height: 8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -673,10 +699,14 @@ struct CalendarScreen: View {
         let items = dayItems
         return VStack(alignment: .leading, spacing: 0) {
             Text(dayTitle).txt(17, .bold).foregroundStyle(Palette.text).padding(.vertical, 8)
-            if items.isEmpty { emptyDay.card(16) }
-            ForEach(Array(items.enumerated()), id: \.element.id) { i, t in
-                TimelineAgendaRow(task: t, day: sel, last: i == items.count - 1)
+            Group {
+                if items.isEmpty { emptyDay.card(16) }
+                ForEach(Array(items.enumerated()), id: \.element.id) { i, t in
+                    TimelineAgendaRow(task: t, day: sel, last: i == items.count - 1)
+                        .transition(Motion.rowTransition(reduceMotion))
+                }
             }
+            .id(agendaContext)
         }
     }
 
@@ -691,12 +721,9 @@ struct CalendarScreen: View {
             .padding(.bottom, 4)
             ForEach(Array(layout.weeks.enumerated()), id: \.offset) { _, w in
                 WeekRow(week: w, month: shownMonth, selected: sel, today: model.today) { d in
-                    dateSelectionHaptic += 1
-                    shiftDir = 0
-                    withAnimation(Motion.toggle(reduceMotion)) {
+                    shiftPage(direction: 0) {
                         selected = d
                         modeRaw = CalMode.day.rawValue
-                        pageSequence += 1
                     }
                 } open: { id in model.openTask(id, inlineAvailable: false) }
             }
@@ -705,6 +732,8 @@ struct CalendarScreen: View {
 }
 
 struct CalReload: Hashable { var range: ClosedRange<LocalDay>; var member: String?; var completed: Bool; var revision: Int }
+private struct CalQueryKey: Equatable { var range: ClosedRange<LocalDay>; var member: String?; var completed: Bool }
+private struct CalAgendaContext: Hashable { var day: LocalDay; var member: String?; var project: String?; var completed: Bool }
 
 /// Card-style agenda row with a checkbox (清單 view).
 struct AgendaRow: View {
@@ -715,7 +744,7 @@ struct AgendaRow: View {
     var day: LocalDay
 
     private var isDone: Bool {
-        task.isCompleted || model.isCompleting(task)
+        model.displaysCompleted(task)
     }
 
     var body: some View {
@@ -1291,7 +1320,7 @@ private struct CalendarPanGesture: UIGestureRecognizerRepresentable {
             let v = pan.velocity(in: pan.view)
             if abs(v.x) > abs(v.y) * 1.25 {
                 let startX = pan.location(in: nil).x - pan.translation(in: nil).x
-                if !allowLeftEdgeRightward && startX <= 24 && v.x > 0 {
+                if !allowLeftEdgeRightward && startX <= DrawerMetrics.edgeWidth && v.x > 0 {
                     return false
                 }
                 activeAxis = .horizontal

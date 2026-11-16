@@ -311,7 +311,7 @@ struct TaskRow: View {
     }
 
     private var isDone: Bool {
-        task.isCompleted || model.isCompleting(task)
+        model.displaysCompleted(task)
     }
 
     var body: some View {

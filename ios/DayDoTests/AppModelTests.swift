@@ -91,7 +91,9 @@ private actor RemoteSoftDeleteTransport: SyncTransport {
 final class AppModelTests: XCTestCase {
     private func makeModel(
         syncEnabled: Bool = false,
-        transport: (any SyncTransport)? = nil
+        transport: (any SyncTransport)? = nil,
+        clock: any Swift.Clock<Duration> = ContinuousClock(),
+        reduceMotion: @escaping @MainActor () -> Bool = { false }
     ) async throws -> (AppModel, DeviceStore) {
         let store = try DeviceStore.inMemory()
         if !syncEnabled {
@@ -101,7 +103,9 @@ final class AppModelTests: XCTestCase {
             store: store,
             tokenStore: InMemorySyncTokenStore(),
             syncEnabled: syncEnabled,
-            transport: transport
+            transport: transport,
+            clock: clock,
+            reduceMotion: reduceMotion
         )
         if syncEnabled {
             try await model.signIn(with: .apple(identityToken: "t", nonce: "n"))
@@ -418,7 +422,8 @@ final class AppModelTests: XCTestCase {
     }
 
     func testToggleCompleteAfterConcurrentTitleUpdateStillCompletes() async throws {
-        let (model, store) = try await makeModel()
+        let clock = TestClock()
+        let (model, store) = try await makeModel(clock: clock)
         let api = store.api
         let task = try await api.createTask(CreateTaskInput(
             title: "原本標題",
@@ -428,25 +433,39 @@ final class AppModelTests: XCTestCase {
         await model.reloadData()
 
         model.toggleComplete(task)
-        XCTAssertTrue(model.isCompleting(task))
+        XCTAssertTrue(model.displaysCompleted(task))
+        await clock.waitForSleeper()
 
-        // Simulate saving a title edit within the 350ms completion delay (bumping updatedAt).
+        // Not written before the commit delay even after a concurrent title edit.
+        await clock.advance(by: AppModel.completionCommitDelay - .milliseconds(1))
         var edit = UpdateTaskInput(taskId: task.id)
         edit.title = "已改標題"
         _ = try await api.updateTask(edit)
+        let beforeCommit = try await api.getTask(id: task.id)
+        XCTAssertFalse(beforeCommit.isCompleted, "Task must not be written before completionCommitDelay")
+        XCTAssertTrue(model.displaysCompleted(beforeCommit))
 
-        // Wait for the delayed completeTask + grace period to finish.
-        for _ in 0..<80 where model.completingIds[task.id] != nil {
-            try await Task.sleep(for: .milliseconds(25))
-        }
-
+        // Written at the commit delay, and optimistic state stays held during layoutSettle.
+        await clock.advance(by: .milliseconds(1))
+        await clock.waitForSleeper()
         let fetched = try await api.getTask(id: task.id)
         XCTAssertEqual(fetched.title, "已改標題")
         XCTAssertTrue(fetched.isCompleted, "Delayed toggleComplete must not be silently swallowed by an earlier save")
+        XCTAssertNotNil(model.completingIds[task.id], "Optimistic state must remain held right after commit")
+
+        await clock.advance(by: Motion.layoutSettle(false) - .milliseconds(1))
+        XCTAssertNotNil(model.completingIds[task.id], "Optimistic state must remain held until layoutSettle elapses")
+        XCTAssertTrue(model.displaysCompleted(task), "Unrefreshed snapshot still renders completed during hold")
+
+        await clock.advance(by: .milliseconds(1))
+        await model.waitForCompletions()
+        XCTAssertTrue(model.completingIds.isEmpty, "Optimistic state must release after layoutSettle")
+        XCTAssertFalse(model.displaysCompleted(task), "Unrefreshed snapshot stops appearing completed once hold releases")
     }
 
     func testToggleCompleteRepeatingTaskCompletesOnlyOnce() async throws {
-        let (model, store) = try await makeModel()
+        let clock = TestClock()
+        let (model, store) = try await makeModel(clock: clock)
         let api = store.api
         let task = try await api.createTask(CreateTaskInput(
             title: "每日例行",
@@ -456,17 +475,18 @@ final class AppModelTests: XCTestCase {
         ))
         await model.reloadData()
 
-        // 1. Rapid double-tap is ignored while completingIds holds the task.
+        // 1. Rapid double-tap is ignored while completingLocks holds the task.
         model.toggleComplete(task)
         model.toggleComplete(task)
-        // 2. If another writer already completed this occurrence during the 350ms window
+        await clock.waitForSleeper()
+
+        // 2. If another writer already completed this occurrence during the commit delay
         //    (advancing the repeating task's schedule), the delayed write must NOT complete
         //    the next occurrence a second time.
         _ = try await api.completeTask(id: task.id, ifUpdatedAt: task.updatedAt)
 
-        for _ in 0..<80 where model.completingIds[task.id] != nil {
-            try await Task.sleep(for: .milliseconds(25))
-        }
+        await clock.advance(by: AppModel.completionCommitDelay)
+        await model.waitForCompletions()
 
         let all = try await api.listTasks(TaskQuery(includeCompleted: true))
         let completedCopies = all.filter { $0.isCompleted && $0.title == "每日例行" }
@@ -475,10 +495,12 @@ final class AppModelTests: XCTestCase {
         let active = try await api.getTask(id: task.id)
         XCTAssertFalse(active.isCompleted)
         XCTAssertEqual(active.schedule?.startDay, model.today.adding(days: 1))
+        XCTAssertTrue(model.completingIds.isEmpty)
     }
 
     func testToggleCompleteRepeatingTaskNextOccurrenceIsNotCompletingAndCanCompleteImmediately() async throws {
-        let (model, store) = try await makeModel()
+        let clock = TestClock()
+        let (model, store) = try await makeModel(clock: clock)
         let api = store.api
         let task = try await api.createTask(CreateTaskInput(
             title: "每日打卡",
@@ -489,33 +511,36 @@ final class AppModelTests: XCTestCase {
         await model.reloadData()
 
         model.toggleComplete(task)
-        XCTAssertTrue(model.isCompleting(task))
+        XCTAssertTrue(model.displaysCompleted(task))
+        await clock.waitForSleeper()
 
-        // Wait until the 350ms write finishes and advances the original task to tomorrow,
-        // still inside the ~750ms visual hold window.
-        var nextOccurrence = task
-        for _ in 0..<40 {
-            let current = try await api.getTask(id: task.id)
-            if current.schedule?.startDay == model.today.adding(days: 1) {
-                nextOccurrence = current
-                break
-            }
-            try await Task.sleep(for: .milliseconds(25))
-        }
+        // Before the commit delay, nothing is written yet.
+        await clock.advance(by: AppModel.completionCommitDelay - .milliseconds(1))
+        let preWrite = try await api.getTask(id: task.id)
+        XCTAssertEqual(preWrite.schedule?.startDay, model.today)
+
+        // At the commit delay, completeTask writes and immediately unlocks the next occurrence
+        // while keeping the clicked occurrence held for layoutSettle.
+        await clock.advance(by: .milliseconds(1))
+        await clock.waitForSleeper()
+
+        let nextOccurrence = try await api.getTask(id: task.id)
         XCTAssertEqual(nextOccurrence.schedule?.startDay, model.today.adding(days: 1))
-
-        XCTAssertFalse(model.isCompleting(nextOccurrence), "Next occurrence must not appear optimistically completed during the 750ms hold window")
+        XCTAssertTrue(model.displaysCompleted(task), "Clicked occurrence must remain displayed as completed during hold")
+        XCTAssertFalse(model.displaysCompleted(nextOccurrence), "Next occurrence must not appear optimistically completed during the hold window")
 
         model.toggleComplete(nextOccurrence)
-        XCTAssertTrue(model.isCompleting(nextOccurrence), "Next occurrence must be immediately completable without being swallowed")
+        XCTAssertTrue(model.displaysCompleted(nextOccurrence), "Next occurrence must be immediately completable without being swallowed")
+        await clock.waitForSleeper(count: 2)
 
-        for _ in 0..<80 {
-            let current = try await api.getTask(id: task.id)
-            if current.schedule?.startDay == model.today.adding(days: 2) && model.completingIds.isEmpty {
-                break
-            }
-            try await Task.sleep(for: .milliseconds(25))
-        }
+        await clock.advance(by: AppModel.completionCommitDelay)
+        await clock.waitForSleeper(count: 2)
+
+        let secondAdvanced = try await api.getTask(id: task.id)
+        XCTAssertEqual(secondAdvanced.schedule?.startDay, model.today.adding(days: 2))
+
+        await clock.advance(by: Motion.layoutSettle(false))
+        await model.waitForCompletions()
 
         let all = try await api.listTasks(TaskQuery(includeCompleted: true))
         let completedCopies = all.filter { $0.isCompleted && $0.title == "每日打卡" }
@@ -523,5 +548,64 @@ final class AppModelTests: XCTestCase {
         let finalTask = try await api.getTask(id: task.id)
         XCTAssertEqual(finalTask.schedule?.startDay, model.today.adding(days: 2))
         XCTAssertTrue(model.completingIds.isEmpty)
+    }
+
+    func testDisplaysCompletedShowsClickedOccurrenceOnlyForRepeatingTask() async throws {
+        let clock = TestClock()
+        let (model, store) = try await makeModel(clock: clock)
+        let api = store.api
+        let clicked = try await api.createTask(CreateTaskInput(
+            title: "週期測試",
+            start: model.today.description,
+            allDay: true,
+            repeat: "RRULE:FREQ=DAILY"
+        ))
+        await model.reloadData()
+
+        XCTAssertFalse(model.displaysCompleted(clicked))
+        model.toggleComplete(clicked)
+        XCTAssertTrue(model.displaysCompleted(clicked))
+
+        await clock.waitForSleeper()
+        await clock.advance(by: AppModel.completionCommitDelay)
+        await clock.waitForSleeper()
+
+        let nextOccurrence = try await api.getTask(id: clicked.id)
+        XCTAssertEqual(nextOccurrence.schedule?.startDay, model.today.adding(days: 1))
+        XCTAssertTrue(model.displaysCompleted(clicked), "Clicked occurrence stays completed during layoutSettle hold")
+        XCTAssertFalse(model.displaysCompleted(nextOccurrence), "Repeating task's next occurrence must not show completed")
+
+        await clock.advance(by: Motion.layoutSettle(false))
+        await model.waitForCompletions()
+        XCTAssertFalse(model.displaysCompleted(clicked))
+        XCTAssertFalse(model.displaysCompleted(nextOccurrence))
+    }
+
+    func testToggleCompleteHoldUsesReducedLayoutSettleUnderReduceMotion() async throws {
+        let clock = TestClock()
+        let (model, store) = try await makeModel(clock: clock, reduceMotion: { true })
+        let api = store.api
+        let task = try await api.createTask(CreateTaskInput(
+            title: "減少動態效果",
+            start: model.today.description,
+            allDay: true
+        ))
+        await model.reloadData()
+
+        model.toggleComplete(task)
+        await clock.waitForSleeper()
+        await clock.advance(by: AppModel.completionCommitDelay)
+        await clock.waitForSleeper()
+
+        await clock.advance(by: Motion.layoutSettle(true) - .milliseconds(1))
+        XCTAssertNotNil(model.completingIds[task.id])
+
+        await clock.advance(by: .milliseconds(1))
+        await Task.yield()
+        XCTAssertTrue(model.completingIds.isEmpty, "Reduced-motion hold should release at Motion.layoutSettle(true)")
+        if !model.completingIds.isEmpty {
+            await clock.advance(by: Motion.layoutSettle(false))
+        }
+        await model.waitForCompletions()
     }
 }

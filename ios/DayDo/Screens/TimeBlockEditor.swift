@@ -7,6 +7,7 @@ import DayDoCore
 struct TimeBlockEditor: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var draft: DateDraft
     var title: String
     var excludeTaskId: String?
@@ -79,7 +80,7 @@ struct TimeBlockEditor: View {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(DateText.hm(s) + " – " + (e >= 1440 ? "隔日 " : "") + DateText.hm(e))
                     .txt(26, .bold).foregroundStyle(accent.text)
-                    .contentTransition(.numericText())
+                    .contentTransition(reduceMotion ? .identity : .numericText())
                 Text("共 " + DateText.duration(e - s)).txt(14).foregroundStyle(Palette.textMuted)
             }
             .accessibilityElement(children: .combine)
@@ -200,7 +201,8 @@ struct TimeBlockEditor: View {
             .padding(.horizontal, 10).padding(.vertical, 6)
         }
         .frame(width: width, height: h)
-        .scaleEffect(isMoving ? 1.02 : 1)
+        .scaleEffect(isMoving && !reduceMotion ? 1.02 : 1)
+        .animation(Motion.press(reduceMotion), value: isMoving)
         .highPriorityGesture(moveGesture)
         .overlay(alignment: .top) { handle.offset(y: -12).highPriorityGesture(dragGesture(.start)).accessibilityLabel("拖曳調整開始時間").accessibilityValue(DateText.hm(s)) }
         .overlay(alignment: .bottom) { handle.offset(y: 12).highPriorityGesture(dragGesture(.end)).accessibilityLabel("拖曳調整結束時間").accessibilityValue(DateText.hm(e)) }
@@ -215,7 +217,7 @@ struct TimeBlockEditor: View {
             .contentShape(Rectangle())
     }
 
-    enum DragKind { case move, start, end }
+    enum DragKind { case start, end }
 
     /// Moving the whole block requires a 0.3s long press so vertical timeline
     /// scrolling over the block does not accidentally reposition it.
@@ -235,13 +237,14 @@ struct TimeBlockEditor: View {
                 let dm = Int((drag.translation.height / Self.pxPerMinute / 5).rounded()) * 5
                 let len = e0 - s0
                 let ns = max(0, min(1440 - 5, s0 + dm))
-                s = ns
-                e = min(ns + len, Self.maxEnd)
-            }
-            .onEnded { _ in
-                if dragStart != nil {
+                let ne = min(ns + len, Self.maxEnd)
+                if ns != s || ne != e {
+                    s = ns
+                    e = ne
                     snapHaptic += 1
                 }
+            }
+            .onEnded { _ in
                 dragStart = nil
             }
     }
@@ -253,20 +256,22 @@ struct TimeBlockEditor: View {
                 let (s0, e0) = dragStart!
                 let dm = Int((v.translation.height / Self.pxPerMinute / 5).rounded()) * 5
                 switch kind {
-                case .move:
-                    let len = e0 - s0
-                    let ns = max(0, min(1440 - 5, s0 + dm))
-                    s = ns
-                    e = min(ns + len, Self.maxEnd)
                 case .start:
-                    s = max(0, min(s0 + dm, e0 - 5))
+                    let ns = max(0, min(s0 + dm, e0 - 5))
+                    if ns != s {
+                        s = ns
+                        snapHaptic += 1
+                    }
                 case .end:
-                    e = min(Self.maxEnd, max(e0 + dm, s0 + 5))
+                    let ne = min(Self.maxEnd, max(e0 + dm, s0 + 5))
+                    if ne != e {
+                        e = ne
+                        snapHaptic += 1
+                    }
                 }
             }
             .onEnded { _ in
                 dragStart = nil
-                snapHaptic += 1
             }
     }
 

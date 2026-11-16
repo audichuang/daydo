@@ -60,6 +60,11 @@ enum Motion {
         reduced: .easeOut(duration: 0.15)
     )
 
+    /// Time for a `Motion.layout` removal to finish, plus margin for the list reload.
+    static func layoutSettle(_ reduceMotion: Bool) -> Duration {
+        reduceMotion ? .milliseconds(350) : .milliseconds(750)
+    }
+
     /// Calendar page shift and horizontal swipe commit.
     static let page = MotionToken(
         full: .spring(response: 0.34, dampingFraction: 0.86),

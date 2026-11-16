@@ -6,6 +6,7 @@
 
 - 動畫曲線的正本是 `DayDo/Components/Motion.swift`，依用途命名（按壓、分頁、抽屜、列表重排、打勾、數字…），每個 token 都含「減少動態效果」時的替代動畫。畫面裡不寫裸的 `.spring(…)`、`.snappy`、`.easeOut(…)`；`DayDoCore/Tests/DayDoCoreTests/ArchitectureTests.swift` 會擋。
 - 新動畫先找用途相同的 token。真的是新用途才在 `Motion.swift` 加一個，不為單一畫面微調數字；要改手感就改 token，全 App 一起變。
+- 非畫面的程式要等動畫做完（例如完成任務的樂觀狀態要保留到列收起）時，等待時間跟著對應的 token 定義在 `Motion.swift`（如 `Motion.layoutSettle`），不在呼叫端寫死毫秒。
 - 手勢的距離門檻、速度判斷、彈回條件留在各畫面，不抽成通用元件；它們只共用 token 的曲線。
 
 ## 每種變化都要有過渡
@@ -26,7 +27,7 @@
 | 事件 | 回饋 |
 |---|---|
 | 完成任務 | `.success` |
-| 取消完成、開合抽屜、日曆換頁、拖曳開始 | `.impact(weight: .light)` |
+| 取消完成、建立任務、開合抽屜、日曆換頁、拖曳開始 | `.impact(weight: .light)` |
 | 選取（分頁、日期、模式、拖曳對齊刻度） | `.selection` |
 
 ## 驗收

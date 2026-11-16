@@ -89,7 +89,7 @@ private let guards: [Guard] = [
     Guard(
         name: "animation curves are centralized in ios/DayDo/Components/Motion.swift",
         directories: ["ios/DayDo"],
-        pattern: #"(?:\bAnimation)?\.(spring|snappy|bouncy|smooth|easeOut|easeIn|easeInOut|linear|timingCurve|interpolatingSpring)\b|\bAnimation\.default\b"#,
+        pattern: #"(?:\bAnimation)?\.(spring|snappy|bouncy|smooth|easeOut|easeIn|easeInOut|linear|timingCurve|interpolatingSpring)\b|\bAnimation\.default\b|(?:withAnimation|\.animation)\s*\(\s*\.default\b"#,
         allow: ["ios/DayDo/Components/Motion.swift"],
         bad: [
             "withAnimation(.snappy) {",
@@ -104,6 +104,8 @@ private let guards: [Guard] = [
             "withAnimation(.interpolatingSpring(stiffness: 170, damping: 15)) {",
             "withAnimation(Animation.spring(response: 0.3, dampingFraction: 0.8)) {",
             "withAnimation(Animation.default) {",
+            ".animation(.default, value: x)",
+            "withAnimation(.default) {",
         ]
     ),
 ]

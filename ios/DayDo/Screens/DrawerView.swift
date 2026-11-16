@@ -1,6 +1,22 @@
 import SwiftUI
 import DayDoCore
 
+enum DrawerMetrics {
+    static let edgeWidth: CGFloat = 24
+
+    static func width(for containerWidth: CGFloat) -> CGFloat {
+        min(containerWidth * 0.82, 340)
+    }
+
+    static func shouldOpen(translationX: CGFloat, velocityX: CGFloat, drawerWidth: CGFloat) -> Bool {
+        translationX > drawerWidth * 0.5 || (velocityX > 500 && translationX > 12)
+    }
+
+    static func shouldClose(translationX: CGFloat, predictedEndTranslationX: CGFloat, drawerWidth: CGFloat) -> Bool {
+        translationX < -drawerWidth * 0.4 || predictedEndTranslationX < -drawerWidth * 0.5
+    }
+}
+
 /// 1a · Left list drawer: smart lists, folders (expandable), loose lists,
 /// tags, and 已完成／垃圾桶 at the bottom.
 struct DrawerOverlay: View {
@@ -14,7 +30,7 @@ struct DrawerOverlay: View {
 
     var body: some View {
         GeometryReader { geo in
-            let width = min(geo.size.width * 0.82, 340)
+            let width = DrawerMetrics.width(for: geo.size.width)
             let progress: CGFloat = {
                 if open {
                     return max(0, min(1, 1 + min(0, drag) / width))
@@ -59,7 +75,11 @@ struct DrawerOverlay: View {
                                         }
                                         return
                                     }
-                                    let shouldClose = v.translation.width < -width * 0.4 || v.predictedEndTranslation.width < -width * 0.5
+                                    let shouldClose = DrawerMetrics.shouldClose(
+                                        translationX: v.translation.width,
+                                        predictedEndTranslationX: v.predictedEndTranslation.width,
+                                        drawerWidth: width
+                                    )
                                     if shouldClose { close() }
                                     withAnimation(Motion.rowSwipe(reduceMotion)) {
                                         drag = 0
@@ -86,7 +106,7 @@ struct DrawerOverlay: View {
 /// taps, vertical scrolling, or system navigation back swipes.
 struct EdgePanGesture: UIGestureRecognizerRepresentable {
     var isEnabled: () -> Bool
-    var edgeWidth: CGFloat = 24
+    var edgeWidth: CGFloat = DrawerMetrics.edgeWidth
     var onChanged: (CGFloat) -> Void
     var onEnded: (CGFloat, CGFloat) -> Void
 
@@ -563,7 +583,7 @@ private struct SwipeableListRow<Content: View>: View {
                 .background(Circle().fill(bg))
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .scaleEffect(visible ? 1 : 0.3)
         .opacity(visible ? 1 : 0)
         .animation(Motion.popup(reduceMotion), value: visible)

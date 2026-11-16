@@ -3,6 +3,7 @@ import GoogleSignIn
 import Network
 import Observation
 import SwiftUI
+import UIKit
 import UserNotifications
 import WidgetKit
 import DayDoCore
@@ -49,6 +50,8 @@ final class AppModel {
     let sharing: any ListSharing
     let tokenStore: any SyncTokenStore
     let syncEnabled: Bool
+    private let clock: any Swift.Clock<Duration>
+    private let reduceMotion: @MainActor () -> Bool
 
     // Lookups shared by many screens
     var projects: [Project] = []
@@ -255,20 +258,35 @@ final class AppModel {
         var startMinute: Int?
     }
 
+    static let completionCommitDelay: Duration = .milliseconds(350)
+
     /// Optimistic visual completion state keyed by task id -> clicked occurrence.
     private(set) var completingIds: [String: CompletingOccurrence] = [:]
     /// Write re-entry lock keyed by task id -> invocation token; released as soon as
     /// `completeTask` finishes for repeating tasks so the next occurrence can be tapped right away.
     private var completingLocks: [String: UUID] = [:]
+    private var completionTasks: [UUID: Task<Void, Never>] = [:]
     var completionHapticTrigger = 0
     var uncompletionHapticTrigger = 0
 
-    func isCompleting(_ task: TodoTask) -> Bool {
+    func displaysCompleted(_ task: TodoTask) -> Bool {
+        task.isCompleted || isCompleting(task)
+    }
+
+    private func isCompleting(_ task: TodoTask) -> Bool {
         guard let occ = completingIds[task.id] else { return false }
         if task.repeat != nil {
             return task.schedule?.startDay == occ.startDay && task.schedule?.startMinute == occ.startMinute
         }
         return true
+    }
+
+    func waitForCompletions() async {
+        while !completionTasks.isEmpty {
+            for task in Array(completionTasks.values) {
+                await task.value
+            }
+        }
     }
 
     let reminders = ReminderScheduler()
@@ -291,12 +309,16 @@ final class AppModel {
         store: DeviceStore,
         tokenStore: any SyncTokenStore = KeychainSyncTokenStore(),
         syncEnabled: Bool = !ProcessInfo.processInfo.arguments.contains("-DayDoSkipLogin"),
-        transport: (any SyncTransport)? = nil
+        transport: (any SyncTransport)? = nil,
+        clock: any Swift.Clock<Duration> = ContinuousClock(),
+        reduceMotion: @escaping @MainActor () -> Bool = { UIAccessibility.isReduceMotionEnabled }
     ) {
         self.store = store
         self.api = store.api
         self.tokenStore = tokenStore
         self.syncEnabled = syncEnabled
+        self.clock = clock
+        self.reduceMotion = reduceMotion
         let resolvedTransport: any SyncTransport = transport ?? HTTPSyncTransport(
             baseURL: SyncConfig.baseURL,
             extraHeaders: SyncConfig.accessHeaders()
@@ -448,8 +470,9 @@ final class AppModel {
         completingLocks[id] = occ.token
         completingIds[id] = occ
         completionHapticTrigger += 1
-        Task {
+        let task = Task {
             defer {
+                completionTasks.removeValue(forKey: occ.token)
                 if completingLocks[id] == occ.token {
                     completingLocks.removeValue(forKey: id)
                 }
@@ -457,7 +480,7 @@ final class AppModel {
                     completingIds.removeValue(forKey: id)
                 }
             }
-            try? await Task.sleep(for: .milliseconds(350))
+            try? await clock.sleep(for: Self.completionCommitDelay)
             guard let current = try? await api.getTask(id: id),
                   current.deletedAt == nil,
                   !current.isCompleted else {
@@ -476,11 +499,12 @@ final class AppModel {
                         completingLocks.removeValue(forKey: id)
                     }
                 }
-                // Hold optimistic visual state past the list removal spring (~0.6s) so fading rows
+                // Hold optimistic visual state past the list removal animation so fading rows
                 // stay checked, while repeating tasks' next occurrence already renders unchecked.
-                try? await Task.sleep(for: .milliseconds(750))
+                try? await clock.sleep(for: Motion.layoutSettle(reduceMotion()))
             }
         }
+        completionTasks[occ.token] = task
     }
 
     /// Reloads UI state and reminders without triggering sync. Used for remote
