@@ -1,9 +1,9 @@
 // Bearer authentication for the MCP endpoint (spec/mcp.md 4.6). Check order:
 // signature + exp, iss, aud origin, scope mcp (verifyMcpAccessToken), then the user exists.
+import { logEvent } from '../log';
 import type { DatabaseClient } from '../auth/session';
 import { userExists } from '../oauth/refresh';
 import { verifyMcpAccessToken } from '../oauth/tokens';
-import { logEvent } from './log';
 
 export interface McpPrincipal {
   userId: string;

@@ -1,5 +1,5 @@
 import { createDb } from 'void/db';
-import { logEvent } from '../mcp/log';
+import { logEvent } from '../log';
 import { productionToolServices } from '../mcp/services';
 import { syncDueSources, ICS_SOURCES_PER_RUN, type IcsEngineDeps } from './engine';
 import { D1IcsStore } from './store';

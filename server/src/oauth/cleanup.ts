@@ -2,7 +2,7 @@ import { emailCode, oauthCode, oauthPending, oauthRefresh } from '@schema';
 import { inArray, lt } from 'void/db';
 import { EMAIL_LOCKOUT_WINDOW_MS } from '../auth/email';
 import type { DatabaseClient } from '../auth/session';
-import { logEvent } from '../mcp/log';
+import { logEvent } from '../log';
 
 // Purges expired OAuth and email sign-in code rows (spec/mcp.md 4.8). Runs from the 5-minute ICS cron on the first
 // tick of each UTC hour. oauthClient rows are kept: once pending/code/refresh rows are gone,

@@ -2,7 +2,7 @@
 // Cloudflare Email Service `send_email` binding; development builds keep the last message per
 // recipient in memory so e2e can read it via routes/test/mail.dev.ts. Logs never carry the
 // subject or body, because the body contains the sign-in code.
-import { logEvent } from '../mcp/log';
+import { logEvent } from '../log';
 
 export interface MailMessage {
   to: string;

@@ -5,7 +5,7 @@ import { normalizeEmail, startEmailCode, verifyEmailCode } from '../auth/email';
 import { AuthVerificationError, verifyAppleToken, type ProviderName, type VerifiedIdentity } from '../auth/providers';
 import type { DatabaseClient } from '../auth/session';
 import type { Mailer } from '../mail/mailer';
-import { logEvent } from '../mcp/log';
+import { logEvent } from '../log';
 import { createAuthorizationCode } from './codes';
 import { SCOPES, requestOrigin } from './metadata';
 import { consentPage, emailCodePage, errorPage, loginPage } from './pages';

@@ -1,9 +1,7 @@
 // Structured logs for MCP calls (spec/mcp.md 4.7). Only argument key names are recorded,
 // never values, tokens or task text.
 
-export function logEvent(level: 'log' | 'warn' | 'error', event: string, fields: Record<string, unknown> = {}): void {
-  console[level](JSON.stringify({ event, ...fields }));
-}
+import { logEvent } from '../log';
 
 export interface CallMeta {
   clientId: string | null;
