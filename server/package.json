@@ -14,6 +14,7 @@
     "e2e:ics": "node scripts/e2e-ics.mjs",
     "e2e:mcp": "node scripts/e2e-mcp.mjs",
     "smoke:prod": "node scripts/smoke-prod.mjs",
+    "check:fast": "npm run lint && npm run typecheck && npm test",
     "check": "npm run lint && npm run typecheck && npm test && npm run e2e && npm run e2e:sync && npm run e2e:ics && npm run e2e:mcp"
   },
   "keywords": [],
