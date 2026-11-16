@@ -1,8 +1,12 @@
 // MCP tool registry: definitions, behaviour hints, argument validation (spec/mcp.md 5, 8).
 
+import { icsTools } from './tools/ics';
 import { projectTools } from './tools/projects';
 import { tagTools } from './tools/tags';
 import { taskReadTools, taskWriteTools } from './tools/tasks';
+import type { FetchIcsOptions } from '../ics/fetch';
+import type { IcsStore } from '../ics/store';
+import type { ServerHlcClock } from '../sync/hlc';
 import type { AppDb, ScopeStub } from '../sync/push';
 
 export type Hint = 'read' | 'write' | 'idempotent-write' | 'idempotent-overwrite' | 'destructive';
@@ -22,6 +26,8 @@ export interface ToolServices {
   getScopeStub: (scope: string) => ScopeStub;
   /** `DEFAULT_TIMEZONE`, tried first when inferring a task's zone from an offset. Defaults to Asia/Taipei. */
   defaultTimeZone?: string;
+  /** ICS tool overrides. Production leaves it unset: D1 store, real fetch, shared clock. */
+  ics?: { store?: IcsStore; fetchOptions?: FetchIcsOptions; clock?: ServerHlcClock };
 }
 
 export interface ToolContext {
@@ -58,12 +64,17 @@ export const HINTS: Record<string, Hint> = {
   delete_task: 'destructive',
   move_task: 'idempotent-write',
   move_all: 'idempotent-write',
+  add_ics_source: 'write',
+  list_ics_sources: 'read',
+  remove_ics_source: 'destructive',
+  sync_ics_now: 'destructive',
+  get_ics_sync_status: 'read',
 };
 
 /** Only tools that fetch caller-supplied external URLs. */
-export const OPEN_WORLD = new Set<string>();
+export const OPEN_WORLD = new Set<string>(['add_ics_source', 'sync_ics_now']);
 
-export const TOOLS: readonly ToolDef[] = [...projectTools(), ...tagTools(), ...taskReadTools(), ...taskWriteTools()];
+export const TOOLS: readonly ToolDef[] = [...projectTools(), ...tagTools(), ...taskReadTools(), ...taskWriteTools(), ...icsTools()];
 
 export interface ToolDescriptor {
   name: string;

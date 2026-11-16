@@ -1,48 +1,49 @@
 import { createDb } from 'void/db';
 import { Scope } from '../../durable-objects/scope';
-import { user } from '../../db/schema';
+import { logEvent } from '../mcp/log';
+import type { ScopeStub } from '../sync/push';
+import { syncDueSources, ICS_SOURCES_PER_RUN, type IcsEngineDeps } from './engine';
+import { parseInsecureHosts } from './fetch';
+import { D1IcsStore } from './store';
 
 export interface IcsCronEnv {
   DB: Parameters<typeof createDb>[0];
-  JWT_SECRET?: string;
+  DEFAULT_TIMEZONE?: string;
+  ICS_ALLOW_INSECURE_HOSTS?: string;
 }
 
-export interface CronProbeResult {
-  db: 'ok' | 'fail';
-  scope: 'ok' | 'skip' | 'fail';
-  env: 'ok' | 'fail';
+function productionDeps(env: IcsCronEnv): IcsEngineDeps {
+  const db = createDb(env.DB, { session: 'first-primary' });
+  const insecureHosts = parseInsecureHosts(env.ICS_ALLOW_INSECURE_HOSTS);
+  return {
+    store: new D1IcsStore(db),
+    db,
+    getScopeStub: (scope) => Scope.get(scope) as unknown as ScopeStub,
+    ...(env.DEFAULT_TIMEZONE && { defaultTimeZone: env.DEFAULT_TIMEZONE }),
+    ...(insecureHosts.length > 0 && { fetchOptions: { insecureHosts } }),
+  };
 }
 
-async function attempt(fn: () => Promise<void>): Promise<'ok' | 'fail'> {
-  try {
-    await fn();
-    return 'ok';
-  } catch {
-    return 'fail';
+/**
+ * Syncs the due sources, at most ICS_SOURCES_PER_RUN per run and never with allowMassDelete.
+ * The engine absorbs per-source failures (recorded on the source), so only a run-level failure,
+ * such as the due query, throws. `deps` is injected by tests.
+ */
+export async function runIcsCron(env: IcsCronEnv, deps: IcsEngineDeps = productionDeps(env)): Promise<void> {
+  const results = await syncDueSources(deps, Date.now(), ICS_SOURCES_PER_RUN);
+  // Source ids only: feed URLs are secrets and never reach the logs.
+  for (const r of results) {
+    logEvent(r.stats.errors > 0 ? 'warn' : 'log', 'ics.sync', {
+      source_id: r.source,
+      ms: r.ms,
+      created: r.stats.created,
+      updated: r.stats.updated,
+      skipped: r.stats.skipped,
+      deleted: r.stats.deleted,
+      errors: r.stats.errors,
+      ...(r.stats.busy && { busy: true }),
+      ...(r.stats.lastError && { error: r.stats.lastError }),
+    });
   }
-}
-
-/** M2 spike: prove D1, the Scope DO and env are reachable from a scheduled handler. */
-export async function probeCronRuntime(
-  env: IcsCronEnv,
-  isDev: boolean = import.meta.env.DEV,
-): Promise<CronProbeResult> {
-  const db = await attempt(async () => {
-    const database = createDb(env.DB, { session: 'first-primary' });
-    await database.select({ id: user.id }).from(user).limit(1);
-  });
-  const scope = isDev
-    ? await attempt(async () => {
-        await Scope.get('u:__cron_probe__').getInboxProjectId({
-          readableProjectIds: ['__cron_probe__'],
-        });
-      })
-    : 'skip';
-  const envOk = typeof env.JWT_SECRET === 'string' && env.JWT_SECRET.length > 0 ? 'ok' : 'fail';
-  return { db, scope, env: envOk };
-}
-
-export async function runIcsCron(env: IcsCronEnv): Promise<void> {
-  const probe = await probeCronRuntime(env);
-  console.log(`ics.cron.probe ${JSON.stringify(probe)}`);
+  logEvent('log', 'ics.cron.run', { due: results.length });
 }

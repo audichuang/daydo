@@ -106,15 +106,16 @@ async function runCronRuntimeScenario({ baseUrl, getLogs }) {
   const text = await res.text();
   assert.equal(res.status, 200, `scheduled trigger failed: ${res.status} ${text}`);
 
+  // The production cron queries D1 for due sources; a fresh database has none.
   const deadline = Date.now() + 10_000;
-  let probe = null;
-  while (Date.now() < deadline && !probe) {
-    const m = stripAnsi(getLogs()).match(/ics\.cron\.probe (\{[^}]*\})/);
-    if (m) probe = JSON.parse(m[1]);
+  let run = null;
+  while (Date.now() < deadline && !run) {
+    const m = stripAnsi(getLogs()).match(/\{"event":"ics\.cron\.run"[^}]*\}/);
+    if (m) run = JSON.parse(m[0]);
     else await new Promise((r) => setTimeout(r, 100));
   }
-  assert(probe, `ics.cron.probe log not found:\n${getLogs()}`);
-  assert.deepEqual(probe, { db: 'ok', scope: 'ok', env: 'ok' });
+  assert(run, `ics.cron.run log not found:\n${getLogs()}`);
+  assert.equal(run.due, 0);
 }
 
 const SCENARIOS = { cron_runtime: runCronRuntimeScenario };
