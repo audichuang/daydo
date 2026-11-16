@@ -18,10 +18,16 @@ import {
 } from './webIdentity';
 
 // OAuth 2.1 authorization endpoint (spec/mcp.md 4.4). The browser that starts the flow gets
-// a random bind cookie (D1 stores its hash); both callbacks, the consent page and the consent
+// a random bind cookie named after the pending (D1 stores its hash); both callbacks, the consent page and the consent
 // POST compare it, so the browser that signs in must be the browser that started.
 
-export const BIND_COOKIE = 'daydo_oauth_bind';
+const BIND_COOKIE_PREFIX = 'daydo_oauth_bind_';
+const BIND_COOKIE_ID_LENGTH = 16;
+
+/** One cookie per pending, so several authorize tabs in one browser do not overwrite each other. */
+export function bindCookieName(pendingId: string): string {
+  return `${BIND_COOKIE_PREFIX}${pendingId.slice(0, BIND_COOKIE_ID_LENGTH)}`;
+}
 export const PENDING_TTL_MS = 10 * 60 * 1000;
 /** Pending rows one address may create per hour (spec/mcp.md 4.4). */
 export const AUTHORIZE_LIMIT_PER_HOUR = 30;
@@ -62,12 +68,12 @@ function readCookie(request: Request, name: string): string | null {
 }
 
 async function cookieMatches(request: Request, pending: PendingRow): Promise<boolean> {
-  const value = readCookie(request, BIND_COOKIE);
+  const value = readCookie(request, bindCookieName(pending.id));
   return value !== null && value.length > 0 && (await sha256Hex(value)) === pending.bindHash;
 }
 
-function bindCookieHeader(value: string): string {
-  return `${BIND_COOKIE}=${value}; HttpOnly; Secure; SameSite=None; Path=/authorize; Max-Age=${PENDING_TTL_MS / 1000}`;
+function bindCookieHeader(pendingId: string, value: string): string {
+  return `${bindCookieName(pendingId)}=${value}; HttpOnly; Secure; SameSite=None; Path=/authorize; Max-Age=${PENDING_TTL_MS / 1000}`;
 }
 
 /** Loads an open pending row: not consumed and not expired. */
@@ -202,7 +208,7 @@ async function beginAuthorization(request: Request, deps: AuthorizeDeps, now: nu
         ? `/authorize/start?pending=${encodeURIComponent(pendingId)}&provider=${provider}`
         : null,
     })),
-    setCookie: bindCookieHeader(bindToken),
+    setCookie: bindCookieHeader(pendingId, bindToken),
   });
 }
 

@@ -6,7 +6,7 @@ import type { KeySource } from '../src/auth/providers';
 import type { DatabaseClient } from '../src/auth/session';
 import {
   AUTHORIZE_LIMIT_PER_HOUR,
-  BIND_COOKIE,
+  bindCookieName,
   PENDING_TTL_MS,
   handleAppleCallback,
   handleAuthorizeGet,
@@ -79,14 +79,24 @@ function pendingRow(sqlite: DatabaseSync, id: string): Row {
   return sqlite.prepare('SELECT * FROM oauthPending WHERE id = ?').get(id) as Row;
 }
 
-function cookieHeader(value: string): Record<string, string> {
-  return { Cookie: `other=1; ${BIND_COOKIE}=${value}` };
+/** `cookie` is a full `name=value` pair, as a browser would send it. */
+function cookieHeader(pair: string): Record<string, string> {
+  return { Cookie: `other=1; ${pair}` };
 }
 
 function bindCookieFrom(res: Response): string {
-  const match = /daydo_oauth_bind=([^;]+)/.exec(res.headers.get('Set-Cookie') ?? '');
+  const match = /(daydo_oauth_bind_[A-Za-z0-9_-]+=[^;]+)/.exec(res.headers.get('Set-Cookie') ?? '');
   if (!match) throw new Error('no bind cookie');
   return match[1];
+}
+
+function cookieValue(pair: string): string {
+  return pair.slice(pair.indexOf('=') + 1);
+}
+
+/** Same cookie name as the flow's, someone else's value. */
+function foreignCookie(pendingId: string): string {
+  return `${bindCookieName(pendingId)}=someone-else`;
 }
 
 async function authorizeParams(overrides: Record<string, string | undefined> = {}) {
@@ -211,7 +221,7 @@ describe('GET /authorize parameter validation', () => {
       scope: 'mcp offline_access',
       clientState: 'client-state-xyz',
       resource: `${ORIGIN}/`,
-      bindHash: await sha256Hex(cookie),
+      bindHash: await sha256Hex(cookieValue(cookie)),
       provider: '',
       userId: null,
       consentTokenHash: null,
@@ -221,7 +231,7 @@ describe('GET /authorize parameter validation', () => {
     });
     expect(pendingId).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(String(row.nonce)).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(row.bindHash).not.toBe(cookie);
+    expect(row.bindHash).not.toBe(cookieValue(cookie));
   });
 
   it('accepts a missing resource and a resource on the same origin without trailing slash', async () => {
@@ -293,7 +303,7 @@ describe('GET /authorize/start', () => {
   it('refuses a browser without the bind cookie and does not record the provider', async () => {
     const s = setup();
     const { pendingId } = await startAuthorize(s);
-    for (const cookie of [null, 'someone-else']) {
+    for (const cookie of [null, foreignCookie(pendingId)]) {
       const res = await chooseApple(s, pendingId, cookie);
       expect(res.status).toBe(400);
       expect(res.headers.get('Location')).toBeNull();
@@ -353,7 +363,7 @@ describe('POST /authorize/apple/callback', () => {
     const idToken = await signAppleToken({ sub: KNOWN_APPLE_SUB, nonceHash: flow.nonceHash });
 
     // The victim's browser has its own (or no) bind cookie.
-    const victim = await appleCallback(s, { state: flow.pendingId, id_token: idToken }, 'victim-cookie');
+    const victim = await appleCallback(s, { state: flow.pendingId, id_token: idToken }, foreignCookie(flow.pendingId));
     expect(victim.status).toBe(400);
     expect(victim.headers.get('Location')).toBeNull();
     const row = pendingRow(s.sqlite, flow.pendingId);
@@ -587,6 +597,56 @@ describe('consent page and POST /authorize', () => {
     );
     expect(res.status).toBe(400);
     expect(count(s.sqlite, 'oauthCode')).toBe(0);
+  });
+});
+
+describe('two authorize flows in one browser', () => {
+  it('both complete, because each pending has its own bind cookie', async () => {
+    const s = setup();
+    const first = await startAuthorize(s);
+    const second = await startAuthorize(s, { state: 'second-state' });
+    expect(bindCookieName(first.pendingId)).not.toBe(bindCookieName(second.pendingId));
+    const jar = `${first.cookie}; ${second.cookie}`;
+
+    const flows = [first, second];
+    const cts: string[] = [];
+    for (const flow of flows) {
+      const start = await handleAuthorizeStart(
+        new Request(`${ORIGIN}/authorize/start?pending=${flow.pendingId}&provider=apple`, { headers: { Cookie: jar } }),
+        s.deps(),
+      );
+      expect(start.status).toBe(302);
+      const nonceHash = new URL(start.headers.get('Location') ?? '').searchParams.get('nonce') ?? '';
+      const idToken = await signAppleToken({ sub: KNOWN_APPLE_SUB, nonceHash });
+      const callback = await handleAppleCallback(
+        new Request(`${ORIGIN}/authorize/apple/callback`, {
+          method: 'POST',
+          headers: { Origin: 'https://appleid.apple.com', Cookie: jar },
+        }),
+        { state: flow.pendingId, id_token: idToken },
+        s.deps(),
+      );
+      expect(callback.status).toBe(303);
+      cts.push(new URL(callback.headers.get('Location') ?? '', ORIGIN).searchParams.get('ct') ?? '');
+    }
+
+    for (const [index, flow] of flows.entries()) {
+      const res = await handleAuthorizePost(
+        new Request(`${ORIGIN}/authorize`, { method: 'POST', headers: { Cookie: jar } }),
+        { pending: flow.pendingId, ct: cts[index], decision: 'approve' },
+        s.deps(),
+      );
+      expect(res.status).toBe(302);
+    }
+    expect(count(s.sqlite, 'oauthCode')).toBe(2);
+  });
+
+  it('a cookie of one flow does not open another', async () => {
+    const s = setup();
+    const first = await startAuthorize(s);
+    const second = await startAuthorize(s);
+    const res = await chooseApple(s, first.pendingId, second.cookie);
+    expect(res.status).toBe(400);
   });
 });
 

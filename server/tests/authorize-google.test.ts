@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import type { KeySource } from '../src/auth/providers';
 import type { DatabaseClient } from '../src/auth/session';
 import {
-  BIND_COOKIE,
+  bindCookieName,
   handleAuthorizeGet,
   handleAuthorizeStart,
   type AuthorizeDeps,
@@ -81,10 +81,10 @@ async function toGoogleCallback(s: Setup) {
   const html = await page.text();
   const pendingId = /\/authorize\/start\?pending=([A-Za-z0-9_-]+)&amp;provider=google/.exec(html)?.[1];
   if (!pendingId) throw new Error(`no google link in ${html}`);
-  const cookie = new RegExp(`${BIND_COOKIE}=([^;]+)`).exec(page.headers.get('Set-Cookie') ?? '')?.[1] ?? '';
+  const cookie = /(daydo_oauth_bind_[A-Za-z0-9_-]+=[^;]+)/.exec(page.headers.get('Set-Cookie') ?? '')?.[1] ?? '';
   const res = await handleAuthorizeStart(
     new Request(`${ORIGIN}/authorize/start?pending=${pendingId}&provider=google`, {
-      headers: { Cookie: `${BIND_COOKIE}=${cookie}` },
+      headers: { Cookie: cookie },
     }),
     s.deps,
   );
@@ -119,7 +119,7 @@ function tokenEndpoint(idToken: string | null, calls: TokenCall[] = []): typeof 
 
 function callbackRequest(query: Record<string, string>, cookie: string | null) {
   return new Request(`${ORIGIN}/authorize/google/callback?${new URLSearchParams(query)}`, {
-    headers: cookie ? { Cookie: `${BIND_COOKIE}=${cookie}` } : {},
+    headers: cookie ? { Cookie: cookie } : {},
   });
 }
 
@@ -215,7 +215,7 @@ describe('Google web sign-in', () => {
     const flow = await toGoogleCallback(s);
     const calls: TokenCall[] = [];
     const idToken = await signGoogleToken({ sub: KNOWN_SUB, nonce: flow.nonce });
-    for (const cookie of ['victim-cookie', null]) {
+    for (const cookie of [`${bindCookieName(flow.pendingId)}=victim-cookie`, null]) {
       const res = await handleGoogleCallback(
         callbackRequest({ state: flow.pendingId, code: 'c' }, cookie),
         s.deps,
@@ -244,7 +244,7 @@ describe('Google web sign-in', () => {
 
     const retry = await handleAuthorizeStart(
       new Request(`${ORIGIN}/authorize/start?pending=${flow.pendingId}&provider=google`, {
-        headers: { Cookie: `${BIND_COOKIE}=${flow.cookie}` },
+        headers: { Cookie: flow.cookie },
       }),
       s.deps,
     );

@@ -131,7 +131,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 ### 4.4 `/authorize` 流程
 
 **瀏覽器綁定 cookie**
-- 名稱 `daydo_oauth_bind`，屬性 `HttpOnly; Secure; SameSite=None; Path=/authorize`，值是 32 bytes 隨機值，D1 只存它的雜湊 `bindHash`。
+- 名稱 `daydo_oauth_bind_<pending id 前 16 字元>`，每個 pending 一個 cookie，所以同一個瀏覽器同時開多個授權分頁互不覆蓋；屬性 `HttpOnly; Secure; SameSite=None; Path=/authorize; Max-Age=600`（等於 pending 的有效期，過期自動消失），值是 32 bytes 隨機值，D1 只存它的雜湊 `bindHash`。
 - 用 `SameSite=None` 是為了讓 Apple 的跨站 form_post（頂層導覽）也帶得到這個 cookie。
 - **兩個 callback、同意頁 GET、同意 POST 都比對這個 cookie。**
 - callback 比對失敗時，把 pending 標成 `consumedAt`（終結）並顯示錯誤頁。

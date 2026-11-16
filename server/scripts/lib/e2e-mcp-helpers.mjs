@@ -330,11 +330,11 @@ export async function registerClient(mcpBase, redirectUri) {
   return data.client_id;
 }
 
+/** Returns the full `name=value` pair of the per-pending bind cookie (`daydo_oauth_bind_<id prefix>`). */
 function readBindCookie(headers) {
   for (const value of headers.getSetCookie()) {
-    const first = value.split(';')[0];
-    const eq = first.indexOf('=');
-    if (first.slice(0, eq).trim() === 'daydo_oauth_bind') return first.slice(eq + 1).trim();
+    const first = value.split(';')[0].trim();
+    if (first.startsWith('daydo_oauth_bind_')) return first;
   }
   return null;
 }
@@ -361,7 +361,7 @@ export async function beginAuthorize(mcpBase, { clientId, redirectUri, state = `
   assert(bind, 'GET /authorize did not set the bind cookie');
   const href = res.text.replace(/&amp;/g, '&').match(/\/authorize\/start\?pending=([^&"]+)&provider=apple/);
   assert(href, `login page has no Apple button:\n${res.text}`);
-  return { pendingId: decodeURIComponent(href[1]), cookie: `daydo_oauth_bind=${bind}`, verifier: pkce.verifier, state };
+  return { pendingId: decodeURIComponent(href[1]), cookie: bind, verifier: pkce.verifier, state };
 }
 
 /** GET /authorize/start; returns the provider redirect URL. */
