@@ -1,5 +1,6 @@
-import { entityHome, projectMembership, purgedProject, user } from '@schema';
-import { and, eq, inArray, or, type BatchItem } from 'void/db';
+import { entityHome, user } from '@schema';
+import { and, eq, or, type BatchItem } from 'void/db';
+import { collectProjectIds, decodeForUser, forUser, purgedAmong } from '../../membership';
 import type { MembershipRole } from '../entities';
 import type { AppDb } from '../push';
 import type { LookupPair } from './parse';
@@ -60,12 +61,7 @@ export async function loadPushContext(
 
   const purgedChunks = chunkArray(projectIdsToCheck, QUERY_CHUNK_SIZE);
   for (const chunk of purgedChunks) {
-    batch1Queries.push(
-      db
-        .select({ projectId: purgedProject.projectId })
-        .from(purgedProject)
-        .where(inArray(purgedProject.projectId, chunk)),
-    );
+    batch1Queries.push(purgedAmong(db, chunk));
   }
 
   const userQueryIdx = batch1Queries.length;
@@ -74,16 +70,7 @@ export async function loadPushContext(
   );
 
   const membershipQueryIdx = batch1Queries.length;
-  batch1Queries.push(
-    db
-      .select({
-        projectId: projectMembership.projectId,
-        role: projectMembership.role,
-        removedAt: projectMembership.removedAt,
-      })
-      .from(projectMembership)
-      .where(eq(projectMembership.userId, userId)),
-  );
+  batch1Queries.push(forUser(db, userId));
 
   const batch1Results = (await db.batch(
     batch1Queries as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]],
@@ -99,27 +86,16 @@ export async function loadPushContext(
 
   const purgedSet = new Set<string>();
   for (let i = 0; i < purgedChunks.length; i += 1) {
-    for (const row of batch1Results[cursorIdx++]) {
-      purgedSet.add(String(row.projectId));
-    }
+    collectProjectIds(batch1Results[cursorIdx++], purgedSet);
   }
 
   const userRow = batch1Results[userQueryIdx]?.[0];
   const meMemberId =
     userRow && typeof userRow.meMemberId === 'string' ? userRow.meMemberId : null;
 
-  const memberships: Record<string, MembershipRole> = {};
-  const removedOwnerProjects = new Set<string>();
-  for (const row of batch1Results[membershipQueryIdx] ?? []) {
-    const role = row.role;
-    if (row.removedAt === null || row.removedAt === undefined) {
-      if (role === 'owner' || role === 'editor' || role === 'viewer') {
-        memberships[String(row.projectId)] = role;
-      }
-    } else if (role === 'owner') {
-      removedOwnerProjects.add(String(row.projectId));
-    }
-  }
+  const { memberships, removedOwnerProjects } = decodeForUser(
+    batch1Results[membershipQueryIdx] ?? [],
+  );
 
   return {
     knownHome,
