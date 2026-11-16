@@ -1,12 +1,12 @@
 import { defineHandler } from 'void';
-import { createDb } from 'void/db';
 import { env } from 'void/env';
+import { productionAppDeps } from '../../../src/deps';
 import { handleAuthorizeEmailVerify } from '../../../src/oauth/authorize';
 import { webIdentityConfigFromEnv } from '../../../src/oauth/webIdentity';
 
 export const POST = defineHandler(async (c) =>
   handleAuthorizeEmailVerify(c.req.raw, await c.req.parseBody(), {
-    database: createDb(c.env.DB, { session: 'first-primary' }),
+    database: productionAppDeps(c.env).db,
     web: webIdentityConfigFromEnv(env),
   }),
 );

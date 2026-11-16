@@ -1,11 +1,11 @@
 import { defineHandler } from 'void';
-import { createDb } from 'void/db';
+import { productionAppDeps } from '../src/deps';
 import { readJsonObject } from '../src/http';
 import { withCors } from '../src/oauth/cors';
 import { registerClient } from '../src/oauth/register';
 
 export const POST = defineHandler(async (c) => {
-  const result = await registerClient(createDb(c.env.DB, { session: 'first-primary' }), {
+  const result = await registerClient(productionAppDeps(c.env).db, {
     body: await readJsonObject(c),
     ip: c.req.header('CF-Connecting-IP') ?? null,
   });

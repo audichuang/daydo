@@ -1,6 +1,6 @@
 import { defineHandler } from 'void';
-import { createDb } from 'void/db';
 import { env } from 'void/env';
+import { productionAppDeps } from '../src/deps';
 import { withCors } from '../src/oauth/cors';
 import { handleToken } from '../src/oauth/token';
 
@@ -8,7 +8,7 @@ import { handleToken } from '../src/oauth/token';
 const handler = defineHandler(async (c) =>
   withCors(
     await handleToken(c.req.raw, {
-      database: createDb(c.env.DB, { session: 'first-primary' }),
+      database: productionAppDeps(c.env).db,
       secret: env.JWT_SECRET,
     }),
   ),
