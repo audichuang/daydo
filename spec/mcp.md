@@ -51,6 +51,7 @@ server/
   src/domain/    uuid、sortKey、tags、reminders、schedule、recurrence（Swift 邏輯的 TS 移植）
   src/ics/       types、parser、filters、store、fetch、engine、cron
   src/sync/serverClock.ts      共用的伺服器 HLC 時鐘單例（從 routes/sync/push.ts 移出）
+  src/clock.ts                 GetNow／systemNow：可注入時間的預設值（牆鐘讀取例外見 tests/architecture.test.ts）
 ```
 
 **MCP endpoint 放在主機根目錄 `https://daydo-mcp.audichuang.app/`**，與 REF 相同。
