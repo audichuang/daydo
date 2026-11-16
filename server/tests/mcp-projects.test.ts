@@ -1,10 +1,11 @@
 import { eq } from 'drizzle-orm';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as schema from '../db/schema';
 import { acceptInvite, createInvite } from '../src/sharing';
 import { executeSyncPush } from '../src/sync/push';
 import { loadSnapshot } from '../src/serverops/snapshot';
 import { handleToolCall, HINTS, TOOL_DEFS } from '../src/mcp/registry';
+import { advancingNow } from './helpers/advancingClock';
 import { createScopeWorld, type ScopePushInput } from './helpers/scopeWorld';
 
 function createHarness() {
@@ -255,6 +256,25 @@ describe('M10 delete_project', () => {
     const snap = await h.snapshot('u-a');
     expect(snap.findRow('task', 't1')?.row.deletedAt).toBeTypeOf('number');
     expect(snap.findRow('task', 't2')?.row.deletedAt).toBeTypeOf('number');
+  });
+
+  it('stamps the trashed tasks and the list with one now', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    advancingNow(Date.now() + 120_000);
+    try {
+      const r = await call(h, 'u-a', 'delete_project', { project_id: 'p1' });
+      expect(r.isError, r.text).toBe(false);
+    } finally {
+      vi.restoreAllMocks();
+    }
+    const snap = await h.snapshot('u-a');
+    const task = snap.findRow('task', 't1')!.row;
+    const project = snap.findRow('project', 'p1')!.row;
+    expect(task.deletedAt).toBeTypeOf('number');
+    expect(task.updatedAt).toBe(task.deletedAt);
+    expect(project.deletedAt).toBe(task.deletedAt);
+    expect(project.updatedAt).toBe(project.deletedAt);
   });
 
   it.each(['viewer', 'editor'] as const)('refuses a %s without pushing', async (role) => {

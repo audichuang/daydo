@@ -8,6 +8,7 @@ import { acceptInvite, createInvite } from '../src/sharing';
 import { loadSnapshot } from '../src/serverops/snapshot';
 import { handleToolCall, HINTS, TOOL_DEFS } from '../src/mcp/registry';
 import { uuidv5 } from '../src/domain/uuid';
+import { advancingNow } from './helpers/advancingClock';
 import { createScopeWorld } from './helpers/scopeWorld';
 
 function createHarness() {
@@ -267,5 +268,32 @@ describe('M12 complete_task, repeating tasks', () => {
     expect(r.isError).toBe(true);
     expect(mcpCalls(h)).toEqual([]);
     expect(pulled(await h.pull('u-a'), 'task', await repCopyId())).toBeUndefined();
+  });
+});
+
+describe('complete_task carries one now into every stamp', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('stamps a one-off completion with the same now for completedAt and updatedAt', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    advancingNow(FIX_NOW);
+    const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 't1' });
+    expect(r.isError, r.text).toBe(false);
+    const row = pulled(await h.pull('u-a'), 'task', 't1')!;
+    expect(row.completedAt).toBeTypeOf('number');
+    expect(row.updatedAt).toBe(row.completedAt);
+  });
+
+  it('stamps the completed copy of a repeating task with one now', async () => {
+    const h = createHarness();
+    await seedRepeating(h);
+    advancingNow(FIX_NOW);
+    const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
+    expect(r.isError, r.text).toBe(false);
+    const copy = pulled(await h.pull('u-a'), 'task', await repCopyId())!;
+    expect(copy.completedAt).toBeTypeOf('number');
+    expect(copy.createdAt).toBe(copy.completedAt);
+    expect(copy.updatedAt).toBe(copy.completedAt);
   });
 });

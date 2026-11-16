@@ -896,3 +896,37 @@ it('renews the lease before the removal push, so a lost lease writes nothing', a
   expect(h.icsPushes()).toBe(1);
   expect(await h.store.listMappings('u-a', source.id)).toHaveLength(1);
 });
+
+// The run's clock is the one stamp every ICS write carries: updatedAt must equal the injected
+// now (and the deletedAt / completedAt of the same write), not whatever Date.now() says later.
+describe('ICS writes use the injected nowMs', () => {
+  const LATER = NOW + 3_600_000;
+
+  it('stamps createdAt and updatedAt of a new task with the run clock', async () => {
+    const h = createHarness();
+    const source = await seedSource(h);
+    await sync(h, 'u-a', source.id);
+    const { taskId } = await onlyMapping(h, source.id);
+    expect(await taskOf(h, taskId)).toMatchObject({ createdAt: NOW, updatedAt: NOW });
+  });
+
+  it('stamps a trashed task with the same now for deletedAt and updatedAt', async () => {
+    const h = createHarness();
+    const source = await seedSource(h);
+    await sync(h, 'u-a', source.id);
+    const { taskId } = await onlyMapping(h, source.id);
+    h.setFeed(calendar());
+    await sync(h, 'u-a', source.id, {}, LATER);
+    expect(await taskOf(h, taskId)).toMatchObject({ deletedAt: LATER, updatedAt: LATER });
+  });
+
+  it('stamps a cancelled task with the same now for completedAt and updatedAt', async () => {
+    const h = createHarness();
+    const source = await seedSource(h);
+    await sync(h, 'u-a', source.id);
+    const { taskId } = await onlyMapping(h, source.id);
+    h.setFeed(calendar(event(['STATUS:CANCELLED'])));
+    await sync(h, 'u-a', source.id, {}, LATER);
+    expect(await taskOf(h, taskId)).toMatchObject({ status: 2, completedAt: LATER, updatedAt: LATER });
+  });
+});

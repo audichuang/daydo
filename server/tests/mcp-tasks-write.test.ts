@@ -1,9 +1,10 @@
 import { eq } from 'drizzle-orm';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as schema from '../db/schema';
 import { acceptInvite, createInvite } from '../src/sharing';
 import { loadSnapshot } from '../src/serverops/snapshot';
 import { handleToolCall, HINTS, TOOL_DEFS } from '../src/mcp/registry';
+import { advancingNow } from './helpers/advancingClock';
 import { createScopeWorld } from './helpers/scopeWorld';
 
 function createHarness() {
@@ -496,6 +497,21 @@ describe('M11b delete_task', () => {
     expect(row?.deletedAt).toBeTypeOf('number');
     expect(row?.purgedAt ?? null).toBeNull();
     expect((await call(h, 'u-a', 'get_task', { project_id: 'p1', task_id: 't1' })).isError).toBe(true);
+  });
+
+  it('stamps deletedAt and updatedAt with the same now', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    advancingNow(Date.now() + 120_000);
+    try {
+      const r = await call(h, 'u-a', 'delete_task', { project_id: 'p1', task_id: 't1' });
+      expect(r.isError, r.text).toBe(false);
+    } finally {
+      vi.restoreAllMocks();
+    }
+    const row = pulled(await h.pull('u-a'), 'task', 't1')!;
+    expect(row.deletedAt).toBeTypeOf('number');
+    expect(row.updatedAt).toBe(row.deletedAt);
   });
 
   it('errors when the task is not in that project', async () => {
