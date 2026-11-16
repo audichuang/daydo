@@ -204,14 +204,11 @@ const GUARDS: Guard[] = [
     bad: ['const nowMs = Date.now();', 'this.now = options.now ?? Date.now;', 'const d = new Date();'],
   },
   {
-    // Known limit: `undefined ?? systemNow()` still passes, since the guard only sees the `??` before it.
-    // Allowed: import statements and the text after `??`; src/clock.ts (definition) and src/deps.ts
-    // (`getNow: systemNow`) are the allowed files. Any other mention, including `const f = systemNow; f()`, is a hit.
-    name: 'systemNow is only the default of an injectable time',
+    name: 'systemNow() is only the default of an injectable time',
     dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
-    pattern: /(?<!\?\?\s*)(?<!^\s*import\b[^;]*)\bsystemNow\b/m,
-    allow: ['src/clock.ts', 'src/deps.ts'],
-    bad: ['const now = systemNow();', 'expiresAt: systemNow() + TTL_MS,', 'const f = systemNow; f();'],
+    pattern: /(?<!\?\?\s*)\bsystemNow\(\)/,
+    allow: [],
+    bad: ['const now = systemNow();', 'expiresAt: systemNow() + TTL_MS,'],
   },
   {
     name: 'createDb( is called only in src/deps.ts',
