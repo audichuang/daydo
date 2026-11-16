@@ -14,37 +14,29 @@ interface PurgeTarget {
 }
 
 /**
- * Asks every target scope to purge its rows of the list, then builds the listScopes
- * deletes for the scopes that confirmed (one statement per project). Scopes that failed
- * keep their listScopes row so a later pull of that scope retries the purge.
+ * Asks every target scope to purge its rows of the list and returns the outcomes plus
+ * the targets that confirmed. Callers clear listScopes only for confirmed targets; a
+ * failed scope keeps its row so a later pull of that scope retries the purge.
  */
 async function notifyScopes(
-  db: AppDb,
   getScopeStub: PurgeStubLookup,
   targets: readonly PurgeTarget[],
 ): Promise<{
   settled: Array<PromiseSettledResult<ScopePurgeProjectResponse>>;
-  clearConfirmed: BatchItem<'sqlite'>[];
+  confirmed: PurgeTarget[];
 }> {
   const settled = await Promise.allSettled(
     targets.map(async (t) => getScopeStub(t.scope).purgeProject(t.input)),
   );
-  const confirmedByProject = new Map<string, string[]>();
-  targets.forEach((t, idx) => {
-    if (settled[idx].status !== 'fulfilled') return;
-    const scopes = confirmedByProject.get(t.input.projectId);
-    if (scopes) {
-      scopes.push(t.scope);
-    } else {
-      confirmedByProject.set(t.input.projectId, [t.scope]);
-    }
-  });
-  const clearConfirmed = Array.from(confirmedByProject, ([projectId, scopes]) =>
-    db
-      .delete(listScopes)
-      .where(and(eq(listScopes.projectId, projectId), inArray(listScopes.scope, scopes))),
-  );
-  return { settled, clearConfirmed };
+  const confirmed = targets.filter((_, idx) => settled[idx].status === 'fulfilled');
+  return { settled, confirmed };
+}
+
+/** Deletes the listScopes rows of `projectId` for scopes that confirmed the purge. */
+function clearListScopes(db: AppDb, projectId: string, scopes: string[]) {
+  return db
+    .delete(listScopes)
+    .where(and(eq(listScopes.projectId, projectId), inArray(listScopes.scope, scopes)));
 }
 
 /**
@@ -79,8 +71,7 @@ export async function purgeProject(
 
   const listedScopes = (purgeBatchResults[2] ?? []).map((r) => String(r.scope));
   const scopesToPurge = Array.from(new Set([...listedScopes, homeScope]));
-  const { settled, clearConfirmed } = await notifyScopes(
-    db,
+  const { settled, confirmed } = await notifyScopes(
     getScopeStub,
     scopesToPurge.map((scope) => ({
       scope,
@@ -93,10 +84,13 @@ export async function purgeProject(
     })),
   );
 
-  // A single project yields at most one statement; it runs on its own, outside a batch.
-  const [clearStmt] = clearConfirmed;
-  if (clearStmt) {
-    await clearStmt;
+  // One statement for every confirmed scope, run on its own outside a batch.
+  if (confirmed.length > 0) {
+    await clearListScopes(
+      db,
+      projectId,
+      confirmed.map((t) => t.scope),
+    );
   }
 
   const homeSettled = settled[scopesToPurge.indexOf(homeScope)];
@@ -142,8 +136,14 @@ export async function retryPendingPurges(
   }
   if (pending.length === 0) return;
 
-  const { clearConfirmed } = await notifyScopes(db, getScopeStub, pending);
-  if (clearConfirmed.length > 0) {
-    await db.batch(clearConfirmed as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+  // One delete per confirmed (project, scope) pair, all in one batch.
+  const { confirmed } = await notifyScopes(getScopeStub, pending);
+  if (confirmed.length > 0) {
+    await db.batch(
+      confirmed.map((t) => clearListScopes(db, t.input.projectId, [t.scope])) as unknown as [
+        BatchItem<'sqlite'>,
+        ...BatchItem<'sqlite'>[],
+      ],
+    );
   }
 }
