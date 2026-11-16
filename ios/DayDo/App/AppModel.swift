@@ -428,15 +428,29 @@ final class AppModel {
         }
         completingIds.insert(id)
         completionHapticTrigger += 1
-        let ifUpdatedAt = task.updatedAt
+        let clickedRepeat = task.repeat
+        let clickedStartDay = task.schedule?.startDay
+        let clickedStartMinute = task.schedule?.startMinute
         Task {
+            defer { completingIds.remove(id) }
             try? await Task.sleep(for: .milliseconds(350))
-            let updated = await perform { try await $0.completeTask(id: id, ifUpdatedAt: ifUpdatedAt) }
-            if updated != nil {
-                // Keep optimistic done state across the single runloop hop while screens reload.
-                try? await Task.sleep(for: .milliseconds(60))
+            guard let current = try? await api.getTask(id: id),
+                  current.deletedAt == nil,
+                  !current.isCompleted else {
+                return
             }
-            completingIds.remove(id)
+            if clickedRepeat != nil || current.repeat != nil {
+                guard current.schedule?.startDay == clickedStartDay,
+                      current.schedule?.startMinute == clickedStartMinute else {
+                    return
+                }
+            }
+            let updated = await perform { try await $0.completeTask(id: id, ifUpdatedAt: current.updatedAt) }
+            if updated != nil {
+                // Hold optimistic state past the list removal spring (~0.6s) so fading rows
+                // stay checked, while repeating tasks still reset cleanly to their next occurrence.
+                try? await Task.sleep(for: .milliseconds(750))
+            }
         }
     }
 

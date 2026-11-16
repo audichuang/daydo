@@ -1163,4 +1163,49 @@ final class DayDoFlowTests: XCTestCase {
         let expBack = XCTNSPredicateExpectation(predicate: monthRestored, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [expBack], timeout: 3), .completed, "Expected calendar title to return to \(initialTitle), got \(title.label)")
     }
+
+    @MainActor
+    func testCollapsedCalendarIgnoresTapsOnHiddenWeeks() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        app.buttons["日曆"].tap()
+        let title = app.buttons["calendarTitle"]
+        XCTAssertTrue(title.waitForExistence(timeout: 3), app.debugDescription)
+
+        // Pick day 12 of the current month so the selected week is never the first or last row.
+        let comps = Calendar.current.dateComponents([.year, .month], from: Date())
+        let m = comps.month!
+        let day12Label = "\(m)月12日"
+        let day12Prefix = "\(m) 月 12 日"
+        let day12Cell = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", day12Prefix)).firstMatch
+        XCTAssertTrue(day12Cell.waitForExistence(timeout: 3), app.debugDescription)
+        day12Cell.tap()
+        XCTAssertTrue(day12Cell.isSelected)
+        let agendaHeading = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", day12Label)).firstMatch
+        XCTAssertTrue(agendaHeading.waitForExistence(timeout: 3), app.debugDescription)
+
+        // Collapse to a single week via the handle.
+        let collapseHandle = app.buttons["收合成單週"]
+        XCTAssertTrue(collapseHandle.waitForExistence(timeout: 3), app.debugDescription)
+        collapseHandle.tap()
+        let expandHandle = app.buttons["展開整個月份"]
+        XCTAssertTrue(expandHandle.waitForExistence(timeout: 3), app.debugDescription)
+
+        // Tap 1: top edge of the weekday symbol header ("三") directly above the visible week,
+        // where the hidden previous-week row sits if hit-testing isn't disabled.
+        let wednesdayHeader = app.staticTexts["三"].firstMatch
+        XCTAssertTrue(wednesdayHeader.waitForExistence(timeout: 3), app.debugDescription)
+        wednesdayHeader.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.0)).tap()
+        XCTAssertTrue(expandHandle.exists, "Tap on weekday header should keep calendar collapsed")
+        XCTAssertTrue(day12Cell.isSelected, "Tap on weekday header should not select a hidden week's day")
+        XCTAssertTrue(agendaHeading.exists, "Agenda heading should remain on \(day12Label)")
+
+        // Tap 2: in the gap right below the collapse handle (just above the agenda card),
+        // where the hidden next-week row sits if hit-testing isn't disabled.
+        let gapPoint = expandHandle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1.0)).withOffset(CGVector(dx: 0, dy: 11))
+        gapPoint.tap()
+        XCTAssertTrue(day12Cell.isSelected, "Tap below collapse handle should not select a hidden week's day")
+        XCTAssertTrue(agendaHeading.exists, "Agenda heading should remain on \(day12Label)")
+    }
 }

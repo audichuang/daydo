@@ -541,6 +541,7 @@ struct CalendarScreen: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: rowSpacing) {
                     ForEach(Array(days.enumerated()), id: \.element) { idx, d in
                         dayCell(d, progress: progress)
+                            .allowsHitTesting(progress > 0 || idx / 7 == selectedRow)
                             .accessibilityHidden(progress == 0 && idx / 7 != selectedRow)
                     }
                 }
