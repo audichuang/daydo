@@ -1,4 +1,7 @@
 import Scope, { ScopeObject, shouldSplitTransaction } from '../../durable-objects/scope';
+import { systemNow, type GetNow } from '../../src/clock';
+import type { AppDeps } from '../../src/deps';
+import type { MailMessage } from '../../src/mail/mailer';
 import { createServerHlcClock } from '../../src/sync/hlc';
 import { executeSyncPull } from '../../src/sync/pull';
 import { executeSyncPush } from '../../src/sync/push';
@@ -33,6 +36,8 @@ export interface CreateScopeWorldOptions {
     input: ScopePushInput,
     proceed: (input: ScopePushInput) => Promise<ScopePushResult>,
   ) => Promise<ScopePushResult>;
+  /** Clock handed out as `deps.getNow` (defaults to systemNow). */
+  getNow?: GetNow;
 }
 
 /** In-memory D1 + per-scope ScopeObject test world shared by sync, MCP, and ICS tests. */
@@ -92,6 +97,20 @@ export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
       getScopeStub,
     });
 
+  const sentMail: MailMessage[] = [];
+  // Same interface as productionAppDeps: tsc fails here when AppDeps gains or changes a field.
+  const deps = {
+    db,
+    getScopeStub,
+    getNow: options.getNow ?? systemNow,
+    mailer: {
+      send: (message: MailMessage) => {
+        sentMail.push(message);
+        return Promise.resolve({ ok: true as const });
+      },
+    },
+  } satisfies AppDeps;
+
   return {
     d1,
     db,
@@ -104,6 +123,8 @@ export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
     getScopeStub,
     push,
     pull,
+    sentMail,
+    deps,
   };
 }
 
