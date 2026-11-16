@@ -305,6 +305,25 @@ describe('M9b writer: ops and HLC', () => {
     ]);
     expect(out?.status).toBe('purged');
     expect(out?.row?.purgedAt).toBeTypeOf('number');
+ 
+    const err = await writeOrThrow(h.deps('u-a'), snap, [
+      { entity: 'task', entityId: 't1', set: { title: 'later' } },
+    ]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WriteError);
+    expect((err as WriteError).outcome.status).toBe('purged');
+  });
+
+  it('keeps caller order for lists and tasks (tasks trashed before their list)', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    const snap = await h.snapshot('u-a');
+    h.calls.length = 0;
+    const now = Date.now();
+    await writeOrThrow(h.deps('u-a'), snap, [
+      { entity: 'task', entityId: 't1', set: { deletedAt: now, updatedAt: now } },
+      { entity: 'project', entityId: 'p1', set: { deletedAt: now, updatedAt: now } },
+    ]);
+    expect(h.calls[0]!.ops.map((o) => o.entity)).toEqual(['task', 'project']);
   });
 });
 

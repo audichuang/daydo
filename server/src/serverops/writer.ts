@@ -56,6 +56,7 @@ export interface WriterDeps {
  * unapplied: some fields lost LWW to a newer device edit; nothing is resent.
  * rejected: the server refused the op (reason passed through, e.g. Forbidden).
  * skipped: not sent because an earlier chunk failed (writeOrThrow only).
+ * writeOrThrow treats purged, unapplied and rejected as failures.
  */
 export type WriteStatus = 'applied' | 'purged' | 'unapplied' | 'rejected' | 'skipped';
 
@@ -92,6 +93,9 @@ export class WriteError extends Error {
 
 function describeFailure(o: WriteOutcome): string {
   const target = `${o.entity} ${o.entityId}`;
+  if (o.status === 'purged') {
+    return `${target} was permanently deleted; nothing was written. Re-read and retry.`;
+  }
   if (o.status === 'unapplied') {
     return (
       `${target}: fields not applied because a newer edit from another device won: ` +
@@ -321,9 +325,9 @@ function planOps(
     return { index, intent, op };
   });
 
-  // Stable: lists, then tasks, then their child rows, so a child never precedes its task
-  // in a chunk or lands in an earlier chunk.
-  const rank = (e: WritableEntity) => (e === 'task' ? 1 : isTaskChildEntity(e) ? 2 : 0);
+  // Stable: child rows go last so a child never precedes its task in a chunk or lands in an
+  // earlier chunk; everything else keeps caller order (delete_project trashes tasks before the list).
+  const rank = (e: WritableEntity) => (isTaskChildEntity(e) ? 1 : 0);
   return planned
     .map((p, order) => ({ p, order }))
     .sort((a, b) => rank(a.p.op.entity) - rank(b.p.op.entity) || a.order - b.order)
@@ -364,6 +368,10 @@ function classify(
   return { ...base, status: 'applied', row, clocks };
 }
 
+function isFailure(o: WriteOutcome): boolean {
+  return o.status === 'rejected' || o.status === 'unapplied' || o.status === 'purged';
+}
+
 /**
  * Pushes the intents (validated up front, nothing sent on a bad value) and returns one outcome
  * per intent, in intent order. Existing snapshot rows are refreshed from the response.
@@ -398,7 +406,7 @@ export async function pushIntents(
     chunk.forEach((p, j) => {
       const outcome = classify(p, res.results[j]);
       outcomes[p.index] = outcome;
-      if (outcome.status === 'rejected' || outcome.status === 'unapplied') failed = true;
+      if (isFailure(outcome)) failed = true;
       if (outcome.row) {
         const cached = snapshot.findRow(p.op.entity, p.op.entityId);
         if (cached) {
@@ -412,14 +420,17 @@ export async function pushIntents(
   return outcomes;
 }
 
-/** Tool-layer variant: stops at the first failing chunk and throws a WriteError for the first failure. */
+/**
+ * Tool-layer variant: stops after the first chunk with a failure and throws a WriteError for the
+ * first failing intent (callers that handle tombstones themselves use pushIntents).
+ */
 export async function writeOrThrow(
   deps: WriterDeps,
   snapshot: Snapshot,
   intents: readonly WriteIntent[],
 ): Promise<WriteOutcome[]> {
   const outcomes = await pushIntents(deps, snapshot, intents, { stopOnFailure: true });
-  const failure = outcomes.find((o) => o.status === 'rejected' || o.status === 'unapplied');
+  const failure = outcomes.find(isFailure);
   if (failure) throw new WriteError(failure);
   return outcomes;
 }
