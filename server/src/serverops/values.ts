@@ -1,6 +1,7 @@
 // Row value helpers shared by the server-side writers (writer, MCP tools, ICS engine).
 import type { Schedule } from '../domain/schedule';
 import { SCHEDULE_FIELDS } from '../sync/entities';
+import type { SnapshotRow } from './snapshot';
 
 /** null and undefined both mean "no value" in a row or a write. */
 export function isNil(v: unknown): v is null | undefined {
@@ -35,4 +36,14 @@ export function rowSchedule(row: Record<string, unknown>): Schedule | null {
 export function sameSchedule(a: Schedule | null, b: Schedule | null): boolean {
   if (a === null || b === null) return a === b;
   return SCHEDULE_FIELDS.every((k) => a[k] === b[k]);
+}
+
+/** Plain code-unit order, the same order the App uses for sort keys. */
+export function compareKeys(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** By sortKey, then id. */
+export function bySortKey(a: SnapshotRow, b: SnapshotRow): number {
+  return compareKeys(String(a.row.sortKey ?? ''), String(b.row.sortKey ?? '')) || compareKeys(String(a.row.id), String(b.row.id));
 }

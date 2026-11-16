@@ -5,6 +5,7 @@ import type { MembershipRole } from '../sync/entities';
 import { executeSyncPull } from '../sync/pull';
 import type { AppDb, ScopeStub } from '../sync/push';
 import { userScope } from '../sync/scopeName';
+import type { WriteOutcome } from './writer';
 
 const PULL_LIMIT = 1000;
 /** Safety valve: a scope that keeps reporting hasMore without advancing its cursor is a bug. */
@@ -125,5 +126,18 @@ export async function loadSnapshot(
       const role = memberships.get(projectId);
       return role === 'owner' || role === 'editor';
     },
+  };
+}
+
+/** The snapshot plus rows created by a write, so a result can show new tasks and checklist items. */
+export function withCreated(snapshot: Snapshot, outcomes: readonly WriteOutcome[]): Snapshot {
+  const created: SnapshotRow[] = outcomes
+    .filter((o) => o.row && !snapshot.findRow(o.entity, o.entityId))
+    .map((o) => ({ entity: o.entity, scope: '', row: o.row!, clocks: o.clocks, serverSeq: 0 }));
+  const keyOf = (r: SnapshotRow) => String(r.entity === 'tag' ? r.row.name : r.row.id);
+  return {
+    ...snapshot,
+    rows: (entity) => [...snapshot.rows(entity), ...created.filter((r) => r.entity === entity)],
+    findRow: (entity, id) => snapshot.findRow(entity, id) ?? created.find((r) => r.entity === entity && keyOf(r) === id),
   };
 }
