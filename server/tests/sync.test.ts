@@ -827,6 +827,30 @@ describe('sync push plan (pure)', () => {
     expect(originalHome.has('task:t-edit')).toBe(false);
   });
 
+  it("registers an existing task's target list by write role alone, purged or not", () => {
+    const parsed = parsePushBatch([
+      makeNewTaskOp('op-1', 't-gone', 'p-gone'),
+      makeNewTaskOp('op-2', 't-view', 'p-view'),
+      makeNewTaskOp('op-3', 't-gone-view', 'p-gone-view'),
+    ]);
+    const plan = planPushBatch({
+      pusherScope: 'u:editor',
+      parsedOps: parsed.ops,
+      context: makeContext({
+        knownHome: new Map([
+          ['task:t-gone', 'u:editor'],
+          ['task:t-view', 'u:editor'],
+          ['task:t-gone-view', 'u:editor'],
+        ]),
+        memberships: { 'p-gone': 'editor', 'p-view': 'viewer', 'p-gone-view': 'viewer' },
+        purgedSet: new Set(['p-gone', 'p-gone-view']),
+      }),
+    });
+
+    expect(plan.opTargetScope).toEqual(['u:editor', 'u:editor', 'u:editor']);
+    expect(plan.listScopeTargets).toEqual([{ opIndex: 0, projectId: 'p-gone', scope: 'u:editor' }]);
+  });
+
   it('rejects in-batch child when parent task is rejected (Forbidden or id-in-other-scope)', () => {
     // 1. Parent rejected as viewer Forbidden -> child inherits Forbidden
     const viewerBatch = parsePushBatch([

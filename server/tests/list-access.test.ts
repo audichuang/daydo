@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { listWriteDenial } from '../src/sync/access';
+import { hasWriteRole, listWriteDenial } from '../src/sync/access';
 import type { MembershipRole } from '../src/sync/entities';
 
 describe('listWriteDenial', () => {
@@ -29,5 +29,18 @@ describe('listWriteDenial', () => {
         listWriteDenial(id, { memberships, purgedSet: new Set() }),
       );
     }
+  });
+});
+
+describe('hasWriteRole', () => {
+  it.each([
+    ['owner', true],
+    ['editor', true],
+    ['viewer', false],
+    [undefined, false],
+  ] as const)('%s → %s, from a record or a Map', (role, expected) => {
+    const memberships: Record<string, MembershipRole> = role ? { p: role } : {};
+    expect(hasWriteRole(memberships, 'p')).toBe(expected);
+    expect(hasWriteRole(new Map(Object.entries(memberships)), 'p')).toBe(expected);
   });
 });

@@ -6,7 +6,7 @@ import {
   type EntityName,
   type MembershipRole,
 } from '../entities';
-import { listWriteDenial } from '../access';
+import { hasWriteRole, listWriteDenial } from '../access';
 import { entityHomeKey, type ParsedPushOp } from './parse';
 
 export interface NewEntityHomeEntry {
@@ -183,10 +183,10 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
         validated.op.row.projectId.length > 0
       ) {
         const targetPid = validated.op.row.projectId;
-        const targetRole = memberships[targetPid];
+        // Role only, as before: a purged target list is still registered here (registerListScope
+        // skips purged lists and the DO refuses the write), so the batch composition is unchanged.
         if (
-          targetRole === 'owner' ||
-          targetRole === 'editor' ||
+          hasWriteRole(memberships, targetPid) ||
           inBatchNewProjects.has(targetPid) ||
           projectOwnerBackfills.has(targetPid)
         ) {
