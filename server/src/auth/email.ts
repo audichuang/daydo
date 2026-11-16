@@ -16,6 +16,10 @@ export const EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
 export const EMAIL_CODE_MAX_ATTEMPTS = 5;
 export const EMAIL_START_LIMIT_PER_EMAIL = 5;
 export const EMAIL_START_LIMIT_PER_IP = 20;
+/** Wrong guesses one address may make across all its codes (both flows) before it is locked. */
+export const EMAIL_LOCKOUT_FAILURES = 10;
+/** Failures count while their code was issued less than this long ago (spec/sync.md "信箱驗證碼"). */
+export const EMAIL_LOCKOUT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const MAX_EMAIL_LENGTH = 254;
 
@@ -45,12 +49,22 @@ function pendingMatches(pendingId: string | null) {
   return pendingId === null ? isNull(emailCode.pendingId) : eq(emailCode.pendingId, pendingId);
 }
 
-export type EmailStartOutcome = 'sent' | 'mail_failed' | 'rate_limited_email' | 'rate_limited_ip';
+/**
+ * True while `email` has fewer than EMAIL_LOCKOUT_FAILURES wrong guesses on codes issued inside
+ * the window. `attempts` counts wrong guesses only, so the sum is the failure count. A subquery
+ * (aliased so it never binds to an outer emailCode) lets the guess UPDATE check it atomically.
+ */
+function notLockedOut(email: string, now: number) {
+  return sql`(SELECT coalesce(sum(f.attempts), 0) FROM ${emailCode} AS f WHERE f.email = ${email} AND f.createdAt > ${now - EMAIL_LOCKOUT_WINDOW_MS}) < ${EMAIL_LOCKOUT_FAILURES}`;
+}
+
+export type EmailStartOutcome = 'sent' | 'mail_failed' | 'locked' | 'rate_limited_email' | 'rate_limited_ip';
 
 /**
- * Issues a code for `email` and mails it. Over the per-address or per-IP hourly limit nothing is
- * stored or sent. A new code replaces every older live code for the address. Never reveals whether
- * an account exists: the identity table is not consulted.
+ * Issues a code for `email` and mails it. While the address is locked out, or over the
+ * per-address or per-IP hourly limit, nothing is stored or sent. A new code replaces the older
+ * live codes of the same flow only: App codes (no pending) or codes of the same pending. Never
+ * reveals whether an account exists: the identity table is not consulted.
  */
 export async function startEmailCode(
   database: DatabaseClient,
@@ -60,8 +74,13 @@ export async function startEmailCode(
   const email = params.email.trim().toLowerCase();
   const ipHash = await sha256Hex(`email|${ipRateKey(params.ip)}`);
   const since = now - LIMIT_WINDOW_MS;
+  const pendingId = params.pendingId ?? null;
 
-  const [[byEmail], [byIp]] = await database.batch([
+  const [[recent], [byEmail], [byIp]] = await database.batch([
+    database
+      .select({ failures: sql<number>`coalesce(sum(${emailCode.attempts}), 0)` })
+      .from(emailCode)
+      .where(and(eq(emailCode.email, email), gt(emailCode.createdAt, now - EMAIL_LOCKOUT_WINDOW_MS))),
     database
       .select({ n: count() })
       .from(emailCode)
@@ -71,6 +90,10 @@ export async function startEmailCode(
       .from(emailCode)
       .where(and(eq(emailCode.ipHash, ipHash), gt(emailCode.createdAt, since))),
   ]);
+  if (Number(recent.failures) >= EMAIL_LOCKOUT_FAILURES) {
+    logEvent('warn', 'auth.email.start', { outcome: 'locked' });
+    return 'locked';
+  }
   if (byEmail.n >= EMAIL_START_LIMIT_PER_EMAIL || byIp.n >= EMAIL_START_LIMIT_PER_IP) {
     const outcome = byEmail.n >= EMAIL_START_LIMIT_PER_EMAIL ? 'rate_limited_email' : 'rate_limited_ip';
     logEvent('warn', 'auth.email.start', { outcome });
@@ -84,7 +107,9 @@ export async function startEmailCode(
     database
       .update(emailCode)
       .set({ usedAt: now })
-      .where(and(eq(emailCode.email, email), isNull(emailCode.usedAt), gt(emailCode.expiresAt, now))),
+      .where(
+        and(eq(emailCode.email, email), pendingMatches(pendingId), isNull(emailCode.usedAt), gt(emailCode.expiresAt, now)),
+      ),
     database.insert(emailCode).values({
       id: crypto.randomUUID(),
       email,
@@ -94,7 +119,7 @@ export async function startEmailCode(
       createdAt: now,
       expiresAt: now + EMAIL_CODE_TTL_MS,
       usedAt: null,
-      pendingId: params.pendingId ?? null,
+      pendingId,
       ipHash,
     }),
   ]);
@@ -106,9 +131,10 @@ export async function startEmailCode(
 }
 
 /**
- * Consumes the live code for `email` (and `pendingId`; null for App sign-in). Every call on a live
- * code spends one attempt in the same conditional UPDATE that consumes it, so concurrent guesses
- * cannot exceed the limit and a code is accepted at most once.
+ * Consumes the live code for `email` (and `pendingId`; null for App sign-in). A wrong guess spends
+ * one attempt and the right one consumes the code, both in one conditional UPDATE that also
+ * re-checks the per-address lockout, so concurrent guesses cannot exceed either limit and a code
+ * is accepted at most once. A locked address is refused without touching any row.
  */
 export async function verifyEmailCode(
   database: DatabaseClient,
@@ -121,6 +147,7 @@ export async function verifyEmailCode(
     isNull(emailCode.usedAt),
     gt(emailCode.expiresAt, now),
     lt(emailCode.attempts, EMAIL_CODE_MAX_ATTEMPTS),
+    notLockedOut(email, now),
   );
 
   const row = await database
@@ -134,7 +161,7 @@ export async function verifyEmailCode(
   const matched = /^\d{6}$/.test(params.code) && (await hashCode(params.code, row.salt)) === row.codeHash;
   const updated = await database
     .update(emailCode)
-    .set({ attempts: sql`${emailCode.attempts} + 1`, ...(matched ? { usedAt: now } : {}) })
+    .set(matched ? { usedAt: now } : { attempts: sql`${emailCode.attempts} + 1` })
     .where(and(eq(emailCode.id, row.id), live))
     .returning({ id: emailCode.id });
   return matched && updated.length === 1;

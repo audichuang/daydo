@@ -464,8 +464,8 @@ export async function handleAppleCallback(
 
 // ---------------------------------------------------------------------------
 // Email sign-in code (spec/mcp.md 4.4 3b): POST /authorize/email/start mails a code bound to the
-// pending, POST /authorize/email/verify checks it and binds an EXISTING user. Codes, limits and
-// attempts are the shared store in src/auth/email.ts.
+// pending, POST /authorize/email/verify checks it and binds an EXISTING user. Codes, limits,
+// attempts and the per-address lockout are the shared store in src/auth/email.ts.
 
 /** Records `email` as the pending's provider while it is still open and unbound. */
 async function markEmailProvider(database: DatabaseClient, pendingId: string, now: number): Promise<boolean> {
@@ -486,8 +486,9 @@ async function markEmailProvider(database: DatabaseClient, pendingId: string, no
 
 /**
  * Like GET /authorize/start, a cookie mismatch here only refuses (the pending is kept). The code
- * page is the same whether the code was mailed, the address or IP was over its limit, or the
- * mail failed, and the identity table is not read, so it reveals nothing about accounts.
+ * page is the same whether the code was mailed, the address was locked out, the address or IP
+ * was over its limit, or the mail failed, and the identity table is not read, so it reveals
+ * nothing about accounts. The new code replaces only this pending's older code.
  */
 export async function handleAuthorizeEmailStart(
   request: Request,

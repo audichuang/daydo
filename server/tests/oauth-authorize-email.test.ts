@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { EMAIL_CODE_MAX_ATTEMPTS, EMAIL_START_LIMIT_PER_EMAIL } from '../src/auth/email';
+import { EMAIL_CODE_MAX_ATTEMPTS, EMAIL_LOCKOUT_FAILURES, EMAIL_START_LIMIT_PER_EMAIL } from '../src/auth/email';
 import type { DatabaseClient } from '../src/auth/session';
 import type { MailMessage, Mailer } from '../src/mail/mailer';
 import {
@@ -390,6 +390,33 @@ describe('POST /authorize/email/verify', () => {
     // A's code still works on A.
     const own = await emailVerify(s, { pending: a.pendingId, email: KNOWN_EMAIL, code: a.code }, a.cookie);
     expect(own.status).toBe(303);
+  });
+
+  it('two pendings for the same address each keep their own code', async () => {
+    const s = setup();
+    const a = await toCodeForm(s);
+    const b = await toCodeForm(s);
+    expect((await emailVerify(s, { pending: a.pendingId, email: KNOWN_EMAIL, code: a.code }, a.cookie)).status).toBe(303);
+    expect((await emailVerify(s, { pending: b.pendingId, email: KNOWN_EMAIL, code: b.code }, b.cookie)).status).toBe(303);
+  });
+
+  it(`shows the wrong-code page for the right code once the address has ${EMAIL_LOCKOUT_FAILURES} failures, and mails no more codes`, async () => {
+    const s = setup();
+    const { pendingId, cookie } = await beginAuthorize(s);
+    for (const n of [5, 4, 1]) {
+      expect((await emailStart(s, { pending: pendingId, email: KNOWN_EMAIL }, cookie)).status).toBe(200);
+      const c = s.mail.codeFor(KNOWN_EMAIL);
+      for (let i = 0; i < n; i += 1) await emailVerify(s, { pending: pendingId, email: KNOWN_EMAIL, code: wrongCode(c) }, cookie);
+    }
+    const locked = await emailVerify(s, { pending: pendingId, email: KNOWN_EMAIL, code: s.mail.codeFor(KNOWN_EMAIL) }, cookie);
+    expect(locked.status).toBe(400);
+    expect(await locked.text()).toContain('驗證碼錯誤');
+    expect(pendingRow(s.sqlite, pendingId)).toMatchObject({ userId: null, consumedAt: null });
+
+    const again = await emailStart(s, { pending: pendingId, email: KNOWN_EMAIL }, cookie);
+    expect(again.status).toBe(200);
+    expect(await again.text()).toContain('已寄出');
+    expect(s.mail.sent).toHaveLength(3);
   });
 
   it('refuses when the pending was switched to another provider after the code was sent', async () => {

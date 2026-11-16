@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   EMAIL_CODE_MAX_ATTEMPTS,
   EMAIL_CODE_TTL_MS,
+  EMAIL_LOCKOUT_FAILURES,
+  EMAIL_LOCKOUT_WINDOW_MS,
   EMAIL_START_LIMIT_PER_EMAIL,
   EMAIL_START_LIMIT_PER_IP,
   generateEmailCode,
@@ -13,6 +15,7 @@ import {
   verifyEmailCode,
 } from '../src/auth/email';
 import { createSessionForIdentity, type DatabaseClient } from '../src/auth/session';
+import { EMAIL_CODE_RETENTION_MS, cleanupExpiredOAuth } from '../src/oauth/cleanup';
 import type { MailMessage, MailResult, Mailer } from '../src/mail/mailer';
 import { createTestD1 } from './sqliteD1';
 
@@ -129,15 +132,38 @@ describe('startEmailCode', () => {
     expect(await verifyEmailCode(database, { email: EMAIL, code: second, now: NOW + 2000 })).toBe(true);
   });
 
-  it('a new App start also invalidates a code bound to an MCP pending for the address', async () => {
+  it('a new App start leaves a code bound to an MCP pending for the address live', async () => {
     const { sqlite, database } = setup();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const mail = fakeMailer();
     await start(database, mail, { pendingId: 'pending-a' });
     const mcpCode = mail.lastCode();
     await start(database, mail, { now: NOW + 1000 });
-    expect(rows(sqlite)[0].usedAt).toBe(NOW + 1000);
-    expect(await verifyEmailCode(database, { email: EMAIL, code: mcpCode, pendingId: 'pending-a', now: NOW + 2000 })).toBe(false);
+    const appCode = mail.lastCode();
+    expect(rows(sqlite)[0].usedAt).toBeNull();
+    expect(await verifyEmailCode(database, { email: EMAIL, code: mcpCode, pendingId: 'pending-a', now: NOW + 2000 })).toBe(true);
+    expect(await verifyEmailCode(database, { email: EMAIL, code: appCode, now: NOW + 2000 })).toBe(true);
+  });
+
+  it("an MCP start replaces only its own pending's older code, leaving App and other pendings' codes live", async () => {
+    const { database } = setup();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const mail = fakeMailer();
+    await start(database, mail);
+    const appCode = mail.lastCode();
+    await start(database, mail, { pendingId: 'pending-a', now: NOW + 1 });
+    const a1 = mail.lastCode();
+    await start(database, mail, { pendingId: 'pending-b', now: NOW + 2 });
+    const b1 = mail.lastCode();
+    await start(database, mail, { pendingId: 'pending-a', now: NOW + 3 });
+    const a2 = mail.lastCode();
+
+    if (a1 !== a2) {
+      expect(await verifyEmailCode(database, { email: EMAIL, code: a1, pendingId: 'pending-a', now: NOW + 10 })).toBe(false);
+    }
+    expect(await verifyEmailCode(database, { email: EMAIL, code: b1, pendingId: 'pending-b', now: NOW + 10 })).toBe(true);
+    expect(await verifyEmailCode(database, { email: EMAIL, code: a2, pendingId: 'pending-a', now: NOW + 10 })).toBe(true);
+    expect(await verifyEmailCode(database, { email: EMAIL, code: appCode, now: NOW + 10 })).toBe(true);
   });
 
   it('a new start leaves other addresses alone', async () => {
@@ -259,6 +285,18 @@ describe('verifyEmailCode', () => {
     expect(await verifyEmailCode(database, { email: EMAIL, code, now: NOW + 2 })).toBe(true);
   });
 
+  it('counts only wrong guesses as attempts: the accepted guess is not a failure', async () => {
+    const { sqlite, database } = setup();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const mail = fakeMailer();
+    await start(database, mail);
+    const code = mail.lastCode();
+    const wrong = code === '000000' ? '111111' : '000000';
+    for (let i = 0; i < 4; i++) await verifyEmailCode(database, { email: EMAIL, code: wrong, now: NOW + 1 });
+    expect(await verifyEmailCode(database, { email: EMAIL, code, now: NOW + 2 })).toBe(true);
+    expect(rows(sqlite)[0]).toMatchObject({ attempts: 4, usedAt: NOW + 2 });
+  });
+
   it('does not let a code verify for another address', async () => {
     const { database } = setup();
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -277,6 +315,137 @@ describe('verifyEmailCode', () => {
     expect(await verifyEmailCode(database, { email: EMAIL, code, now: NOW + 1 })).toBe(false);
     expect(await verifyEmailCode(database, { email: EMAIL, code, pendingId: 'pending-b', now: NOW + 1 })).toBe(false);
     expect(await verifyEmailCode(database, { email: EMAIL, code, pendingId: 'pending-a', now: NOW + 1 })).toBe(true);
+  });
+});
+
+describe('per-address failure lockout', () => {
+  const DAY = 24 * HOUR;
+
+  /** Starts a code (App flow unless `pendingId`) and guesses wrong `n` times; returns the code. */
+  async function failWith(
+    database: DatabaseClient,
+    mail: ReturnType<typeof fakeMailer>,
+    n: number,
+    over: { now: number; pendingId?: string | null },
+  ): Promise<string> {
+    expect(await start(database, mail, over)).toBe('sent');
+    const code = mail.lastCode();
+    const wrong = code === '000000' ? '111111' : '000000';
+    for (let i = 0; i < n; i++) {
+      await verifyEmailCode(database, { email: EMAIL, code: wrong, pendingId: over.pendingId, now: over.now + 1 });
+    }
+    return code;
+  }
+
+  function totalAttempts(sqlite: DatabaseSync): number {
+    return rows(sqlite).reduce((sum, r) => sum + Number(r.attempts), 0);
+  }
+
+  it(`locks verify after ${EMAIL_LOCKOUT_FAILURES} wrong guesses across codes, even with the right code`, async () => {
+    const { sqlite, database } = setup();
+    captureLogs();
+    const mail = fakeMailer();
+    expect(EMAIL_LOCKOUT_FAILURES).toBe(10);
+    expect(EMAIL_LOCKOUT_WINDOW_MS).toBe(DAY);
+    await failWith(database, mail, 5, { now: NOW });
+    await failWith(database, mail, 4, { now: NOW + 1000 });
+    // The third code has spent only one of its own five attempts.
+    const third = await failWith(database, mail, 1, { now: NOW + 2000 });
+    expect(totalAttempts(sqlite)).toBe(10);
+
+    expect(await verifyEmailCode(database, { email: EMAIL, code: third, now: NOW + 3000 })).toBe(false);
+    // A locked verify spends nothing and consumes nothing.
+    expect(rows(sqlite)[2]).toMatchObject({ attempts: 1, usedAt: null });
+  });
+
+  it('counts failures from both flows toward the same address', async () => {
+    const { database } = setup();
+    captureLogs();
+    const mail = fakeMailer();
+    await failWith(database, mail, 5, { now: NOW });
+    await failWith(database, mail, 4, { now: NOW + 1000, pendingId: 'pending-a' });
+    const mcp = await failWith(database, mail, 1, { now: NOW + 2000, pendingId: 'pending-a' });
+    expect(await verifyEmailCode(database, { email: EMAIL, code: mcp, pendingId: 'pending-a', now: NOW + 3000 })).toBe(false);
+  });
+
+  it('a locked address gets no new code: start stores and sends nothing and logs "locked"', async () => {
+    const { sqlite, database } = setup();
+    const lines = captureLogs();
+    const mail = fakeMailer();
+    await failWith(database, mail, 5, { now: NOW });
+    const liveCode = await failWith(database, mail, 4, { now: NOW + 1000 });
+    await failWith(database, mail, 5, { now: NOW + 2000, pendingId: 'pending-a' });
+
+    expect(await start(database, mail, { now: NOW + 3000 })).toBe('locked');
+    expect(await start(database, mail, { now: NOW + 3001, pendingId: 'pending-b' })).toBe('locked');
+    expect(mail.sent).toHaveLength(3);
+    expect(rows(sqlite)).toHaveLength(3);
+    expect(lines.some((l) => l.includes('"event":"auth.email.start"') && l.includes('"outcome":"locked"'))).toBe(true);
+    // The route still answers 202 {sent:true}.
+    expect(
+      await handleEmailStart(database, { body: { email: EMAIL, deviceId: 'd' }, ip: IP, mailer: mail.mailer, now: NOW + 3002 }),
+    ).toEqual({ status: 202, body: { sent: true } });
+    expect(mail.sent).toHaveLength(3);
+    // The App code still live from before the lock is locked too.
+    expect(await verifyEmailCode(database, { email: EMAIL, code: liveCode, now: NOW + 3003 })).toBe(false);
+  });
+
+  it('lifts once the failed codes are 24 hours old', async () => {
+    const { database } = setup();
+    captureLogs();
+    const mail = fakeMailer();
+    await failWith(database, mail, 5, { now: NOW });
+    await failWith(database, mail, 5, { now: NOW + 1000 });
+
+    expect(await start(database, mail, { now: NOW + DAY - 1 })).toBe('locked');
+    expect(mail.sent).toHaveLength(2);
+    // The first code's five failures leave the window; five remain.
+    expect(await start(database, mail, { now: NOW + DAY })).toBe('sent');
+    expect(await verifyEmailCode(database, { email: EMAIL, code: mail.lastCode(), now: NOW + DAY + 1 })).toBe(true);
+  });
+
+  it('an accepted guess does not count toward the lockout', async () => {
+    const { database } = setup();
+    captureLogs();
+    const mail = fakeMailer();
+    await failWith(database, mail, 5, { now: NOW });
+    const second = await failWith(database, mail, 4, { now: NOW + 1000 });
+    expect(await verifyEmailCode(database, { email: EMAIL, code: second, now: NOW + 2000 })).toBe(true);
+    // Nine failures: the address can still sign in.
+    expect(await start(database, mail, { now: NOW + 3000 })).toBe('sent');
+    expect(await verifyEmailCode(database, { email: EMAIL, code: mail.lastCode(), now: NOW + 3001 })).toBe(true);
+  });
+
+  it('concurrent wrong guesses on several live codes cannot pass the lockout', async () => {
+    const { sqlite, database } = setup();
+    captureLogs();
+    const mail = fakeMailer();
+    await failWith(database, mail, 5, { now: NOW });
+    const mcp = await failWith(database, mail, 4, { now: NOW + 1000, pendingId: 'pending-a' });
+    const app = await failWith(database, mail, 0, { now: NOW + 2000 });
+    expect(totalAttempts(sqlite)).toBe(9);
+    const wrongApp = app === '000000' ? '111111' : '000000';
+    const wrongMcp = mcp === '000000' ? '111111' : '000000';
+
+    await Promise.all([
+      ...Array.from({ length: 3 }, () => verifyEmailCode(database, { email: EMAIL, code: wrongApp, now: NOW + 3000 })),
+      ...Array.from({ length: 3 }, () =>
+        verifyEmailCode(database, { email: EMAIL, code: wrongMcp, pendingId: 'pending-a', now: NOW + 3000 }),
+      ),
+    ]);
+    expect(totalAttempts(sqlite)).toBe(10);
+  });
+
+  it('the hourly cleanup keeps the rows the lockout still counts', async () => {
+    const { database } = setup();
+    captureLogs();
+    const mail = fakeMailer();
+    await failWith(database, mail, 5, { now: NOW });
+    await failWith(database, mail, 5, { now: NOW + 1000 });
+    expect(EMAIL_CODE_RETENTION_MS).toBeGreaterThanOrEqual(EMAIL_LOCKOUT_WINDOW_MS);
+
+    await cleanupExpiredOAuth(database, NOW + DAY - 1);
+    expect(await start(database, mail, { now: NOW + DAY - 1 })).toBe('locked');
   });
 });
 
@@ -380,6 +549,15 @@ describe('handleEmailVerify (POST /auth/email/verify)', () => {
     const lockedWrong = lockedCode === '000000' ? '111111' : '000000';
     for (let i = 0; i < 5; i++) await verify('locked@example.com', lockedWrong, NOW + 1);
     failures.push(await verify('locked@example.com', lockedCode, NOW + 2));
+
+    // Right code, but the address is locked after ten wrong guesses across codes.
+    const lockedOut = 'locked-out@example.com';
+    for (const n of [5, 4, 1]) {
+      await handleEmailStart(database, { body: { email: lockedOut, deviceId: 'd' }, ip: IP, mailer: mail.mailer, now: NOW });
+      const c = mail.lastCode();
+      for (let i = 0; i < n; i++) await verify(lockedOut, c === '000000' ? '111111' : '000000', NOW + 1);
+    }
+    failures.push(await verify(lockedOut, mail.lastCode(), NOW + 2));
 
     const [firstFailure] = failures;
     expect(firstFailure.status).toBe(401);

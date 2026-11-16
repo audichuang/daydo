@@ -183,7 +183,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
      5. 丟棄 `code`（沒有 client secret 可以換）。
 3b. **信箱驗證碼（第三個選項）**
    - 使用者輸入信箱 → `POST /authorize/email/start`（帶 pending id，比對綁定 cookie；路徑在 `/authorize/` 底下）→ 寄碼並顯示輸入驗證碼的頁面 → `POST /authorize/email/verify`（pending id、email、code，同樣比對 cookie）。
-   - 限速與碼規則與 `spec/sync.md` 的信箱登入相同（碼 6 位、10 分鐘、一次性、每碼 5 次、新 start 使舊碼失效；每信箱 5 次／小時、每 IP 20 次／小時，超過仍顯示「已寄出」但不寄信並記 log）。碼綁定該 pending，不能拿來完成別的 pending。
+   - 限速與碼規則與 `spec/sync.md` 的信箱登入相同（碼 6 位、10 分鐘、一次性、每碼猜錯 5 次；每信箱 5 次／小時、每 IP 20 次／小時，與 App 共用額度，超過仍顯示「已寄出」但不寄信並記 log；同信箱 24 小時內兩種流程合計猜錯 10 次即鎖定，鎖定時 start 同樣顯示「已寄出」但不寄信，verify 顯示錯碼訊息）。碼綁定該 pending，不能拿來完成別的 pending，App 也不能用；新 start 只作廢同一個 pending 的舊碼，不影響 App 的碼與其他 pending 的碼。
    - verify 成功後只做「綁定既有使用者」：查 `identity('email', <信箱>)`，找不到時顯示與 Google／Apple 相同的未知身分錯誤頁（**公開的 MCP 主機不註冊帳號**，使用者要先在 API 側用信箱登入建立帳號或用其他方式登入）；找到時接上下一步的條件式 UPDATE 與 consent token，之後與其他 provider 完全相同。
    - `oauth.authorize` 的 log 結果沿用既有分類，信箱路徑的驗證碼錯誤記為 `provider_error`；log 不記驗證碼。
 4. **身分對應**
@@ -265,7 +265,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 
 - 由 ICS 的 5 分鐘 cron 在每個 UTC 整點後的第一輪執行（`scheduledTime` 落在整點後 5 分鐘內），每張表每次最多刪 500 列，用 `DELETE … WHERE pk IN (SELECT … LIMIT 500)`。
 - 刪除條件：
-  - `emailCode`：`expiresAt` 早於 1 天前。
+  - `emailCode`：`expiresAt` 早於 1 天前（`EMAIL_CODE_RETENTION_MS` 取自跨碼鎖定的 24 小時窗，發出未滿 24 小時的列都留著）。
   - `oauthPending`：`expiresAt` 早於 1 天前。
   - `oauthCode`：`expiresAt` 早於 1 天前。
   - `oauthRefresh`：`expiresAt` 早於 30 天前。每一列都在發出後 30 天內到期，所以已撤銷的列也涵蓋在內；只看到期時間是為了讓撤銷過的列多留 30 天，期間重送舊 token 仍會撤銷整個 family。
@@ -607,6 +607,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 - ICS 任務被移到使用者看不到的清單時，該 mapping 每輪記一次錯誤，不重建。
 - ICS 的 `CATEGORIES` 不轉成標籤。
 - iOS App 還沒有信箱登入畫面；信箱驗證碼只能經 API 與 MCP 授權頁使用，且同信箱不會與 Google／Apple 帳號合併。
+- 知道某人信箱的人可以故意用完他每小時的寄碼額度，或猜錯 10 次觸發 24 小時鎖定（阻斷服務，不會登入他的帳號）。
 
 ## 13. 合併後手動步驟（不在票內）
 

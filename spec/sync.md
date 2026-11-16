@@ -70,6 +70,7 @@
 ## 已知限制（正常使用不會碰到，先不處理）
 
 - iOS App 還沒有信箱登入畫面；信箱驗證碼目前只能透過 API 與 MCP 授權頁使用。
+- 知道某人信箱的人可以故意用完他每小時 5 次的寄碼額度，或猜錯 10 次觸發 24 小時鎖定，讓他暫時無法用信箱登入（阻斷服務，不會因此登入他的帳號）；Google／Apple 登入不受影響。
 - 同一個子項目 id 同時指向兩個不同任務、兩個請求又同時送出時，路由可能被清掉（需異常 client）。
 - 共享清單的 editor 能把清單的 `isInbox` 改成 true（App 不會這樣送）。
 - 兩台舊版手機在同一瞬間第一次登入，可能各自上傳一個收件匣。
@@ -155,11 +156,12 @@
 - **Apple**：App 用 `ASAuthorizationAppleIDProvider` 取得 `identityToken`（帶 nonce）。Worker 用 Apple JWKS 驗證：`iss = https://appleid.apple.com`、`aud = com.audichuang.daydo`、nonce 雜湊相符。
 - **Google**：App 用 GoogleSignIn SDK 取得 `idToken`。Worker 用 Google JWKS 驗證：`iss` 是 `accounts.google.com` 或 `https://accounts.google.com`，`aud` 等於 iOS OAuth client id。
 - **信箱驗證碼**：不用密碼。`POST /auth/email/start` 寄 6 位數驗證碼，`POST /auth/email/verify` 驗證後發 token；第一次驗證成功時建立 user 與 identity（註冊 = 驗證）。身分為 `('email', <小寫並去頭尾空白的信箱>)`，**不與同信箱的 Google／Apple 帳號自動合併**（沿用下一條規則）。
-  - 驗證碼：6 位數字、10 分鐘有效、一次性（條件式 UPDATE 消耗）；D1 只存 `SHA-256(code + 該列的 salt)`，不存明碼；每組碼最多驗 5 次，超過即作廢；同一信箱重新 start 會讓舊碼全部失效。表為 `emailCode`。
-  - 限速：每個信箱每小時最多 5 次 start；每個來源 IP（`CF-Connecting-IP`，IPv6 取 /64）每小時最多 20 次 start。超過上限仍回 202 但不寄信（只記 log）。
+  - 驗證碼：6 位數字、10 分鐘有效、一次性（條件式 UPDATE 消耗）；D1 只存 `SHA-256(code + 該列的 salt)`，不存明碼；每組碼最多猜錯 5 次，超過即作廢（`attempts` 只記猜錯，猜對不算）；重新 start 只讓同一流程的舊碼失效：App 登入（`pendingId` 為 null）只作廢該信箱的 App 碼，MCP 授權頁只作廢同一個 pending 的碼；verify 只接受自己流程的碼（App 只認 `pendingId` 為 null 的碼，MCP 只認該 pending 的碼）。表為 `emailCode`。
+  - 限速：每個信箱每小時最多 5 次 start；每個來源 IP（`CF-Connecting-IP`，IPv6 取 /64）每小時最多 20 次 start（App 與 MCP 授權頁共用這兩個額度）。超過上限仍回 202 但不寄信（只記 log）。
+  - 跨碼鎖定：同一信箱在 24 小時內發出的碼（兩種流程合計）累計猜錯 10 次就鎖定，不另加欄位，直接加總 `emailCode.attempts`。鎖定期間 start 仍回 202（MCP 頁仍顯示「已寄出」）但不寄信、不建碼，log 記 `locked`；verify 一律回與錯碼相同的 401（MCP 頁顯示同樣的錯碼訊息），即使碼正確也不消耗。猜錯次數的檢查與扣次數在同一個條件式 UPDATE 內，並發猜測無法超過上限。那些碼發出滿 24 小時後自動解除。
   - `start` 一律回 `202 {sent:true}`，不透露該信箱是否已有帳號。
   - 信件：Cloudflare Email Service 的 `send_email` binding（名稱 `EMAIL`），寄件人 `DayDo <no-reply@audichuang.app>`，主旨「你的 DayDo 驗證碼」，純文字與 HTML 兩份，內含驗證碼與「10 分鐘內有效」的說明。開發建置使用可注入的記憶體 mailer，並提供僅開發建置掛上的路由（`routes/test/*.dev.ts`）讀取某信箱最後一組碼；正式環境不記驗證碼。
-  - 過期的 `emailCode` 列由既有的每小時 OAuth 清理一併刪除。
+  - 過期的 `emailCode` 列由既有的每小時 OAuth 清理一併刪除，保留到過期後 24 小時，跨碼鎖定要加總的列都還在。
 - 帳號用 `(provider, sub)` 識別，不用 email 自動合併帳號：Apple 可能給隱藏的轉寄 email。要讓兩種登入方式共用同一個帳號，登入後在設定裡手動連結。
 - Worker 自己發 token：access token 為 JWT，1 小時；refresh token 90 天，每次使用就換一組新的，D1 只存雜湊值。
 - **refresh 寬限期**：正常換發後 10 分鐘內且後繼 token 尚未被使用時，以舊 refresh token 重試視為遺失回應重試，撤銷該未使用的後繼 token 並換發新的一組；其餘重複使用撤銷整條 session 鏈並回 401。

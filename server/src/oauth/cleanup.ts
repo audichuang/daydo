@@ -1,5 +1,6 @@
 import { emailCode, oauthCode, oauthPending, oauthRefresh } from '@schema';
 import { inArray, lt } from 'void/db';
+import { EMAIL_LOCKOUT_WINDOW_MS } from '../auth/email';
 import type { DatabaseClient } from '../auth/session';
 import { logEvent } from '../mcp/log';
 
@@ -11,7 +12,9 @@ import { logEvent } from '../mcp/log';
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const PENDING_RETENTION_MS = DAY_MS;
 export const CODE_RETENTION_MS = DAY_MS;
-export const EMAIL_CODE_RETENTION_MS = DAY_MS;
+// The per-address lockout sums attempts over codes issued in the last 24 hours. A code expires
+// after it is issued, so keying on expiry with the same window keeps every row the sum still needs.
+export const EMAIL_CODE_RETENTION_MS = EMAIL_LOCKOUT_WINDOW_MS;
 // Keyed on expiry only: every row expires within 30 days of issue, and a revoked row must
 // outlive its expiry so a replayed old token still revokes its family.
 export const REFRESH_RETENTION_MS = 30 * DAY_MS;

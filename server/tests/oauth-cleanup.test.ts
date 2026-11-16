@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EMAIL_CODE_TTL_MS, EMAIL_LOCKOUT_WINDOW_MS } from '../src/auth/email';
 import type { DatabaseClient } from '../src/auth/session';
 import {
   CODE_RETENTION_MS,
@@ -106,6 +107,18 @@ describe('cleanupExpiredOAuth (spec/mcp.md 4.8)', () => {
     expect(ids(sqlite, 'oauthRefresh', 'refreshHash')).toEqual(['r-edge', 'r-live', 'r-revoked-recent-expiry']);
     expect(ids(sqlite, 'oauthClient', 'clientId')).toEqual(['mcp-ancient']);
     expect(ids(sqlite, 'emailCode', 'id')).toEqual(['e-edge', 'e-live']);
+  });
+
+  it('keeps every email code row created inside the lockout window, however long expired', async () => {
+    const { sqlite, database } = setup();
+    sqlite
+      .prepare(
+        `INSERT INTO emailCode (id, email, codeHash, salt, attempts, createdAt, expiresAt, usedAt, pendingId, ipHash)
+         VALUES ('e-window', 'a@example.com', 'h', 's', 5, ?, ?, NULL, NULL, 'ip')`,
+      )
+      .run(NOW - EMAIL_LOCKOUT_WINDOW_MS + 1, NOW - EMAIL_LOCKOUT_WINDOW_MS + 1 + EMAIL_CODE_TTL_MS);
+    expect(await cleanupExpiredOAuth(database, NOW)).toMatchObject({ emailCode: 0 });
+    expect(ids(sqlite, 'emailCode', 'id')).toEqual(['e-window']);
   });
 
   it('deletes at most `batch` rows per table per call', async () => {
