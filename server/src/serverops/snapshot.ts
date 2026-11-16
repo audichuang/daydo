@@ -4,6 +4,7 @@ import type { PullScopeRow } from '../../durable-objects/scope';
 import type { MembershipRole } from '../sync/entities';
 import { executeSyncPull } from '../sync/pull';
 import type { AppDb, ScopeStub } from '../sync/push';
+import { userScope } from '../sync/scopeName';
 
 const PULL_LIMIT = 1000;
 /** Safety valve: a scope that keeps reporting hasMore without advancing its cursor is a bug. */
@@ -92,7 +93,7 @@ export async function loadSnapshot(
   const meMemberId =
     userRows[0] && typeof userRows[0].meMemberId === 'string' ? userRows[0].meMemberId : null;
 
-  const ownScope = `u:${userId}`;
+  const ownScope = userScope(userId);
   let inboxProjectId: string | null = null;
   for (const p of byEntity.get('project')?.values() ?? []) {
     if (p.scope === ownScope && p.row.isInbox === true && isAbsent(p.row, 'purgedAt')) {

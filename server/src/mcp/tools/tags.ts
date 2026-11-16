@@ -3,12 +3,13 @@ import { normalizeTagLabels } from '../../domain/tags';
 import { after } from '../../domain/sortKey';
 import type { Snapshot, SnapshotRow } from '../../serverops/snapshot';
 import { writeOrThrow } from '../../serverops/writer';
+import { userScope } from '../../sync/scopeName';
 import { bySortKey, compareKeys } from '../format';
 import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../registry';
 import { openSession, parseColor } from './projects';
 
 function ownTags(snapshot: Snapshot, userId: string): SnapshotRow[] {
-  return snapshot.rows('tag').filter((t) => t.scope === `u:${userId}`);
+  return snapshot.rows('tag').filter((t) => t.scope === userScope(userId));
 }
 
 function formatTag(snapshot: Snapshot, row: Record<string, unknown>) {

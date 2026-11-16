@@ -1,6 +1,7 @@
 import { device, identity, projectMembership, session, user } from '@schema';
 import { and, eq, gt, isNull, sql, type db } from 'void/db';
 import type { ScopeStub } from '../sync/push';
+import { userScope } from '../sync/scopeName';
 import { generateRefreshToken, sha256Hex, signAccessToken } from './crypto';
 import { sanitizeHttpsAvatarUrl, type IdentityProviderName } from './providers';
 
@@ -55,7 +56,7 @@ async function resolveUserSyncState(
 
   let inboxProjectId: string | null = null;
   if (readableProjectIds.length > 0 && getScopeStub) {
-    inboxProjectId = await getScopeStub(`u:${userId}`).getInboxProjectId({
+    inboxProjectId = await getScopeStub(userScope(userId)).getInboxProjectId({
       readableProjectIds,
     });
   }

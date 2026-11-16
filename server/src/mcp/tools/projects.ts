@@ -4,6 +4,7 @@ import { uniqueProjectKey } from '../../domain/sortKey';
 import { uuidv7 } from '../../domain/uuid';
 import { loadSnapshot, type Snapshot, type SnapshotRow } from '../../serverops/snapshot';
 import { writeOrThrow, type WriteIntent, type WriterDeps } from '../../serverops/writer';
+import { userScope } from '../../sync/scopeName';
 import { bySortKey, compareKeys, formatProject, openTasksOf, summarizeTask } from '../format';
 import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../registry';
 
@@ -121,7 +122,7 @@ export function projectTools(): ToolDef[] {
           ...(color !== undefined && { color }),
         };
         const [out] = await writeOrThrow(deps, snapshot, [{ entity: 'project', entityId: id, set }]);
-        return { ...formatProject(snapshot, { entity: 'project', scope: `u:${ctx.userId}`, row: out!.row!, clocks: out!.clocks, serverSeq: 0 }), role: 'owner', can_write: true };
+        return { ...formatProject(snapshot, { entity: 'project', scope: userScope(ctx.userId), row: out!.row!, clocks: out!.clocks, serverSeq: 0 }), role: 'owner', can_write: true };
       },
     },
     {

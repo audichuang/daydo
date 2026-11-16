@@ -27,6 +27,7 @@ import {
   type WriterDeps,
 } from '../../serverops/writer';
 import { ENTITY_FIELDS } from '../../sync/entities';
+import { userScope } from '../../sync/scopeName';
 import { bySortKey, compareKeys, formatTask, openTasksOf, summarizeTask } from '../format';
 import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../registry';
 import { openSession } from './projects';
@@ -289,7 +290,7 @@ function scheduleSet(s: Schedule | null): Record<string, unknown> {
 
 /** Tag rows for a task's tags (LocalDayDoAPI.normalizeTags): create missing ones, revive trashed ones. */
 function tagIntents(snapshot: Snapshot, userId: string, tags: readonly NormalizedTag[], now: number): WriteIntent[] {
-  const own = snapshot.rows('tag').filter((t) => t.scope === `u:${userId}`);
+  const own = snapshot.rows('tag').filter((t) => t.scope === userScope(userId));
   let last: string | null = own
     .map((t) => String(t.row.sortKey ?? ''))
     .reduce<string | null>((a, b) => (a === null || compareKeys(b, a) > 0 ? b : a), null);
