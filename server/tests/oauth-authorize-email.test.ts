@@ -228,6 +228,29 @@ describe('POST /authorize/email/start', () => {
     expect(unknown.status).toBe(400);
     expect(s.mail.sent).toHaveLength(0);
     expect(count(s.sqlite, 'emailCode')).toBe(0);
+
+    // Bound: sign in once, then a second start on the same pending is refused.
+    expect((await emailStart(s, { pending: pendingId, email: KNOWN_EMAIL }, cookie)).status).toBe(200);
+    const code = s.mail.codeFor(KNOWN_EMAIL);
+    expect((await emailVerify(s, { pending: pendingId, email: KNOWN_EMAIL, code }, cookie)).status).toBe(303);
+    const bound = await emailStart(s, { pending: pendingId, email: KNOWN_EMAIL }, cookie);
+    expect(bound.status).toBe(400);
+    expect(await bound.text()).toContain('已失效或已完成');
+    expect(s.mail.sent).toHaveLength(1);
+  });
+
+  it('shows the same "sent" page when the mail fails', async () => {
+    const s = setup();
+    const { pendingId, cookie } = await beginAuthorize(s);
+    const failing: Mailer = { send: async () => ({ ok: false, reason: 'send_failed' }) };
+    const res = await handleAuthorizeEmailStart(
+      new Request(`${ORIGIN}/authorize/email/start`, { method: 'POST', headers: cookieHeader(cookie) }),
+      { pending: pendingId, email: KNOWN_EMAIL },
+      s.deps(),
+      failing,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('驗證碼已寄出');
   });
 
   it('rejects a malformed address without mailing', async () => {
