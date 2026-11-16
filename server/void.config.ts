@@ -18,6 +18,12 @@ export default defineConfig({
         "pattern": "daydo-mcp.audichuang.app",
         "custom_domain": true
       }
+    ],
+    // Cloudflare Email Service binding for sign-in codes (spec/mcp.md section 10).
+    "send_email": [
+      {
+        "name": "EMAIL"
+      }
     ]
   }
 });

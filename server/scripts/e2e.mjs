@@ -311,7 +311,22 @@ async function main() {
     const authData = await authRes.json();
     assert.equal(authData.userId, appleLogin1.data.user.id);
 
-    console.log('e2e: all 7 auth & session assertions passed');
+    // 8. Dev mailer: a message sent in one request is readable from the next (single isolate)
+    const mailTo = `e2e-${randomUUID()}@example.com`;
+    const sentMail = await postJson(baseUrl, '/test/mail', { to: mailTo, code: '135790' });
+    assert.equal(sentMail.status, 200);
+    assert.deepEqual(sentMail.data, { ok: true });
+    const readMail = await fetch(`${baseUrl}/test/mail?to=${encodeURIComponent(mailTo.toUpperCase())}`);
+    assert.equal(readMail.status, 200);
+    const mailBody = await readMail.json();
+    assert.equal(mailBody.to, mailTo);
+    assert.equal(mailBody.subject, '你的 DayDo 驗證碼');
+    assert.equal(mailBody.code, '135790');
+    assert.match(mailBody.html, /135790/);
+    const noMail = await fetch(`${baseUrl}/test/mail?to=${encodeURIComponent(`none-${mailTo}`)}`);
+    assert.equal(noMail.status, 404);
+
+    console.log('e2e: all 8 auth & session assertions passed');
   } finally {
     process.off('SIGINT', cleanup);
     process.off('SIGTERM', cleanup);

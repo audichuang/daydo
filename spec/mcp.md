@@ -557,6 +557,8 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 - `JWT_SECRET` 沿用；MCP 的 access 金鑰與 refresh 金鑰都由它經 HKDF 衍生。
 - 正式環境唯一新增的 secret 是 `GOOGLE_WEB_CLIENT_SECRET`；信箱登入只新增 `EMAIL` binding，不是 secret。
 
+**E1 spike 結果（Void 1.8.0，`EMAIL` binding）**：Void 的 `CloudflareConfig` 型別有 `send_email`，`void.config.ts` 的 `cloudflare.send_email: [{ name: 'EMAIL' }]` 會原樣帶進 `vite build` 產物：`dist/ssr/wrangler.json` 有 `send_email`，`.cloudflare/output/v0/workers/default/worker.config.json` 的 `env.EMAIL` 是 `{type: 'send-email'}`；`void prepare` 也自動產生 `.void/bindings.d.ts`，讓 `c.env.EMAIL` 的型別是 `SendEmail`，`env.ts` 不用改。不需要退回 REST API。Void 內建的 `void/email` 的 `sendEmail` 讀的是名為 `SEND_EMAIL` 的 binding，所以不用它，由 `src/mail/mailer.ts` 直接呼叫 `env.EMAIL.send({from, to, subject, text, html})`（寄件人用物件形式 `{name:'DayDo', email:'no-reply@audichuang.app'}`）；`send` 不 throw，失敗只記 `mail.send` 與 Cloudflare 的錯誤代碼（`E_*`），不記主旨與內文。開發建置一律用模組層級的記憶體 mailer（每個收件人留最後一封），Void dev server 是單一 isolate，`npm run e2e` 驗證了一個請求寄出的信，下一個請求能從 `GET /test/mail?to=` 讀到。正式建置不含 `/test/mail`。實際寄送沒有測過：寄給任意收件人需要 Workers Paid，且寄件網域 `audichuang.app` 要先完成 Email Sending 的設定（SPF／DKIM），這是部署前的前置作業。另外 dev server 與 `vite build` 會依設定改寫 `void.lock.json` 的 `send_email`，部署時一起 commit。
+
 ## 11. 測試策略
 
 - **單元測試**（vitest，`tests/`）：
