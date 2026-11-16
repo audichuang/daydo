@@ -87,7 +87,8 @@ async function verifyJwtWithSource(
 export async function verifyAppleToken(params: {
   identityToken: string;
   nonce: string;
-  audience: string;
+  /** One audience or a list (App bundle id, web Services ID); the token must match one. */
+  audience: string | string[];
   jwksUrl?: string;
   keySource?: KeySource;
   currentDate?: Date;
@@ -119,12 +120,15 @@ export async function verifyAppleToken(params: {
 
 export async function verifyGoogleToken(params: {
   idToken: string;
-  audience: string;
+  /** One audience or a list (iOS and web client ids); the token must match one. */
+  audience: string | string[];
+  /** Raw nonce sent in the web authorize request; Google echoes it verbatim. */
+  nonce?: string;
   jwksUrl?: string;
   keySource?: KeySource;
   currentDate?: Date;
 }): Promise<VerifiedIdentity> {
-  if (!params.audience) {
+  if (params.audience.length === 0) {
     throw new AuthVerificationError('Missing Google audience');
   }
   const keySource =
@@ -137,6 +141,9 @@ export async function verifyGoogleToken(params: {
 
   if (typeof payload.sub !== 'string' || payload.sub.length === 0) {
     throw new AuthVerificationError('Missing subject');
+  }
+  if (params.nonce !== undefined && payload.nonce !== params.nonce) {
+    throw new AuthVerificationError('Nonce mismatch');
   }
 
   return {
