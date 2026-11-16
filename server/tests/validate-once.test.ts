@@ -7,6 +7,7 @@ import { loadSnapshot } from '../src/serverops/snapshot';
 import { writeOrThrow, type WriteIntent } from '../src/serverops/writer';
 import { validateSyncOp } from '../src/sync/entities';
 import { createScopeWorld } from './helpers/scopeWorld';
+import { deviceOp as sharedDeviceOp, NOW_ISH, projectRow, taskRow } from './helpers/serverHarness';
 
 vi.mock('../src/sync/entities', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/sync/entities')>();
@@ -14,36 +15,12 @@ vi.mock('../src/sync/entities', async (importOriginal) => {
 });
 
 const validateSpy = vi.mocked(validateSyncOp);
-const NOW_ISH = 1_700_000_000_000;
 let seq = 0;
 const deviceHlc = () => `${Date.now() - 60_000}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
 
-function projectRow(id: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, name: id, viewMode: 'list', kind: 'TASK', isInbox: false, ownerId: 'm-a',
-    sortKey: 'a0', showInSmart: 'all', notifyMode: 'all', createdAt: NOW_ISH, updatedAt: NOW_ISH,
-    ...extra,
-  };
-}
-
-function taskRow(id: string, projectId: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, projectId, title: id, content: '', priority: 0, status: 0, sortKey: 'a0',
-    reminders: [], tags: [], createdAt: NOW_ISH, updatedAt: NOW_ISH, ...extra,
-  };
-}
-
-function deviceOp(entity: string, row: Record<string, unknown>, hlc = deviceHlc()) {
-  return {
-    opId: `dev-${entity}-${String(row.id)}-${hlc}`,
-    hlc,
-    entity,
-    entityId: String(row.id),
-    op: 'upsert',
-    fields: Object.keys(row),
-    row,
-  };
-}
+// Same op shape as the shared builder, bound to this file's module-level device clock.
+const deviceOp = (entity: string, row: Record<string, unknown>, hlc = deviceHlc()) =>
+  sharedDeviceOp({ deviceHlc }, entity, row, hlc);
 
 async function seededWorld() {
   const world = createScopeWorld();

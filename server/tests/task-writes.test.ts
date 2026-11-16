@@ -1,18 +1,20 @@
 // serverops/taskWrites: the task writes MCP and ICS share, checked against the App's behaviour
 // (LocalDayDoAPI). The pure builders run on hand-made snapshots; completeOccurrence runs against
 // a real ScopeObject, with the App fixture where one exists.
-import { eq } from 'drizzle-orm';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import * as schema from '../db/schema';
 import { parseRecurrence } from '../src/domain/recurrence';
 import { addDays } from '../src/domain/schedule';
 import { normalizeTagLabels } from '../src/domain/tags';
 import { uuidv5 } from '../src/domain/uuid';
 import { acceptInvite, createInvite } from '../src/sharing';
-import { loadSnapshot, withCreated, type Snapshot, type SnapshotRow } from '../src/serverops/snapshot';
+import {
+  withCreated,
+  type Snapshot,
+  type SnapshotRow,
+} from '../src/serverops/snapshot';
 import {
   checklistIntents,
   completeOccurrence,
@@ -28,9 +30,18 @@ import {
 } from '../src/serverops/taskWrites';
 import { rowSchedule } from '../src/serverops/values';
 import type { MembershipRole } from '../src/sync/entities';
-import { createScopeWorld, type ScopePushInput } from './helpers/scopeWorld';
-
-const NOW_ISH = 1_700_000_000_000;
+import {
+  type ScopePushInput,
+} from './helpers/scopeWorld';
+import {
+  createServerHarness,
+  deviceOp,
+  NOW_ISH,
+  projectRow,
+  pulled,
+  seedUser,
+  taskRow,
+} from './helpers/serverHarness';
 
 // MARK: - Hand-made snapshots for the pure builders
 
@@ -242,7 +253,7 @@ function createHarness() {
     /** One-shot: makes the matching push throw before the scope applies it (a DO failure). */
     failPush?: (input: ScopePushInput) => boolean;
   } = {};
-  const { db, calls, clock, getScopeStub, push, pull } = createScopeWorld({
+  const world = createServerHarness({
     onPush: async (input, proceed) => {
       if (input.deviceId === 'mcp' && hooks.beforeServerPush) {
         const hook = hooks.beforeServerPush;
@@ -256,51 +267,10 @@ function createHarness() {
       return proceed(input);
     },
   });
-  let seq = 0;
-  const deviceHlc = (ms = Date.now() - 60_000) => `${ms}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
-  return {
-    db,
-    calls,
-    hooks,
-    deviceHlc,
-    devicePush: (userId: string, ops: unknown[]) => push(userId, 'dev-a', ops),
-    deps: (userId: string) => ({ db, userId, deviceId: 'mcp' as const, getScopeStub, clock }),
-    snapshot: (userId: string) => loadSnapshot(db, userId, getScopeStub),
-    pull: (userId: string) => pull(userId, { limit: 1000 }),
-  };
+  return { ...world, hooks };
 }
 
 type Harness = ReturnType<typeof createHarness>;
-
-function projectRow(id: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, name: id, viewMode: 'list', kind: 'TASK', isInbox: false, ownerId: 'm-a',
-    sortKey: 'a0', showInSmart: 'all', notifyMode: 'all', createdAt: NOW_ISH, updatedAt: NOW_ISH,
-    ...extra,
-  };
-}
-
-function taskRow(id: string, projectId: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, projectId, title: id, content: '', priority: 0, status: 0, sortKey: 'a0',
-    reminders: [], tags: [], createdAt: NOW_ISH, updatedAt: NOW_ISH, ...extra,
-  };
-}
-
-function deviceOp(h: Harness, entity: string, row: Record<string, unknown>, hlc = h.deviceHlc()) {
-  return { opId: `dev-${entity}-${String(row.id)}-${hlc}`, hlc, entity, entityId: String(row.id), op: 'upsert', fields: Object.keys(row), row };
-}
-
-async function seedUser(h: Harness, userId: string, memberId: string) {
-  await h.db.insert(schema.user).values({
-    id: userId, name: userId, initial: userId[0], color: '#007AFF', avatarUrl: null, createdAt: NOW_ISH,
-  });
-  await h.db.update(schema.user).set({ meMemberId: memberId }).where(eq(schema.user.id, userId));
-  const res = await h.devicePush(userId, [
-    deviceOp(h, 'project', projectRow(`inbox-${userId}`, { isInbox: true, ownerId: memberId })),
-  ]);
-  expect(res.results[0]?.status).toBe('applied');
-}
 
 /** p1 with a weekly 09:00 task `rep` from 2026-11-15 (Asia/Taipei). */
 async function seedRepeating(h: Harness, extra: Record<string, unknown> = {}) {
@@ -318,18 +288,6 @@ async function seedRepeating(h: Harness, extra: Record<string, unknown> = {}) {
     ),
   ]);
   expect(res.results.map((r) => r.status)).toEqual(['applied', 'applied']);
-}
-
-type PullRes = Awaited<ReturnType<Harness['pull']>>;
-
-function pulled(res: PullRes, entity: string, key: string): Record<string, unknown> | undefined {
-  for (const s of res.scopes) {
-    for (const r of s.rows) {
-      if (r.entity !== entity || 'gone' in r) continue;
-      if ((entity === 'tag' ? r.row.name : r.row.id) === key) return r.row as Record<string, unknown>;
-    }
-  }
-  return undefined;
 }
 
 const serverCalls = (h: Harness) => h.calls.filter((c) => c.deviceId === 'mcp');

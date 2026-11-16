@@ -2,16 +2,20 @@
 // against a real ScopeObject and the in-memory ICS store. Scenarios follow the rest of REF
 // engine.test, rewritten for DayDo rows. The harness mirrors ics-engine-sync.test.ts with a
 // per-URL feed so several sources can be synced in one test.
-import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
-import * as schema from '../db/schema';
 import { acceptInvite, createInvite, updateProjectMemberRole } from '../src/sharing';
 import { syncDueSources, syncSource } from '../src/ics/engine';
 import { MemoryIcsStore, type IcsMapping } from '../src/ics/store';
-import { createScopeWorld } from './helpers/scopeWorld';
+import {
+  createServerHarness,
+  deviceOp,
+  NOW_ISH,
+  projectRow,
+  seedUser,
+  type PullRes,
+} from './helpers/serverHarness';
 
 const NOW = Date.parse('2026-10-01T00:00:00Z');
-const NOW_ISH = 1_700_000_000_000;
 const FEED_URL = 'https://calendar.example/feed.ics';
 const BAD_URL = 'https://calendar.example/bad.ics';
 const PREFIX = '[已取消] ';
@@ -27,7 +31,7 @@ function createHarness(initialFeed = calendar(event())) {
     failBeforeIcsPush?: boolean;
     loseIcsResponse?: boolean;
   } = {};
-  const { db, calls, clock, getScopeStub, push, pull } = createScopeWorld({
+  const { db, calls, clock, getScopeStub, devicePush, deviceHlc, pull } = createServerHarness({
     onPush: async (input, proceed) => {
       if (input.deviceId === 'ics') {
         if (hooks.beforeIcsPush) {
@@ -60,9 +64,6 @@ function createHarness(initialFeed = calendar(event())) {
   }) as typeof fetch;
 
   const store = new MemoryIcsStore();
-  let seq = 0;
-  const deviceHlc = (ms = Date.now() - 60_000) => `${ms}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
-  const devicePush = (userId: string, ops: unknown[]) => push(userId, 'dev-a', ops);
   const deps = { store, db, getScopeStub, clock, fetchOptions: { fetch: fakeFetch } };
   return {
     db,
@@ -72,7 +73,7 @@ function createHarness(initialFeed = calendar(event())) {
     getScopeStub,
     deviceHlc,
     devicePush,
-    pull: (userId: string) => pull(userId, { limit: 1000 }),
+    pull,
     setFeed(body: string, url = FEED_URL) {
       feeds.set(url, { body, status: 200 });
     },
@@ -82,18 +83,6 @@ function createHarness(initialFeed = calendar(event())) {
 }
 
 type Harness = ReturnType<typeof createHarness>;
-
-function projectRow(id: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, name: id, viewMode: 'list', kind: 'TASK', isInbox: false, ownerId: 'm-a',
-    sortKey: 'a0', showInSmart: 'all', notifyMode: 'all', createdAt: NOW_ISH, updatedAt: NOW_ISH,
-    ...extra,
-  };
-}
-
-function deviceOp(h: Harness, entity: string, row: Record<string, unknown>, hlc = h.deviceHlc()) {
-  return { opId: `dev-${entity}-${String(row.id)}-${hlc}`, hlc, entity, entityId: String(row.id), op: 'upsert', fields: Object.keys(row), row };
-}
 
 async function deviceEdit(h: Harness, userId: string, entity: string, id: string, set: Record<string, unknown>, hlc = h.deviceHlc(Date.now() + 1000)) {
   const res = await h.devicePush(userId, [{ ...deviceOp(h, entity, { id, ...set }, hlc), fields: Object.keys(set) }]);
@@ -109,17 +98,6 @@ async function devicePurge(h: Harness, userId: string, entity: 'task' | 'project
   expect(res.results[0]?.status).toBe('applied');
 }
 
-async function seedUser(h: Harness, userId: string, memberId: string) {
-  await h.db.insert(schema.user).values({
-    id: userId, name: userId, initial: userId[0], color: '#007AFF', avatarUrl: null, createdAt: NOW_ISH,
-  });
-  await h.db.update(schema.user).set({ meMemberId: memberId }).where(eq(schema.user.id, userId));
-  const res = await h.devicePush(userId, [
-    deviceOp(h, 'project', projectRow(`inbox-${userId}`, { isInbox: true, ownerId: memberId })),
-  ]);
-  expect(res.results[0]?.status).toBe('applied');
-}
-
 /** u-a with inbox and list p1, plus an ICS source on p1. */
 async function seedSource(h: Harness) {
   await seedUser(h, 'u-a', 'm-a');
@@ -127,8 +105,6 @@ async function seedSource(h: Harness) {
   expect(res.results[0]?.status).toBe('applied');
   return h.store.addSource('u-a', { name: 'Work', url: FEED_URL, projectId: 'p1' });
 }
-
-type PullRes = Awaited<ReturnType<Harness['pull']>>;
 
 /** Every task row the user can pull, trash included. */
 function pulledTasks(res: PullRes): Record<string, unknown>[] {

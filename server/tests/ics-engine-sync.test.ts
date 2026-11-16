@@ -1,17 +1,21 @@
 // M15a: ICS engine create and update paths (spec/mcp.md 9.3), against a real ScopeObject and the
 // in-memory ICS store. Scenarios follow REF engine.test, rewritten for DayDo rows.
-import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
-import * as schema from '../db/schema';
 import { acceptInvite, createInvite, updateProjectMemberRole } from '../src/sharing';
 import { syncSource } from '../src/ics/engine';
 import { LEASE_TTL_MS, MemoryIcsStore, type IcsMapping } from '../src/ics/store';
+import {
+  createServerHarness,
+  deviceOp,
+  NOW_ISH,
+  projectRow,
+  seedUser,
+  type PullRes,
+} from './helpers/serverHarness';
 import { NO_DATA_MESSAGE } from '../src/serverops/writer';
 import { isGeneratedKeyValid } from '../src/domain/sortKey';
-import { createScopeWorld } from './helpers/scopeWorld';
 
 const NOW = Date.parse('2026-10-01T00:00:00Z');
-const NOW_ISH = 1_700_000_000_000;
 const FEED_URL = 'https://calendar.example/feed.ics';
 
 const event = (extra: string[] = [], uid = 'meeting-a') =>
@@ -27,7 +31,7 @@ function createHarness(initialFeed = calendar(event())) {
     /** Apply the ops, then lose the response. */
     loseIcsResponse?: boolean;
   } = {};
-  const { db, calls, clock, getScopeStub, push, pull } = createScopeWorld({
+  const { db, calls, clock, getScopeStub, devicePush, deviceHlc, pull } = createServerHarness({
     onPush: async (input, proceed) => {
       if (input.deviceId === 'ics') {
         if (hooks.beforeIcsPush) {
@@ -57,9 +61,6 @@ function createHarness(initialFeed = calendar(event())) {
   }) as typeof fetch;
 
   const store = new MemoryIcsStore();
-  let seq = 0;
-  const deviceHlc = (ms = Date.now() - 60_000) => `${ms}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
-  const devicePush = (userId: string, ops: unknown[]) => push(userId, 'dev-a', ops);
   const deps = { store, db, getScopeStub, clock, fetchOptions: { fetch: fakeFetch } };
   return {
     db,
@@ -70,7 +71,7 @@ function createHarness(initialFeed = calendar(event())) {
     getScopeStub,
     deviceHlc,
     devicePush,
-    pull: (userId: string) => pull(userId, { limit: 1000 }),
+    pull,
     setFeed(value: string) {
       feed = value;
     },
@@ -84,37 +85,12 @@ function createHarness(initialFeed = calendar(event())) {
 
 type Harness = ReturnType<typeof createHarness>;
 
-function projectRow(id: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, name: id, viewMode: 'list', kind: 'TASK', isInbox: false, ownerId: 'm-a',
-    sortKey: 'a0', showInSmart: 'all', notifyMode: 'all', createdAt: NOW_ISH, updatedAt: NOW_ISH,
-    ...extra,
-  };
-}
-
-function deviceOp(h: Harness, entity: string, row: Record<string, unknown>, hlc = h.deviceHlc()) {
-  return { opId: `dev-${entity}-${String(row.id)}-${hlc}`, hlc, entity, entityId: String(row.id), op: 'upsert', fields: Object.keys(row), row };
-}
-
 /** A device edit of some fields of an existing row, stamped after the server's last write by default. */
 async function deviceEdit(h: Harness, userId: string, entity: string, id: string, set: Record<string, unknown>, hlc = h.deviceHlc(Date.now() + 1000)) {
   const res = await h.devicePush(userId, [{ ...deviceOp(h, entity, { id, ...set }, hlc), fields: Object.keys(set) }]);
   expect(res.results[0]?.status).toBe('applied');
   const row = res.results[0]?.row as Record<string, unknown>;
   for (const [k, v] of Object.entries(set)) expect(row[k], k).toEqual(v);
-}
-
-async function seedUser(h: Harness, userId: string, memberId: string | null, withInbox = true) {
-  await h.db.insert(schema.user).values({
-    id: userId, name: userId, initial: userId[0], color: '#007AFF', avatarUrl: null, createdAt: NOW_ISH,
-  });
-  if (memberId) await h.db.update(schema.user).set({ meMemberId: memberId }).where(eq(schema.user.id, userId));
-  if (withInbox) {
-    const res = await h.devicePush(userId, [
-      deviceOp(h, 'project', projectRow(`inbox-${userId}`, { isInbox: true, ownerId: memberId ?? '' })),
-    ]);
-    expect(res.results[0]?.status).toBe('applied');
-  }
 }
 
 /** u-a with inbox and list p1, plus an ICS source on p1. */
@@ -124,8 +100,6 @@ async function seedSource(h: Harness, extra: { timezone?: string; filter?: { exc
   expect(res.results[0]?.status).toBe('applied');
   return h.store.addSource('u-a', { name: 'Work', url: FEED_URL, projectId: 'p1', ...extra });
 }
-
-type PullRes = Awaited<ReturnType<Harness['pull']>>;
 
 function pulledTasks(res: PullRes): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
