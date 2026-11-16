@@ -5,7 +5,7 @@ description: DayDo 的開發與優化迴圈：agy 實作、Codex 審查、Claude
 
 # DayDo 開發迴圈
 
-使用者要求優化或修 bug 時，已授權下面整串（審查、修、commit、push、出 TestFlight 給「自己」到 READY），中途不用再問；新功能先列「要做／先不做」給使用者看過再派工。發給「家人」、`void deploy` 仍要使用者明說。
+使用者要求優化或修 bug 時，已授權下面整串（審查、修、commit、push、出 TestFlight 給「自己」到 READY），中途不用再問（第 3 輪審完仍有 Act on 例外，見步驟 3）；新功能先列「要做／先不做」給使用者看過再派工。發給「家人」、`void deploy` 仍要使用者明說。
 
 ## 分工
 
@@ -17,7 +17,7 @@ description: DayDo 的開發與優化迴圈：agy 實作、Codex 審查、Claude
 
 1. 開 worktree。派給 agy 的 prompt 寫明：只在這個 worktree 改、驗收條件、UI 測試只用 `ios/scripts/uitest.sh`（DD 模擬器）、不 commit 不上傳。
 2. agy 完成後讀 `git diff`，照 AGENTS.md「指令」自己重跑受影響部分的測試（新 worktree 的 server 要先 `npm ci`），動到畫面就設 `TEST_RUNNER_DAYDO_SHOTS` 看截圖。有問題用 agy 的 `--continue` 交回同一個對話修。
-3. 優化或修 bug 類：Codex 審 → 轉述原文並篩選 → agy 修 → Claude 審 diff 與自測 → Codex 再審。最多 3 輪；第 3 輪剩下的小問題由 Claude 判斷後直接修。
+3. 優化或修 bug 類：Codex 審 → 轉述原文並篩選 → agy 修 → Claude 審 diff 與自測 → Codex 再審。最多 3 輪；第 3 輪結束仍有 Act on 就不修、不開第 4 輪，也不進步驟 4，照 review-gate 的 stalled-loop 把診斷交給使用者決定，其餘 finding 列進回報不修。
 4. 併入最新 main 並重跑測試，合併、push，照 `ios/RELEASE.md` 出 TestFlight 給「自己」，`tf verify` 到 `RESULT READY`。
 
 ## 回報
