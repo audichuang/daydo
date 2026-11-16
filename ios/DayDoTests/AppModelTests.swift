@@ -273,4 +273,33 @@ final class AppModelTests: XCTestCase {
         XCTAssertNil(model.pendingDetailTaskId)
         XCTAssertEqual(model.detailTaskId, "task-4")
     }
+
+    func testWidgetDeepLinkRoutingAndQueuingBeforeLaunchReady() async throws {
+        let store = try DeviceStore.inMemory()
+        try await store.bootstrap()
+        let model = AppModel(
+            store: store,
+            tokenStore: InMemorySyncTokenStore(),
+            syncEnabled: false
+        )
+
+        // Deep link arriving before launch() completes is queued and flushed on ready+signedIn.
+        let targetDay = LocalDay(year: 2026, month: 11, day: 20)
+        model.handleWidgetDeepLink(.calendar(targetDay))
+        XCTAssertEqual(model.pendingWidgetDeepLink, .calendar(targetDay))
+        XCTAssertEqual(model.tab, .tasks)
+
+        await model.launch()
+        XCTAssertNil(model.pendingWidgetDeepLink)
+        XCTAssertEqual(model.tab, .calendar)
+        XCTAssertEqual(model.calendarNavigationDay, targetDay)
+        XCTAssertEqual(model.calendarNavigationTrigger, 1)
+
+        model.handleWidgetDeepLink(.today)
+        XCTAssertEqual(model.tab, .tasks)
+        XCTAssertEqual(model.scope, .smart(.today))
+
+        model.handleWidgetDeepLink(.task("widget-task-1"))
+        XCTAssertEqual(model.detailTaskId, "widget-task-1")
+    }
 }

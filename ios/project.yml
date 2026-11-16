@@ -31,6 +31,8 @@ targets:
       - package: DayDoCore
       - package: GoogleSignIn
         product: GoogleSignIn
+      - target: DayDoWidgets
+        embed: true
     entitlements:
       path: DayDo/DayDo.entitlements
       properties:
@@ -71,11 +73,38 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_PREVIEWS: YES
+  DayDoWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: DayDoWidgets
+    dependencies:
+      - package: DayDoCore
+    entitlements:
+      path: DayDoWidgets/DayDoWidgets.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.audichuang.daydo
+    info:
+      path: DayDoWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: DayDo
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        UIUserInterfaceStyle: Dark
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.audichuang.daydo.widgets
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SKIP_INSTALL: YES
   DayDoTests:
     type: bundle.unit-test
     platform: iOS
     sources:
       - path: DayDoTests
+      - path: DayDoWidgets/Views
     dependencies:
       - target: DayDo
       - package: DayDoCore

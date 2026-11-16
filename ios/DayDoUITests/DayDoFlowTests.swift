@@ -1003,4 +1003,32 @@ final class DayDoFlowTests: XCTestCase {
         let activityList = app.otherElements["ActivityListView"]
         XCTAssertTrue(activityList.waitForNonExistence(timeout: 4), app.debugDescription)
     }
+
+    @MainActor
+    func testWidgetDeepLinkOpensTaskDetailAndTabs() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoSeedSharedList"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        // Ensure seeded shared task "買鮮奶" (id: debug-shared-task-1) has arrived.
+        XCTAssertTrue(app.buttons["完成：買鮮奶"].waitForExistence(timeout: 5), app.debugDescription)
+
+        // Switch away to Calendar first via widget calendar deep link.
+        app.open(URL(string: "daydo://calendar")!)
+        XCTAssertTrue(app.buttons["calendarTitle"].waitForExistence(timeout: 5), app.debugDescription)
+
+        // Open task detail via widget task deep link.
+        app.open(URL(string: "daydo://task/debug-shared-task-1")!)
+        let titleField = app.descendants(matching: .any)["taskTitleField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 5), app.debugDescription)
+        let titleValue = (titleField.value as? String) ?? ""
+        XCTAssertTrue(titleValue.contains("買鮮奶"), "Expected task detail for 買鮮奶, got: \(titleValue)")
+
+        // Dismiss detail and navigate back to Today via widget today deep link.
+        let closeButton = app.buttons["關閉"]
+        if closeButton.exists { closeButton.tap() }
+        app.open(URL(string: "daydo://today")!)
+        XCTAssertTrue(app.buttons["完成：買鮮奶"].waitForExistence(timeout: 5), app.debugDescription)
+    }
 }

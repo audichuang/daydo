@@ -84,6 +84,18 @@ struct CalendarScreen: View {
             }
         }
         .task(id: CalReload(range: range, member: memberFilter, completed: showCompleted, revision: model.revision)) { await load() }
+        .onAppear { applyPendingCalendarDay() }
+        .onChange(of: model.calendarNavigationTrigger) { _, _ in applyPendingCalendarDay() }
+    }
+
+    private func applyPendingCalendarDay() {
+        guard let day = model.calendarNavigationDay else { return }
+        model.calendarNavigationDay = nil
+        selected = day
+        month = day.firstOfMonth
+        if mode == .year {
+            modeRaw = CalMode.list.rawValue
+        }
     }
 
     // MARK: Header

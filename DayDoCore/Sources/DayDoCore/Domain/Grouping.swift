@@ -104,10 +104,15 @@ public struct MonthLayout: Sendable {
     }
 
     public init(month: LocalDay, tasks: [TodoTask], maxLanes: Int = 3) {
-        let days = MonthLayout.gridDays(for: month)
+        self.init(days: MonthLayout.gridDays(for: month), tasks: tasks, maxLanes: maxLanes)
+    }
+
+    public init(days: [LocalDay], tasks: [TodoTask], maxLanes: Int = 3) {
         var weeks: [Week] = []
         for w in stride(from: 0, to: days.count, by: 7) {
-            let wd = Array(days[w..<w + 7])
+            let endIdx = min(w + 7, days.count)
+            guard endIdx - w == 7 else { continue }
+            let wd = Array(days[w..<endIdx])
             let first = wd[0], last = wd[6]
             let items = tasks.compactMap { t -> (TodoTask, Schedule)? in
                 guard let s = t.schedule, s.overlaps(first, last) else { return nil }

@@ -61,6 +61,10 @@ struct DayDoApp: App {
                     if GIDSignIn.sharedInstance.handle(url) { return }
                     if let code = SyncEngine.parseInviteCode(from: url) {
                         model.handleIncomingInvite(code: code)
+                        return
+                    }
+                    if let link = WidgetDeepLink(url: url) {
+                        model.handleWidgetDeepLink(link)
                     }
                 }
                 // Day boundaries & sync: re-read and sync when returning to foreground.

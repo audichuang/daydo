@@ -4,6 +4,7 @@ import Network
 import Observation
 import SwiftUI
 import UserNotifications
+import WidgetKit
 import DayDoCore
 
 enum SyncConfig {
@@ -103,6 +104,9 @@ final class AppModel {
     /// Task opened from a notification while another detail sheet was open;
     /// shown after that sheet is dismissed so unsaved edits are not replaced.
     var pendingDetailTaskId: String?
+    var pendingWidgetDeepLink: WidgetDeepLink?
+    var calendarNavigationDay: LocalDay?
+    var calendarNavigationTrigger = 0
 
     /// Opens a task's detail inline in the split view when in a regular-width
     /// window on the Tasks tab; otherwise opens it as a root sheet.
@@ -229,7 +233,17 @@ final class AppModel {
     var sharingProjectId: String?
 
     // Preferences
-    var accentHex: String { didSet { UserDefaults.standard.set(accentHex, forKey: "accent") } }
+    private static var sharedDefaults: UserDefaults? {
+        UserDefaults(suiteName: DayDoStorage.appGroup)
+    }
+
+    var accentHex: String {
+        didSet {
+            UserDefaults.standard.set(accentHex, forKey: "accent")
+            Self.sharedDefaults?.set(accentHex, forKey: "accent")
+            scheduleWidgetReload()
+        }
+    }
     var compact: Bool { didSet { UserDefaults.standard.set(compact, forKey: "compact") } }
     var textScale: Double { didSet { UserDefaults.standard.set(textScale, forKey: "textScale") } }
     var openFolders: Set<String> { didSet { UserDefaults.standard.set(Array(openFolders), forKey: "openFolders") } }
@@ -248,6 +262,7 @@ final class AppModel {
     private var debounceSyncTask: Task<Void, Never>?
     private var retrySyncTask: Task<Void, Never>?
     private var notificationObserverTask: Task<Void, Never>?
+    private var widgetReloadTask: Task<Void, Never>?
     private var pathMonitor: NWPathMonitor?
     private var pathSatisfied: Bool?
     private var didAttemptGoogleAvatarSyncOnLaunch = false
@@ -275,7 +290,9 @@ final class AppModel {
             ? RemoteListSharing(syncEngine: engine)
             : store.makeLocalSharing()
         let d = UserDefaults.standard
-        accentHex = d.string(forKey: "accent") ?? "#FF8A1E"
+        let initialAccent = d.string(forKey: "accent") ?? "#FF8A1E"
+        accentHex = initialAccent
+        Self.sharedDefaults?.set(initialAccent, forKey: "accent")
         compact = d.bool(forKey: "compact")
         textScale = d.object(forKey: "textScale") as? Double ?? 1
         openFolders = Set(d.stringArray(forKey: "openFolders") ?? [])
@@ -310,6 +327,7 @@ final class AppModel {
             isSignedIn = true
             ready = true
             await DebugLaunch.apply(to: self)
+            flushPendingWidgetDeepLinkIfNeeded()
             return
         }
 
@@ -347,6 +365,7 @@ final class AppModel {
             ready = true
             startSyncObservers()
             await DebugLaunch.apply(to: self)
+            flushPendingWidgetDeepLinkIfNeeded()
             await processPendingInviteIfNeeded()
             triggerSyncNow()
             syncGoogleAvatarOnLaunchIfNeeded()
@@ -418,6 +437,7 @@ final class AppModel {
             showingMeNamePrompt = false
         }
         revision += 1
+        scheduleWidgetReload()
         // Never block the UI on the notification permission prompt.
         let scheduler = reminders, api = api
         Task.detached { await scheduler.reschedule(api: api) }
@@ -440,6 +460,7 @@ final class AppModel {
             isSignedIn = true
             await reloadData()
             await resolveMeProfileAfterSignIn(suggestedName: displayName)
+            flushPendingWidgetDeepLinkIfNeeded()
             await processPendingInviteIfNeeded()
             syncGoogleAvatarAfterSignIn(credential: credential, explicitAvatarUrl: avatarUrl)
         } catch {
@@ -451,6 +472,7 @@ final class AppModel {
                 await reloadData()
                 await resolveMeProfileAfterSignIn(suggestedName: displayName)
                 await handleSyncError(syncError)
+                flushPendingWidgetDeepLinkIfNeeded()
                 await processPendingInviteIfNeeded()
                 syncGoogleAvatarAfterSignIn(credential: credential, explicitAvatarUrl: avatarUrl)
                 return
@@ -585,6 +607,8 @@ final class AppModel {
         detailTaskId = nil
         selectedTaskId = nil
         pendingDetailTaskId = nil
+        pendingWidgetDeepLink = nil
+        calendarNavigationDay = nil
         composing = nil
         editingProjectId = nil
         sharingProjectId = nil
@@ -595,6 +619,50 @@ final class AppModel {
         showingMeNamePrompt = false
         isSignedIn = false
         revision += 1
+        scheduleWidgetReload()
+    }
+
+    // MARK: - Widgets
+
+    func scheduleWidgetReload() {
+        widgetReloadTask?.cancel()
+        widgetReloadTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            WidgetCenter.shared.reloadAllTimelines()
+        }
+    }
+
+    func handleWidgetDeepLink(_ link: WidgetDeepLink) {
+        guard ready, isSignedIn else {
+            pendingWidgetDeepLink = link
+            return
+        }
+        applyWidgetDeepLink(link)
+    }
+
+    func flushPendingWidgetDeepLinkIfNeeded() {
+        guard ready, isSignedIn, let link = pendingWidgetDeepLink else { return }
+        pendingWidgetDeepLink = nil
+        applyWidgetDeepLink(link)
+    }
+
+    private func applyWidgetDeepLink(_ link: WidgetDeepLink) {
+        switch link {
+        case .today:
+            drawerOpen = false
+            tab = .tasks
+            scope = .smart(.today)
+        case .task(let id):
+            openDetailFromNotification(id)
+        case .calendar(let day):
+            drawerOpen = false
+            tab = .calendar
+            if let day {
+                calendarNavigationDay = day
+                calendarNavigationTrigger += 1
+            }
+        }
     }
 
     func scheduleDebouncedSync() {

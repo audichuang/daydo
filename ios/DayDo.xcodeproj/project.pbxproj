@@ -13,14 +13,18 @@
 		0F335A407D2DCE82DC52398D /* ComposerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36BA7575D416B540F3E5F021 /* ComposerSheet.swift */; };
 		1B5B5057036A95B851A8C16F /* TimeBlockEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CC0B1CED20281F2431A79ED /* TimeBlockEditor.swift */; };
 		1F43E9357842CB04A22105DB /* DayDoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 615E31EA2D033F846C07B08E /* DayDoApp.swift */; };
+		239BE2EFE14CE7C2720AF28E /* TodayWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B8A10BACD8F7752A8C5A164 /* TodayWidgetView.swift */; };
 		23FCC3E72501BB4E763CA638 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2E3411D9BD47A773354B9EE /* RootView.swift */; };
 		2586B4711A3F7B5A08BFC598 /* EditListSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 723C6FDF68327E755BBBC400 /* EditListSheet.swift */; };
 		291183E9EBCB11282851A4F3 /* ShareListSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD944E1EAEB502E47717D303 /* ShareListSheet.swift */; };
 		2B68D0A20FBE89F153D00562 /* KeychainSyncTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */; };
+		36614013B8857F519ECCE7DC /* WidgetTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9A02351805458F23E7DB226 /* WidgetTheme.swift */; };
 		36C06F0D17D9C8A91549B2E6 /* TaskListScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBE69B8A39D6026F6C72A644 /* TaskListScreen.swift */; };
 		4461E85D6F754C9A7FCD0A48 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 7E101714C88520768756EA09 /* GoogleSignIn */; };
 		509C4CA0873E1CAB038DFEA4 /* AppModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC3484874C0CCBD966338B4D /* AppModelTests.swift */; };
 		52E699F2CDF260B54AE329F5 /* DebugAvatar.png in Resources */ = {isa = PBXBuildFile; fileRef = 6797E97CCA68C6FB31E5196E /* DebugAvatar.png */; };
+		5383CF711DC6E85AA7EF56EF /* TodayWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B8A10BACD8F7752A8C5A164 /* TodayWidgetView.swift */; };
+		55991F44D5F3CCFA3301D173 /* CalendarWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A7F8C84AE26E0C8B8272408 /* CalendarWidgetView.swift */; };
 		5C95C3DAF6AA8AF7C303DEEA /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36A61F18DDDC6C2FC166DDDB /* Theme.swift */; };
 		6241455AB6BDC69BCF835DB0 /* DayDoFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93AF820DEE1E49529E90A0E0 /* DayDoFlowTests.swift */; };
 		635BEE00F58D95D66615961E /* DatePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3ADCB55D80C898953405EA4 /* DatePanel.swift */; };
@@ -30,15 +34,30 @@
 		7454858BA67E1C4407B53A26 /* OtherScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 586710AA91D1F8A386C4DA0F /* OtherScreens.swift */; };
 		7D0D980B5B52B78EF1CA32AF /* MeProfileSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87A6EE2C31E3EA193622C3D4 /* MeProfileSheet.swift */; };
 		8E2D7343DA9825517D9845EF /* InviteConfirmSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40ED13459CB865ADD6D54F4 /* InviteConfirmSheet.swift */; };
+		971DBD236D629470649D00B3 /* NextWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4977F811E6EBE5878C8AC687 /* NextWidgetView.swift */; };
+		A087FC82AD3BEED279F6F0D4 /* DayDoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4148E35FBA61D1882A2ED98F /* DayDoCore */; };
+		A76CA81AB7C79056C7BBF883 /* WidgetTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9A02351805458F23E7DB226 /* WidgetTheme.swift */; };
 		AE2BF5BFEF228940A02802F7 /* DemoData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DAF0DFE366B2DF89B894383 /* DemoData.swift */; };
+		B6932C6011DDA88EB6338216 /* CalendarWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A7F8C84AE26E0C8B8272408 /* CalendarWidgetView.swift */; };
+		BA3665B45AB6639B842BBA89 /* WidgetSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 769FB898F8CB816D3209FD16 /* WidgetSnapshotTests.swift */; };
 		BA526A6B810BD3379EC9BA14 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6984AFAE49745EDDDFF3BDB4 /* AppModel.swift */; };
+		D5B392650E0271184B023696 /* DayDoWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D30F5C2B4335B32BA231501 /* DayDoWidgetsBundle.swift */; };
+		D6E8515463547C7474484DF0 /* DayDoWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 90C4A324F918B192D9D68EE1 /* DayDoWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		EAB896BF06D1DA77E283DF5E /* DayDoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4677FEEE4764DF9B66BB6C5A /* DayDoCore */; };
 		EF57A429289CCBCFF71EB323 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = B385BD7500B9C55FC5E7A64A /* Components.swift */; };
+		F22D59FD9BEA7AC96C0306A0 /* NextWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4977F811E6EBE5878C8AC687 /* NextWidgetView.swift */; };
 		FA871EBC37232DE4894D7FCE /* CalendarScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 423EDB9F8B70C6CE2D2E3326 /* CalendarScreen.swift */; };
 		FE3382C49FF0F62208E3B7C7 /* DrawerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E45AF04A64333352B5667B17 /* DrawerView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		2357CEF4AE3F523E40CD0980 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 28AB0642BA8F0D2B44C8D653 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 66FB6B13EF54E912D1E61B82;
+			remoteInfo = DayDoWidgets;
+		};
 		334F2E9F4629FD11150D1789 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 28AB0642BA8F0D2B44C8D653 /* Project object */;
@@ -55,8 +74,24 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		4DE495400F3BD9A4EFDF9FCB /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				D6E8515463547C7474484DF0 /* DayDoWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		0A7F8C84AE26E0C8B8272408 /* CalendarWidgetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarWidgetView.swift; sourceTree = "<group>"; };
 		14E86541BA71F626A6811C13 /* DayDo.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DayDo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1B8A10BACD8F7752A8C5A164 /* TodayWidgetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayWidgetView.swift; sourceTree = "<group>"; };
 		27AE9AE733071F3B645C0DE2 /* DayDoTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DayDoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		2E477F2C75D83F9691F85C75 /* DayDoIPadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoIPadTests.swift; sourceTree = "<group>"; };
 		36A61F18DDDC6C2FC166DDDB /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
@@ -64,18 +99,25 @@
 		3AC93921B8246DF3D1A2F32B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		3CC0B1CED20281F2431A79ED /* TimeBlockEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeBlockEditor.swift; sourceTree = "<group>"; };
 		423EDB9F8B70C6CE2D2E3326 /* CalendarScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarScreen.swift; sourceTree = "<group>"; };
+		4977F811E6EBE5878C8AC687 /* NextWidgetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NextWidgetView.swift; sourceTree = "<group>"; };
 		586710AA91D1F8A386C4DA0F /* OtherScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OtherScreens.swift; sourceTree = "<group>"; };
 		615E31EA2D033F846C07B08E /* DayDoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoApp.swift; sourceTree = "<group>"; };
 		6797E97CCA68C6FB31E5196E /* DebugAvatar.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = DebugAvatar.png; sourceTree = "<group>"; };
 		6984AFAE49745EDDDFF3BDB4 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		6D30F5C2B4335B32BA231501 /* DayDoWidgetsBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoWidgetsBundle.swift; sourceTree = "<group>"; };
 		6DAF0DFE366B2DF89B894383 /* DemoData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoData.swift; sourceTree = "<group>"; };
 		723C6FDF68327E755BBBC400 /* EditListSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditListSheet.swift; sourceTree = "<group>"; };
 		75740C90A3D93DC752FAB1DE /* DayDoUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DayDoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		769FB898F8CB816D3209FD16 /* WidgetSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshotTests.swift; sourceTree = "<group>"; };
+		804D37B4E777C0B7FFBAECAA /* DayDoWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DayDoWidgets.entitlements; sourceTree = "<group>"; };
 		85E2F4237AF4F16976307DCE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		87A6EE2C31E3EA193622C3D4 /* MeProfileSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeProfileSheet.swift; sourceTree = "<group>"; };
+		90C4A324F918B192D9D68EE1 /* DayDoWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = DayDoWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		93AF820DEE1E49529E90A0E0 /* DayDoFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoFlowTests.swift; sourceTree = "<group>"; };
 		A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainSyncTokenStore.swift; sourceTree = "<group>"; };
 		A3ADCB55D80C898953405EA4 /* DatePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatePanel.swift; sourceTree = "<group>"; };
+		A9A02351805458F23E7DB226 /* WidgetTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetTheme.swift; sourceTree = "<group>"; };
+		B23F152D25AD641F8B905F41 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		B2E3411D9BD47A773354B9EE /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		B385BD7500B9C55FC5E7A64A /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		B40ED13459CB865ADD6D54F4 /* InviteConfirmSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteConfirmSheet.swift; sourceTree = "<group>"; };
@@ -88,7 +130,7 @@
 		EC3484874C0CCBD966338B4D /* AppModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelTests.swift; sourceTree = "<group>"; };
 		F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		F68BFC5798449FCFE7B82212 /* DayDoCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DayDoCore; path = ../DayDoCore; sourceTree = SOURCE_ROOT; };
-		"TEMP_AA138A9A-444B-453C-8704-497EACC55D01" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		"TEMP_2931D3A8-0A93-4F5E-B6DF-77FAD3D4DA80" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -109,6 +151,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FD5ACCCA53FBAF98A9634E99 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A087FC82AD3BEED279F6F0D4 /* DayDoCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -123,12 +173,24 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		2291417B1791CC88A7349725 /* DayDoWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				804D37B4E777C0B7FFBAECAA /* DayDoWidgets.entitlements */,
+				6D30F5C2B4335B32BA231501 /* DayDoWidgetsBundle.swift */,
+				B23F152D25AD641F8B905F41 /* Info.plist */,
+				ACF5068A4449D13A2D304958 /* Views */,
+			);
+			path = DayDoWidgets;
+			sourceTree = "<group>";
+		};
 		278D9ED9D8E42F80F5100B57 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				14E86541BA71F626A6811C13 /* DayDo.app */,
 				27AE9AE733071F3B645C0DE2 /* DayDoTests.xctest */,
 				75740C90A3D93DC752FAB1DE /* DayDoUITests.xctest */,
+				90C4A324F918B192D9D68EE1 /* DayDoWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -153,6 +215,7 @@
 			isa = PBXGroup;
 			children = (
 				EC3484874C0CCBD966338B4D /* AppModelTests.swift */,
+				769FB898F8CB816D3209FD16 /* WidgetSnapshotTests.swift */,
 			);
 			path = DayDoTests;
 			sourceTree = "<group>";
@@ -163,6 +226,17 @@
 				36A61F18DDDC6C2FC166DDDB /* Theme.swift */,
 			);
 			path = Theme;
+			sourceTree = "<group>";
+		};
+		ACF5068A4449D13A2D304958 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				0A7F8C84AE26E0C8B8272408 /* CalendarWidgetView.swift */,
+				4977F811E6EBE5878C8AC687 /* NextWidgetView.swift */,
+				1B8A10BACD8F7752A8C5A164 /* TodayWidgetView.swift */,
+				A9A02351805458F23E7DB226 /* WidgetTheme.swift */,
+			);
+			path = Views;
 			sourceTree = "<group>";
 		};
 		B36EA48CC7C86824567CEF4C /* DayDo */ = {
@@ -216,6 +290,7 @@
 				B36EA48CC7C86824567CEF4C /* DayDo */,
 				630CF5A80C94AA9B46B5BCE1 /* DayDoTests */,
 				E8E832832820352F66F1D79E /* DayDoUITests */,
+				2291417B1791CC88A7349725 /* DayDoWidgets */,
 				33958DAB9F6D6866E32D1FE3 /* Packages */,
 				278D9ED9D8E42F80F5100B57 /* Products */,
 			);
@@ -230,10 +305,10 @@
 			path = DayDoUITests;
 			sourceTree = "<group>";
 		};
-		"TEMP_4EEBF1FE-2FC8-4D29-A60E-2ADAAC0A3DB6" /* ios */ = {
+		"TEMP_DECCC0E6-3FFE-4B85-B495-EE0451DE20D1" /* ios */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_AA138A9A-444B-453C-8704-497EACC55D01" /* Config.xcconfig */,
+				"TEMP_2931D3A8-0A93-4F5E-B6DF-77FAD3D4DA80" /* Config.xcconfig */,
 			);
 			path = ios;
 			sourceTree = "<group>";
@@ -248,10 +323,12 @@
 				D7826C0F2B2FEEB50A695CDF /* Sources */,
 				AEA4EA25F056F5578D078F24 /* Resources */,
 				D725491C8E6AC36C149DBC11 /* Frameworks */,
+				4DE495400F3BD9A4EFDF9FCB /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				46F50EBA857EBD54399072CA /* PBXTargetDependency */,
 			);
 			name = DayDo;
 			packageProductDependencies = (
@@ -279,6 +356,25 @@
 			productName = DayDoUITests;
 			productReference = 75740C90A3D93DC752FAB1DE /* DayDoUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		66FB6B13EF54E912D1E61B82 /* DayDoWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0396F716A84B17D96AA61D0D /* Build configuration list for PBXNativeTarget "DayDoWidgets" */;
+			buildPhases = (
+				C28A4308DC5BE05443873209 /* Sources */,
+				FD5ACCCA53FBAF98A9634E99 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DayDoWidgets;
+			packageProductDependencies = (
+				4148E35FBA61D1882A2ED98F /* DayDoCore */,
+			);
+			productName = DayDoWidgets;
+			productReference = 90C4A324F918B192D9D68EE1 /* DayDoWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 		A9DA8234155D509E2ED69B50 /* DayDoTests */ = {
 			isa = PBXNativeTarget;
@@ -318,6 +414,10 @@
 						ProvisioningStyle = Automatic;
 						TestTargetID = 0B9A652E0E50A90A28F74D8C;
 					};
+					66FB6B13EF54E912D1E61B82 = {
+						DevelopmentTeam = 37HFR5V2JJ;
+						ProvisioningStyle = Automatic;
+					};
 					A9DA8234155D509E2ED69B50 = {
 						DevelopmentTeam = 37HFR5V2JJ;
 						ProvisioningStyle = Automatic;
@@ -343,6 +443,7 @@
 			projectRoot = "";
 			targets = (
 				0B9A652E0E50A90A28F74D8C /* DayDo */,
+				66FB6B13EF54E912D1E61B82 /* DayDoWidgets */,
 				A9DA8234155D509E2ED69B50 /* DayDoTests */,
 				28B477599E33BE7FACE645FE /* DayDoUITests */,
 			);
@@ -367,6 +468,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				509C4CA0873E1CAB038DFEA4 /* AppModelTests.swift in Sources */,
+				B6932C6011DDA88EB6338216 /* CalendarWidgetView.swift in Sources */,
+				971DBD236D629470649D00B3 /* NextWidgetView.swift in Sources */,
+				5383CF711DC6E85AA7EF56EF /* TodayWidgetView.swift in Sources */,
+				BA3665B45AB6639B842BBA89 /* WidgetSnapshotTests.swift in Sources */,
+				36614013B8857F519ECCE7DC /* WidgetTheme.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -376,6 +482,18 @@
 			files = (
 				6241455AB6BDC69BCF835DB0 /* DayDoFlowTests.swift in Sources */,
 				71E047BD3761B4116F06B846 /* DayDoIPadTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C28A4308DC5BE05443873209 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				55991F44D5F3CCFA3301D173 /* CalendarWidgetView.swift in Sources */,
+				D5B392650E0271184B023696 /* DayDoWidgetsBundle.swift in Sources */,
+				F22D59FD9BEA7AC96C0306A0 /* NextWidgetView.swift in Sources */,
+				239BE2EFE14CE7C2720AF28E /* TodayWidgetView.swift in Sources */,
+				A76CA81AB7C79056C7BBF883 /* WidgetTheme.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -420,6 +538,11 @@
 			target = 0B9A652E0E50A90A28F74D8C /* DayDo */;
 			targetProxy = 334F2E9F4629FD11150D1789 /* PBXContainerItemProxy */;
 		};
+		46F50EBA857EBD54399072CA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 66FB6B13EF54E912D1E61B82 /* DayDoWidgets */;
+			targetProxy = 2357CEF4AE3F523E40CD0980 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -440,6 +563,23 @@
 			};
 			name = Debug;
 		};
+		563069EBAA1110D22D703869 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = DayDoWidgets/DayDoWidgets.entitlements;
+				INFOPLIST_FILE = DayDoWidgets/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.audichuang.daydo.widgets;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		6CA6FB3616D936661D6DB4D3 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -459,7 +599,7 @@
 		};
 		739B74DBC48851785BC9AAA2 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_AA138A9A-444B-453C-8704-497EACC55D01" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_2931D3A8-0A93-4F5E-B6DF-77FAD3D4DA80" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
@@ -572,7 +712,7 @@
 		};
 		B97B517B54A6D8DCCD7DFE92 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_AA138A9A-444B-453C-8704-497EACC55D01" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_2931D3A8-0A93-4F5E-B6DF-77FAD3D4DA80" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
@@ -656,9 +796,35 @@
 			};
 			name = Debug;
 		};
+		DEFF22999DF7F11862B1016C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = DayDoWidgets/DayDoWidgets.entitlements;
+				INFOPLIST_FILE = DayDoWidgets/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.audichuang.daydo.widgets;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0396F716A84B17D96AA61D0D /* Build configuration list for PBXNativeTarget "DayDoWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DEFF22999DF7F11862B1016C /* Debug */,
+				563069EBAA1110D22D703869 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		35E6FF4EBFA3306C45EDC6BD /* Build configuration list for PBXProject "DayDo" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -716,6 +882,10 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		4148E35FBA61D1882A2ED98F /* DayDoCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = DayDoCore;
+		};
 		4677FEEE4764DF9B66BB6C5A /* DayDoCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = DayDoCore;
