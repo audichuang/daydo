@@ -271,6 +271,17 @@ describe('M15a create', () => {
     expect(mark).not.toHaveBeenCalled();
   });
 
+  it('records an event whose schedule cannot be built as an error and still imports the others', async () => {
+    const bad = ['BEGIN:VEVENT', 'UID:zero-length', 'SUMMARY:Broken', 'DTSTART;VALUE=DATE:20261005', 'DTEND;VALUE=DATE:20261005', 'END:VEVENT'].join('\r\n');
+    const h = createHarness(calendar(event(), bad));
+    const source = await seedSource(h);
+    const stats = await sync(h, 'u-a', source.id, { includeChanges: true });
+    expect(stats).toMatchObject({ created: 1, errors: 1 });
+    expect(stats.changes).toContainEqual(expect.objectContaining({ uid: 'zero-length', action: 'error' }));
+    expect((await h.store.listMappings('u-a', source.id)).map((m) => m.icsUid)).toEqual(['meeting-a']);
+    expect((await h.store.getSource('u-a', source.id))?.lastStatus).toBe('partial');
+  });
+
   it('imports 31 meetings in a single push and orders new tasks before existing ones', async () => {
     const meetings = Array.from({ length: 31 }, (_, i) => event([], `meeting-${String(i).padStart(2, '0')}`));
     const h = createHarness(calendar(...meetings));
@@ -328,6 +339,20 @@ describe('M15a create', () => {
     const tasks = pulledTasks(await h.pull('u-a'));
     expect(tasks).toHaveLength(1);
     expect(tasks[0]).toMatchObject({ priority: 3, tags: ['mine'], reminders: ['TRIGGER:-PT1H'] });
+  });
+
+  it('does not reopen a task completed after a lost create response while the feed is unchanged', async () => {
+    const h = createHarness();
+    const source = await seedSource(h);
+    h.hooks.loseIcsResponse = true;
+    await sync(h, 'u-a', source.id);
+    const pending = await onlyMapping(h, source.id);
+    await deviceEdit(h, 'u-a', 'task', pending.taskId, { status: 2, completedAt: NOW_ISH });
+    const pushes = h.icsPushes();
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ errors: 0 });
+    expect(h.icsPushes()).toBe(pushes);
+    expect(await taskOf(h, 'u-a', pending.taskId)).toMatchObject({ status: 2, completedAt: NOW_ISH });
+    expect(await onlyMapping(h, source.id)).toMatchObject({ state: 'applied' });
   });
 
   it('after a lost create response, a changed feed sends only the fields ICS owns', async () => {

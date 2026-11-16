@@ -96,7 +96,11 @@ function rowSchedule(row: Record<string, unknown>): Schedule | null {
   };
 }
 
-/** The ICS-owned fields that differ from the row, plus a reopen when the source itself changed. */
+/**
+ * The ICS-owned fields that differ from the row, plus a reopen when the source changed and the row
+ * does not show it yet. A row already matching the draft means the write landed earlier (lost
+ * response), so a completion there came after it and stays.
+ */
 function ownedDelta(row: Record<string, unknown>, draft: TaskDraft, reopen: boolean): Record<string, unknown> {
   const delta: Record<string, unknown> = {};
   if (!sameValue(row.title, draft.title)) delta.title = draft.title;
@@ -104,7 +108,7 @@ function ownedDelta(row: Record<string, unknown>, draft: TaskDraft, reopen: bool
   const schedule = scheduleSet(draft.schedule);
   // The schedule is one LWW group: send all five when any differs.
   if (SCHEDULE_KEYS.some((k) => !sameValue(row[k], schedule[k]))) Object.assign(delta, schedule);
-  if (reopen && row.status === 2) {
+  if (reopen && row.status === 2 && Object.keys(delta).length > 0) {
     delta.status = 0;
     delta.completedAt = null;
   }
@@ -192,14 +196,14 @@ export async function syncSource(
   };
   /** start/end (and previous*) are rendered like the task API, in the task's zone. */
   const record = (
-    item: { event: ParsedEvent; draft: TaskDraft },
+    item: { event: ParsedEvent; draft?: TaskDraft },
     action: SyncChange['action'],
     taskId?: string,
     prev?: Record<string, unknown>,
     reason?: string,
   ) => {
     if (!stats.changes) return;
-    const next = scheduleToAPI(item.draft.schedule);
+    const next = item.draft ? scheduleToAPI(item.draft.schedule) : { start: item.event.start, due: item.event.end };
     const previous = prev ? rowSchedule(prev) : null;
     const api = previous ? scheduleToAPI(previous) : null;
     stats.changes.push({
@@ -217,7 +221,7 @@ export async function syncSource(
   /** Mapping commits for this run (confirmed writes, revision bumps, error notes), one batch at the end. */
   const commits: MappingCommit[] = [];
   const fail = (
-    item: { event: ParsedEvent; draft: TaskDraft },
+    item: { event: ParsedEvent; draft?: TaskDraft },
     mapping: IcsMapping | null,
     reason: string,
     prev?: Record<string, unknown>,
@@ -226,7 +230,7 @@ export async function syncSource(
     stats.lastError = reason;
     record(item, 'error', mapping?.taskId, prev, reason);
     // Keep the fingerprint and state: the next run retries. Only the error note is stored.
-    if (mapping && !dryRun) commits.push({ ...mapping, state: mapping.state as MappingCommit['state'], lastError: reason });
+    if (mapping && !dryRun && mapping.state !== 'purged') commits.push({ ...mapping, state: mapping.state, lastError: reason });
   };
 
   try {
@@ -276,7 +280,14 @@ export async function syncSource(
       seen.add(key);
       const fingerprint = fingerprints[index]!;
       const mapping = existing.get(key) ?? null;
-      const draft = eventToTaskDraft(event, zone);
+      let draft: TaskDraft;
+      try {
+        draft = eventToTaskDraft(event, zone);
+      } catch (error) {
+        // e.g. an all-day event whose DTEND equals its DTSTART: only this event fails.
+        fail({ event }, mapping, errMsg(error));
+        continue;
+      }
       if (!mapping) {
         creates.push({ event, fingerprint, mapping, draft, row: undefined, delta: {} });
         continue;
