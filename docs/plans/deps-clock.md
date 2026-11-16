@@ -504,6 +504,6 @@ git -C .. diff <票3起點> -- server/tests | rg '^[-+]\s*expect\('             
 | 票 | 內容 | 狀態 | commit 範圍 | 偏離 |
 |----|------|------|-------------|------|
 | 1 | clock 模組（`src/clock.ts`、`getNow`／`systemNow`、`nowOf`）＋ G1–G3 護欄、`uuidv7` 必填 | 完成 | 1054afb..b68cf3c（4 commit，check 與 e2e 全綠，852 tests） | 無 |
-| 2 | `src/deps.ts`（`AppDeps`／`productionAppDeps`）、lint 例外搬移、21 個 route＋cron 遷移、`createScopeWorld().deps`、A1–A4／L1–L2 護欄 | 未開始 | | |
+| 2 | `src/deps.ts`（`AppDeps`／`productionAppDeps`）、lint 例外搬移、21 個 route＋cron 遷移、`createScopeWorld().deps`、A1–A4／L1–L2 護欄 | 完成 | 708041e..77ec3aa（8 commit，check 與 e2e 全綠，855 tests；`productionAppDeps(` 逐檔計數與改前 `createDb(` 相同：routes 23、crons 1、src/ics/cron.ts 1） | ① `Scope.get` 不留 cast：拿掉 `services.ts` 的 `as unknown as ScopeStub` 後 tsc 仍綠，routes 本來也沒有，`src/deps.ts` 照樣不 cast（cast 數 1→0）。② `src/ics/engine.ts` 的註解在 :51 不是 :50。③ `satisfies` 違規證明要有 `world.deps`，移到 commit 7 之後跑。④ 行內引數的 6 個 oauth route 寫成 `productionAppDeps(c.env).db`、`authorize/email/start` 先 `parseBody` 再建 deps，保留原本「parseBody 之後才開 session」的順序，而不是在呼叫前一行宣告 |
 | 3 | `tests/helpers/serverHarness.ts`、拿掉 fake timers 與 `Date.now` spy、H1–H3 護欄 | 未開始 | | |
 | — | config／env 收斂（原第三塊） | 不做（§2），以 A4 凍結護欄取代 | — | — |
