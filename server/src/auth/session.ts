@@ -1,5 +1,6 @@
 import { device, identity, session, user } from '@schema';
 import { and, eq, gt, isNull, sql, type db } from 'void/db';
+import { systemNow } from '../clock';
 import { activeProjectIds, decodeProjectIds } from '../membership';
 import type { ScopeStub } from '../scope/api';
 import { userScope } from '../sync/scopeName';
@@ -163,7 +164,7 @@ export async function createSessionForIdentity(
     getScopeStub?: ScopeLookup;
   },
 ): Promise<AuthSessionResult> {
-  const now = params.now ?? Date.now();
+  const now = params.now ?? systemNow();
   const refreshToken = generateRefreshToken();
   const refreshHash = await sha256Hex(refreshToken);
   const sessionId = crypto.randomUUID();
@@ -265,7 +266,7 @@ export async function rotateRefreshToken(
     getScopeStub?: ScopeLookup;
   },
 ): Promise<RefreshResult | null> {
-  const now = params.now ?? Date.now();
+  const now = params.now ?? systemNow();
   const tokenHash = await sha256Hex(params.refreshToken);
 
   const existing = await database

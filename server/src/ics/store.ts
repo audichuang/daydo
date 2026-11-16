@@ -5,6 +5,7 @@
 // RETURNING rather than result metadata.
 import { icsMapping, icsSource } from '@schema';
 import { and, asc, eq, isNull, lte, ne, or, sql, type BatchItem } from 'void/db';
+import { systemNow } from '../clock';
 import type { AppDb } from '../sync/push';
 import { IcsError, type IcsFilter } from './types';
 
@@ -222,7 +223,7 @@ export class D1IcsStore implements IcsStore {
     private readonly db: AppDb,
     options: { now?: () => number } = {},
   ) {
-    this.now = options.now ?? Date.now;
+    this.now = options.now ?? systemNow;
   }
 
   async addSource(userId: string, input: AddSourceInput): Promise<IcsSource> {
@@ -521,7 +522,7 @@ export class MemoryIcsStore implements IcsStore {
   private nextId = 1;
 
   constructor(options: { now?: () => number } = {}) {
-    this.now = options.now ?? Date.now;
+    this.now = options.now ?? systemNow;
   }
 
   private owned(userId: string, id: number): IcsSource | undefined {

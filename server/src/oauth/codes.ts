@@ -3,6 +3,7 @@ import { and, eq, gt, isNull } from 'void/db';
 import { sha256Hex } from '../auth/crypto';
 import type { DatabaseClient } from '../auth/session';
 import { randomB64url } from '../base64url';
+import { systemNow } from '../clock';
 
 // Authorization codes (spec/mcp.md 4.2, 4.4 step 6, 4.5). D1 stores only the SHA-256 of
 // the code; each code starts a new refresh family.
@@ -26,7 +27,7 @@ export async function createAuthorizationCode(
   database: DatabaseClient,
   params: NewAuthorizationCode,
 ): Promise<string> {
-  const now = params.now ?? Date.now();
+  const now = params.now ?? systemNow();
   const code = randomB64url(32);
   await database.insert(oauthCode).values({
     codeHash: await sha256Hex(code),

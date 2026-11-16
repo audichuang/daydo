@@ -3,6 +3,7 @@ import { and, count, eq, gt } from 'void/db';
 import { sha256Hex } from '../auth/crypto';
 import type { DatabaseClient } from '../auth/session';
 import { randomB64url } from '../base64url';
+import { systemNow } from '../clock';
 import { ipRateKey } from '../ipRateKey';
 
 // Dynamic Client Registration (RFC 7591, spec/mcp.md 4.3). Clients are persisted so
@@ -39,7 +40,7 @@ export async function registerClient(
   database: DatabaseClient,
   params: { body: Record<string, unknown> | null; ip: string | null; now?: number },
 ): Promise<RegisterResult> {
-  const now = params.now ?? Date.now();
+  const now = params.now ?? systemNow();
   const body = params.body;
   if (!body) return error(400, 'invalid_client_metadata', 'Body must be a JSON object');
 

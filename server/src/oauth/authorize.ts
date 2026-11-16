@@ -4,6 +4,7 @@ import { sha256Hex } from '../auth/crypto';
 import { normalizeEmail, startEmailCode, verifyEmailCode } from '../auth/email';
 import { AuthVerificationError, verifyAppleToken, type ProviderName, type VerifiedIdentity } from '../auth/providers';
 import type { DatabaseClient } from '../auth/session';
+import { systemNow } from '../clock';
 import type { Mailer } from '../mail/mailer';
 import { randomB64url } from '../base64url';
 import { ipRateKey } from '../ipRateKey';
@@ -263,7 +264,7 @@ async function showConsent(request: Request, deps: AuthorizeDeps, now: number): 
 }
 
 export function handleAuthorizeGet(request: Request, deps: AuthorizeDeps): Promise<Response> {
-  const now = deps.now ?? Date.now();
+  const now = deps.now ?? systemNow();
   if (new URL(request.url).searchParams.has('pending')) return showConsent(request, deps, now);
   return beginAuthorization(request, deps, now);
 }
@@ -273,7 +274,7 @@ export async function handleAuthorizePost(
   form: Record<string, unknown>,
   deps: AuthorizeDeps,
 ): Promise<Response> {
-  const now = deps.now ?? Date.now();
+  const now = deps.now ?? systemNow();
   const pendingId = stringField(form, 'pending');
   const consentToken = stringField(form, 'ct');
   const decision = stringField(form, 'decision');
@@ -321,7 +322,7 @@ export async function handleAuthorizePost(
 // GET /authorize/start?pending&provider: compare cookie, record provider, go to provider.
 
 export async function handleAuthorizeStart(request: Request, deps: AuthorizeDeps): Promise<Response> {
-  const now = deps.now ?? Date.now();
+  const now = deps.now ?? systemNow();
   const sp = new URL(request.url).searchParams;
   const provider = sp.get('provider') ?? '';
   if (!isWebProvider(provider) || !isProviderAvailable(deps.web, provider)) {
@@ -372,7 +373,7 @@ export async function openCallbackPending(
   deps: AuthorizeDeps,
   params: { provider: ProviderName; state: string; error: string },
 ): Promise<CallbackCheck> {
-  const now = deps.now ?? Date.now();
+  const now = deps.now ?? systemNow();
   const pending = await loadOpenPending(deps.database, params.state, now);
   if (!pending || pending.provider !== params.provider || pending.userId !== null) {
     return { ok: false, response: errorPage(MESSAGES.expired) };
@@ -400,7 +401,7 @@ export async function bindIdentity(
   pending: PendingRow,
   verified: VerifiedIdentity,
 ): Promise<Response> {
-  const now = deps.now ?? Date.now();
+  const now = deps.now ?? systemNow();
   const found = await deps.database
     .select({ userId: identity.userId })
     .from(identity)
@@ -496,7 +497,7 @@ export async function handleAuthorizeEmailStart(
   deps: AuthorizeDeps,
   mailer: Mailer,
 ): Promise<Response> {
-  const now = deps.now ?? Date.now();
+  const now = deps.now ?? systemNow();
   const pending = await loadOpenPending(deps.database, stringField(form, 'pending'), now);
   if (!pending || pending.userId !== null) return errorPage(MESSAGES.expired);
   if (!(await cookieMatches(request, pending))) return errorPage(MESSAGES.wrongBrowser);
@@ -528,7 +529,7 @@ export async function handleAuthorizeEmailVerify(
   form: Record<string, unknown>,
   deps: AuthorizeDeps,
 ): Promise<Response> {
-  const now = deps.now ?? Date.now();
+  const now = deps.now ?? systemNow();
   const pending = await loadOpenPending(deps.database, stringField(form, 'pending'), now);
   if (!pending || pending.provider !== 'email' || pending.userId !== null) {
     logEmailAuthorize('invalid_request');

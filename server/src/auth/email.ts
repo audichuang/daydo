@@ -3,6 +3,7 @@
 // Logs carry outcomes only: never the code, and not the address.
 import { emailCode } from '@schema';
 import { and, count, desc, eq, gt, isNull, lt, sql } from 'void/db';
+import { systemNow } from '../clock';
 import { renderCodeEmail } from '../mail/code-email';
 import type { Mailer } from '../mail/mailer';
 import { logEvent } from '../log';
@@ -70,7 +71,7 @@ export async function startEmailCode(
   database: DatabaseClient,
   params: { email: string; ip: string | null; mailer: Mailer; pendingId?: string | null; now?: number },
 ): Promise<EmailStartOutcome> {
-  const now = params.now ?? Date.now();
+  const now = params.now ?? systemNow();
   const email = params.email.trim().toLowerCase();
   const ipHash = await sha256Hex(`email|${ipRateKey(params.ip)}`);
   const since = now - LIMIT_WINDOW_MS;
@@ -140,7 +141,7 @@ export async function verifyEmailCode(
   database: DatabaseClient,
   params: { email: string; code: string; pendingId?: string | null; now?: number },
 ): Promise<boolean> {
-  const now = params.now ?? Date.now();
+  const now = params.now ?? systemNow();
   const email = params.email.trim().toLowerCase();
   const pendingId = params.pendingId ?? null;
   const live = and(

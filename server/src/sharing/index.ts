@@ -1,6 +1,7 @@
 import { entityHome, invite, user } from '@schema';
 import { and, eq, isNull, type BatchItem } from 'void/db';
 import { sha256Hex } from '../auth/crypto';
+import { systemNow } from '../clock';
 import {
   activeOwnerOf,
   inviteDetails,
@@ -80,7 +81,7 @@ export async function createInvite(
     throw new SharingError(403, 'Only the project owner can create invites');
   }
 
-  const now = params.nowMs ?? Date.now();
+  const now = params.nowMs ?? systemNow();
   const expiresAt = now + INVITE_TTL_MS;
   const code = generateInviteCode();
   const codeHash = await sha256Hex(code);
@@ -119,7 +120,7 @@ export async function getInviteInfo(
   if (!params.code) {
     throw new SharingError(404, 'Invite not found');
   }
-  const now = params.nowMs ?? Date.now();
+  const now = params.nowMs ?? systemNow();
   const codeHash = await sha256Hex(params.code);
 
   const inviteRows = await inviteDetails(db, codeHash);
@@ -166,7 +167,7 @@ export async function acceptInvite(
   if (!params.code) {
     throw new SharingError(404, 'Invite not found');
   }
-  const now = params.nowMs ?? Date.now();
+  const now = params.nowMs ?? systemNow();
   const codeHash = await sha256Hex(params.code);
 
   const inserted = await joinViaInvite(db, { codeHash, userId: params.userId, nowMs: now });
@@ -227,7 +228,7 @@ export async function revokeInvite(
   if (!params.code) {
     throw new SharingError(404, 'Invite not found');
   }
-  const now = params.nowMs ?? Date.now();
+  const now = params.nowMs ?? systemNow();
   const codeHash = await sha256Hex(params.code);
 
   const rows = await inviteWithMembership(db, codeHash, params.userId);
@@ -294,7 +295,7 @@ export async function updateProjectMemberRole(
     role,
   });
 
-  const now = params.nowMs ?? Date.now();
+  const now = params.nowMs ?? systemNow();
   const memberId = resolveMemberId(params.targetUserId, access.targetMeMemberId);
   await projectToHome(
     params.getScopeStub,
@@ -351,7 +352,7 @@ export async function removeProjectMember(
     throw new SharingError(400, 'Project owner cannot be removed');
   }
 
-  const now = params.nowMs ?? Date.now();
+  const now = params.nowMs ?? systemNow();
   if (targetMembership.removedAt === null) {
     await removeActiveMember(db, {
       projectId: params.projectId,

@@ -1,5 +1,6 @@
 import { sha256Hex } from '../auth/crypto';
 import type { DatabaseClient } from '../auth/session';
+import { systemNow } from '../clock';
 import { consumeAuthorizationCode, findAuthorizationCode } from './codes';
 import { issueRefreshToken, rotateRefreshToken, userExists } from './refresh';
 import { MCP_ACCESS_TTL_SECONDS, sha256b64url, signMcpAccessToken } from './tokens';
@@ -128,7 +129,7 @@ export async function handleToken(request: Request, deps: TokenDeps): Promise<Re
   if (!params) return oauthError(400, 'invalid_request', 'Unparseable body');
 
   const origin = new URL(request.url).origin;
-  const now = deps.now ?? Date.now();
+  const now = deps.now ?? systemNow();
   const grantType = params.get('grant_type');
   if (grantType === 'authorization_code') return authorizationCodeGrant(params, origin, deps, now);
   if (grantType === 'refresh_token') return refreshTokenGrant(params, origin, deps, now);
