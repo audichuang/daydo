@@ -94,18 +94,29 @@ All sharing endpoints require `Authorization: Bearer <accessToken>`.
 
 ## Run Checks
 
-Runs `void prepare && tsc --noEmit`, unit tests (`vitest run`), auth e2e (`scripts/e2e.mjs`), and sync e2e (`scripts/e2e-sync.mjs` against a real local `vite` + `workerd` server and local JWKS server):
+Runs `lint` (`oxlint --deny-warnings`), `typecheck` (`void prepare && tsc --noEmit`), unit tests (`vitest run`), and all local `vite` + `workerd` e2e checks (`e2e`, `e2e:sync`, `e2e:ics`, `e2e:mcp`, `e2e:fault`):
 
 ```bash
 npm run check
 ```
 
-To run only the sync e2e suite or a single scenario (`fixture`, `lww`, `concurrency`, `replay`, `paging`, `auth`, `id_race`, `unknown_row`, `move_task`, `child_task_id`, `two_device`, `sharing`, `move_with_child`):
+To run only the fast static and unit checks (`lint`, `typecheck`, `test`) without starting a local dev server:
 
 ```bash
-npm run e2e:sync
-node scripts/e2e-sync.mjs --only concurrency
+npm run check:fast
 ```
+
+Individual e2e suites:
+
+- `npm run e2e` (`scripts/e2e.mjs`): auth and session e2e
+- `npm run e2e:sync` (`scripts/e2e-sync.mjs`): sync e2e, or run a single scenario (`fixture`, `lww`, `concurrency`, `replay`, `paging`, `auth`, `id_race`, `unknown_row`, `move_task`, `child_task_id`, `two_device`, `sharing`, `move_with_child`):
+  ```bash
+  npm run e2e:sync
+  node scripts/e2e-sync.mjs --only concurrency
+  ```
+- `npm run e2e:ics` (`scripts/e2e-ics.mjs`): ICS subscription sync and cron e2e
+- `npm run e2e:mcp` (`scripts/e2e-mcp.mjs`): MCP OAuth, tools, and hostname gate e2e
+- `npm run e2e:fault` (`scripts/e2e-fault.mjs`): negative check running `e2e-sync --only concurrency` with `SYNC_FAULT=split-txn` and asserting it fails with the expected concurrency assertion
 
 ## Deploy
 
