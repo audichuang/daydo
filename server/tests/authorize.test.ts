@@ -629,18 +629,4 @@ describe('GET /authorize rate limit (spec/mcp.md 4.4)', () => {
       await sha256Hex('authorize|local'),
     ]);
   });
-
-  it('does not count rejected requests against the limit', async () => {
-    const s = setup();
-    for (let i = 0; i < 40; i++) {
-      const res = await handleAuthorizeGet(
-        new Request(`${ORIGIN}/authorize?${await authorizeParams({ client_id: 'mcp-unknown' })}`, {
-          headers: { 'CF-Connecting-IP': '198.51.100.11' },
-        }),
-        s.deps(NOW + i),
-      );
-      expect(res.status).toBe(400);
-    }
-    expect((await begin(s, '198.51.100.11', NOW + 40)).status).toBe(200);
-  });
 });

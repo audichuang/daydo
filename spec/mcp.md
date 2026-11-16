@@ -45,7 +45,7 @@ server/
   routes/.well-known/oauth-authorization-server.ts
   routes/.well-known/oauth-protected-resource.ts
   crons/ics-sync.ts
-  src/oauth/     tokens、metadata、cors、register、codes、refresh、token、authorize、webIdentity、pages
+  src/oauth/     tokens、metadata、cors、register、codes、refresh、token、authorize、webIdentity、pages、cleanup
   src/mcp/       protocol（JSON-RPC）、auth（Bearer）、registry（validateArgs、HINTS）、log、format、tools/{projects,tags,tasks,ics}.ts
   src/serverops/ snapshot（讀）、writer（寫）
   src/domain/    uuid、sortKey、tags、reminders、schedule、recurrence（Swift 邏輯的 TS 移植）
