@@ -166,7 +166,7 @@
 - 帳號用 `(provider, sub)` 識別，不用 email 自動合併帳號：Apple 可能給隱藏的轉寄 email。要讓兩種登入方式共用同一個帳號，登入後在設定裡手動連結。
 - Worker 自己發 token：access token 為 JWT，1 小時；refresh token 90 天，每次使用就換一組新的，D1 只存雜湊值。
 - **refresh 寬限期**：正常換發後 10 分鐘內且後繼 token 尚未被使用時，以舊 refresh token 重試視為遺失回應重試，撤銷該未使用的後繼 token 並換發新的一組；其餘重複使用撤銷整條 session 鏈並回 401。
-- 登入與 refresh 回應另帶 `hasData`（伺服器上已經有這個使用者的收件匣，等同 `inboxProjectId` 不是 null）、`meMemberId`（綁定的「我」，還沒有就是 null）、`inboxProjectId`（自己範圍裡的收件匣，還沒有就是 null）、`avatarUrl`（D1 `user.avatarUrl`，可為 null）。App 依「已定的決策」的第一次登入規則處理。
+- 登入與 refresh 回應另帶 `hasData`（伺服器上已經有這個使用者的收件匣，等同 `inboxProjectId` 不是 null）、`meMemberId`（綁定的「我」，還沒有就是 null）、`inboxProjectId`（收件匣的定義：自己範圍裡 `isInbox` 為真、沒有 `deletedAt` 也沒有 `purgedAt` 的清單；有多個時取 `serverSeq` 最小的；沒有就是 null。MCP／ICS 的 snapshot 沿用同一個定義）、`avatarUrl`（D1 `user.avatarUrl`，可為 null）。App 依「已定的決策」的第一次登入規則處理。
 - **網頁登入（MCP 授權頁）**：Google 用網頁 client（`GOOGLE_WEB_CLIENT_ID`／`GOOGLE_WEB_CLIENT_SECRET`），Apple 用 Services ID `com.audichuang.daydo.web`，另有信箱驗證碼（只綁定既有帳號，不註冊）；帳號仍以 `(provider, sub)` 識別，與 App 登入是同一個帳號。細節見 `spec/mcp.md`。
 - **Cloudflare Access**：正式環境每個請求都要通過 Access（App 帶 service token），Worker 再驗 `Cf-Access-Jwt-Assertion`（簽章、`aud` 等於 Access 應用程式的 AUD）。本機開發與 e2e 用環境變數關掉這一層，只在開發建置有效。
 - App Store 規定：可以建立帳號的 App 必須能在 App 裡刪除帳號。刪除時要一併撤銷 Apple 的授權（需要 authorization code 和 client secret）。

@@ -311,7 +311,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 - 其他內容：
   - `memberships`：`projectId → role`，取自 pull 回應的 `memberships`。
   - `meMemberId`：**另外查 D1 `user.meMemberId`**，pull 回應沒有這個欄位。
-  - `inboxProjectId`：自己 scope 裡 `isInbox` 為真、沒有 `deletedAt` 也沒有 `purgedAt` 的清單；與登入回應的 `inboxProjectId`（`spec/sync.md`）是同一個定義。有多個時取 `serverSeq` 最小的，與 Scope DO 的 `getInboxProjectId` 一致。
+  - `inboxProjectId`：定義見 `spec/sync.md` 登入回應的 `inboxProjectId`，與 Scope DO 的 `getInboxProjectId` 一致。
 - 可見性過濾放在 helper，由工具層呼叫：
   - `liveTasks()`：`deletedAt` 為 null、沒有 `purgedAt`，且所屬清單未刪除、未封存。
   - `liveProjects()`
