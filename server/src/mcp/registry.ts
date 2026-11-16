@@ -54,6 +54,7 @@ export const HINTS: Record<string, Hint> = {
   get_completed_tasks: 'read',
   create_task: 'write',
   update_task: 'idempotent-overwrite',
+  complete_task: 'idempotent-write',
   delete_task: 'destructive',
   move_task: 'idempotent-write',
   move_all: 'idempotent-write',

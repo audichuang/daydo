@@ -1,15 +1,32 @@
 // Task tools (spec/mcp.md 8).
 // Read: list_recent_tasks, list_tasks, search_tasks, get_task, get_completed_tasks.
-// Write: create_task, update_task, delete_task, move_task, move_all (complete_task lives elsewhere).
+// Write: create_task, update_task, complete_task, delete_task, move_task, move_all.
 // Visibility comes from snapshot.liveTasks(): no trashed tasks, nothing in trashed or archived lists.
-import { validateRepeat } from '../../domain/recurrence';
+import { nextOccurrence, parseRecurrence, validateRepeat, type Recurrence } from '../../domain/recurrence';
 import { parseReminderCsv } from '../../domain/reminders';
-import { isValidTimeZone, scheduleFromAPI, scheduleWithDue, type Schedule, type ScheduleContext } from '../../domain/schedule';
+import {
+  isValidTimeZone,
+  movedSchedule,
+  scheduleFromAPI,
+  scheduleWithDue,
+  wallClockAt,
+  type Schedule,
+  type ScheduleContext,
+} from '../../domain/schedule';
 import { after, before } from '../../domain/sortKey';
 import { normalizeTagLabels, normalizeTags, type NormalizedTag } from '../../domain/tags';
-import { uuidv7 } from '../../domain/uuid';
+import { uuidv5, uuidv7 } from '../../domain/uuid';
 import type { Snapshot, SnapshotRow } from '../../serverops/snapshot';
-import { assertHasData, writeOrThrow, type WriteIntent, type WriteOutcome } from '../../serverops/writer';
+import {
+  assertHasData,
+  pushIntents,
+  WriteError,
+  writeOrThrow,
+  type WriteIntent,
+  type WriteOutcome,
+  type WriterDeps,
+} from '../../serverops/writer';
+import { ENTITY_FIELDS } from '../../sync/entities';
 import { bySortKey, compareKeys, formatTask, openTasksOf, summarizeTask } from '../format';
 import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../registry';
 import { openSession } from './projects';
@@ -324,6 +341,132 @@ function withCreated(snapshot: Snapshot, outcomes: readonly WriteOutcome[]): Sna
   };
 }
 
+// MARK: - complete_task (LocalDayDoAPI.completeTask)
+
+/** Columns a completed copy takes from the original as they are (Swift `copy = t`). */
+const COPIED_TASK_COLUMNS = Object.keys(ENTITY_FIELDS.task).filter(
+  (k) => !['id', 'status', 'completedAt', 'repeatRule', 'createdAt', 'updatedAt', 'deletedAt'].includes(k),
+);
+/** Catch-up bound for a long-overdue repeating task, as in the App. */
+const MAX_CATCH_UP = 1000;
+
+/**
+ * The write that records the completed copy `copyId`, or null when it already exists completed.
+ * A live open copy only gets its status; a new or trashed one is rebuilt from the original.
+ */
+function copyIntent(snapshot: Snapshot, original: Record<string, unknown>, copyId: string, now: number): WriteIntent | null {
+  const existing = snapshot.findRow('task', copyId);
+  if (existing && isNil(existing.row.deletedAt)) {
+    if (Number(existing.row.status ?? 0) === 2) return null;
+    return { entity: 'task', entityId: copyId, set: { status: 2, completedAt: now, updatedAt: bump(existing.row, now) } };
+  }
+  // A new row omits empty columns (as the App's op); a trashed one is overwritten column by column.
+  const copied = Object.fromEntries(
+    COPIED_TASK_COLUMNS.filter((k) => existing || !isNil(original[k])).map((k) => [k, original[k] ?? null]),
+  );
+  return {
+    entity: 'task',
+    entityId: copyId,
+    set: {
+      id: copyId,
+      ...copied,
+      status: 2,
+      completedAt: now,
+      createdAt: existing?.row.createdAt ?? now,
+      updatedAt: existing ? bump(existing.row, now) : now,
+      ...(existing && { repeatRule: null, deletedAt: null }),
+    },
+    verbatim: Object.keys(copied),
+  };
+}
+
+/** Copies of the live checklist (v5 ids under the copy) and reopened originals, item by item. */
+async function checklistCopyIntents(
+  snapshot: Snapshot,
+  items: readonly Record<string, unknown>[],
+  copyId: string,
+  now: number,
+): Promise<WriteIntent[]> {
+  const intents: WriteIntent[] = [];
+  for (const item of items) {
+    const id = await uuidv5(`${copyId}|${String(item.id)}`);
+    const existing = snapshot.findRow('checklistItem', id);
+    if (!existing || (!isNil(existing.row.deletedAt) && isNil(existing.row.purgedAt))) {
+      intents.push({
+        entity: 'checklistItem',
+        entityId: id,
+        set: {
+          id,
+          taskId: copyId,
+          title: item.title,
+          status: item.status,
+          sortKey: item.sortKey,
+          createdAt: existing?.row.createdAt ?? now,
+          updatedAt: now,
+          ...(existing && { deletedAt: null }),
+        },
+        verbatim: ['sortKey'],
+      });
+    }
+    if (Number(item.status ?? 0) !== 0) {
+      intents.push({ entity: 'checklistItem', entityId: String(item.id), set: { status: 0, updatedAt: bump(item, now) } });
+    }
+  }
+  return intents;
+}
+
+/**
+ * Records a completed copy of the current occurrence and moves the task to its next one.
+ * Three pushes in the App's order (copy, checklist, original): the original moves last, so a
+ * failure leaves it on the same occurrence and a retry reuses the same v5 ids.
+ */
+async function completeOccurrence(
+  deps: WriterDeps,
+  snapshot: Snapshot,
+  task: SnapshotRow,
+  rule: Recurrence,
+  schedule: Schedule,
+  ctx: ToolContext,
+): Promise<ReturnType<typeof formatTask>> {
+  const now = Date.now();
+  const taskId = idOf(task);
+  // Taken before any push: pushIntents refreshes cached rows from the response.
+  const original = { ...task.row };
+  const items = snapshot
+    .rows('checklistItem')
+    .filter((c) => c.row.taskId === taskId && isNil(c.row.deletedAt) && isNil(c.row.purgedAt))
+    .sort(bySortKey)
+    .map((c) => ({ ...c.row }));
+
+  const v5 = await uuidv5(`${taskId}|${schedule.startDay}|${schedule.startMinute ?? ''}`);
+  let copyId = isNil(snapshot.findRow('task', v5)?.row.purgedAt) ? v5 : uuidv7(now);
+  const outcomes: WriteOutcome[] = [];
+  const intent = copyIntent(snapshot, original, copyId, now);
+  if (intent) {
+    let [out] = await pushIntents(deps, snapshot, [intent]);
+    if (out?.status === 'purged') {
+      // A tombstone the snapshot could not see (its list is not visible to us).
+      copyId = uuidv7(now);
+      [out] = await pushIntents(deps, snapshot, [copyIntent(snapshot, original, copyId, now)!]);
+    }
+    if (out?.status !== 'applied') throw new WriteError(out!);
+    outcomes.push(out);
+  }
+
+  const checklist = await checklistCopyIntents(snapshot, items, copyId, now);
+  if (checklist.length > 0) outcomes.push(...(await writeOrThrow(deps, snapshot, checklist)));
+
+  const today = wallClockAt(now, schedule.timeZone ?? scheduleContext(ctx).defaultTimeZone).day;
+  let next = nextOccurrence(rule, schedule.startDay);
+  for (let n = 0; next < today && n < MAX_CATCH_UP; n++) next = nextOccurrence(rule, next);
+  await writeOrThrow(deps, snapshot, [
+    { entity: 'task', entityId: taskId, set: { ...scheduleSet(movedSchedule(schedule, next)), updatedAt: bump(original, now) } },
+  ]);
+
+  const view = withCreated(snapshot, outcomes);
+  return formatTask(view, view.findRow('task', copyId)!);
+}
+
 const NEEDS_DATE = (field: string) =>
   `\`${field}\` needs a date: set \`start\` or \`due\` in this same call, or omit \`${field}\`.`;
 
@@ -535,6 +678,33 @@ export function taskWriteTools(): ToolDef[] {
         const outcomes = await writeOrThrow(deps, snapshot, [{ entity: 'task', entityId: taskId, set }, ...extra]);
         const view = withCreated(snapshot, outcomes);
         return formatTask(view, view.findRow('task', taskId)!);
+      },
+    },
+    {
+      name: 'complete_task',
+      description:
+        'Mark a task completed. For a repeating task, the current occurrence is recorded as a separate completed task (returned, with a copy of the checklist) and the task itself moves to its next occurrence on or after today, with its checklist reopened; later occurrences are not cancelled. Completing an already completed task returns it unchanged. Errors when the task is not in that project; the project must be writable.',
+      inputSchema: {
+        type: 'object',
+        required: ['project_id', 'task_id'],
+        properties: { project_id: PROJECT_ID, task_id: { type: 'string' } },
+      },
+      run: async (args, ctx) => {
+        const projectId = requireStr(args, 'project_id');
+        const taskId = requireStr(args, 'task_id');
+        const { snapshot, deps } = await openSession(ctx);
+        assertHasData(snapshot);
+        const task = taskIn(snapshot, taskId, projectId);
+        requireWritable(snapshot, projectId);
+        if (num(task, 'status') === 2) return formatTask(snapshot, task);
+        const rule = typeof task.row.repeatRule === 'string' ? parseRecurrence(task.row.repeatRule) : null;
+        const schedule = currentSchedule(task.row);
+        if (rule !== null && schedule !== null) return completeOccurrence(deps, snapshot, task, rule, schedule, ctx);
+        const now = Date.now();
+        await writeOrThrow(deps, snapshot, [
+          { entity: 'task', entityId: taskId, set: { status: 2, completedAt: now, updatedAt: bump(task.row, now) } },
+        ]);
+        return formatTask(snapshot, snapshot.findRow('task', taskId)!);
       },
     },
     {
