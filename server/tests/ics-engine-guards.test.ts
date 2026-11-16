@@ -458,6 +458,13 @@ describe('M15b source deletion', () => {
     expect((await liveTasks(h)).map((t) => t.id)).toEqual([keep.taskId]);
   });
 
+  // Guards the second ICAL.parse in the engine, which would throw on a BOM fetchIcs let through.
+  it('accepts a feed that starts with a byte-order mark', async () => {
+    const h = createHarness(`\uFEFF${calendar(event())}`);
+    const source = await seedSource(h);
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 1, errors: 0 });
+  });
+
   it.each(['<html>gateway failure</html>', 'BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:broken'])(
     'rejects invalid or truncated input before touching any task: %s',
     async (feed) => {

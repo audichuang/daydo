@@ -104,8 +104,8 @@ function seriesCore(signature: string): string {
  * window, so a missing slot is not a source deletion. Called only after parseIcs accepted the text.
  */
 function recurringUids(text: string): Set<string> {
-  // ICAL.parse throws on a byte-order mark; parseIcs strips it the same way.
-  const root = new ICAL.Component(ICAL.parse(text.replace(/^\uFEFF/, '')));
+  // ICAL.parse throws on a byte-order mark; fetchIcs's TextDecoder already drops it.
+  const root = new ICAL.Component(ICAL.parse(text));
   return new Set(
     root
       .getAllSubcomponents('vevent')
