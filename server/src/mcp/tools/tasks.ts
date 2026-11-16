@@ -25,7 +25,7 @@ import {
 import { bySortKey, compareKeys, isNil, rowSchedule } from '../../serverops/values';
 import { assertHasData, writeOrThrow } from '../../serverops/writer';
 import { formatTask, openTasksOf, summarizeTask } from '../format';
-import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
+import { nowOf, requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
 import { openSession, requireWritableList } from './projects';
 
 export const SEARCH_LIMIT = 200;
@@ -326,7 +326,7 @@ export function taskWriteTools(): ToolDef[] {
         const { snapshot, deps } = await openSession(ctx);
         assertHasData(snapshot);
         requireWritableList(snapshot, projectId);
-        const now = Date.now();
+        const now = nowOf(ctx);
         const id = uuidv7(now);
         const task = { projectId, title, content, priority, reminders, tags, subtasks, schedule, repeatRule };
         const outcomes = await writeOrThrow(deps, snapshot, newTaskIntents(snapshot, ctx.userId, id, task, now), { nowMs: now });
@@ -405,7 +405,7 @@ export function taskWriteTools(): ToolDef[] {
           if (repeatRule) throw new ToolValidationError('repeat', NEEDS_DATE('repeat'));
         }
 
-        const now = Date.now();
+        const now = nowOf(ctx);
         const tags = rawTags === undefined ? undefined : normalizeTagLabels(rawTags);
         const patch = { title, content, priority, schedule: next, reminders, repeatRule, tags, subtasks };
         const intents = patchTaskIntents(snapshot, ctx.userId, task, patch, now);
@@ -435,12 +435,12 @@ export function taskWriteTools(): ToolDef[] {
         const rule = typeof task.row.repeatRule === 'string' ? parseRecurrence(task.row.repeatRule) : null;
         const schedule = rowSchedule(task.row);
         if (rule !== null && schedule !== null) {
-          const options = { defaultTimeZone: scheduleContext(ctx).defaultTimeZone, nowMs: Date.now() };
+          const options = { defaultTimeZone: scheduleContext(ctx).defaultTimeZone, nowMs: nowOf(ctx) };
           const { copyId, outcomes } = await completeOccurrence(deps, snapshot, task, rule, schedule, options);
           const view = withCreated(snapshot, outcomes);
           return formatTask(view, view.findRow('task', copyId)!);
         }
-        const now = Date.now();
+        const now = nowOf(ctx);
         await writeOrThrow(deps, snapshot, [completeTaskIntent(taskId, now)], { nowMs: now });
         return formatTask(snapshot, snapshot.findRow('task', taskId)!);
       },
@@ -461,7 +461,7 @@ export function taskWriteTools(): ToolDef[] {
         assertHasData(snapshot);
         const task = taskIn(snapshot, taskId, projectId);
         requireWritableList(snapshot, projectId);
-        const now = Date.now();
+        const now = nowOf(ctx);
         await writeOrThrow(deps, snapshot, [trashTaskIntent(taskId, now)], { nowMs: now });
         return { deleted: true, task_id: taskId, title: String(task.row.title ?? '') };
       },

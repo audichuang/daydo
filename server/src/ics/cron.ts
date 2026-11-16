@@ -1,4 +1,5 @@
 import { createDb } from 'void/db';
+import { systemNow } from '../clock';
 import { logEvent } from '../log';
 import { productionToolServices } from '../mcp/services';
 import { syncDueSources, ICS_SOURCES_PER_RUN, type IcsEngineDeps } from './engine';
@@ -27,7 +28,7 @@ function productionDeps(env: IcsCronEnv): IcsEngineDeps {
  * such as the due query, throws. `deps` is injected by tests.
  */
 export async function runIcsCron(env: IcsCronEnv, deps: IcsEngineDeps = productionDeps(env)): Promise<void> {
-  const results = await syncDueSources(deps, Date.now(), ICS_SOURCES_PER_RUN);
+  const results = await syncDueSources(deps, (deps.getNow ?? systemNow)(), ICS_SOURCES_PER_RUN);
   // Source ids only: feed URLs are secrets and never reach the logs.
   for (const r of results) {
     logEvent(r.stats.errors > 0 ? 'warn' : 'log', 'ics.sync', {

@@ -1,6 +1,7 @@
 // Shared MCP tool building blocks: tool and context types, argument readers, the
 // invalid-params error. Tools import this, not the registry, so the registry can import tools.
 
+import { systemNow, type GetNow } from '../clock';
 import type { FetchIcsOptions } from '../ics/fetch';
 import type { IcsStore } from '../ics/store';
 import type { ServerHlcClock } from '../sync/hlc';
@@ -24,6 +25,13 @@ export interface ToolServices {
   defaultTimeZone?: string;
   /** ICS tool overrides. Production leaves it unset: D1 store, real fetch, shared clock. */
   ics?: { store?: IcsStore; fetchOptions?: FetchIcsOptions; clock?: ServerHlcClock };
+  /** Business time source. Production leaves it unset: `systemNow`. */
+  getNow?: GetNow;
+}
+
+/** Business "now" for a tool call: one clock read per call. */
+export function nowOf(ctx: ToolContext): number {
+  return (ctx.services?.getNow ?? systemNow)();
 }
 
 export interface ToolContext {

@@ -3,6 +3,7 @@
 // so a lost response or a restart retries the same id. A mapping's fingerprint is committed only after
 // the push response row shows every intended field applied; a removed event's mapping is deleted only
 // after its task is confirmed in the trash.
+import type { GetNow } from '../clock';
 import { scheduleToAPI } from '../domain/schedule';
 import { before } from '../domain/sortKey';
 import { uuidv7 } from '../domain/uuid';
@@ -55,6 +56,8 @@ export interface IcsEngineDeps {
   fetchOptions?: FetchIcsOptions;
   /** `DEFAULT_TIMEZONE`, used when a source has no timezone. Defaults to Asia/Taipei. */
   defaultTimeZone?: string;
+  /** Only the cron entry reads it, to compute a run's `now`. The engine's leases and timings always read the wall clock. */
+  getNow?: GetNow;
 }
 
 export interface SyncOptions {

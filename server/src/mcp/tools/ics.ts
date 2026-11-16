@@ -7,7 +7,7 @@ import { assertFetchableUrl } from '../../ics/fetch';
 import { D1IcsStore, MIN_SYNC_INTERVAL_SEC, type AddSourceInput, type IcsSource, type IcsStore } from '../../ics/store';
 import type { IcsFilter } from '../../ics/types';
 import { NO_DATA_MESSAGE } from '../../serverops/writer';
-import { isEmpty, requireInt, requireStr, ToolValidationError, type ToolContext, type ToolDef, type ToolServices } from '../toolkit';
+import { isEmpty, nowOf, requireInt, requireStr, ToolValidationError, type ToolContext, type ToolDef, type ToolServices } from '../toolkit';
 import { openSession, requireWritableList } from './projects';
 
 function servicesOf(ctx: ToolContext): ToolServices {
@@ -189,10 +189,10 @@ export function icsTools(): ToolDef[] {
         const run = async (source: IcsSource) => ({
           source_id: source.id,
           name: source.name,
-          ...(await syncSource(deps, ctx.userId, source.id, Date.now(), options)),
+          ...(await syncSource(deps, ctx.userId, source.id, nowOf(ctx), options)),
         });
         if (sourceId !== undefined) return run(await requireOwnSource(store, ctx.userId, sourceId));
-        const now = Date.now();
+        const now = nowOf(ctx);
         const due = (await store.listSources(ctx.userId)).filter(
           (s) => s.enabled && (s.lastSyncAt === null || now >= s.lastSyncAt + s.syncIntervalSec * 1000),
         );

@@ -5,7 +5,7 @@ import type { Snapshot, SnapshotRow } from '../../serverops/snapshot';
 import { writeOrThrow } from '../../serverops/writer';
 import { userScope } from '../../sync/scopeName';
 import { bySortKey, compareKeys } from '../../serverops/values';
-import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
+import { nowOf, requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
 import { openSession, parseColor } from './projects';
 
 function ownTags(snapshot: Snapshot, userId: string): SnapshotRow[] {
@@ -57,7 +57,7 @@ export function tagTools(): ToolDef[] {
         const own = ownTags(snapshot, ctx.userId);
         const existing = own.find((t) => t.row.name === tag.name);
         if (existing && isLive(existing)) return formatTag(snapshot, existing.row);
-        const now = Date.now();
+        const now = nowOf(ctx);
         // A trashed tag is revived; its key (the name) cannot be reused for a new row.
         const set: Record<string, unknown> = existing
           ? { label: tag.label, deletedAt: null, ...(color !== undefined && { color }) }

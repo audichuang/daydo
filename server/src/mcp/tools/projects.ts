@@ -8,7 +8,7 @@ import { writeOrThrow, type WriterDeps } from '../../serverops/writer';
 import { userScope } from '../../sync/scopeName';
 import { formatProject, openTasksOf, summarizeTask } from '../format';
 import { bySortKey, compareKeys } from '../../serverops/values';
-import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
+import { nowOf, requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
 
 export interface Session {
   snapshot: Snapshot;
@@ -118,7 +118,7 @@ export function projectTools(): ToolDef[] {
         const { snapshot, deps } = await openSession(ctx);
         const sortKeys = snapshot.liveProjects().map((p) => String(p.row.sortKey ?? ''));
         const max = sortKeys.length === 0 ? null : sortKeys.reduce((a, b) => (compareKeys(a, b) >= 0 ? a : b));
-        const now = Date.now();
+        const now = nowOf(ctx);
         const id = uuidv7(now);
         const set: Record<string, unknown> = {
           id,
@@ -184,7 +184,7 @@ export function projectTools(): ToolDef[] {
         if (snapshot.memberships.get(id) !== 'owner') {
           throw new Error(`Only the owner can delete project '${id}' (your role: ${snapshot.memberships.get(id) ?? 'none'})`);
         }
-        const now = Date.now();
+        const now = nowOf(ctx);
         const tasks = snapshot
           .rows('task')
           .filter((t) => t.row.projectId === id && t.row.deletedAt == null && t.row.purgedAt == null);
