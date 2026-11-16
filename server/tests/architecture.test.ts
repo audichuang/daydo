@@ -57,14 +57,15 @@ function ledgerValueImporters(dirs: string[]): string[] {
   });
 }
 
-// The owner-or-editor write rule: 'owner' and 'editor' compared in one boolean chain, either
-// polarity and order, across line breaks. A three-way role parse (… || x === 'viewer') is not it.
-const OPERAND = String.raw`[\w$.\[\]'"]+`;
-const NOT_VIEWER = String.raw`(?!\s*(?:\|\||&&)\s*${OPERAND}\s*(?:===|!==)\s*'viewer')`;
+// The owner-or-editor write rule: 'owner' and 'editor' compared in adjacent terms of one boolean
+// chain, either polarity and order, across line breaks, whatever the role read is (variable,
+// index, call, optional chain). A three-way role parse (… || x === 'viewer') is not it.
+const NEXT_TERM = String.raw`\s*(?:\|\||&&)[^;{}|&]*?(?:===|!==)\s*`;
+const NOT_VIEWER = String.raw`(?!${NEXT_TERM}'viewer')`;
 const WRITE_ROLE_PAIR = new RegExp(
   [
-    String.raw`(?:===|!==)\s*'owner'\s*(?:\|\||&&)\s*${OPERAND}\s*(?:===|!==)\s*'editor'${NOT_VIEWER}`,
-    String.raw`(?:===|!==)\s*'editor'\s*(?:\|\||&&)\s*${OPERAND}\s*(?:===|!==)\s*'owner'${NOT_VIEWER}`,
+    String.raw`(?:===|!==)\s*'owner'${NEXT_TERM}'editor'${NOT_VIEWER}`,
+    String.raw`(?:===|!==)\s*'editor'${NEXT_TERM}'owner'${NOT_VIEWER}`,
   ].join('|'),
 );
 
