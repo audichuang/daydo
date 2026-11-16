@@ -2,14 +2,17 @@
 
 import { projectTools } from './tools/projects';
 import { tagTools } from './tools/tags';
-import { taskReadTools } from './tools/tasks';
+import { taskReadTools, taskWriteTools } from './tools/tasks';
 import type { AppDb, ScopeStub } from '../sync/push';
 
 export type Hint = 'read' | 'write' | 'idempotent-write' | 'idempotent-overwrite' | 'destructive';
 
 export interface ToolSchema {
   type: 'object';
-  properties: Record<string, { type?: string; description?: string; enum?: readonly string[] }>;
+  properties: Record<
+    string,
+    { type?: string; description?: string; enum?: readonly string[]; items?: { type: string } }
+  >;
   required?: readonly string[];
 }
 
@@ -17,6 +20,8 @@ export interface ToolSchema {
 export interface ToolServices {
   db: AppDb;
   getScopeStub: (scope: string) => ScopeStub;
+  /** `DEFAULT_TIMEZONE`, tried first when inferring a task's zone from an offset. Defaults to Asia/Taipei. */
+  defaultTimeZone?: string;
 }
 
 export interface ToolContext {
@@ -47,12 +52,17 @@ export const HINTS: Record<string, Hint> = {
   search_tasks: 'read',
   get_task: 'read',
   get_completed_tasks: 'read',
+  create_task: 'write',
+  update_task: 'idempotent-overwrite',
+  delete_task: 'destructive',
+  move_task: 'idempotent-write',
+  move_all: 'idempotent-write',
 };
 
 /** Only tools that fetch caller-supplied external URLs. */
 export const OPEN_WORLD = new Set<string>();
 
-export const TOOLS: readonly ToolDef[] = [...projectTools(), ...tagTools(), ...taskReadTools()];
+export const TOOLS: readonly ToolDef[] = [...projectTools(), ...tagTools(), ...taskReadTools(), ...taskWriteTools()];
 
 export interface ToolDescriptor {
   name: string;
