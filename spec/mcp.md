@@ -427,6 +427,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
   - 寫死的 `Asia/Taipei` 改成參數，由來源的 `timezone` 傳入，預設 `DEFAULT_TIMEZONE`。
   - `TickTickError` 換成本地的錯誤類別。
   - `eventToTaskBody` 改成 `eventToTaskDraft`，直接產出 DayDo 的 schedule 五欄。
+  - 刻意偏離參考實作：只有 RDATE、沒有 RRULE 的重複系列，展開時也包含 DTSTART 那一次（RFC 5545：DTSTART 屬於重複集合；ical.js 在沒有 RRULE 時只吐 RDATE，參考實作因此漏掉它）。DTSTART 那次一樣套用 RECURRENCE-ID 例外，EXDATE 指到它時標為取消。
 - **對應到 DayDo 任務**：
   - 標題直接用 `summary`，**不加 `[HH:MM]` 前綴**：DayDo 列表本來就會顯示時間。
   - `content`：description；有地點時空一行接「📍 地點」。

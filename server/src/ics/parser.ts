@@ -217,6 +217,14 @@ export function parseIcs(
     if (master?.hasProperty('dtstart')) {
       const item = new ICAL.Event(master, { exceptions, strictExceptions: true });
       if (item.isRecurring()) {
+        // ical.js yields only the RDATEs of a series without RRULE; RFC 5545 puts DTSTART in the set too.
+        // Emitted through getOccurrenceDetails so RECURRENCE-ID overrides apply; a duplicate RDATE
+        // overwrites the same key, and EXDATE on DTSTART is applied by the EXDATE pass below.
+        if (!master.hasProperty('rrule')) {
+          const first = item.startDate.clone();
+          const detail = item.getOccurrenceDetails(first);
+          emit(detail.item, detail.startDate, detail.endDate, first);
+        }
         const iterator = item.iterator();
         for (let occurrence; (occurrence = iterator.next());) {
           requireValid(++iterations <= MAX_ITERATIONS, 'ICS expansion budget exceeded');

@@ -283,6 +283,19 @@ const wrapEvents = (events: string[]) => ['BEGIN:VCALENDAR', 'VERSION:2.0', ...e
     expect(after.find(e => e.occurrenceId === 'UTC:2026-10-12T01:00:00Z')?.start).toBe('2026-10-14T03:00:00+0000');
   });
   
+  it('includes DTSTART in an RDATE-only series, and EXDATE on DTSTART removes it', () => {
+    const lines = ['UID:rdate', 'DTSTART:20261005T010000Z', 'DTEND:20261005T020000Z', 'RDATE:20261012T010000Z,20261019T010000Z'];
+    const live = (events: string[]) => parseIcs(wrapEvents(events), window).filter(e => !e.cancelled);
+    const all = live([vevent(lines)]);
+    expect(all.map(e => e.start).sort()).toEqual(['2026-10-05T01:00:00+0000', '2026-10-12T01:00:00+0000', '2026-10-19T01:00:00+0000']);
+    expect(all.map(e => e.occurrenceId).sort()).toEqual(['UTC:2026-10-05T01:00:00Z', 'UTC:2026-10-12T01:00:00Z', 'UTC:2026-10-19T01:00:00Z']);
+    const excluded = parseIcs(wrapEvents([vevent([...lines, 'EXDATE:20261005T010000Z'])]), window);
+    expect(excluded.filter(e => !e.cancelled).map(e => e.start).sort()).toEqual(['2026-10-12T01:00:00+0000', '2026-10-19T01:00:00+0000']);
+    expect(excluded.find(e => e.occurrenceId === 'UTC:2026-10-05T01:00:00Z')?.cancelled).toBe(true);
+    const moved = vevent(['UID:rdate', 'RECURRENCE-ID:20261005T010000Z', 'SEQUENCE:1', 'DTSTART:20261006T030000Z', 'DTEND:20261006T040000Z']);
+    expect(live([vevent(lines), moved]).map(e => e.start).sort()).toEqual(['2026-10-06T03:00:00+0000', '2026-10-12T01:00:00+0000', '2026-10-19T01:00:00+0000']);
+  });
+
   it('applies RANGE=THISANDFUTURE and cancellation without DTSTART to original slots', () => {
     const master = vevent(['UID:range', 'DTSTART:20261005T010000Z', 'DTEND:20261005T020000Z', 'RRULE:FREQ=WEEKLY;COUNT=3']);
     const shifted = vevent(['UID:range', 'RECURRENCE-ID;RANGE=THISANDFUTURE:20261012T010000Z', 'DTSTART:20261012T030000Z', 'DTEND:20261012T040000Z']);
