@@ -39,6 +39,16 @@ export interface WriteIntent {
   set: Record<string, unknown>;
   /** Fields copied as-is from an existing row (e.g. a completed copy's sortKey); skipped by value checks. */
   verbatim?: readonly string[];
+  /** Bump an existing row's updatedAt even when `set` changes nothing else. */
+  touch?: boolean;
+}
+
+export interface WriteOptions {
+  /**
+   * Time for the createdAt/updatedAt stamps the writer fills in (defaults to now). Callers pass the
+   * value they also wrote into deletedAt or completedAt. HLCs and opIds always use the wall clock.
+   */
+  nowMs?: number;
 }
 
 export interface WriterDeps {
@@ -233,10 +243,33 @@ function validateValues(
   }
 }
 
+/**
+ * The intent's values plus the stamps the caller left out: a new row gets createdAt and updatedAt,
+ * an existing row with a delta (or `touch`) gets an updatedAt past its current one.
+ */
+function stampedSet(
+  intent: WriteIntent,
+  current: Record<string, unknown> | undefined,
+  stampMs: number,
+): Record<string, unknown> {
+  const set = { ...intent.set };
+  if (!current) {
+    if (set.createdAt === undefined) set.createdAt = stampMs;
+    if (set.updatedAt === undefined) set.updatedAt = stampMs;
+    return set;
+  }
+  if (set.updatedAt !== undefined) return set;
+  const key = keyField(intent.entity);
+  const hasDelta = Object.keys(set).some((f) => f !== key && f !== 'createdAt');
+  if (hasDelta || intent.touch) set.updatedAt = Math.max(stampMs, Number(current.updatedAt ?? 0) + 1);
+  return set;
+}
+
 function planOps(
   snapshot: Snapshot,
   intents: readonly WriteIntent[],
   clock: ServerHlcClock,
+  stampMs: number | undefined,
 ): PlannedOp[] {
   const nowMs = Date.now();
   const lastHlc = new Map<string, Hlc>();
@@ -250,16 +283,17 @@ function planOps(
       throw new WriteValidationError(key, `${entity}.${key} does not match ${entityId}`);
     }
     const current = snapshot.findRow(entity, entityId);
+    const set = stampedSet(intent, current?.row, stampMs ?? nowMs);
 
     let fields: string[];
     const row: Record<string, unknown> = {};
     if (current) {
       // Delta only: re-sending the key and every required field would make push treat
       // a row homed in another scope as a foreign create (id-in-other-scope).
-      fields = Object.keys(intent.set).filter((f) => f !== key && f !== 'createdAt');
-      for (const f of fields) row[f] = intent.set[f];
+      fields = Object.keys(set).filter((f) => f !== key && f !== 'createdAt');
+      for (const f of fields) row[f] = set[f];
     } else {
-      Object.assign(row, intent.set);
+      Object.assign(row, set);
       fields = Object.keys(row).filter((f) => f !== key);
       if (!hasAllRequiredFields(entity, [key, ...fields])) {
         const missing = Object.entries(ENTITY_FIELDS[entity])
@@ -370,11 +404,11 @@ export async function pushIntents(
   deps: WriterDeps,
   snapshot: Snapshot,
   intents: readonly WriteIntent[],
-  options: { stopOnFailure?: boolean } = {},
+  options: WriteOptions & { stopOnFailure?: boolean } = {},
 ): Promise<WriteOutcome[]> {
   assertHasData(snapshot);
   const clock = deps.clock ?? serverClock;
-  const plan = planOps(snapshot, intents, clock);
+  const plan = planOps(snapshot, intents, clock, options.nowMs);
   const outcomes: WriteOutcome[] = intents.map((i) => ({
     entity: i.entity,
     entityId: i.entityId,
@@ -418,8 +452,9 @@ export async function writeOrThrow(
   deps: WriterDeps,
   snapshot: Snapshot,
   intents: readonly WriteIntent[],
+  options: WriteOptions = {},
 ): Promise<WriteOutcome[]> {
-  const outcomes = await pushIntents(deps, snapshot, intents, { stopOnFailure: true });
+  const outcomes = await pushIntents(deps, snapshot, intents, { ...options, stopOnFailure: true });
   const failure = outcomes.find(isFailure);
   if (failure) throw new WriteError(failure);
   return outcomes;

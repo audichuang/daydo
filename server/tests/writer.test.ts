@@ -298,7 +298,7 @@ describe('M9b writer: schedule group', () => {
     ]);
     const op = h.calls[0]!.ops[0]!;
     expect([...(op.fields as string[])].sort()).toEqual(
-      ['endDay', 'endMinute', 'startDay', 'startMinute', 'timeZone'],
+      ['endDay', 'endMinute', 'startDay', 'startMinute', 'timeZone', 'updatedAt'],
     );
     expect(op.row).toMatchObject({
       startDay: '2026-11-20', startMinute: 540, endDay: '2026-11-21', endMinute: 660,
@@ -319,6 +319,69 @@ describe('M9b writer: schedule group', () => {
       { entity: 'task', entityId: 't1', set: { id: 't1', createdAt: 5, title: 'x', updatedAt: Date.now() } },
     ]);
     expect([...(h.calls[0]!.ops[0]!.fields as string[])].sort()).toEqual(['title', 'updatedAt']);
+  });
+});
+
+describe('writer: createdAt and updatedAt stamps', () => {
+  const LATER = NOW_ISH + 5_000;
+
+  it('stamps a new row with createdAt and updatedAt from nowMs', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    const snap = await h.snapshot('u-a');
+    h.calls.length = 0;
+    const { createdAt: _c, updatedAt: _u, ...set } = taskRow('t-new', 'p1', { sortKey: 'h' });
+    const [out] = await writeOrThrow(h.deps('u-a'), snap, [{ entity: 'task', entityId: 't-new', set }], { nowMs: LATER });
+    expect(out?.status).toBe('applied');
+    const op = h.calls[0]!.ops[0]!;
+    expect(op.fields).toEqual(expect.arrayContaining(['createdAt', 'updatedAt']));
+    expect(op.row).toMatchObject({ createdAt: LATER, updatedAt: LATER });
+  });
+
+  it('bumps updatedAt on a delta write: nowMs, or one past a row stamped ahead of it', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    const snap = await h.snapshot('u-a');
+    h.calls.length = 0;
+    await pushIntents(h.deps('u-a'), snap, [{ entity: 'task', entityId: 't1', set: { title: 'a' } }], { nowMs: LATER });
+    expect([...(h.calls[0]!.ops[0]!.fields as string[])].sort()).toEqual(['title', 'updatedAt']);
+    expect(h.calls[0]!.ops[0]!.row).toMatchObject({ updatedAt: LATER });
+    // The row now says LATER; an earlier clock still moves it forward.
+    await writeOrThrow(h.deps('u-a'), snap, [{ entity: 'task', entityId: 't1', set: { title: 'b' } }], { nowMs: NOW_ISH });
+    expect(h.calls[1]!.ops[0]!.row).toMatchObject({ updatedAt: LATER + 1 });
+  });
+
+  it('keeps an updatedAt the caller gives', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    const snap = await h.snapshot('u-a');
+    h.calls.length = 0;
+    await writeOrThrow(h.deps('u-a'), snap, [{ entity: 'task', entityId: 't1', set: { title: 'a', updatedAt: 42 } }], { nowMs: LATER });
+    expect(h.calls[0]!.ops[0]!.row).toMatchObject({ updatedAt: 42 });
+  });
+
+  it('refuses a write with no delta and pushes nothing (no bare updatedAt bump)', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    const snap = await h.snapshot('u-a');
+    h.calls.length = 0;
+    for (const set of [{}, { id: 't1', createdAt: 5 }]) {
+      await expect(writeOrThrow(h.deps('u-a'), snap, [{ entity: 'task', entityId: 't1', set }])).rejects.toThrow(
+        'Nothing to write for task t1',
+      );
+    }
+    expect(h.calls).toEqual([]);
+  });
+
+  it('touch writes only updatedAt', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    const snap = await h.snapshot('u-a');
+    h.calls.length = 0;
+    const [out] = await writeOrThrow(h.deps('u-a'), snap, [{ entity: 'task', entityId: 't1', set: {}, touch: true }], { nowMs: LATER });
+    expect(out?.status).toBe('applied');
+    expect(h.calls[0]!.ops[0]!.fields).toEqual(['updatedAt']);
+    expect(out?.row?.updatedAt).toBe(LATER);
   });
 });
 
