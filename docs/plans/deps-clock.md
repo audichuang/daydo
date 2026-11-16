@@ -503,7 +503,7 @@ git -C .. diff <票3起點> -- server/tests | rg '^[-+]\s*expect\('             
 
 | 票 | 內容 | 狀態 | commit 範圍 | 偏離 |
 |----|------|------|-------------|------|
-| 1 | clock 模組（`src/clock.ts`、`getNow`／`systemNow`、`nowOf`）＋ G1–G3 護欄、`uuidv7` 必填 | 未開始 | | |
+| 1 | clock 模組（`src/clock.ts`、`getNow`／`systemNow`、`nowOf`）＋ G1–G3 護欄、`uuidv7` 必填 | 完成 | 1054afb..b68cf3c（4 commit，check 與 e2e 全綠，852 tests） | 無 |
 | 2 | `src/deps.ts`（`AppDeps`／`productionAppDeps`）、lint 例外搬移、21 個 route＋cron 遷移、`createScopeWorld().deps`、A1–A4／L1–L2 護欄 | 未開始 | | |
 | 3 | `tests/helpers/serverHarness.ts`、拿掉 fake timers 與 `Date.now` spy、H1–H3 護欄 | 未開始 | | |
 | — | config／env 收斂（原第三塊） | 不做（§2），以 A4 凍結護欄取代 | — | — |
