@@ -1,5 +1,5 @@
 // Server-side writer for MCP tools and ICS sync (spec/mcp.md 6.2): turns write intents into
-// sync ops, pushes them through executeSyncPush and reports the server's answer per intent.
+// sync ops, pushes them through executeParsedSyncPush and reports the server's answer per intent.
 import { parseReminder } from '../domain/reminders';
 import { MAX_INTERVAL, parseWritableRecurrence } from '../domain/recurrence';
 import { isValidDay, isValidTimeZone } from '../domain/schedule';
@@ -10,7 +10,6 @@ import {
   SCHEDULE_FIELD_SET,
   hasAllRequiredFields,
   isTaskChildEntity,
-  validateSyncOp,
   ENTITY_FIELDS,
 } from '../sync/entities';
 import {
@@ -21,8 +20,8 @@ import {
   type Hlc,
   type ServerHlcClock,
 } from '../sync/hlc';
-import { MAX_OPS_PER_PUSH } from '../sync/envelope';
-import { executeSyncPush, type AppDb, type ScopeStub } from '../sync/push';
+import { MAX_OPS_PER_PUSH, toEnvelope, type OpEnvelope } from '../sync/envelope';
+import { executeParsedSyncPush, type AppDb, type ScopeStub } from '../sync/push';
 import { serverClock } from '../sync/serverClock';
 import type { Snapshot } from './snapshot';
 import { isNil, sameValue } from './values';
@@ -138,6 +137,8 @@ interface PlannedOp {
     fields: string[];
     row: Record<string, unknown>;
   };
+  /** `op` validated once here; the push path reuses it instead of validating again. */
+  envelope: OpEnvelope;
 }
 
 function keyField(entity: WritableEntity): string {
@@ -349,11 +350,11 @@ function planOps(
       fields,
       row,
     };
-    const checked = validateSyncOp(op);
-    if (!checked.ok) {
-      throw new WriteValidationError(key, `Invalid ${entity} ${entityId}: ${checked.reason}`);
+    const envelope = toEnvelope(op);
+    if (!envelope.validated.ok) {
+      throw new WriteValidationError(key, `Invalid ${entity} ${entityId}: ${envelope.validated.reason}`);
     }
-    return { index, intent, op };
+    return { index, intent, op, envelope };
   });
 
   // Stable: child rows go last so a child never precedes its task in a chunk or lands in an
@@ -419,10 +420,10 @@ export async function pushIntents(
 
   for (let start = 0; start < plan.length; start += MAX_OPS_PER_PUSH) {
     const chunk = plan.slice(start, start + MAX_OPS_PER_PUSH);
-    const res = await executeSyncPush(deps.db, {
+    const res = await executeParsedSyncPush(deps.db, {
       userId: deps.userId,
       deviceId: deps.deviceId,
-      ops: chunk.map((p) => p.op),
+      envelopes: chunk.map((p) => p.envelope),
       getScopeStub: deps.getScopeStub,
       clock,
     });
