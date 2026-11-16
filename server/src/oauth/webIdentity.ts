@@ -1,5 +1,12 @@
 import { sha256Hex } from '../auth/crypto';
-import type { KeySource, ProviderName } from '../auth/providers';
+import {
+  AuthVerificationError,
+  verifyGoogleToken,
+  type KeySource,
+  type ProviderName,
+  type VerifiedIdentity,
+} from '../auth/providers';
+import { bindIdentity, openCallbackPending, providerErrorPage, type AuthorizeDeps } from './authorize';
 
 // Web sign-in with Google / Apple for /authorize (spec/mcp.md 4.4 steps 2-3).
 
@@ -17,6 +24,9 @@ export interface GoogleWebConfig {
   clientSecret: string | undefined;
   authUrl: string;
   tokenUrl: string;
+  jwksUrl?: string;
+  /** Test-only key source; production fetches jwksUrl. */
+  keySource?: KeySource;
 }
 
 export interface WebIdentityConfig {
@@ -57,8 +67,9 @@ export function isWebProvider(value: string): value is ProviderName {
   return (WEB_PROVIDERS as readonly string[]).includes(value);
 }
 
-/** Whether the provider's web sign-in can be started. Google web sign-in arrives in M7b. */
-export function isProviderAvailable(_config: WebIdentityConfig, provider: ProviderName): boolean {
+/** Apple needs no secret; Google needs the web client secret to exchange the code. */
+export function isProviderAvailable(config: WebIdentityConfig, provider: ProviderName): boolean {
+  if (provider === 'google') return Boolean(config.google.clientSecret);
   return provider === 'apple';
 }
 
@@ -85,6 +96,79 @@ export async function appleAuthorizeUrl(config: AppleWebConfig, params: Authoriz
   return url.toString();
 }
 
+/** Google authorization-code flow; Google echoes the raw nonce inside the id_token. */
+export function googleAuthorizeUrl(config: GoogleWebConfig, params: AuthorizeUrlParams): string {
+  const url = new URL(config.authUrl);
+  url.searchParams.set('client_id', config.clientId);
+  url.searchParams.set('redirect_uri', `${params.origin}/authorize/google/callback`);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', 'openid email profile');
+  url.searchParams.set('state', params.state);
+  url.searchParams.set('nonce', params.rawNonce);
+  url.searchParams.set('prompt', 'select_account');
+  return url.toString();
+}
+
+/** Exchanges an authorization code for the id_token; null when Google refuses or replies oddly. */
+export async function exchangeGoogleCode(
+  config: GoogleWebConfig,
+  params: { code: string; origin: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<string | null> {
+  if (!config.clientSecret) return null;
+  const response = await fetchImpl(config.tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code: params.code,
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      redirect_uri: `${params.origin}/authorize/google/callback`,
+    }),
+  });
+  if (!response.ok) return null;
+  const body: unknown = await response.json().catch(() => null);
+  if (typeof body !== 'object' || body === null) return null;
+  const idToken = (body as Record<string, unknown>).id_token;
+  return typeof idToken === 'string' && idToken.length > 0 ? idToken : null;
+}
+
+/** GET /authorize/google/callback. Anything that fails after the cookie check keeps the pending. */
+export async function handleGoogleCallback(
+  request: Request,
+  deps: AuthorizeDeps,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const check = await openCallbackPending(request, deps, {
+    provider: 'google',
+    state: url.searchParams.get('state') ?? '',
+    error: url.searchParams.get('error') ?? '',
+  });
+  if (!check.ok) return check.response;
+
+  const code = url.searchParams.get('code') ?? '';
+  if (!code) return providerErrorPage();
+  const google = deps.web.google;
+  let verified: VerifiedIdentity;
+  try {
+    const idToken = await exchangeGoogleCode(google, { code, origin: new URL(request.url).origin }, fetchImpl);
+    if (!idToken) return providerErrorPage();
+    verified = await verifyGoogleToken({
+      idToken,
+      audience: google.clientId,
+      nonce: check.pending.nonce,
+      jwksUrl: google.jwksUrl,
+      keySource: google.keySource,
+    });
+  } catch (error) {
+    if (error instanceof AuthVerificationError) return providerErrorPage();
+    throw error;
+  }
+  return bindIdentity(request, deps, check.pending, verified);
+}
+
 /** The provider's authorize URL, or null when the provider is not available. */
 export async function providerAuthorizeUrl(
   config: WebIdentityConfig,
@@ -93,5 +177,5 @@ export async function providerAuthorizeUrl(
 ): Promise<string | null> {
   if (!isProviderAvailable(config, provider)) return null;
   if (provider === 'apple') return appleAuthorizeUrl(config.apple, params);
-  return null;
+  return googleAuthorizeUrl(config.google, params);
 }
