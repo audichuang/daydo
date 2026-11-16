@@ -192,7 +192,6 @@ const GUARDS: Guard[] = [
     allow: [
       'durable-objects/scope.ts',
       'src/clock.ts',
-      'src/domain/uuid.ts',
       'src/ics/engine.ts',
       'src/ics/parser.ts',
       'src/mail/mailer.ts',

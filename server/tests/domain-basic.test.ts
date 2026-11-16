@@ -34,7 +34,7 @@ describe('uuid', () => {
     const id = uuidv7(0x01a1dd5bfc89);
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(id.replace(/-/g, '').slice(0, 12)).toBe('01a1dd5bfc89');
-    expect(uuidv7()).not.toBe(uuidv7());
+    expect(uuidv7(1)).not.toBe(uuidv7(1));
   });
 });
 

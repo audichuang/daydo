@@ -16,7 +16,7 @@ function uuidToBytes(uuid: string): Uint8Array {
 }
 
 /** UUIDv7: 48-bit millisecond timestamp, version 7, RFC 4122 variant. */
-export function uuidv7(now: number = Date.now()): string {
+export function uuidv7(now: number): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   let ms = BigInt(Math.max(0, Math.floor(now)));
