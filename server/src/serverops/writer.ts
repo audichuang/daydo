@@ -250,18 +250,18 @@ function validateValues(
 function stampedSet(
   intent: WriteIntent,
   current: Record<string, unknown> | undefined,
-  stampMs: number,
+  nowMs: number,
 ): Record<string, unknown> {
   const set = { ...intent.set };
   if (!current) {
-    if (set.createdAt === undefined) set.createdAt = stampMs;
-    if (set.updatedAt === undefined) set.updatedAt = stampMs;
+    if (set.createdAt === undefined) set.createdAt = nowMs;
+    if (set.updatedAt === undefined) set.updatedAt = nowMs;
     return set;
   }
   if (set.updatedAt !== undefined) return set;
   const key = keyField(intent.entity);
   const hasDelta = Object.keys(set).some((f) => f !== key && f !== 'createdAt');
-  if (hasDelta || intent.touch) set.updatedAt = Math.max(stampMs, Number(current.updatedAt ?? 0) + 1);
+  if (hasDelta || intent.touch) set.updatedAt = Math.max(nowMs, Number(current.updatedAt ?? 0) + 1);
   return set;
 }
 
