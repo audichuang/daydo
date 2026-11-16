@@ -84,14 +84,26 @@ import("node:fs").then((fs) => {
   const p = L.statePath("claude-dir");
   const d = fs.existsSync(p) ? fs.readFileSync(p, "utf8").trim() : "";
   console.log(d && fs.existsSync(d) ? `info  previous Claude temp dir still present: ${d}` : "ok    no leftover Claude temp dir");
-  const keys = L.claudeCredentialKeys();
-  const mine = (keys.keychain?.mcpOAuth ?? []).filter((e) => e.serverUrl === L.cfg.mcp);
+  const cp = L.statePath("claude-config-dir");
+  if (d && fs.existsSync(d)) {
+    const recorded = fs.existsSync(cp) ? fs.readFileSync(cp, "utf8").trim() : null;
+    if (recorded === null) { console.log("FAIL  leftover Claude temp dir has no recorded CLAUDE_CONFIG_DIR (older run?); cleanup.sh will refuse it"); process.exitCode = 1; }
+    else if (recorded !== L.cfg.claudeConfigDir) { console.log(`FAIL  CLAUDE_CONFIG_DIR mismatch: leftover login used "${recorded || "(default ~/.claude)"}", this shell has "${L.cfg.claudeConfigDir || "(default ~/.claude)"}"`); process.exitCode = 1; }
+  }
+  let keys;
+  try { keys = L.claudeCredentialKeys(); } catch (e) { console.log(`FAIL  Claude credential stores unreadable: ${e.message}`); process.exitCode = 1; return; }
+  const mine = [...(keys.keychain?.mcpOAuth ?? []).map((e) => ({ ...e, store: "keychain" })), ...(keys.fileShape?.mcpOAuth ?? []).map((e) => ({ ...e, store: "file" }))].filter((e) => e.serverUrl === L.cfg.mcp);
   if (mine.some((e) => e.hasAccessToken)) {
     console.log(`FAIL  Claude Code already holds a token for ${L.cfg.mcp} (shared by name+URL across directories; mcp-login would overwrite it and cleanup would sign it out). Leftover verify login: cleanup.sh. Otherwise ask the user.`);
     process.exitCode = 1;
   }
-  console.log(`info  Claude credentials: keychain "${keys.service}" has ${mine.length} entr${mine.length === 1 ? "y" : "ies"} for ${L.cfg.mcp}${mine.length ? " (" + mine.map((e) => e.key + (e.hasAccessToken ? " token" : " no-token")).join(", ") + ")" : ""}`);
+  console.log(`info  Claude credentials: keychain "${keys.service}" + ${keys.file} have ${mine.length} entr${mine.length === 1 ? "y" : "ies"} for ${L.cfg.mcp}${mine.length ? " (" + mine.map((e) => e.store + ":" + e.key + (e.hasAccessToken ? " token" : " no-token")).join(", ") + ")" : ""}`);
 });
+' || fails=$((fails + 1))
+# A device session made for another email would be driven against the wrong account.
+js '
+const s = L.readJson(L.sessionFile());
+if (s && s.email !== L.cfg.email) { console.log(`FAIL  device session is for ${s.email ?? "(no email recorded)"}, DAYDO_VERIFY_EMAIL is ${L.cfg.email}; run device.mjs forget`); process.exitCode = 1; }
 ' || fails=$((fails + 1))
 node "$HERE/device.mjs" status | sed 's/^/info  device /'
 

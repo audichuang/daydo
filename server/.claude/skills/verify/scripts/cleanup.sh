@@ -8,8 +8,10 @@
 #   5. finishes the recorded ego-browser TaskSpace with keep: [] (user tabs are protected)
 #   6. deletes the device session file (tokens)                                        [--keep-session skips]
 # The verify-seed project and the account stay (there is no delete-account endpoint).
+# Steps 2-3 fail closed: if logout fails, a token remains, or CLAUDE_CONFIG_DIR differs from the one
+# mcp-login recorded (<state>/claude-config-dir), the temp dir and pointers are kept and the exit code is 1.
 # macOS bash 3.2 compatible.
-set -u
+set -u -o pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LIB="$HERE/lib.mjs"
 keep_probe=0; keep_session=0
@@ -37,17 +39,36 @@ fi
 DIR=""
 [ -f "$STATE/claude-dir" ] && DIR="$(cat "$STATE/claude-dir")"
 if [ -n "$DIR" ] && [ -d "$DIR" ]; then
-  (cd "$DIR" && claude mcp logout daydo-verify) 2>&1 | tee -a "$RUN/cleanup.txt"
-  js '
-    const mine = (L.claudeCredentialKeys().keychain?.mcpOAuth ?? []).filter((e) => e.serverUrl === L.cfg.mcp && e.hasAccessToken);
-    if (mine.length) { console.log(`FAIL  keychain still holds a token for ${L.cfg.mcp}: ${mine.map((e) => e.key).join(", ")}`); process.exit(1); }
-    console.log(`ok    no Claude Code token left for ${L.cfg.mcp}`);
-  ' | tee -a "$RUN/cleanup.txt" || rc=1
-  case "$DIR" in
-    */daydo-verify-claude.*) rm -rf "$DIR" && echo "ok    removed $DIR" ;;
-    *) echo "FAIL  refusing to remove unexpected dir $DIR"; rc=1 ;;
-  esac
-  rm -f "$STATE/claude-dir"
+  # Any failure below keeps the temp dir and the pointers, so a leftover login can still be found and retried.
+  keep=0
+  if [ ! -f "$STATE/claude-config-dir" ]; then
+    echo "FAIL  no recorded CLAUDE_CONFIG_DIR next to the claude-dir pointer (older run?); not touching credentials. Log out by hand, then remove $STATE/claude-dir"
+    keep=1
+  else
+    RECORDED_CFG="$(cat "$STATE/claude-config-dir")"
+    CURRENT_CFG="$(js 'console.log(L.cfg.claudeConfigDir)')"
+    if [ "$RECORDED_CFG" != "$CURRENT_CFG" ]; then
+      echo "FAIL  CLAUDE_CONFIG_DIR mismatch: login used '${RECORDED_CFG:-(default ~/.claude)}', this shell has '${CURRENT_CFG:-(default ~/.claude)}'; rerun with the recorded one"
+      keep=1
+    fi
+  fi
+  if [ "$keep" = 0 ]; then
+    (cd "$DIR" && claude mcp logout daydo-verify) 2>&1 | tee -a "$RUN/cleanup.txt" || { echo "FAIL  claude mcp logout daydo-verify failed"; keep=1; }
+    js '
+      const mine = L.claudeMcpTokens();
+      if (mine.length) { console.log(`FAIL  Claude Code still holds a token for ${L.cfg.mcp}: ${mine.map((e) => `${e.store}:${e.key}`).join(", ")}`); process.exit(1); }
+      console.log(`ok    no Claude Code token left for ${L.cfg.mcp}`);
+    ' 2>&1 | tee -a "$RUN/cleanup.txt" || keep=1
+  fi
+  if [ "$keep" = 0 ]; then
+    case "$DIR" in
+      */daydo-verify-claude.*) rm -rf "$DIR" && echo "ok    removed $DIR" && rm -f "$STATE/claude-dir" "$STATE/claude-config-dir" || { echo "FAIL  could not remove $DIR"; rc=1; } ;;
+      *) echo "FAIL  refusing to remove unexpected dir $DIR"; rc=1 ;;
+    esac
+  else
+    echo "FAIL  kept $DIR and the pointers in $STATE for a retry"
+    rc=1
+  fi
 else
   echo "skip  no Claude temp dir recorded"
 fi
@@ -59,7 +80,9 @@ fi
 js '
   const { egoFinish } = await import("'"$HERE"'/ego.mjs");
   const r = egoFinish();
-  console.log(`${r.finished || r.reason === "no space recorded" || r.reason === "space already gone" ? "ok   " : "FAIL "} ego-browser: ${JSON.stringify(r)}`);
+  const ok = r.finished || r.reason === "no space recorded" || r.reason === "space already gone" || String(r.reason).startsWith("recorded space is not ours");
+  console.log(`${ok ? "ok   " : "FAIL "} ego-browser: ${JSON.stringify(r)}`);
+  if (!ok) process.exit(1);
 ' || rc=1
 
 if [ "$keep_session" = 0 ]; then node "$HERE/device.mjs" forget; fi

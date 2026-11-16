@@ -44,7 +44,7 @@ Preconditions:
 - Accepting trust leaves an entry for the temp path under `projects` in `$CLAUDE_CONFIG_DIR/.claude.json` (`hasTrustDialogAccepted: true`). Cleanup leaves that shared file alone.
 - Token storage (Claude Code 2.1.325, macOS) is the keychain generic password `Claude Code-credentials-<first 8 hex of sha256(CLAUDE_CONFIG_DIR)>`, or `Claude Code-credentials` when the variable is unset.
   - The entries sit in JSON key `mcpOAuth["daydo-verify|<hash>"]`, with `serverUrl`, `accessToken`, `refreshToken`, `clientId`, `discoveryState` and so on.
-  - `~/.claude*/.credentials.json` holds only `claudeAiOauth`.
+  - `~/.claude*/.credentials.json` holds only `claudeAiOauth`, but the scripts also read its `mcpOAuth` for the token check. Only `security` exit 44 (item not found) counts as "no keychain item"; any other `security` error or unparsable JSON fails the check instead of reading as "no token".
   - The entry appears (without tokens) as soon as interactive `claude` sees the server, before login.
 - The entry key comes from the server name and URL, not the directory. A personal "daydo-verify" connector in Claude Code with the same URL shares it. So `mcp-login.mjs` refuses to start, and Doctor fails, while a token for the URL already exists, rather than overwriting it and then signing it out in cleanup.
 - The callback port is chosen per login (52310 and 62903 in the dry runs); the script reads it from `redirect_uri` in the printed URL.

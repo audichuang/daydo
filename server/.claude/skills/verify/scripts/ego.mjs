@@ -8,7 +8,9 @@ const SPACE_FILE = statePath('ego-space.json');
 
 const PRELUDE = String.raw`
 const P = JSON.parse(__PARAMS__);
-const entry = P.space.spaceId == null ? undefined : (await listTaskSpaces()).find((s) => s.id === P.space.spaceId);
+// Only a space this skill created (name starts with "daydo-verify ") may be reused; a recorded id that now
+// belongs to anything else (user space, id reuse) is discarded and a new space is created.
+const entry = P.space.spaceId == null ? undefined : (await listTaskSpaces()).find((s) => s.id === P.space.spaceId && String(s.name ?? '').startsWith('daydo-verify '));
 const task = !entry
   ? await taskSpace(P.spaceName)
   : entry.ownership === 'user'
@@ -18,15 +20,10 @@ const task = !entry
       : await taskSpace(P.space.spaceId);
 const labels = { ...(entry ? P.space.pages : {}) };
 async function pageFor(role) {
-  let pages = await task.pages();
-  if (pages.length === 0) {
-    const tab = (await task.tabs()).find((t) => t.openedBy !== 'unknown');
-    if (tab) { await task.adopt(tab.page); pages = await task.pages(); }
-  }
-  let page = pages.find((p) => p.label === labels[role]);
+  // Never adopt existing tabs: always open our own page.
+  let page = (await task.pages()).find((p) => p.label === labels[role]);
   if (!page) {
-    const taken = new Set(Object.values(labels));
-    page = pages.find((p) => !taken.has(p.label)) ?? (await task.newPage());
+    page = await task.newPage();
     labels[role] = page.label;
   }
   return page;
@@ -63,11 +60,13 @@ export function egoRun(body, args = {}, { timeoutMs = 240_000 } = {}) {
 /** Finishes the persisted space (closes only pages it owns) and forgets it. */
 export function egoFinish() {
   const space = readJson(SPACE_FILE, null);
-  if (!space?.spaceId) return { finished: false, reason: 'no space recorded' };
+  if (space?.spaceId == null) return { finished: false, reason: 'no space recorded' };
   const script = `
 const entry = (await listTaskSpaces()).find((s) => s.id === ${Number(space.spaceId)});
 if (!entry) { console.log('__RESULT__ ' + JSON.stringify({ finished: false, reason: 'space already gone' })); }
-else {
+else if (!String(entry.name ?? '').startsWith('daydo-verify ')) {
+  console.log('__RESULT__ ' + JSON.stringify({ finished: false, reason: 'recorded space is not ours; record discarded', spaceId: entry.id }));
+} else {
   const task = entry.ownership === 'user' ? await claimTaskSpace(entry.id)
     : entry.ownership === 'agentDelegatedToUser' ? await takeOverTaskSpace(entry.id) : await taskSpace(entry.id);
   const out = await task.finish({ keep: [] });
@@ -76,6 +75,6 @@ else {
   const res = spawnSync('ego-browser', ['nodejs'], { input: script, encoding: 'utf8', timeout: 60_000 });
   const line = `${res.stdout ?? ''}\n${res.stderr ?? ''}`.split('\n').find((l) => l.startsWith('__RESULT__ '));
   const result = line ? JSON.parse(line.slice(11)) : { finished: false, reason: redact(`${res.stdout}${res.stderr}`) };
-  if (result.finished || result.reason === 'space already gone') writeJson(SPACE_FILE, { spaceId: null, pages: {} });
+  if (result.finished || result.reason === 'space already gone' || String(result.reason).startsWith('recorded space is not ours')) writeJson(SPACE_FILE, { spaceId: null, pages: {} });
   return result;
 }

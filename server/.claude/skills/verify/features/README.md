@@ -15,7 +15,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 
 - Run steps in the order of `../SKILL.md` Drive. Every step depends on the one before it: login, then bootstrap, seed, MCP login and the claude assertions.
 - Device actions go through `node $S/device.mjs …`. Browser actions go through `scripts/ego.mjs`, in the single TaskSpace recorded in `<state>/ego-space.json`; never in the user's own spaces or tabs.
-- Claude Code actions run only in the temp dir recorded in `<state>/claude-dir`. They use tmux socket `daydo-verify`, with `CLAUDE_CONFIG_DIR` passed explicitly.
+- Claude Code actions run only in the temp dir recorded in `<state>/claude-dir`. They use tmux socket `daydo-verify`, with `CLAUDE_CONFIG_DIR` passed explicitly. The value used is recorded in `<state>/claude-config-dir`; cleanup and Doctor fail when the current one differs.
 - Selectors are the authorize page's form actions and names, never coordinates:
   - `form[action="/authorize/email/start"] input[name=email]`
   - `form[action="/authorize/email/verify"] input[name=code]`

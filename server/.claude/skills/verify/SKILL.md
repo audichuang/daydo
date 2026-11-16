@@ -102,7 +102,7 @@ node $S/claude-assert.mjs all --model haiku     # 5a-5c in one go (haiku is the 
 ```
 
 Notes:
-- `mcp-login.mjs` refuses to start without a bootstrapped device session, because the MCP email path only binds existing accounts. It also refuses while the tmux socket is busy.
+- `mcp-login.mjs` refuses to start without a bootstrapped device session, because the MCP email path only binds existing accounts. It also refuses while the tmux socket is busy, or when the session's email differs from `DAYDO_VERIFY_EMAIL`. It kills tmux socket `daydo-verify` on every exit path, because the pane holds the unredacted OAuth URL.
 - `claude-assert.mjs` runs `claude -p` in the temp dir with:
   - `--tools ""`, and `--allowedTools` limited to the `mcp__daydo-verify__*` tools the step needs;
   - `--permission-mode dontAsk`;
@@ -139,10 +139,10 @@ bash $S/cleanup.sh [--keep-probe] [--keep-session]
 
 Cleanup runs in this order:
 1. Soft-deletes the live `verify-probe*` tasks through the device. The HLC is newer than the MCP-written clocks, and the result is checked on the returned `deletedAt`.
-2. Runs `claude mcp logout daydo-verify` in the temp dir and checks that no keychain token is left for the MCP URL.
-3. Removes the recorded `daydo-verify-claude.*` temp dir.
+2. Runs `claude mcp logout daydo-verify` in the temp dir and checks that no token is left for the MCP URL, in the keychain item or in `$CLAUDE_CONFIG_DIR/.credentials.json`. It first compares the current `CLAUDE_CONFIG_DIR` with the one `mcp-login.mjs` recorded in `<state>/claude-config-dir`.
+3. Removes the recorded `daydo-verify-claude.*` temp dir. If the config dir differs, logout fails, or a token remains, it keeps the temp dir and both pointers and exits 1, so the cleanup can be retried.
 4. Kills only tmux socket `daydo-verify`.
-5. Finishes only the ego-browser TaskSpace this skill recorded, with `keep: []`. User tabs are protected by ego-browser.
+5. Finishes only the ego-browser TaskSpace this skill recorded, with `keep: []`, and only if its name starts with `daydo-verify ` (otherwise the record is discarded). User tabs are protected by ego-browser. A failed finish exits 1.
 6. Deletes the device session file. Use `--keep-session` to rerun without another email.
 
 It never deletes `verify-seed` or the account: there is no delete-account endpoint, and seeding is rerun-safe. After a stand-in run, also run `bash $S/devserver.sh down`.

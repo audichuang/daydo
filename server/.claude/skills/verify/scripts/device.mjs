@@ -17,6 +17,7 @@ import {
   evidence,
   hlc,
   parseArgs,
+  readBoundSession,
   readJson,
   saveEvidence,
   sessionFile,
@@ -28,7 +29,7 @@ import {
 // Session
 
 function loadSession() {
-  const s = readJson(sessionFile());
+  const s = readBoundSession();
   if (!s?.refreshToken) die(`no device session for ${cfg.api}; run: node device.mjs login`, 2);
   return s;
 }
@@ -65,7 +66,7 @@ async function call(s, route, body) {
 
 async function login() {
   const prev = readJson(sessionFile(), {});
-  const deviceId = prev.deviceId ?? uuidv7();
+  const deviceId = (prev.email === cfg.email && prev.deviceId) || uuidv7();
   const since = Date.now();
   const start = await apiRequest('POST', '/auth/email/start', { email: cfg.email, deviceId });
   evidence('device.log', { step: 'email/start', status: start.status, body: start.data });

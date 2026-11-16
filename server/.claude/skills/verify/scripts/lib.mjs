@@ -73,6 +73,13 @@ export function sessionFile() {
   return statePath(`session.${new URL(cfg.api).host.replace(/[^a-z0-9.]/gi, '_')}.json`);
 }
 
+/** Reads the device session and refuses one that was created for a different email than cfg.email. */
+export function readBoundSession() {
+  const s = readJson(sessionFile());
+  if (s && s.email !== cfg.email) die(`device session is for ${s.email ?? '(no email recorded)'}, but DAYDO_VERIFY_EMAIL is ${cfg.email}; run device.mjs forget and login again`, 2);
+  return s;
+}
+
 /** Appends one redacted line to <run>/<name>. */
 export function evidence(name, value) {
   const text = typeof value === 'string' ? value : JSON.stringify(value);
@@ -195,7 +202,11 @@ export function claudeCredentialStores() {
   return { service, file };
 }
 
-/** Top-level key names (and mcpOAuth entry names) of both stores; never values. */
+/**
+ * Top-level key names (and mcpOAuth entry names) of both stores; never values. Fail-closed: only
+ * `security` exit 44 (item not found) and a missing file mean "no credentials"; any other error or
+ * unparsable JSON throws, because "cannot tell" must not read as "no token".
+ */
 export function claudeCredentialKeys() {
   const { service, file } = claudeCredentialStores();
   const shape = (obj) =>
@@ -210,15 +221,37 @@ export function claudeCredentialKeys() {
           })),
         }
       : null;
-  let keychain = null;
+  let raw = null;
   try {
-    const raw = execFileSync('security', ['find-generic-password', '-s', service, '-w'], {
+    raw = execFileSync('security', ['find-generic-password', '-s', service, '-w'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    keychain = shape(JSON.parse(raw));
-  } catch {
-    keychain = null;
+  } catch (e) {
+    if (e.status !== 44) throw new Error(`security find-generic-password "${service}" failed (exit ${e.status ?? e.code}); cannot tell whether a Claude Code token exists`);
   }
-  return { service, keychain, file, fileShape: shape(readJson(file)) };
+  let keychain = null;
+  if (raw !== null) {
+    try {
+      keychain = shape(JSON.parse(raw));
+    } catch {
+      throw new Error(`keychain item "${service}" is not valid JSON; cannot tell whether a Claude Code token exists`);
+    }
+  }
+  let fileShape = null;
+  if (fs.existsSync(file)) {
+    try {
+      fileShape = shape(JSON.parse(fs.readFileSync(file, 'utf8')));
+    } catch {
+      throw new Error(`${file} is unreadable or not valid JSON; cannot tell whether a Claude Code token exists`);
+    }
+  }
+  return { service, keychain, file, fileShape };
+}
+
+/** Access-token entries for the MCP URL in the keychain item and in .credentials.json. */
+export function claudeMcpTokens(keys = claudeCredentialKeys()) {
+  const pick = (store, shape) =>
+    (shape?.mcpOAuth ?? []).filter((e) => e.serverUrl === cfg.mcp && e.hasAccessToken).map((e) => ({ store, key: e.key }));
+  return [...pick('keychain', keys.keychain), ...pick('file', keys.fileShape)];
 }
