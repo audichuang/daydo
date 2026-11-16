@@ -8,3 +8,6 @@ dist
 .env.*
 *.tsbuildinfo
 .DS_Store
+
+# Legacy Scope DO sources materialized by tests/scope-rpc-compat.test.ts
+tests/.legacy-*/
