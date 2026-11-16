@@ -7,7 +7,7 @@ import { assertFetchableUrl } from '../../ics/fetch';
 import { D1IcsStore, MIN_SYNC_INTERVAL_SEC, type AddSourceInput, type IcsSource, type IcsStore } from '../../ics/store';
 import type { IcsFilter } from '../../ics/types';
 import { NO_DATA_MESSAGE } from '../../serverops/writer';
-import { requireInt, requireStr, ToolValidationError, type ToolContext, type ToolDef, type ToolServices } from '../registry';
+import { requireInt, requireStr, ToolValidationError, type ToolContext, type ToolDef, type ToolServices } from '../toolkit';
 import { openSession, requireWritableList } from './projects';
 
 const isEmpty = (v: unknown) => v === undefined || v === null || (typeof v === 'string' && v.trim() === '');

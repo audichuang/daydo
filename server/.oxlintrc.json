@@ -1,5 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import"],
   "rules": {
     "max-lines": ["error", { "max": 700, "skipBlankLines": true, "skipComments": true }],
     "no-restricted-imports": [
@@ -35,7 +36,8 @@
     "typescript/no-base-to-string": "off",
     "typescript/no-misused-spread": "off",
     "eqeqeq": ["error", "always", { "null": "ignore" }],
-    "no-console": "error"
+    "no-console": "error",
+    "import/no-cycle": "error"
   },
   "overrides": [
     {

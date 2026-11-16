@@ -8,7 +8,7 @@ import { writeOrThrow, type WriterDeps } from '../../serverops/writer';
 import { userScope } from '../../sync/scopeName';
 import { formatProject, openTasksOf, summarizeTask } from '../format';
 import { bySortKey, compareKeys } from '../../serverops/values';
-import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../registry';
+import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
 
 export interface Session {
   snapshot: Snapshot;

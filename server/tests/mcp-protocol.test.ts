@@ -8,15 +8,11 @@ import {
   annotationsFor,
   describeTools,
   handleToolCall,
-  requireInt,
-  requireStr,
   TOOL_DEFS,
-  ToolValidationError,
   validateArgs,
   type Hint,
-  type ToolDef,
-  type ToolSchema,
 } from '../src/mcp/registry';
+import { requireInt, requireStr, ToolValidationError, type ToolDef, type ToolSchema } from '../src/mcp/toolkit';
 import { signMcpAccessToken } from '../src/oauth/tokens';
 import { createTestD1 } from './sqliteD1';
 

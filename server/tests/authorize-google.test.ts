@@ -9,7 +9,8 @@ import {
   handleAuthorizeStart,
   type AuthorizeDeps,
 } from '../src/oauth/authorize';
-import { handleGoogleCallback, type WebIdentityConfig } from '../src/oauth/webIdentity';
+import { handleGoogleCallback } from '../src/oauth/googleCallback';
+import type { WebIdentityConfig } from '../src/oauth/webIdentity';
 import { createTestD1 } from './sqliteD1';
 
 const ORIGIN = 'https://daydo-mcp.audichuang.app';

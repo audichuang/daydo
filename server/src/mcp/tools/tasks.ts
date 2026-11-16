@@ -25,7 +25,7 @@ import {
 import { bySortKey, compareKeys, isNil, rowSchedule } from '../../serverops/values';
 import { assertHasData, writeOrThrow } from '../../serverops/writer';
 import { formatTask, openTasksOf, summarizeTask } from '../format';
-import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../registry';
+import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
 import { openSession, requireWritableList } from './projects';
 
 export const SEARCH_LIMIT = 200;
