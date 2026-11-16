@@ -1,5 +1,7 @@
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import type { CloudContext } from 'void';
+import { env } from 'void/env';
+import { isMcpHost } from './host';
 
 export type AccessJwksResolver = (certsUrl: string) => JWTVerifyGetKey;
 
@@ -12,6 +14,8 @@ export interface AccessMiddlewareOptions {
   getConfig?: () => AccessConfig;
   jwksResolver?: AccessJwksResolver;
   isDev?: boolean;
+  /** Defaults to env.MCP_HOST. Requests on this hostname skip Access (spec/mcp.md §3). */
+  getMcpHost?: () => string | undefined;
 }
 
 const accessJwksCache = new Map<string, JWTVerifyGetKey>();
@@ -53,6 +57,12 @@ export async function verifyAccessJwt(params: {
 export function createAccessMiddleware(options: AccessMiddlewareOptions = {}) {
   return async (c: CloudContext, next: () => Promise<void>): Promise<Response | void> => {
     if (shouldSkipAccessVerification(options.isDev)) {
+      await next();
+      return;
+    }
+
+    const mcpHost = options.getMcpHost ? options.getMcpHost() : env.MCP_HOST;
+    if (isMcpHost(c.req.url, mcpHost)) {
       await next();
       return;
     }

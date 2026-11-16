@@ -16,7 +16,7 @@ DayDo 是待辦加日曆的 iPhone App，給自己和家人用，互動對標 Ti
 DayDoCore/   Swift Package：資料模型、SQLite（GRDB）、DayDoAPI 指令層、日期/重複/提醒邏輯
 ios/         SwiftUI App（iOS 26+，iOS 27.2 SDK），XcodeGen 產生專案（project.yml）
 server/      第二階段同步後端：Void（Cloudflare Workers，底層 Hono）＋ D1 ＋ 每位使用者的範圍 Durable Object
-spec/        openapi.yaml：DayDoAPI 的 HTTP 合約，第二階段 Worker 與 MCP 共用；sync.md：同步協議；fixtures/sync-ops.json：App 實際編出的 op，server 測試直接讀
+spec/        openapi.yaml：DayDoAPI 的 HTTP 合約，第二階段 Worker 與 MCP 共用；sync.md：同步協議；mcp.md：MCP 伺服器、OAuth 與 ICS 同步設計；fixtures/sync-ops.json：App 實際編出的 op，server 測試直接讀
 design/      設計稿
 ```
 

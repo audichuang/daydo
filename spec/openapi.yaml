@@ -3,6 +3,14 @@ info:
   title: DayDo API
   version: 0.1.0
   description: |
+    NOTE: the MCP tool list is defined by spec/mcp.md (section 8), not by this file.
+    Operations here that are not yet ported to MCP: uncomplete_task, restore_task,
+    purge_task, add/update/delete_checklist_item, folder operations, move_project,
+    duplicate_project, transfer_project_owner, member and invite operations,
+    list_sections, smart_counts, postpone_overdue, tag update/delete, attachments
+    (upload_attachment, delete_attachment), list_members and update_me.
+    MCP-only tools (ICS, move_all, list_recent_tasks) are not in this file.
+
     HTTP contract of `DayDoAPI` (DayDoCore/Sources/DayDoCore/API/DayDoAPI.swift).
     The iOS app implements it locally (`LocalDayDoAPI`); the phase-2 Cloudflare
     Worker serves it over HTTP, and the MCP server maps one tool per operation

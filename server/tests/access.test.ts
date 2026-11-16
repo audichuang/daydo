@@ -1,7 +1,11 @@
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import type { CloudContext } from 'void';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createAccessMiddleware, verifyAccessJwt } from '../src/auth/access';
+
+vi.mock('void/env', () => ({
+  env: { MCP_HOST: 'daydo-mcp.audichuang.app' },
+}));
 
 const TEAM_DOMAIN = 'daydo-test.cloudflareaccess.com';
 const AUD = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -18,13 +22,20 @@ async function makeRsaKeyFixture(kid: string) {
   };
 }
 
-function makeMockContext(headers: Record<string, string | undefined> = {}): CloudContext {
+const MCP_HOST = 'daydo-mcp.audichuang.app';
+const API_URL = 'https://daydo-api.audichuang.app/sync/pull';
+
+function makeMockContext(
+  headers: Record<string, string | undefined> = {},
+  url: string = API_URL,
+): CloudContext {
   const normalized = new Map<string, string>();
   for (const [k, v] of Object.entries(headers)) {
     if (v !== undefined) normalized.set(k.toLowerCase(), v);
   }
   return {
     req: {
+      url,
       header: (name?: string) => (name ? normalized.get(name.toLowerCase()) : undefined),
     },
     json: (body: unknown, status = 200) =>
@@ -49,6 +60,7 @@ describe('Cloudflare Access verification middleware', () => {
 
     let seenCertsUrl: string | null = null;
     const middleware = createAccessMiddleware({
+      getMcpHost: () => MCP_HOST,
       getConfig: () => ({ teamDomain: TEAM_DOMAIN, aud: AUD }),
       jwksResolver: (certsUrl) => {
         seenCertsUrl = certsUrl;
@@ -89,6 +101,7 @@ describe('Cloudflare Access verification middleware', () => {
       .sign(privateKey);
 
     const middleware = createAccessMiddleware({
+      getMcpHost: () => MCP_HOST,
       getConfig: () => ({ teamDomain: TEAM_DOMAIN, aud: AUD }),
       jwksResolver: () => jwks,
       isDev: false,
@@ -118,6 +131,7 @@ describe('Cloudflare Access verification middleware', () => {
       .sign(privateKey);
 
     const middleware = createAccessMiddleware({
+      getMcpHost: () => MCP_HOST,
       getConfig: () => ({ teamDomain: TEAM_DOMAIN, aud: AUD }),
       jwksResolver: () => jwks,
       isDev: false,
@@ -148,6 +162,7 @@ describe('Cloudflare Access verification middleware', () => {
       .sign(privateKey);
 
     const middleware = createAccessMiddleware({
+      getMcpHost: () => MCP_HOST,
       getConfig: () => ({ teamDomain: TEAM_DOMAIN, aud: AUD }),
       jwksResolver: () => jwks,
       isDev: false,
@@ -169,6 +184,7 @@ describe('Cloudflare Access verification middleware', () => {
   it('returns 403 when Cf-Access-Jwt-Assertion header is missing or empty', async () => {
     const { jwks } = await makeRsaKeyFixture('access-rsa-missing');
     const middleware = createAccessMiddleware({
+      getMcpHost: () => MCP_HOST,
       getConfig: () => ({ teamDomain: TEAM_DOMAIN, aud: AUD }),
       jwksResolver: () => jwks,
       isDev: false,
@@ -197,6 +213,7 @@ describe('Cloudflare Access verification middleware', () => {
       .sign(attackerKey);
 
     const middleware = createAccessMiddleware({
+      getMcpHost: () => MCP_HOST,
       getConfig: () => ({ teamDomain: TEAM_DOMAIN, aud: AUD }),
       jwksResolver: () => jwks,
       isDev: false,
@@ -232,6 +249,7 @@ describe('Cloudflare Access verification middleware', () => {
       .sign(privateKey);
 
     const middleware = createAccessMiddleware({
+      getMcpHost: () => MCP_HOST,
       getConfig: () => ({ teamDomain: TEAM_DOMAIN, aud: AUD }),
       jwksResolver: () => jwks,
       isDev: false,
@@ -260,6 +278,7 @@ describe('Cloudflare Access verification middleware', () => {
         { teamDomain: '', aud: '' },
       ]) {
         const middleware = createAccessMiddleware({
+          getMcpHost: () => MCP_HOST,
           getConfig: () => config,
         });
         let nextCalled = false;
@@ -274,9 +293,90 @@ describe('Cloudflare Access verification middleware', () => {
     }
   });
 
+  it('skips verification on the MCP host in production, and only there', async () => {
+    let jwksCalled = false;
+    const middleware = createAccessMiddleware({
+      getMcpHost: () => MCP_HOST,
+      getConfig: () => ({ teamDomain: TEAM_DOMAIN, aud: AUD }),
+      jwksResolver: () => {
+        jwksCalled = true;
+        throw new Error('should not be called for the MCP host');
+      },
+      isDev: false,
+    });
+
+    let nextCalled = false;
+    const res = await middleware(makeMockContext({}, `https://${MCP_HOST}/token`), async () => {
+      nextCalled = true;
+    });
+    expect(res).toBeUndefined();
+    expect(nextCalled).toBe(true);
+    expect(jwksCalled).toBe(false);
+
+    nextCalled = false;
+    const apiRes = await middleware(
+      makeMockContext({}, 'https://daydo-api.audichuang.app/token'),
+      async () => {
+        nextCalled = true;
+      },
+    );
+    expect(nextCalled).toBe(false);
+    expect(apiRes?.status).toBe(403);
+  });
+
+  it('reads MCP_HOST from env when getMcpHost is not injected', async () => {
+    const middleware = createAccessMiddleware({
+      getConfig: () => ({ teamDomain: TEAM_DOMAIN, aud: AUD }),
+      jwksResolver: () => {
+        throw new Error('should not be called for the MCP host');
+      },
+      isDev: false,
+    });
+
+    let nextCalled = false;
+    const res = await middleware(makeMockContext({}, `https://${MCP_HOST}/`), async () => {
+      nextCalled = true;
+    });
+    expect(res).toBeUndefined();
+    expect(nextCalled).toBe(true);
+
+    nextCalled = false;
+    const apiRes = await middleware(makeMockContext({}), async () => {
+      nextCalled = true;
+    });
+    expect(nextCalled).toBe(false);
+    expect(apiRes?.status).toBe(403);
+  });
+
+  it('still fails closed on the API host when MCP_HOST is set but Access is not configured', async () => {
+    const origDev = import.meta.env.DEV;
+    import.meta.env.DEV = false;
+    try {
+      const middleware = createAccessMiddleware({
+        getMcpHost: () => MCP_HOST,
+        getConfig: () => ({ teamDomain: undefined, aud: undefined }),
+      });
+      let nextCalled = false;
+      const apiRes = await middleware(makeMockContext({}), async () => {
+        nextCalled = true;
+      });
+      expect(nextCalled).toBe(false);
+      expect(apiRes?.status).toBe(500);
+
+      const mcpRes = await middleware(makeMockContext({}, `http://${MCP_HOST}:8443/`), async () => {
+        nextCalled = true;
+      });
+      expect(mcpRes).toBeUndefined();
+      expect(nextCalled).toBe(true);
+    } finally {
+      import.meta.env.DEV = origDev;
+    }
+  });
+
   it('skips verification in dev builds', async () => {
     let jwksCalled = false;
     const middleware = createAccessMiddleware({
+      getMcpHost: () => MCP_HOST,
       getConfig: () => ({ teamDomain: undefined, aud: undefined }),
       jwksResolver: () => {
         jwksCalled = true;

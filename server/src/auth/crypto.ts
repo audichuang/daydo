@@ -29,9 +29,15 @@ export async function verifyAccessToken(
   token: string,
   secret: string,
 ): Promise<{ userId: string }> {
-  const { payload } = await jwtVerify(token, encoder.encode(secret), {
+  const { payload, protectedHeader } = await jwtVerify(token, encoder.encode(secret), {
     algorithms: ['HS256'],
   });
+  // Defense in depth (spec/mcp.md 4.6): App tokens never carry aud or typ=at+jwt;
+  // MCP access tokens always do, so refuse them even if the key were shared.
+  const typ = typeof protectedHeader.typ === 'string' ? protectedHeader.typ.toLowerCase() : '';
+  if (payload.aud !== undefined || typ === 'at+jwt' || typ === 'application/at+jwt') {
+    throw new Error('Not an App access token');
+  }
   if (typeof payload.sub !== 'string' || payload.sub.length === 0) {
     throw new Error('Missing subject');
   }

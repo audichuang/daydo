@@ -50,6 +50,20 @@
       "when": 1794754100781,
       "tag": "20261115144820_smart_photon",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1794786367329,
+      "tag": "20261115234607_sweet_scream",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1794803202352,
+      "tag": "20261116042642_stale_falcon",
+      "breakpoints": true
     }
   ]
 }

@@ -18,6 +18,7 @@ import {
   rotateRefreshToken,
   type DatabaseClient,
 } from '../src/auth/session';
+import { signMcpAccessToken } from '../src/oauth/tokens';
 import { createTestD1 } from './sqliteD1';
 
 async function makeKeyFixture(alg: 'RS256' | 'ES256', kid: string) {
@@ -54,6 +55,48 @@ describe('auth crypto', () => {
     await expect(
       verifyAccessToken(token, 'secret-b-32-bytes-minimum-123456'),
     ).rejects.toThrow();
+  });
+
+  it('rejects App-secret tokens that carry aud or typ=at+jwt (MCP isolation, spec/mcp.md 4.6)', async () => {
+    const secret = 'unit-test-jwt-secret-32-bytes-minimum';
+    const key = new TextEncoder().encode(secret);
+    const withAud = await new SignJWT({})
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject('user-123')
+      .setAudience('https://daydo-mcp.audichuang.app')
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(key);
+    await expect(verifyAccessToken(withAud, secret)).rejects.toThrow();
+
+    for (const typ of ['at+jwt', 'AT+JWT', 'application/at+jwt']) {
+      const atJwt = await new SignJWT({})
+        .setProtectedHeader({ alg: 'HS256', typ })
+        .setSubject('user-123')
+        .setIssuedAt()
+        .setExpirationTime('1h')
+        .sign(key);
+      await expect(verifyAccessToken(atJwt, secret), typ).rejects.toThrow();
+    }
+
+    const plainTyp = await new SignJWT({})
+      .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+      .setSubject('user-123')
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(key);
+    await expect(verifyAccessToken(plainTyp, secret)).resolves.toEqual({ userId: 'user-123' });
+  });
+
+  it('rejects MCP access tokens (isolation, spec/mcp.md 4.6)', async () => {
+    const secret = 'unit-test-jwt-secret-32-bytes-minimum';
+    const mcpToken = await signMcpAccessToken(secret, {
+      origin: 'https://daydo-mcp.audichuang.app',
+      userId: 'user-123',
+      scope: 'mcp',
+      clientId: 'mcp-abc',
+    });
+    await expect(verifyAccessToken(mcpToken, secret)).rejects.toThrow();
   });
 
   it('generates 32-byte base64url refresh tokens and sha256 hex hashes', async () => {
@@ -162,6 +205,30 @@ describe('Apple identity token verification', () => {
         audience,
         keySource: jwks,
       }),
+    ).rejects.toThrow(AuthVerificationError);
+  });
+
+  it('accepts an audience list (App bundle id and web Services ID)', async () => {
+    const { privateKey, jwks } = await makeKeyFixture('RS256', 'apple-rsa-list');
+    const rawNonce = 'nonce-list';
+    const token = await new SignJWT({ nonce: await sha256Hex(rawNonce) })
+      .setProtectedHeader({ alg: 'RS256', kid: 'apple-rsa-list' })
+      .setIssuer('https://appleid.apple.com')
+      .setAudience('com.audichuang.daydo.web')
+      .setSubject('apple-sub-list')
+      .setIssuedAt()
+      .setExpirationTime('10m')
+      .sign(privateKey);
+
+    const result = await verifyAppleToken({
+      identityToken: token,
+      nonce: rawNonce,
+      audience: [audience, 'com.audichuang.daydo.web'],
+      keySource: jwks,
+    });
+    expect(result.sub).toBe('apple-sub-list');
+    await expect(
+      verifyAppleToken({ identityToken: token, nonce: rawNonce, audience: [audience], keySource: jwks }),
     ).rejects.toThrow(AuthVerificationError);
   });
 
@@ -283,6 +350,56 @@ describe('Google ID token verification', () => {
     await expect(
       verifyGoogleToken({ idToken: expiredToken, audience, keySource: jwks }),
     ).rejects.toThrow(AuthVerificationError);
+  });
+
+  it('accepts an audience list and rejects tokens for none of them', async () => {
+    const { privateKey, jwks } = await makeKeyFixture('RS256', 'google-aud-list');
+    const sign = (aud: string) =>
+      new SignJWT({})
+        .setProtectedHeader({ alg: 'RS256', kid: 'google-aud-list' })
+        .setIssuer('https://accounts.google.com')
+        .setAudience(aud)
+        .setSubject('google-sub-list')
+        .setIssuedAt()
+        .setExpirationTime('10m')
+        .sign(privateKey);
+
+    const audiences = ['google-ios-client-id', 'google-web-client-id'];
+    const res = await verifyGoogleToken({ idToken: await sign('google-web-client-id'), audience: audiences, keySource: jwks });
+    expect(res.sub).toBe('google-sub-list');
+    await expect(
+      verifyGoogleToken({ idToken: await sign('other-client'), audience: audiences, keySource: jwks }),
+    ).rejects.toThrow(AuthVerificationError);
+    await expect(
+      verifyGoogleToken({ idToken: await sign('google-web-client-id'), audience: [], keySource: jwks }),
+    ).rejects.toThrow(AuthVerificationError);
+  });
+
+  it('compares the raw nonce only when one is expected', async () => {
+    const { privateKey, jwks } = await makeKeyFixture('RS256', 'google-nonce');
+    const sign = (claims: Record<string, unknown>) =>
+      new SignJWT(claims)
+        .setProtectedHeader({ alg: 'RS256', kid: 'google-nonce' })
+        .setIssuer('https://accounts.google.com')
+        .setAudience(audience)
+        .setSubject('google-sub-nonce')
+        .setIssuedAt()
+        .setExpirationTime('10m')
+        .sign(privateKey);
+
+    await expect(
+      verifyGoogleToken({ idToken: await sign({ nonce: 'raw-nonce-1' }), audience, nonce: 'raw-nonce-1', keySource: jwks }),
+    ).resolves.toMatchObject({ sub: 'google-sub-nonce' });
+    await expect(
+      verifyGoogleToken({ idToken: await sign({ nonce: 'raw-nonce-1' }), audience, nonce: 'raw-nonce-2', keySource: jwks }),
+    ).rejects.toThrow(AuthVerificationError);
+    await expect(
+      verifyGoogleToken({ idToken: await sign({}), audience, nonce: 'raw-nonce-1', keySource: jwks }),
+    ).rejects.toThrow(AuthVerificationError);
+    // Without an expected nonce (App sign-in) the claim is ignored, as before.
+    await expect(
+      verifyGoogleToken({ idToken: await sign({ nonce: 'anything' }), audience, keySource: jwks }),
+    ).resolves.toMatchObject({ sub: 'google-sub-nonce' });
   });
 });
 

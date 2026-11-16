@@ -130,3 +130,42 @@ Verify the deployed Worker with the smoke test:
 ```bash
 CF_ACCESS_CLIENT_ID=... CF_ACCESS_CLIENT_SECRET=... npm run smoke:prod
 ```
+
+## MCP Server (`daydo-mcp.audichuang.app`)
+
+The same Worker also serves the remote MCP server (OAuth 2.1 + JSON-RPC tools + ICS subscription sync). Design: [`../spec/mcp.md`](../spec/mcp.md). The hostname gate (`middleware/00.host.ts`, `MCP_HOST`, default `daydo-mcp.audichuang.app`) runs before Access: on the MCP host only `/`, `/register`, `/token`, `/authorize*` and the two `/.well-known/oauth-*` documents are served (everything else is 404); on `daydo-api` those MCP paths are 404.
+
+Extra checks: `npm run e2e:ics` (ICS sync and cron) and `npm run e2e:mcp` (OAuth flow, tools, hostname gate). Both are part of `npm run check`.
+
+### Environment
+
+| Name | Kind | Notes |
+|---|---|---|
+| `MCP_HOST` | default `daydo-mcp.audichuang.app` | hostname gate |
+| `GOOGLE_WEB_CLIENT_ID` | default (web client id) | |
+| `GOOGLE_WEB_CLIENT_SECRET` | Worker secret, optional | without it the Google button shows "not configured" |
+| `APPLE_WEB_AUDIENCE` | default `com.audichuang.daydo.web` | Apple Services ID |
+| `DEFAULT_TIMEZONE` | default `Asia/Taipei` | floating ICS times, recurrence "today" |
+| `GOOGLE_AUTH_URL`, `GOOGLE_TOKEN_URL`, `APPLE_AUTH_URL`, `ICS_ALLOW_INSECURE_HOSTS` | e2e only | do not set in production |
+
+`JWT_SECRET` is reused (MCP access and refresh keys are derived from it with HKDF). The only new production secret is `GOOGLE_WEB_CLIENT_SECRET`.
+
+### Post-merge manual steps (not done by any ticket; do not deploy before the user says so)
+
+1. Secret: `void secret put GOOGLE_WEB_CLIENT_SECRET` (reads stdin). The value lives in 1Password vault `Agent`, item "DayDo Google Web OAuth client (MCP)" (read it with the `claude-agent` service account token).
+2. Google Cloud Console: the web client must list the redirect URIs `https://daydo-mcp.audichuang.app/authorize/google/callback` and `http://localhost:5173/authorize/google/callback`.
+3. Apple Developer: Services ID `com.audichuang.daydo.web`, grouped under App ID `com.audichuang.daydo`; domain `daydo-mcp.audichuang.app`; Return URL `https://daydo-mcp.audichuang.app/authorize/apple/callback`.
+4. DNS / custom domain: add `daydo-mcp.audichuang.app` as a second `custom_domain` route on the same Worker in `void.config.ts` (`routes` next to `daydo-api.audichuang.app`), refresh `void.lock.json` with the Void command, then deploy once the user approves. Leave Cloudflare Access untouched: the Access application is bound to `daydo-api` only, and the MCP host skips Access by hostname.
+5. Workers plan: the Free plan (10 ms CPU per invocation) is not enough for ICS parsing or MCP snapshot reads. Use Paid, set `worker.limits.cpu_ms` in `void.config.ts` if needed, and check the plan's subrequest limit per invocation (reduce sources per cron run if necessary).
+
+### After deploy (only when the user asks to deploy)
+
+- Connect Claude, ChatGPT and Codex to `https://daydo-mcp.audichuang.app/` and sign in with a real Apple account in both Safari and Chrome. Confirm: the web Apple `sub` equals the App's `sub` (same account); the Apple `form_post` callback receives the `SameSite=None` cookie; all three clients send `client_id` on `/token`. Repeat once with a Google account.
+- `npm run smoke:prod` against `daydo-api`: Access must still reject requests without a token.
+- `POST https://daydo-mcp.audichuang.app/sync/pull` must return 404.
+
+### Adding the connector
+
+- Claude (claude.ai or desktop): Settings, Connectors, Add custom connector, URL `https://daydo-mcp.audichuang.app/`; leave client id/secret empty (dynamic client registration via `/register`), then sign in with Apple or Google in the opened page.
+- ChatGPT: Settings, Connectors (Developer mode), create a connector with MCP server URL `https://daydo-mcp.audichuang.app/`, authentication OAuth, then sign in.
+- Writes made through MCP show up in the App after its next pull (no push notification).
