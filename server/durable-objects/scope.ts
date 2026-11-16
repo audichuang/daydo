@@ -17,8 +17,9 @@ import {
   type StoredEntityState,
 } from '../src/sync/entities';
 import { advanceServerHlc, clampHlc, type Hlc } from '../src/sync/hlc';
-import { listWriteDenial, type ListAccess } from '../src/sync/access';
+import type { ListAccess } from '../src/sync/access';
 import { mergeOp } from '../src/sync/merge';
+import { authorizeOp } from '../src/scope/authorize';
 import { rowView, type ScopeViewer } from '../src/scope/rowView';
 import { SplitTxnSnapshotStore } from './dev/splitTxnSnapshotStore';
 
@@ -754,131 +755,18 @@ export class ScopeObject extends DurableObject<CloudBindings> {
       }
 
       // 5. Authorization & domain rules by row's CURRENT list
-      let parentTask: StoredEntityState | null = null;
-      let childProjectId: string | undefined;
-
-      if (op.entity === 'member' || op.entity === 'folder' || op.entity === 'tag') {
-        if (!isScopeOwner) {
-          rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
-          continue;
-        }
-      } else if (op.entity === 'project') {
-        if (op.op === 'delete') {
-          if (input.memberships[op.entityId] !== 'owner') {
-            rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
-            continue;
-          }
-          if (!purgedSet.has(op.entityId)) {
-            rejectOp(op.opId, 'Project deletion must be purged via D1', op.entity, op.entityId);
-            continue;
-          }
-        }
-        if (op.op === 'upsert') {
-          const denial = listWriteDenial(op.entityId, access);
-          if (denial) {
-            rejectOp(op.opId, denial, op.entity, op.entityId);
-            continue;
-          }
-          const role = input.memberships[op.entityId];
-          const touchesDeletedAt =
-            op.fields.includes('deletedAt') &&
-            (existing
-              ? (Object.hasOwn(op.row, 'deletedAt') ? (op.row.deletedAt ?? null) : null) !==
-                (existing.row.deletedAt ?? null)
-              : Object.hasOwn(op.row, 'deletedAt') &&
-                op.row.deletedAt !== null &&
-                op.row.deletedAt !== undefined);
-          const touchesArchivedAt =
-            op.fields.includes('archivedAt') &&
-            (existing
-              ? (Object.hasOwn(op.row, 'archivedAt') ? (op.row.archivedAt ?? null) : null) !==
-                (existing.row.archivedAt ?? null)
-              : Object.hasOwn(op.row, 'archivedAt') &&
-                op.row.archivedAt !== null &&
-                op.row.archivedAt !== undefined);
-          if ((touchesDeletedAt || touchesArchivedAt) && role !== 'owner') {
-            rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
-            continue;
-          }
-        }
-      } else if (op.entity === 'task') {
-        if (!existing) {
-          if (op.op === 'upsert') {
-            const denial = listWriteDenial(String(op.row.projectId), access);
-            if (denial) {
-              rejectOp(op.opId, denial, op.entity, op.entityId);
-              continue;
-            }
-          } else if (!isScopeOwner) {
-            rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
-            continue;
-          }
-        } else {
-          const currentProjectId = String(existing.row.projectId);
-          const allowEmptyTombstoneReplay =
-            existing.purgedAt !== null && currentProjectId === '' && isScopeOwner;
-          const denial = listWriteDenial(currentProjectId, access);
-          if (denial === 'Project is purged' || (denial && !allowEmptyTombstoneReplay)) {
-            rejectOp(op.opId, denial, op.entity, op.entityId);
-            continue;
-          }
-          if (existing.purgedAt === null && op.op === 'upsert' && op.fields.includes('projectId')) {
-            const nextProjectId =
-              Object.hasOwn(op.row, 'projectId') && typeof op.row.projectId === 'string'
-                ? op.row.projectId
-                : '';
-            if (nextProjectId !== currentProjectId) {
-              const denial = listWriteDenial(nextProjectId, access);
-              if (denial) {
-                rejectOp(op.opId, denial, op.entity, op.entityId);
-                continue;
-              }
-            }
-          }
-        }
-      } else {
-        // Child row: checklistItem, attachment, comment
-        if (existing) {
-          if (op.op === 'upsert' && op.fields.includes('taskId')) {
-            const nextTaskId = Object.hasOwn(op.row, 'taskId') ? op.row.taskId : null;
-            if (nextTaskId !== existing.row.taskId) {
-              rejectOp(op.opId, 'Child taskId cannot be changed', op.entity, op.entityId);
-              continue;
-            }
-          }
-          parentTask = store.getRow('task', String(existing.row.taskId));
-          const currentProjectId = parentTask
-            ? String(parentTask.row.projectId)
-            : (existing.projectId ?? '');
-          childProjectId = currentProjectId;
-          const allowEmptyTombstoneReplay =
-            existing.purgedAt !== null && currentProjectId === '' && isScopeOwner;
-          const denial = listWriteDenial(currentProjectId, access);
-          if (denial === 'Project is purged' || (denial && !allowEmptyTombstoneReplay)) {
-            rejectOp(op.opId, denial, op.entity, op.entityId);
-            continue;
-          }
-        } else {
-          const parentTaskId =
-            Object.hasOwn(op.row, 'taskId') && typeof op.row.taskId === 'string'
-              ? op.row.taskId
-              : '';
-          parentTask = parentTaskId ? store.getRow('task', parentTaskId) : null;
-          if (!parentTask) {
-            rejectOp(op.opId, 'unknown-row', op.entity, op.entityId);
-            continue;
-          }
-          const currentProjectId = String(parentTask.row.projectId);
-          childProjectId = currentProjectId;
-          const allowEmptyTaskTombstone =
-            parentTask.purgedAt !== null && currentProjectId === '' && isScopeOwner;
-          const denial = listWriteDenial(currentProjectId, access);
-          if (denial === 'Project is purged' || (denial && !allowEmptyTaskTombstone)) {
-            rejectOp(op.opId, denial, op.entity, op.entityId);
-            continue;
-          }
-        }
+      const auth = authorizeOp({
+        op,
+        existing,
+        isScopeOwner,
+        access,
+        getTask: (taskId) => store.getRow('task', taskId),
+      });
+      if (!auth.ok) {
+        rejectOp(op.opId, auth.reason, op.entity, op.entityId);
+        continue;
       }
+      const { parentTask, childProjectId } = auth;
 
       // 6. HLC 5-minute clamp & merge
       let clamped: ReturnType<typeof clampHlc>;
