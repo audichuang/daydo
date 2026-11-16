@@ -4,7 +4,12 @@ import SQLite3
 import Testing
 @testable import DayDoCore
 
-@Suite(.serialized) struct StorageTests {
+/// Suites that open file-backed app databases. GRDB suspension notifications are
+/// process-wide, so these must not run concurrently with the suspension test.
+@Suite(.serialized) enum FileBackedDatabaseTests {}
+
+extension FileBackedDatabaseTests {
+@Suite struct StorageTests {
     private func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("daydo-storage-tests-\(UUID().uuidString)", isDirectory: true)
@@ -235,4 +240,5 @@ import Testing
         #expect(tasks.map(\.id) == [created.id])
         #expect(tasks.first?.title == "Allowed after resume")
     }
+}
 }

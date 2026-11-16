@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import DayDoCore
 
+extension FileBackedDatabaseTests {
 @Suite struct WidgetDataTests {
     private func makeProject(_ id: String, name: String, color: String, showInSmart: String = "all") -> Project {
         Project(
@@ -271,4 +272,5 @@ import Testing
         #expect(hidden.monthLayout.weeks[2].overflow[0] == nil)
         #expect(hidden.monthLayout.weeks[2].bars.allSatisfy { !$0.task.isCompleted })
     }
+}
 }
