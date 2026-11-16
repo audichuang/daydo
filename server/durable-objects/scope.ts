@@ -10,7 +10,6 @@ import {
   isEntityName,
   isTaskChildEntity,
   parseEntityId,
-  serializePublicRow,
   stateToDbValues,
   validateSyncOp,
   type EntityName,
@@ -19,6 +18,7 @@ import {
 } from '../src/sync/entities';
 import { advanceServerHlc, clampHlc, type Hlc } from '../src/sync/hlc';
 import { mergeOp } from '../src/sync/merge';
+import { rowView, type ScopeViewer } from '../src/scope/rowView';
 import { SplitTxnSnapshotStore } from './dev/splitTxnSnapshotStore';
 
 export interface PushOpResult {
@@ -138,6 +138,9 @@ const LIST_SCOPED_ENTITIES: ReadonlyArray<{
   { entity: 'attachment', listCol: 'projectId' },
   { entity: 'comment', listCol: 'projectId' },
 ];
+
+/** purgeProject answers the list owner deleting it, so the purged project row keeps folderId. */
+const PURGE_VIEWER: ScopeViewer = { isScopeOwner: true, meMemberId: null };
 
 export function shouldSplitTransaction(
   syncFault: string | undefined,
@@ -602,10 +605,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
         return { row: null, clocks: {}, gone: true };
       }
       return {
-        row: serializePublicRow(entity, state.row, state.purgedAt, {
-          meMemberId: isScopeOwner ? meMemberId : null,
-          omitFolderId: !isScopeOwner,
-        }),
+        row: rowView(entity, state.row, state.purgedAt, { isScopeOwner, meMemberId }),
         clocks: { ...state.clocks },
       };
     };
@@ -697,10 +697,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
               results.push({
                 opId: rawOpId,
                 status: 'applied',
-                row: serializePublicRow(rawEntity, state.row, state.purgedAt, {
-                  meMemberId: isScopeOwner ? meMemberId : null,
-                  omitFolderId: !isScopeOwner,
-                }),
+                row: rowView(rawEntity, state.row, state.purgedAt, { isScopeOwner, meMemberId }),
                 clocks: { ...state.clocks },
               });
               continue;
@@ -1049,10 +1046,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
       results.push({
         opId: op.opId,
         status: 'applied',
-        row: serializePublicRow(op.entity, merged.row, merged.purgedAt, {
-          meMemberId: isScopeOwner ? meMemberId : null,
-          omitFolderId: !isScopeOwner,
-        }),
+        row: rowView(op.entity, merged.row, merged.purgedAt, { isScopeOwner, meMemberId }),
         clocks: merged.clocks,
       });
     }
@@ -1216,9 +1210,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
           return {
             projectId: input.projectId,
             purgedRow: projState
-              ? serializePublicRow('project', projState.row, projState.purgedAt, {
-                  omitFolderId: false,
-                })
+              ? rowView('project', projState.row, projState.purgedAt, PURGE_VIEWER)
               : null,
             clocks: projState ? { ...projState.clocks } : {},
             serverTime: nextServerHlc.formatted,
@@ -1272,9 +1264,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
       return {
         projectId: input.projectId,
         purgedRow: projState
-          ? serializePublicRow('project', projState.row, projState.purgedAt, {
-              omitFolderId: false,
-            })
+          ? rowView('project', projState.row, projState.purgedAt, PURGE_VIEWER)
           : null,
         clocks: projState ? { ...projState.clocks } : {},
         serverTime: nextServerHlc.formatted,
@@ -1377,7 +1367,8 @@ export class ScopeObject extends DurableObject<CloudBindings> {
           const state = dbRecordToState(entity, r as Record<string, unknown>);
           combined.push({
             entity,
-            row: serializePublicRow(entity, state.row, state.purgedAt, {
+            row: rowView(entity, state.row, state.purgedAt, {
+              isScopeOwner: isCreator,
               meMemberId: input.meMemberId,
             }),
             clocks: state.clocks,
@@ -1402,9 +1393,9 @@ export class ScopeObject extends DurableObject<CloudBindings> {
           const state = dbRecordToState(entity, r as Record<string, unknown>);
           combined.push({
             entity,
-            row: serializePublicRow(entity, state.row, state.purgedAt, {
-              meMemberId: isCreator ? input.meMemberId : null,
-              omitFolderId: entity === 'project' && !isCreator,
+            row: rowView(entity, state.row, state.purgedAt, {
+              isScopeOwner: isCreator,
+              meMemberId: input.meMemberId,
             }),
             clocks: state.clocks,
             serverSeq: state.serverSeq,
