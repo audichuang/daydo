@@ -13,6 +13,11 @@
         "pattern": "daydo-mcp.audichuang.app",
         "custom_domain": true
       }
+    ],
+    "send_email": [
+      {
+        "name": "EMAIL"
+      }
     ]
   },
   "resolved": {
@@ -54,7 +59,12 @@
         "migrations_dir": "./db/migrations"
       }
     ],
-    "compatibility_date": "2026-02-24"
+    "compatibility_date": "2026-02-24",
+    "send_email": [
+      {
+        "name": "EMAIL"
+      }
+    ]
   },
-  "text": "{\n  \"name\": \"daydo-api\",\n  \"workers_dev\": false,\n  \"preview_urls\": false,\n  \"routes\": [\n    {\n      \"pattern\": \"daydo-api.audichuang.app\",\n      \"custom_domain\": true\n    },\n    {\n      \"pattern\": \"daydo-mcp.audichuang.app\",\n      \"custom_domain\": true\n    }\n  ],\n  \"durable_objects\": {\n    \"bindings\": [\n      {\n        \"name\": \"SCOPE\",\n        \"class_name\": \"ScopeDurableObject\"\n      }\n    ]\n  },\n  \"migrations\": [\n    {\n      \"tag\": \"void-durable-scope-v1\",\n      \"new_sqlite_classes\": [\n        \"ScopeDurableObject\"\n      ]\n    }\n  ],\n  \"account_id\": \"c93cf77df286c86caea5807e9051840b\",\n  \"d1_databases\": [\n    {\n      \"binding\": \"DB\",\n      \"database_name\": \"daydo-api-db\",\n      \"database_id\": \"47259eac-5c0a-459f-ac0f-997ffd1ec092\",\n      \"migrations_dir\": \"./db/migrations\"\n    }\n  ],\n  \"compatibility_date\": \"2026-02-24\"\n}\n"
+  "text": "{\n  \"name\": \"daydo-api\",\n  \"workers_dev\": false,\n  \"preview_urls\": false,\n  \"routes\": [\n    {\n      \"pattern\": \"daydo-api.audichuang.app\",\n      \"custom_domain\": true\n    },\n    {\n      \"pattern\": \"daydo-mcp.audichuang.app\",\n      \"custom_domain\": true\n    }\n  ],\n  \"durable_objects\": {\n    \"bindings\": [\n      {\n        \"name\": \"SCOPE\",\n        \"class_name\": \"ScopeDurableObject\"\n      }\n    ]\n  },\n  \"migrations\": [\n    {\n      \"tag\": \"void-durable-scope-v1\",\n      \"new_sqlite_classes\": [\n        \"ScopeDurableObject\"\n      ]\n    }\n  ],\n  \"account_id\": \"c93cf77df286c86caea5807e9051840b\",\n  \"d1_databases\": [\n    {\n      \"binding\": \"DB\",\n      \"database_name\": \"daydo-api-db\",\n      \"database_id\": \"47259eac-5c0a-459f-ac0f-997ffd1ec092\",\n      \"migrations_dir\": \"./db/migrations\"\n    }\n  ],\n  \"compatibility_date\": \"2026-02-24\",\n  \"send_email\": [\n    {\n      \"name\": \"EMAIL\"\n    }\n  ]\n}\n"
 }
