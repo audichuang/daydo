@@ -97,11 +97,19 @@ export async function loadSnapshot(
     userRows[0] && typeof userRows[0].meMemberId === 'string' ? userRows[0].meMemberId : null;
 
   const ownScope = userScope(userId);
+  // Same definition as the Scope DO's getInboxProjectId (login/refresh): own scope, isInbox, not
+  // trashed or purged, lowest serverSeq when there are several.
+  let inboxSeq = Infinity;
   let inboxProjectId: string | null = null;
   for (const p of byEntity.get('project')?.values() ?? []) {
-    if (p.scope === ownScope && p.row.isInbox === true && isAbsent(p.row, 'purgedAt')) {
+    if (
+      p.scope === ownScope &&
+      p.row.isInbox === true &&
+      isAbsent(p.row, 'deletedAt', 'purgedAt') &&
+      p.serverSeq < inboxSeq
+    ) {
+      inboxSeq = p.serverSeq;
       inboxProjectId = String(p.row.id);
-      break;
     }
   }
 
