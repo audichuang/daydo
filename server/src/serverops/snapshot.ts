@@ -68,7 +68,8 @@ export async function loadSnapshot(
           bucket.delete(r.entityId);
           continue;
         }
-        const id = String(r.row.id);
+        // Tags are keyed by name; every other entity by id.
+        const id = String(r.entity === 'tag' ? r.row.name : r.row.id);
         bucket.set(id, {
           entity: r.entity,
           scope: s.scope,

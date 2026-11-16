@@ -101,10 +101,10 @@ describe('handleMcpPost transport', () => {
     expect(((await res.json()) as Envelope).result).toEqual({});
   });
 
-  it('tools/list returns the registry (empty in M8)', async () => {
+  it('tools/list returns the registry', async () => {
     const res = await handleMcpPost(postJson({ jsonrpc: '2.0', id: 2, method: 'tools/list' }), CTX);
     expect(((await res.json()) as Envelope).result).toEqual({ tools: TOOL_DEFS });
-    expect(TOOL_DEFS).toEqual([]);
+    expect(TOOL_DEFS.map((t) => t.name)).toContain('list_projects');
   });
 
   it('tools/call without a name -> -32602, HTTP 200', async () => {

@@ -1,5 +1,8 @@
 // MCP tool registry: definitions, behaviour hints, argument validation (spec/mcp.md 5, 8).
-// The tool list is empty in this ticket; later tickets register tools here.
+
+import { projectTools } from './tools/projects';
+import { tagTools } from './tools/tags';
+import type { AppDb, ScopeStub } from '../sync/push';
 
 export type Hint = 'read' | 'write' | 'idempotent-write' | 'idempotent-overwrite' | 'destructive';
 
@@ -9,9 +12,16 @@ export interface ToolSchema {
   required?: readonly string[];
 }
 
+/** Per-request handles a tool needs to read and write the caller's data (built by the route). */
+export interface ToolServices {
+  db: AppDb;
+  getScopeStub: (scope: string) => ScopeStub;
+}
+
 export interface ToolContext {
   userId: string;
   clientId: string | null;
+  services?: ToolServices;
 }
 
 export interface ToolDef {
@@ -22,12 +32,21 @@ export interface ToolDef {
 }
 
 /** Behaviour hints in one table so a new tool cannot ship without them. Hints are not a security boundary. */
-export const HINTS: Record<string, Hint> = {};
+export const HINTS: Record<string, Hint> = {
+  list_projects: 'read',
+  get_project: 'read',
+  get_project_data: 'read',
+  create_project: 'write',
+  update_project: 'idempotent-overwrite',
+  delete_project: 'destructive',
+  list_tags: 'read',
+  create_tag: 'write',
+};
 
 /** Only tools that fetch caller-supplied external URLs. */
 export const OPEN_WORLD = new Set<string>();
 
-export const TOOLS: readonly ToolDef[] = [];
+export const TOOLS: readonly ToolDef[] = [...projectTools(), ...tagTools()];
 
 export interface ToolDescriptor {
   name: string;
