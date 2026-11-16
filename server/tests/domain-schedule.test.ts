@@ -23,6 +23,7 @@ import {
   nextOccurrence,
   parseRecurrence,
   validateRepeat,
+  parseWritableRecurrence,
 } from '../src/domain/recurrence';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -387,8 +388,8 @@ describe('recurrence', () => {
     });
     expect(parseRecurrence('RRULE:INTERVAL=2')).toBeNull();
     expect(parseRecurrence('RRULE:FREQ=HOURLY')).toBeNull();
-    // Swift's Int() overflows to nil and falls back to 1.
-    expect(validateRepeat('FREQ=DAILY;INTERVAL=99999999999999999999999')).toBe('RRULE:FREQ=DAILY');
+    // Reading: Swift's Int() overflows to nil and falls back to 1.
+    expect(parseRecurrence('FREQ=DAILY;INTERVAL=99999999999999999999999')?.interval).toBe(1);
     expect(formatRecurrence({ frequency: 'MONTHLY', interval: 2, byWeekday: [], byMonthDay: 15 })).toBe(
       'RRULE:FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=15',
     );
@@ -405,6 +406,16 @@ describe('recurrence', () => {
     expect(validateRepeat('RRULE:FREQ=DAILY;INTERVAL=999')).toBe('RRULE:FREQ=DAILY;INTERVAL=999');
     for (const bad of ['RRULE:FREQ=YEARLY;INTERVAL=8000', 'FREQ=WEEKLY;INTERVAL=300000;BYDAY=MO', 'FREQ=DAILY;INTERVAL=1000']) {
       expect(() => validateRepeat(bad), bad).toThrow(`Unsupported repeat rule: ${bad}`);
+    }
+    // Digits beyond a safe integer must not slip through as interval 1: Swift parses up to Int64 and overflows.
+    for (const bad of [
+      'RRULE:FREQ=WEEKLY;INTERVAL=9223372036854775807',
+      'RRULE:FREQ=YEARLY;INTERVAL=2000000000000000000',
+      'FREQ=DAILY;INTERVAL=99999999999999999999999',
+      'RRULE:FREQ=DAILY;INTERVAL=+10000000000000000',
+    ]) {
+      expect(() => validateRepeat(bad), bad).toThrow(`Unsupported repeat rule: ${bad}`);
+      expect(parseWritableRecurrence(bad), bad).toBeNull();
     }
     // Reading stays lenient so App-written rules still parse.
     expect(parseRecurrence('RRULE:FREQ=YEARLY;INTERVAL=8000')?.interval).toBe(8000);

@@ -401,6 +401,7 @@ describe('M9b writer: value validation', () => {
     ['reminder', { entity: 'task', entityId: 't1', set: { reminders: ['TRIGGER:soon'] } }],
     ['reminder beyond a year', { entity: 'task', entityId: 't1', set: { reminders: ['TRIGGER:-P999999999999999D'] } }],
     ['repeat interval above 999', { entity: 'task', entityId: 't1', set: { repeatRule: 'RRULE:FREQ=YEARLY;INTERVAL=8000' } }],
+    ['repeat interval beyond a safe integer', { entity: 'task', entityId: 't1', set: { repeatRule: 'RRULE:FREQ=WEEKLY;INTERVAL=9223372036854775807' } }],
     ['repeat', { entity: 'task', entityId: 't1', set: { repeatRule: 'RRULE:FREQ=MONTHLY;BYMONTHDAY=-1' } }],
     ['sortKey ends in 0', { entity: 'task', entityId: 't1', set: { sortKey: 'i0' } }],
     ['sortKey empty', { entity: 'task', entityId: 't1', set: { sortKey: '' } }],

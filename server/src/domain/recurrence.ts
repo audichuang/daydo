@@ -77,10 +77,22 @@ export function formatRecurrence(r: Recurrence): string {
  */
 export const MAX_INTERVAL = 999;
 
-/** Parses a rule we are willing to write; null when unsupported or the interval is too large. */
+/**
+ * Parses a rule we are willing to write; null when unsupported or the interval is too large.
+ * Checks every raw INTERVAL too: parseRecurrence lowers digits beyond a safe integer to 1, but the
+ * App's Int() reads them up to Int64 and overflows when computing the next occurrence.
+ */
 export function parseWritableRecurrence(rrule: string): Recurrence | null {
   const r = parseRecurrence(rrule);
-  return r && r.interval <= MAX_INTERVAL ? r : null;
+  if (!r || r.interval > MAX_INTERVAL) return null;
+  const body = rrule.toUpperCase().startsWith('RRULE:') ? rrule.slice(6) : rrule;
+  for (const part of body.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq <= 0 || part.slice(0, eq).toUpperCase() !== 'INTERVAL') continue;
+    const value = part.slice(eq + 1);
+    if (INT_RE.test(value) && Number(value) > MAX_INTERVAL) return null;
+  }
+  return r;
 }
 
 /** `RRULE:`-prefixed input is stored verbatim; bare rules are canonicalised. */
