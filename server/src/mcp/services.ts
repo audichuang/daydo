@@ -1,7 +1,8 @@
 // Production ToolServices, shared by the MCP route (routes/index.ts) and the ICS cron.
 import { Scope } from '../../durable-objects/scope';
 import { parseInsecureHosts } from '../ics/fetch';
-import type { AppDb, ScopeStub } from '../sync/push';
+import type { AppDb } from '../sync/push';
+import type { ScopeStub } from '../scope/api';
 import type { ToolServices } from './registry';
 
 export interface ToolServicesEnv {

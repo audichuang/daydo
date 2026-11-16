@@ -1,7 +1,7 @@
 import { device, identity, session, user } from '@schema';
 import { and, eq, gt, isNull, sql, type db } from 'void/db';
 import { activeProjectIds, decodeProjectIds } from '../membership';
-import type { ScopeStub } from '../sync/push';
+import type { ScopeStub } from '../scope/api';
 import { userScope } from '../sync/scopeName';
 import { generateRefreshToken, sha256Hex, signAccessToken } from './crypto';
 import { sanitizeHttpsAvatarUrl, type IdentityProviderName } from './providers';

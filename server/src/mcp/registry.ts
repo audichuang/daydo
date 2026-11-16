@@ -7,7 +7,8 @@ import { taskReadTools, taskWriteTools } from './tools/tasks';
 import type { FetchIcsOptions } from '../ics/fetch';
 import type { IcsStore } from '../ics/store';
 import type { ServerHlcClock } from '../sync/hlc';
-import type { AppDb, ScopeStub } from '../sync/push';
+import type { AppDb } from '../sync/push';
+import type { ScopeStub } from '../scope/api';
 
 export type Hint = 'read' | 'write' | 'idempotent-write' | 'idempotent-overwrite' | 'destructive';
 

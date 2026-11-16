@@ -13,7 +13,8 @@ import {
   updateProjectMemberRole,
 } from '../src/sharing';
 import { resolveMemberId } from '../src/sync/entities';
-import { executeSyncPush, type ScopeStub } from '../src/sync/push';
+import { executeSyncPush } from '../src/sync/push';
+import type { ScopeStub } from '../src/scope/api';
 import { createScopeWorld } from './helpers/scopeWorld';
 
 function createHarness() {

@@ -9,7 +9,8 @@ import {
   updateProjectMemberRole,
 } from '../src/sharing';
 import { executeSyncPull } from '../src/sync/pull';
-import { executeSyncPush, type ScopeStub } from '../src/sync/push';
+import { executeSyncPush } from '../src/sync/push';
+import type { ScopeStub } from '../src/scope/api';
 import { createScopeWorld, type ScopeWorld } from './helpers/scopeWorld';
 
 // Pins how membership work is grouped into D1 round trips. The "permanently delete a

@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '../db/schema';
 import { compareHlc, MAX_FUTURE_DRIFT_MS } from '../src/sync/hlc';
 import { toEnvelope } from '../src/sync/envelope';
-import { executeSyncPush, type ScopeStub } from '../src/sync/push';
+import { executeSyncPush } from '../src/sync/push';
+import type { ScopeStub } from '../src/scope/api';
 import {
   createScopeWorld,
   ScopeClass,

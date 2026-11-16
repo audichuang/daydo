@@ -1,7 +1,8 @@
 import Scope, { ScopeObject, shouldSplitTransaction } from '../../durable-objects/scope';
 import { createServerHlcClock } from '../../src/sync/hlc';
 import { executeSyncPull } from '../../src/sync/pull';
-import { executeSyncPush, type ScopeStub } from '../../src/sync/push';
+import { executeSyncPush } from '../../src/sync/push';
+import type { ScopeStub } from '../../src/scope/api';
 import { createTestD1, createTestDoState } from '../sqliteD1';
 
 export { ScopeObject, shouldSplitTransaction };

@@ -1,6 +1,5 @@
-import type { ExpectedProjectMember } from '../../durable-objects/scope';
+import type { ExpectedProjectMember, ScopeStub } from '../scope/api';
 import { resolveMemberId, type MembershipRole } from '../sync/entities';
-import type { ScopeStub } from '../sync/push';
 import type { ActiveMemberRow } from './statements';
 
 // D1 projectMembership is the source of truth; each list's home Scope keeps a

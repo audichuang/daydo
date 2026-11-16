@@ -1,4 +1,4 @@
-import type { PushOpResult } from '../../../durable-objects/scope';
+import type { PushOpResult } from '../../scope/api';
 import {
   hasAllRequiredFields,
   isTaskChildEntity,

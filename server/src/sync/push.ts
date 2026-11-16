@@ -1,16 +1,6 @@
 import type * as schema from '@schema';
 import type { DrizzleD1Database } from 'void/db';
-import type {
-  PushOpResult,
-  ScopeProjectInfo,
-  ScopeProjectMemberInput,
-  ScopePullInput,
-  ScopePullResponse,
-  ScopePurgeProjectInput,
-  ScopePurgeProjectResponse,
-  ScopePushInput,
-  ScopePushResponse,
-} from '../../durable-objects/scope';
+import type { PushOpResult, ScopeStub } from '../scope/api';
 import { toEnvelope, type OpEnvelope } from './envelope';
 import { advanceServerHlc, type ServerHlcClock } from './hlc';
 import { applyPushPlan } from './push/apply';
@@ -20,15 +10,6 @@ import { collectPushLookups } from './push/parse';
 import { planPushBatch } from './push/plan';
 
 export type AppDb = DrizzleD1Database<typeof schema>;
-
-export interface ScopeStub {
-  push(input: ScopePushInput): Promise<ScopePushResponse>;
-  pull(input: ScopePullInput): Promise<ScopePullResponse>;
-  getInboxProjectId(input: { readableProjectIds: string[] }): Promise<string | null>;
-  getProjectInfo(input: { projectId: string }): Promise<ScopeProjectInfo | null>;
-  projectMember(input: ScopeProjectMemberInput): Promise<void>;
-  purgeProject(input: ScopePurgeProjectInput): Promise<ScopePurgeProjectResponse>;
-}
 
 export { chunkArray };
 

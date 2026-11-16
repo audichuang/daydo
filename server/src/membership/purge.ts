@@ -1,10 +1,7 @@
 import { listScopes, projectMembership, purgedProject } from '@schema';
 import { and, eq, inArray, isNull, type BatchItem } from 'void/db';
-import type {
-  ScopePurgeProjectInput,
-  ScopePurgeProjectResponse,
-} from '../../durable-objects/scope';
-import type { AppDb, ScopeStub } from '../sync/push';
+import type { ScopePurgeProjectInput, ScopePurgeProjectResponse, ScopeStub } from '../scope/api';
+import type { AppDb } from '../sync/push';
 
 type PurgeStubLookup = (scope: string) => Pick<ScopeStub, 'purgeProject'>;
 

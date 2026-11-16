@@ -1,6 +1,6 @@
 import { entityHome, user } from '@schema';
 import { and, eq, isNull, or, type BatchItem } from 'void/db';
-import type { PushOpResult, ScopePushResponse } from '../../../durable-objects/scope';
+import type { PushOpResult, ScopePushResponse, ScopeStub } from '../../scope/api';
 import {
   activeForUser,
   claimOwner,
@@ -12,7 +12,7 @@ import {
 } from '../../membership';
 import type { EntityName, MembershipRole } from '../entities';
 import type { OpEnvelope } from '../envelope';
-import type { AppDb, ScopeStub } from '../push';
+import type { AppDb } from '../push';
 import { scopeOwnerId } from '../scopeName';
 import {
   chunkArray,

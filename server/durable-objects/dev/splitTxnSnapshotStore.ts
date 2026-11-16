@@ -5,7 +5,7 @@ import {
   type StoredEntityState,
 } from '../../src/sync/entities';
 import type { OpEnvelope } from '../../src/sync/envelope';
-import type { OpAppliedRow, ScopeStore, TaskChildEntity } from '../scope';
+import type { OpAppliedRow, ScopeStore, TaskChildEntity } from '../../src/scope/store';
 
 /**
  * Dev-only fault-injection store that snapshots counter, opApplied, and existing rows

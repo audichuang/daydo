@@ -1,10 +1,10 @@
 import { user } from '@schema';
 import { eq } from 'void/db';
-import type { PullScopeRow } from '../../durable-objects/scope';
+import type { PullScopeRow, ScopeStub } from '../scope/api';
 import { listWriteDenial } from '../sync/access';
 import type { MembershipRole } from '../sync/entities';
 import { executeSyncPull } from '../sync/pull';
-import type { AppDb, ScopeStub } from '../sync/push';
+import type { AppDb } from '../sync/push';
 import { userScope } from '../sync/scopeName';
 import type { WriteOutcome } from './writer';
 

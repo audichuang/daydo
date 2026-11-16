@@ -1,6 +1,6 @@
 import { user } from '@schema';
 import { eq, type BatchItem } from 'void/db';
-import type { ScopePullResponse } from '../../durable-objects/scope';
+import type { ScopePullResponse, ScopeStub } from '../scope/api';
 import {
   activeForUser,
   activeMembersAmong,
@@ -18,7 +18,7 @@ import {
   type PullMemberRow,
 } from '../membership';
 import type { MembershipRole } from './entities';
-import { chunkArray, type AppDb, type ScopeStub } from './push';
+import { chunkArray, type AppDb } from './push';
 import { scopeOwnerId, userScope } from './scopeName';
 
 export type { PullMemberRow };
