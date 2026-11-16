@@ -7,7 +7,7 @@ import { loadSnapshot } from '../src/serverops/snapshot';
 import { writeOrThrow, type WriteIntent } from '../src/serverops/writer';
 import { validateSyncOp } from '../src/sync/entities';
 import { createScopeWorld } from './helpers/scopeWorld';
-import { deviceOp as sharedDeviceOp, NOW_ISH, projectRow, taskRow } from './helpers/serverHarness';
+import { deviceOp, NOW_ISH, projectRow, taskRow } from './helpers/serverHarness';
 
 vi.mock('../src/sync/entities', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/sync/entities')>();
@@ -18,9 +18,6 @@ const validateSpy = vi.mocked(validateSyncOp);
 let seq = 0;
 const deviceHlc = () => `${Date.now() - 60_000}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
 
-// Same op shape as the shared builder, bound to this file's module-level device clock.
-const deviceOp = (entity: string, row: Record<string, unknown>, hlc = deviceHlc()) =>
-  sharedDeviceOp({ deviceHlc }, entity, row, hlc);
 
 async function seededWorld() {
   const world = createScopeWorld();
@@ -29,9 +26,9 @@ async function seededWorld() {
   });
   await world.db.update(schema.user).set({ meMemberId: 'm-a' }).where(eq(schema.user.id, 'u-a'));
   const seeded = await world.push('u-a', 'dev-a', [
-    deviceOp('project', projectRow('inbox-u-a', { isInbox: true })),
-    deviceOp('project', projectRow('p1')),
-    deviceOp('task', taskRow('t1', 'p1')),
+    deviceOp({ deviceHlc }, 'project', projectRow('inbox-u-a', { isInbox: true })),
+    deviceOp({ deviceHlc }, 'project', projectRow('p1')),
+    deviceOp({ deviceHlc }, 'task', taskRow('t1', 'p1')),
   ]);
   expect(seeded.results.map((r) => r.status)).toEqual(['applied', 'applied', 'applied']);
   return world;
@@ -47,9 +44,9 @@ describe('validateSyncOp runs once per op', () => {
     validateSpy.mockClear();
 
     const ops = [
-      deviceOp('project', projectRow('p2')),
-      deviceOp('task', taskRow('t2', 'p2')),
-      { ...deviceOp('task', { title: 'renamed' }), entityId: 't1', hlc: 'bad-hlc' },
+      deviceOp({ deviceHlc }, 'project', projectRow('p2')),
+      deviceOp({ deviceHlc }, 'task', taskRow('t2', 'p2')),
+      { ...deviceOp({ deviceHlc }, 'task', { title: 'renamed' }), entityId: 't1', hlc: 'bad-hlc' },
     ];
     const callsBefore = world.calls.length;
     const res = await world.push('u-a', 'dev-a', ops);

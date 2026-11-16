@@ -12,17 +12,13 @@ import { loadSnapshot } from '../src/serverops/snapshot';
 import { writeOrThrow, type WriteIntent } from '../src/serverops/writer';
 import type { ScopePushInput } from '../src/scope/api';
 import { createScopeWorld, ScopeClass, type CreateScopeWorldOptions } from './helpers/scopeWorld';
-import { deviceOp as sharedDeviceOp, NOW_ISH, projectRow, taskRow } from './helpers/serverHarness';
+import { deviceOp, NOW_ISH, projectRow, taskRow } from './helpers/serverHarness';
 import { createTestDoState } from './sqliteD1';
 
 const LEGACY_COMMIT = '701de08';
 const serverDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let seq = 0;
 const deviceHlc = () => `${Date.now() - 60_000}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
-
-// Same op shape as the shared builder, bound to this file's module-level device clock.
-const deviceOp = (entity: string, row: Record<string, unknown>, hlc = deviceHlc()) =>
-  sharedDeviceOp({ deviceHlc }, entity, row, hlc);
 
 /** A world that records every push input exactly as it crosses the RPC boundary. */
 async function seededWorld(scopeClass?: CreateScopeWorldOptions['scopeClass']) {
@@ -39,9 +35,9 @@ async function seededWorld(scopeClass?: CreateScopeWorldOptions['scopeClass']) {
   });
   await world.db.update(schema.user).set({ meMemberId: 'm-a' }).where(eq(schema.user.id, 'u-a'));
   const seedOps = [
-    deviceOp('project', projectRow('inbox-u-a', { isInbox: true })),
-    deviceOp('project', projectRow('p1')),
-    deviceOp('task', taskRow('t1', 'p1')),
+    deviceOp({ deviceHlc }, 'project', projectRow('inbox-u-a', { isInbox: true })),
+    deviceOp({ deviceHlc }, 'project', projectRow('p1')),
+    deviceOp({ deviceHlc }, 'task', taskRow('t1', 'p1')),
   ];
   const seeded = await world.push('u-a', 'dev-a', seedOps);
   return { world, inputs, seedOps, seeded };
@@ -50,9 +46,9 @@ async function seededWorld(scopeClass?: CreateScopeWorldOptions['scopeClass']) {
 /** An App push mixing valid ops with an invalid op whose row is already homed (so it reaches the DO). */
 function appBatch() {
   return [
-    deviceOp('project', projectRow('p2')),
-    deviceOp('task', taskRow('t2', 'p2')),
-    { ...deviceOp('task', { title: 'renamed' }), entityId: 't1', hlc: 'bad-hlc' },
+    deviceOp({ deviceHlc }, 'project', projectRow('p2')),
+    deviceOp({ deviceHlc }, 'task', taskRow('t2', 'p2')),
+    { ...deviceOp({ deviceHlc }, 'task', { title: 'renamed' }), entityId: 't1', hlc: 'bad-hlc' },
   ];
 }
 
@@ -61,9 +57,9 @@ describe('Scope push RPC: old Worker → new DO', () => {
     const doState = createTestDoState();
     const scope = new ScopeClass(doState.ctx, { SYNC_FAULT: 'none' });
     const ops = [
-      deviceOp('project', projectRow('p-1')),
-      deviceOp('task', taskRow('t-1', 'p-1')),
-      { ...deviceOp('task', { title: 'x' }), entityId: 't-1', hlc: 'bad-hlc' },
+      deviceOp({ deviceHlc }, 'project', projectRow('p-1')),
+      deviceOp({ deviceHlc }, 'task', taskRow('t-1', 'p-1')),
+      { ...deviceOp({ deviceHlc }, 'task', { title: 'x' }), entityId: 't-1', hlc: 'bad-hlc' },
     ];
     // Exactly the fields the 701de08 Worker sends; no `validated`.
     const legacyInput = {
