@@ -1,24 +1,12 @@
-import {
-  isEntityName,
-  isTaskChildEntity,
-  parseEntityId,
-  validateSyncOp,
-  type EntityName,
-} from '../entities';
+import { isTaskChildEntity, parseEntityId, type EntityName } from '../entities';
+import { toEnvelope, type OpEnvelope } from '../envelope';
 
 export interface LookupPair {
   entity: EntityName;
   entityId: string;
 }
 
-export interface ParsedPushOp {
-  raw: unknown;
-  rec: Record<string, unknown> | null;
-  rawOpId: string;
-  entity: EntityName | null;
-  entityId: string | null;
-  validated: ReturnType<typeof validateSyncOp>;
-}
+export type ParsedPushOp = OpEnvelope;
 
 export interface ParsedPushBatch {
   ops: ParsedPushOp[];
@@ -30,27 +18,20 @@ export function entityHomeKey(entity: EntityName, entityId: string): string {
   return `${entity}:${entityId}`;
 }
 
-/**
- * Parses and validates raw push ops and collects the D1 entityHome and purgedProject
- * lookup keys required before planning.
- */
+/** Envelopes raw push ops (validating each once) and collects their D1 lookup keys. */
 export function parsePushBatch(rawOps: readonly unknown[]): ParsedPushBatch {
+  return collectPushLookups(rawOps.map(toEnvelope));
+}
+
+/**
+ * Collects the D1 entityHome and purgedProject lookup keys required before planning
+ * an already-enveloped batch.
+ */
+export function collectPushLookups(envelopes: readonly OpEnvelope[]): ParsedPushBatch {
   const lookupPairsMap = new Map<string, LookupPair>();
   const projectIdsToCheck = new Set<string>();
 
-  const ops = rawOps.map((raw): ParsedPushOp => {
-    const rec =
-      raw && typeof raw === 'object' && !Array.isArray(raw)
-        ? (raw as Record<string, unknown>)
-        : null;
-    const rawOpId = rec && typeof rec.opId === 'string' ? rec.opId : '';
-    const entity = rec && isEntityName(rec.entity) ? rec.entity : null;
-    const entityId =
-      entity && rec && typeof rec.entityId === 'string' && parseEntityId(entity, rec.entityId)
-        ? rec.entityId
-        : null;
-    const validated = validateSyncOp(raw);
-
+  for (const { rec, entity, entityId, validated } of envelopes) {
     if (entity && entityId && entity !== 'tag') {
       lookupPairsMap.set(entityHomeKey(entity, entityId), { entity, entityId });
       if (
@@ -101,12 +82,10 @@ export function parsePushBatch(rawOps: readonly unknown[]): ParsedPushBatch {
         projectIdsToCheck.add(validated.op.row.projectId);
       }
     }
-
-    return { raw, rec, rawOpId, entity, entityId, validated };
-  });
+  }
 
   return {
-    ops,
+    ops: [...envelopes],
     lookupPairs: Array.from(lookupPairsMap.values()),
     projectIdsToCheck: Array.from(projectIdsToCheck),
   };

@@ -5,7 +5,6 @@ import { acceptInvite, createInvite } from '../src/sharing';
 import { parseHlc } from '../src/sync/hlc';
 import { loadSnapshot } from '../src/serverops/snapshot';
 import {
-  MAX_OPS_PER_PUSH,
   NO_DATA_MESSAGE,
   WriteError,
   WriteValidationError,
@@ -13,6 +12,7 @@ import {
   writeOrThrow,
   type WriteIntent,
 } from '../src/serverops/writer';
+import { MAX_OPS_PER_PUSH } from '../src/sync/envelope';
 import { createScopeWorld } from './helpers/scopeWorld';
 
 function createHarness() {

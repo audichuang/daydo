@@ -3,10 +3,9 @@ import { createDb } from 'void/db';
 import { Scope } from '../../durable-objects/scope';
 import { requireUser } from '../../src/auth/middleware';
 import { nonEmptyString, readJsonObject } from '../../src/http';
+import { MAX_OPS_PER_PUSH } from '../../src/sync/envelope';
 import { executeSyncPush } from '../../src/sync/push';
 import { serverClock } from '../../src/sync/serverClock';
-
-const MAX_OPS_PER_PUSH = 200;
 
 export const POST = defineHandler(async (c) => {
   const userId = await requireUser(c);

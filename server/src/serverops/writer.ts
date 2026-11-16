@@ -21,12 +21,12 @@ import {
   type Hlc,
   type ServerHlcClock,
 } from '../sync/hlc';
+import { MAX_OPS_PER_PUSH } from '../sync/envelope';
 import { executeSyncPush, type AppDb, type ScopeStub } from '../sync/push';
 import { serverClock } from '../sync/serverClock';
 import type { Snapshot } from './snapshot';
 import { isNil, sameValue } from './values';
 
-export const MAX_OPS_PER_PUSH = 200;
 export const NO_DATA_MESSAGE = '請先在 DayDo App 登入並同步一次';
 
 export type WritableEntity = 'project' | 'task' | 'checklistItem' | 'tag';
