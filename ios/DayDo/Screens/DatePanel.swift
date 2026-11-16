@@ -86,7 +86,7 @@ struct DatePanel: View {
             Image(systemName: icon).font(.system(size: 17, weight: .semibold)).foregroundStyle(fg)
                 .frame(width: 44, height: 44).background(Circle().fill(fill))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .accessibilityLabel(label)
     }
 
@@ -97,7 +97,7 @@ struct DatePanel: View {
                 .padding(.horizontal, 18).frame(height: 36)
                 .background(Capsule().fill(tab == i ? Palette.handle : .clear))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .accessibilityIdentifier(i == 0 ? "dateTab" : "durationTab")
         .accessibilityAddTraits(tab == i ? .isSelected : [])
     }
@@ -174,7 +174,7 @@ struct DatePanel: View {
         } label: {
             rowLabel(icon, label, value, highlight: highlight)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press(scale: 0.985, opacity: 0.92))
         .accessibilityValue(value)
     }
 
@@ -305,7 +305,7 @@ struct DatePanel: View {
                         .frame(maxWidth: .infinity, minHeight: 48)
                         .card(14, color: Palette.raised)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.press)
                 .accessibilityIdentifier("openTimeline")
             }
         }

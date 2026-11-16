@@ -1055,4 +1055,157 @@ final class DayDoFlowTests: XCTestCase {
         app.open(URL(string: "daydo://today")!)
         XCTAssertTrue(app.buttons["完成：買鮮奶"].waitForExistence(timeout: 5), app.debugDescription)
     }
+
+    @MainActor
+    func testEdgeDragOpensDrawer() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+        XCTAssertTrue(app.buttons["開啟清單抽屜"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.buttons["drawer.settings"].exists)
+
+        let window = app.windows.firstMatch
+        let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5))
+        let mid = window.coordinate(withNormalizedOffset: CGVector(dx: 0.36, dy: 0.5))
+        let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.5))
+
+        // Drag halfway, capture screenshot on the main runloop while held, then release (< 50% -> snaps back).
+        nonisolated(unsafe) let testSelf = self
+        let midShotTimer = Timer(timeInterval: 0.55, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                testSelf.shot("46-drawer-half-drag")
+            }
+        }
+        RunLoop.current.add(midShotTimer, forMode: .common)
+        start.press(forDuration: 0.05, thenDragTo: mid, withVelocity: 300, thenHoldForDuration: 0.7)
+        midShotTimer.invalidate()
+
+        // Released before half -> snaps back closed; then drag past half -> opens drawer.
+        XCTAssertTrue(app.buttons["drawer.settings"].waitForNonExistence(timeout: 2), app.debugDescription)
+        start.press(forDuration: 0.05, thenDragTo: end)
+
+        XCTAssertTrue(app.buttons["drawer.settings"].waitForExistence(timeout: 3), app.debugDescription)
+        shot("47-drawer-edge-opened")
+    }
+
+    @MainActor
+    func testOptimisticTaskCompletionUpdatesLabelThenMovesToCompleted() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        let checkbox = app.buttons["完成：去全聯買菜"]
+        XCTAssertTrue(checkbox.waitForExistence(timeout: 5), app.debugDescription)
+        let completedHeader = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '已完成'")).firstMatch
+        XCTAssertTrue(completedHeader.waitForExistence(timeout: 3))
+        let initialDigits = completedHeader.label.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+        let initialCount = Int(initialDigits) ?? -1
+        XCTAssertGreaterThanOrEqual(initialCount, 0, "Expected numeric count in \(completedHeader.label)")
+        shot("43-complete-before")
+
+        // XCUITest's tap() spins the main runloop waiting for animation quiescence (~0.8-1s),
+        // which outlasts the 350ms window. Observe the optimistic state safely on the main runloop.
+        nonisolated(unsafe) var sawOptimistic = false
+        nonisolated(unsafe) let testSelf = self
+        nonisolated(unsafe) let optimisticUndo = app.buttons["取消完成：去全聯買菜"]
+        let pollTimer = Timer(timeInterval: 0.08, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                if !sawOptimistic && optimisticUndo.exists {
+                    sawOptimistic = true
+                    testSelf.shot("44-complete-optimistic")
+                }
+            }
+        }
+        RunLoop.current.add(pollTimer, forMode: .common)
+
+        checkbox.tap()
+        pollTimer.invalidate()
+
+        XCTAssertTrue(sawOptimistic || optimisticUndo.waitForExistence(timeout: 0.5), "Expected optimistic 取消完成 label within 350ms window")
+
+        // After ~350ms write + reload, the row leaves the active section and 已完成 count increments.
+        XCTAssertTrue(optimisticUndo.waitForNonExistence(timeout: 3), app.debugDescription)
+        let expectedCount = "\(initialCount + 1)"
+        let incremented = NSPredicate { _, _ in
+            completedHeader.exists && completedHeader.label.contains(expectedCount)
+        }
+        let exp = XCTNSPredicateExpectation(predicate: incremented, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [exp], timeout: 3), .completed, "Expected 已完成 count \(expectedCount), got: \(completedHeader.label)")
+        shot("45-complete-after")
+    }
+
+    @MainActor
+    func testCalendarHorizontalSwipeChangesMonth() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        app.buttons["日曆"].tap()
+        let title = app.buttons["calendarTitle"]
+        XCTAssertTrue(title.waitForExistence(timeout: 3), app.debugDescription)
+        let initialTitle = title.label
+
+        let window = app.windows.firstMatch
+        let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.28))
+        let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.28))
+        start.press(forDuration: 0.05, thenDragTo: end)
+
+        let monthChanged = NSPredicate { _, _ in
+            title.exists && title.label != initialTitle
+        }
+        let exp = XCTNSPredicateExpectation(predicate: monthChanged, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [exp], timeout: 3), .completed, "Expected calendar title to change from \(initialTitle), got \(title.label)")
+
+        let backStart = window.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.28))
+        let backEnd = window.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.28))
+        backStart.press(forDuration: 0.05, thenDragTo: backEnd)
+
+        let monthRestored = NSPredicate { _, _ in
+            title.exists && title.label == initialTitle
+        }
+        let expBack = XCTNSPredicateExpectation(predicate: monthRestored, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [expBack], timeout: 3), .completed, "Expected calendar title to return to \(initialTitle), got \(title.label)")
+    }
+
+    @MainActor
+    func testCollapsedCalendarIgnoresTapsOnHiddenWeeks() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        app.buttons["日曆"].tap()
+        let title = app.buttons["calendarTitle"]
+        XCTAssertTrue(title.waitForExistence(timeout: 3), app.debugDescription)
+
+        // Pick day 12 of the current month so the selected week is never the first or last row.
+        let comps = Calendar.current.dateComponents([.year, .month], from: Date())
+        let m = comps.month!
+        let day12Label = "\(m)月12日"
+        let day12Prefix = "\(m) 月 12 日"
+        let day12Cell = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", day12Prefix)).firstMatch
+        XCTAssertTrue(day12Cell.waitForExistence(timeout: 3), app.debugDescription)
+        day12Cell.tap()
+        XCTAssertTrue(day12Cell.isSelected)
+        let agendaHeading = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", day12Label)).firstMatch
+        XCTAssertTrue(agendaHeading.waitForExistence(timeout: 3), app.debugDescription)
+
+        // Collapse to a single week via the handle.
+        let collapseHandle = app.buttons["收合成單週"]
+        XCTAssertTrue(collapseHandle.waitForExistence(timeout: 3), app.debugDescription)
+        collapseHandle.tap()
+        let expandHandle = app.buttons["展開整個月份"]
+        XCTAssertTrue(expandHandle.waitForExistence(timeout: 3), app.debugDescription)
+
+        // Tap 1: top edge of the weekday symbol header ("三") directly above the visible week,
+        // where the hidden previous-week row sits if hit-testing isn't disabled.
+        let wednesdayHeader = app.staticTexts["三"].firstMatch
+        XCTAssertTrue(wednesdayHeader.waitForExistence(timeout: 3), app.debugDescription)
+        wednesdayHeader.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.0)).tap()
+        XCTAssertTrue(expandHandle.exists, "Tap on weekday header should keep calendar collapsed")
+        XCTAssertTrue(day12Cell.isSelected, "Tap on weekday header should not select a hidden week's day")
+        XCTAssertTrue(agendaHeading.exists, "Agenda heading should remain on \(day12Label)")
+
+        // Tap 2: in the gap right below the collapse handle (just above the agenda card),
+        // where the hidden next-week row sits if hit-testing isn't disabled.
+        let gapPoint = expandHandle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1.0)).withOffset(CGVector(dx: 0, dy: 11))
+        gapPoint.tap()
+        XCTAssertTrue(day12Cell.isSelected, "Tap below collapse handle should not select a hidden week's day")
+        XCTAssertTrue(agendaHeading.exists, "Agenda heading should remain on \(day12Label)")
+    }
 }

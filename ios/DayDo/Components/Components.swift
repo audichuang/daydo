@@ -2,6 +2,50 @@ import SwiftUI
 import UIKit
 import DayDoCore
 
+/// Tactile press feedback style for interactive controls.
+struct PressButtonStyle: ButtonStyle {
+    var scale: CGFloat = 0.96
+    var opacity: Double = 0.85
+    var highlight: Color? = nil
+
+    func makeBody(configuration: Configuration) -> some View {
+        PressBody(configuration: configuration, scale: scale, opacity: opacity, highlight: highlight)
+    }
+
+    private struct PressBody: View {
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        let configuration: Configuration
+        var scale: CGFloat
+        var opacity: Double
+        var highlight: Color?
+
+        var body: some View {
+            let pressed = configuration.isPressed
+            configuration.label
+                .background {
+                    if let highlight {
+                        highlight.opacity(pressed ? 1 : 0)
+                    }
+                }
+                .scaleEffect(pressed && !reduceMotion ? scale : 1)
+                .opacity(pressed ? opacity : 1)
+                .animation(
+                    reduceMotion
+                        ? .easeOut(duration: 0.1)
+                        : .spring(response: 0.24, dampingFraction: 0.72),
+                    value: pressed
+                )
+        }
+    }
+}
+
+extension ButtonStyle where Self == PressButtonStyle {
+    static var press: PressButtonStyle { PressButtonStyle() }
+    static func press(scale: CGFloat = 0.96, opacity: Double = 0.85, highlight: Color? = nil) -> PressButtonStyle {
+        PressButtonStyle(scale: scale, opacity: opacity, highlight: highlight)
+    }
+}
+
 /// Round glass button used in the top toolbar (44×44 hit area).
 struct GlassIconButton: View {
     var systemName: String
@@ -16,7 +60,7 @@ struct GlassIconButton: View {
                 .frame(width: 44, height: 44)
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .glassEffect(.regular.interactive(), in: .circle)
         .hoverEffect(.highlight)
         .accessibilityLabel(label)
@@ -26,6 +70,7 @@ struct GlassIconButton: View {
 /// The 20pt square checkbox with priority-colored outline (1b).
 struct TaskCheckbox: View {
     @Environment(\.accent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var done: Bool
     var priority: Priority
     var size: CGFloat = 20
@@ -35,10 +80,14 @@ struct TaskCheckbox: View {
             .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(done ? accent.color : .clear))
             .overlay {
                 if done {
-                    Image(systemName: "checkmark").font(.system(size: size * 0.55, weight: .heavy)).foregroundStyle(Palette.background)
+                    Image(systemName: "checkmark")
+                        .font(.system(size: size * 0.55, weight: .heavy))
+                        .foregroundStyle(Palette.background)
+                        .transition(reduceMotion ? .opacity : .scale(scale: 0.4).combined(with: .opacity))
                 }
             }
             .frame(width: size, height: size)
+            .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.62), value: done)
     }
 }
 
@@ -208,7 +257,7 @@ struct OptionChip: View {
                 .background(Capsule().fill(on ? (filled ? accent.color : accent.soft) : (filled ? Palette.chip : .clear)))
                 .overlay(Capsule().strokeBorder(on ? accent.color : (filled ? .clear : Color(hex: "#33363A")), lineWidth: 1))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .hoverEffect(.highlight)
         .accessibilityAddTraits(on ? .isSelected : [])
     }
@@ -230,7 +279,7 @@ struct PillButton: View {
                 .frame(height: 38)
                 .background(Capsule().fill(kind == .primary ? accent.color : (kind == .disabled ? Palette.separator : Palette.control)))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .hoverEffect(.highlight)
         .disabled(kind == .disabled)
     }
@@ -269,6 +318,7 @@ struct MonthPicker: View {
     var selected: LocalDay?
     var today: LocalDay
     var pick: (LocalDay) -> Void
+    @State private var pickHaptic = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -280,7 +330,7 @@ struct MonthPicker: View {
                 Button { month = month.adding(months: 1) } label: { Image(systemName: "chevron.right").frame(width: 36, height: 32) }
             }
             .foregroundStyle(Palette.textSecondary)
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
             HStack(spacing: 0) {
                 ForEach(LocalDay.weekdaySymbols, id: \.self) { w in
                     Text(w).txt(11).foregroundStyle(Palette.textTertiary).frame(maxWidth: .infinity)
@@ -291,7 +341,10 @@ struct MonthPicker: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 0) {
                 ForEach(days, id: \.self) { d in
                     let sel = d == selected, isToday = d == today, inMonth = d.month == month.month
-                    Button { pick(d) } label: {
+                    Button {
+                        pickHaptic += 1
+                        pick(d)
+                    } label: {
                         Text("\(d.day)")
                             .txt(14, sel || isToday ? .bold : .medium)
                             .foregroundStyle(sel ? accent.onAccent : (isToday ? accent.color : Color(hex: "#E6E9E8")))
@@ -300,7 +353,7 @@ struct MonthPicker: View {
                             .frame(maxWidth: .infinity, minHeight: 46)
                             .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.press(scale: 0.92, opacity: 0.85))
                     .opacity(inMonth ? 1 : 0.38)
                     .accessibilityLabel(DateText.full(d))
                     .accessibilityIdentifier("monthDay.\(d)")
@@ -308,6 +361,7 @@ struct MonthPicker: View {
                 }
             }
         }
+        .sensoryFeedback(.selection, trigger: pickHaptic)
     }
 }
 

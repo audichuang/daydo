@@ -416,4 +416,112 @@ final class AppModelTests: XCTestCase {
         let tasks = try await store.api.listTasks(TaskQuery())
         XCTAssertEqual(Set(tasks.map(\.id)), [savedInBackground.id, created.id])
     }
+
+    func testToggleCompleteAfterConcurrentTitleUpdateStillCompletes() async throws {
+        let (model, store) = try await makeModel()
+        let api = store.api
+        let task = try await api.createTask(CreateTaskInput(
+            title: "原本標題",
+            start: model.today.description,
+            allDay: true
+        ))
+        await model.reloadData()
+
+        model.toggleComplete(task)
+        XCTAssertTrue(model.isCompleting(task))
+
+        // Simulate saving a title edit within the 350ms completion delay (bumping updatedAt).
+        var edit = UpdateTaskInput(taskId: task.id)
+        edit.title = "已改標題"
+        _ = try await api.updateTask(edit)
+
+        // Wait for the delayed completeTask + grace period to finish.
+        for _ in 0..<80 where model.completingIds[task.id] != nil {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+
+        let fetched = try await api.getTask(id: task.id)
+        XCTAssertEqual(fetched.title, "已改標題")
+        XCTAssertTrue(fetched.isCompleted, "Delayed toggleComplete must not be silently swallowed by an earlier save")
+    }
+
+    func testToggleCompleteRepeatingTaskCompletesOnlyOnce() async throws {
+        let (model, store) = try await makeModel()
+        let api = store.api
+        let task = try await api.createTask(CreateTaskInput(
+            title: "每日例行",
+            start: model.today.description,
+            allDay: true,
+            repeat: "RRULE:FREQ=DAILY"
+        ))
+        await model.reloadData()
+
+        // 1. Rapid double-tap is ignored while completingIds holds the task.
+        model.toggleComplete(task)
+        model.toggleComplete(task)
+        // 2. If another writer already completed this occurrence during the 350ms window
+        //    (advancing the repeating task's schedule), the delayed write must NOT complete
+        //    the next occurrence a second time.
+        _ = try await api.completeTask(id: task.id, ifUpdatedAt: task.updatedAt)
+
+        for _ in 0..<80 where model.completingIds[task.id] != nil {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+
+        let all = try await api.listTasks(TaskQuery(includeCompleted: true))
+        let completedCopies = all.filter { $0.isCompleted && $0.title == "每日例行" }
+        XCTAssertEqual(completedCopies.count, 1, "Repeating task must produce exactly one completed copy")
+
+        let active = try await api.getTask(id: task.id)
+        XCTAssertFalse(active.isCompleted)
+        XCTAssertEqual(active.schedule?.startDay, model.today.adding(days: 1))
+    }
+
+    func testToggleCompleteRepeatingTaskNextOccurrenceIsNotCompletingAndCanCompleteImmediately() async throws {
+        let (model, store) = try await makeModel()
+        let api = store.api
+        let task = try await api.createTask(CreateTaskInput(
+            title: "每日打卡",
+            start: model.today.description,
+            allDay: true,
+            repeat: "RRULE:FREQ=DAILY"
+        ))
+        await model.reloadData()
+
+        model.toggleComplete(task)
+        XCTAssertTrue(model.isCompleting(task))
+
+        // Wait until the 350ms write finishes and advances the original task to tomorrow,
+        // still inside the ~750ms visual hold window.
+        var nextOccurrence = task
+        for _ in 0..<40 {
+            let current = try await api.getTask(id: task.id)
+            if current.schedule?.startDay == model.today.adding(days: 1) {
+                nextOccurrence = current
+                break
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertEqual(nextOccurrence.schedule?.startDay, model.today.adding(days: 1))
+
+        XCTAssertFalse(model.isCompleting(nextOccurrence), "Next occurrence must not appear optimistically completed during the 750ms hold window")
+
+        model.toggleComplete(nextOccurrence)
+        XCTAssertTrue(model.isCompleting(nextOccurrence), "Next occurrence must be immediately completable without being swallowed")
+
+        for _ in 0..<80 {
+            let current = try await api.getTask(id: task.id)
+            if current.schedule?.startDay == model.today.adding(days: 2) && model.completingIds.isEmpty {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+
+        let all = try await api.listTasks(TaskQuery(includeCompleted: true))
+        let completedCopies = all.filter { $0.isCompleted && $0.title == "每日打卡" }
+        XCTAssertEqual(completedCopies.count, 2)
+        let finalTask = try await api.getTask(id: task.id)
+        XCTAssertEqual(finalTask.schedule?.startDay, model.today.adding(days: 2))
+        XCTAssertTrue(model.completingIds.isEmpty)
+    }
 }

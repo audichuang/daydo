@@ -5,60 +5,148 @@ import DayDoCore
 /// tags, and 已完成／垃圾桶 at the bottom.
 struct DrawerOverlay: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var open: Bool
+    var edgeDrag: CGFloat = 0
+    var isDraggingEdge: Bool = false
     @State private var drag: CGFloat = 0
     @State private var rowDragging = false
 
     var body: some View {
         GeometryReader { geo in
             let width = min(geo.size.width * 0.82, 340)
+            let progress: CGFloat = {
+                if open {
+                    return max(0, min(1, 1 + min(0, drag) / width))
+                } else if isDraggingEdge {
+                    return max(0, min(1, edgeDrag / width))
+                } else {
+                    return 0
+                }
+            }()
+            let drawerX: CGFloat = reduceMotion
+                ? 0
+                : (open ? min(0, drag) : min(0, -width + edgeDrag))
+
             ZStack(alignment: .leading) {
-                Color.black.opacity(open ? 0.45 : 0)
+                Color.black.opacity(0.45 * progress)
                     .ignoresSafeArea()
                     .onTapGesture { close() }
                     .allowsHitTesting(open)
+                    .accessibilityHidden(!open)
                     .accessibilityLabel("關閉抽屜")
-                if open {
-                DrawerView(close: close, rowDragging: $rowDragging)
-                    .frame(width: width)
-                    .frame(maxHeight: .infinity)
-                    .background(Palette.card.ignoresSafeArea())
-                    .clipShape(UnevenRoundedRectangle(bottomTrailingRadius: 28, topTrailingRadius: 28, style: .continuous))
-                    .ignoresSafeArea(edges: .bottom)
-                    .offset(x: min(0, drag))
-                    .gesture(
-                        DragGesture(minimumDistance: 24)
-                            .onChanged { v in
-                                guard !rowDragging else { return }
-                                if abs(v.translation.width) > abs(v.translation.height) {
-                                    drag = v.translation.width
+                if open || isDraggingEdge {
+                    DrawerView(close: close, rowDragging: $rowDragging)
+                        .frame(width: width)
+                        .frame(maxHeight: .infinity)
+                        .background(Palette.card.ignoresSafeArea())
+                        .clipShape(UnevenRoundedRectangle(bottomTrailingRadius: 28, topTrailingRadius: 28, style: .continuous))
+                        .ignoresSafeArea(edges: .bottom)
+                        .offset(x: drawerX)
+                        .opacity(reduceMotion && !open && isDraggingEdge ? progress : 1)
+                        .gesture(
+                            DragGesture(minimumDistance: 24)
+                                .onChanged { v in
+                                    guard open, !rowDragging else { return }
+                                    if abs(v.translation.width) > abs(v.translation.height) {
+                                        drag = min(0, v.translation.width)
+                                    }
                                 }
-                            }
-                            .onEnded { v in
-                                guard !rowDragging else {
-                                    withAnimation(.snappy) { drag = 0 }
-                                    return
+                                .onEnded { v in
+                                    guard open, !rowDragging else {
+                                        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.82)) {
+                                            drag = 0
+                                        }
+                                        return
+                                    }
+                                    let shouldClose = v.translation.width < -width * 0.4 || v.predictedEndTranslation.width < -width * 0.5
+                                    if shouldClose { close() }
+                                    withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.82)) {
+                                        drag = 0
+                                    }
                                 }
-                                if v.translation.width < -80 { close() }
-                                withAnimation(.snappy) { drag = 0 }
-                            }
-                    )
-                    .transition(.move(edge: .leading))
+                        )
+                        .transition(reduceMotion ? .opacity : .move(edge: .leading))
                 }
             }
-            .animation(.snappy(duration: 0.28), value: open)
+            .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.32, dampingFraction: 0.86), value: open)
+            .sensoryFeedback(.impact(weight: .light), trigger: open)
         }
     }
 
     func close() {
         rowDragging = false
-        withAnimation(.snappy) { open = false }
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.32, dampingFraction: 0.86)) {
+            open = false
+        }
+    }
+}
+
+/// Left-edge rightward pan recognizer that opens the drawer without blocking
+/// taps, vertical scrolling, or system navigation back swipes.
+struct EdgePanGesture: UIGestureRecognizerRepresentable {
+    var isEnabled: () -> Bool
+    var edgeWidth: CGFloat = 24
+    var onChanged: (CGFloat) -> Void
+    var onEnded: (CGFloat, CGFloat) -> Void
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator {
+        Coordinator(isEnabled: isEnabled, edgeWidth: edgeWidth, onChanged: onChanged, onEnded: onEnded)
+    }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        context.coordinator.isEnabled = isEnabled
+        context.coordinator.edgeWidth = edgeWidth
+        context.coordinator.onChanged = onChanged
+        context.coordinator.onEnded = onEnded
+    }
+
+    func handleUIGestureRecognizerAction(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        let tx = recognizer.translation(in: recognizer.view).x
+        let vx = recognizer.velocity(in: recognizer.view).x
+        switch recognizer.state {
+        case .began, .changed:
+            onChanged(tx)
+        case .ended, .cancelled, .failed:
+            onEnded(tx, vx)
+        default:
+            break
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var isEnabled: () -> Bool
+        var edgeWidth: CGFloat
+        var onChanged: (CGFloat) -> Void
+        var onEnded: (CGFloat, CGFloat) -> Void
+
+        init(isEnabled: @escaping () -> Bool, edgeWidth: CGFloat, onChanged: @escaping (CGFloat) -> Void, onEnded: @escaping (CGFloat, CGFloat) -> Void) {
+            self.isEnabled = isEnabled
+            self.edgeWidth = edgeWidth
+            self.onChanged = onChanged
+            self.onEnded = onEnded
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard isEnabled(), let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            let startX = pan.location(in: nil).x - pan.translation(in: nil).x
+            let v = pan.velocity(in: pan.view)
+            return startX <= edgeWidth && v.x > abs(v.y) * 1.15 && v.x > 0
+        }
     }
 }
 
 struct DrawerView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var close: () -> Void
     @Binding var rowDragging: Bool
     var isSidebar: Bool = false
@@ -117,7 +205,7 @@ struct DrawerView: View {
                                         .padding(.horizontal, 10).padding(.vertical, 6)
                                         .background(Capsule().fill(isCurrent(.tag(t.name)) ? accent.soft : Palette.raised))
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.press)
                                 .hoverEffect(.highlight)
                             }
                         }
@@ -200,7 +288,7 @@ struct DrawerView: View {
                     .frame(width: 40, height: 36)
                     .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
             .glassEffect(.regular.interactive(), in: .capsule)
             .hoverEffect(.highlight)
             .accessibilityLabel("設定")
@@ -248,7 +336,14 @@ struct DrawerView: View {
                 Text(title).txt(15, current ? .bold : .regular).foregroundStyle(current ? Palette.text : Palette.textBody).lineLimit(1)
                 Spacer(minLength: 4)
                 if let trailing { trailing }
-                if let count, count > 0 { Text("\(count)").txt(12).foregroundStyle(current ? accent.text : Palette.textTertiary) }
+                if let count, count > 0 {
+                    Text("\(count)")
+                        .txt(12)
+                        .foregroundStyle(current ? accent.text : Palette.textTertiary)
+                        .contentTransition(reduceMotion ? .identity : .numericText())
+                        .animation(reduceMotion ? .easeOut(duration: 0.15) : .snappy(duration: 0.25), value: count)
+                        .transition(.opacity)
+                }
             }
             .padding(.leading, indent ? 26 : 12)
             .padding(.trailing, 12)
@@ -256,7 +351,7 @@ struct DrawerView: View {
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(current || highlighted ? accent.soft : .clear))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press(scale: 0.98, opacity: 0.92, highlight: Color.white.opacity(0.04)))
         .hoverEffect(.highlight)
     }
 
@@ -267,7 +362,7 @@ struct DrawerView: View {
             row(icon: Image(systemName: "folder"), title: f.name, count: children.reduce(0) { $0 + $1.activeCount }, current: false, indent: false,
                 trailing: AnyView(Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textTertiary).rotationEffect(.degrees(open ? 90 : 0)))) {
                 if swipedId != nil { closeSwipe(); return }
-                withAnimation(.snappy) {
+                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) {
                     if open { model.openFolders.remove(f.id) } else { model.openFolders.insert(f.id) }
                 }
             }
@@ -279,9 +374,13 @@ struct DrawerView: View {
             }
             .accessibilityValue(open ? "已展開" : "已收合")
             if open {
-                ForEach(children) { p in listRow(p, indent: true) }
+                VStack(spacing: 2) {
+                    ForEach(children) { p in listRow(p, indent: true) }
+                }
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
             }
         }
+        .clipped()
     }
 
     func pinToTop(_ p: Project) {
@@ -338,7 +437,7 @@ struct DrawerView: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.raised))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .hoverEffect(.highlight)
     }
 }
