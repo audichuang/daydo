@@ -206,8 +206,6 @@ export function taskReadTools(): ToolDef[] {
 const DEFAULT_TIME_ZONE = 'Asia/Taipei';
 const PRIORITY: Record<string, number> = { none: 0, low: 1, medium: 3, high: 5 };
 
-const bump = (row: Record<string, unknown>, now: number) => Math.max(now, Number(row.updatedAt ?? 0) + 1);
-
 function optString(args: Record<string, unknown>, field: string): string | undefined {
   const v = args[field];
   if (isNil(v)) return undefined;
@@ -266,7 +264,7 @@ function scheduleContext(ctx: ToolContext, originalTimeZone: string | null = nul
 }
 
 /** Tag rows for a task's tags (LocalDayDoAPI.normalizeTags): create missing ones, revive trashed ones. */
-function tagIntents(snapshot: Snapshot, userId: string, tags: readonly NormalizedTag[], now: number): WriteIntent[] {
+function tagIntents(snapshot: Snapshot, userId: string, tags: readonly NormalizedTag[]): WriteIntent[] {
   const own = snapshot.rows('tag').filter((t) => t.scope === userScope(userId));
   let last: string | null = own
     .map((t) => String(t.row.sortKey ?? ''))
@@ -276,7 +274,7 @@ function tagIntents(snapshot: Snapshot, userId: string, tags: readonly Normalize
     const existing = own.find((t) => t.row.name === tag.name);
     if (existing) {
       if (!isNil(existing.row.deletedAt)) {
-        intents.push({ entity: 'tag', entityId: tag.name, set: { deletedAt: null, updatedAt: bump(existing.row, now) } });
+        intents.push({ entity: 'tag', entityId: tag.name, set: { deletedAt: null } });
       }
       continue;
     }
@@ -284,7 +282,7 @@ function tagIntents(snapshot: Snapshot, userId: string, tags: readonly Normalize
     intents.push({
       entity: 'tag',
       entityId: tag.name,
-      set: { name: tag.name, label: tag.label, sortKey: last, createdAt: now, updatedAt: now },
+      set: { name: tag.name, label: tag.label, sortKey: last },
     });
   }
   return intents;
@@ -301,7 +299,7 @@ function checklistIntents(taskId: string, titles: readonly string[], now: number
       return {
         entity: 'checklistItem',
         entityId: id,
-        set: { id, taskId, title, status: 0, sortKey: key, createdAt: now, updatedAt: now },
+        set: { id, taskId, title, status: 0, sortKey: key },
       };
     });
 }
@@ -336,7 +334,7 @@ function copyIntent(snapshot: Snapshot, original: Record<string, unknown>, copyI
   const existing = snapshot.findRow('task', copyId);
   if (existing && isNil(existing.row.deletedAt)) {
     if (Number(existing.row.status ?? 0) === 2) return null;
-    return { entity: 'task', entityId: copyId, set: { status: 2, completedAt: now, updatedAt: bump(existing.row, now) } };
+    return { entity: 'task', entityId: copyId, set: { status: 2, completedAt: now } };
   }
   // A new row omits empty columns (as the App's op); a trashed one is overwritten column by column.
   const copied = Object.fromEntries(
@@ -350,8 +348,6 @@ function copyIntent(snapshot: Snapshot, original: Record<string, unknown>, copyI
       ...copied,
       status: 2,
       completedAt: now,
-      createdAt: existing?.row.createdAt ?? now,
-      updatedAt: existing ? bump(existing.row, now) : now,
       ...(existing && { repeatRule: null, deletedAt: null }),
     },
     verbatim: Object.keys(copied),
@@ -392,7 +388,7 @@ async function checklistCopyIntents(
       });
     }
     if (Number(item.status ?? 0) !== 0) {
-      reopens.push({ entity: 'checklistItem', entityId: String(item.id), set: { status: 0, updatedAt: bump(item, now) } });
+      reopens.push({ entity: 'checklistItem', entityId: String(item.id), set: { status: 0 } });
     }
   }
   return { copies, reopens };
@@ -432,23 +428,26 @@ async function completeOccurrence(
   const outcomes: WriteOutcome[] = [];
   const intent = copyIntent(snapshot, original, copyId, now);
   if (intent) {
-    let [out] = await pushIntents(deps, snapshot, [intent]);
+    let [out] = await pushIntents(deps, snapshot, [intent], { nowMs: now });
     if (out?.status === 'purged') {
       // A tombstone the snapshot could not see (its list is not visible to us).
       copyId = uuidv7(now);
-      [out] = await pushIntents(deps, snapshot, [copyIntent(snapshot, original, copyId, now)!]);
+      [out] = await pushIntents(deps, snapshot, [copyIntent(snapshot, original, copyId, now)!], { nowMs: now });
     }
     if (out?.status !== 'applied') throw new WriteError(out!);
     outcomes.push(out);
   }
 
   const { copies, reopens } = await checklistCopyIntents(snapshot, items, copyId, now);
-  if (copies.length > 0) outcomes.push(...(await writeOrThrow(deps, snapshot, copies)));
-  if (reopens.length > 0) outcomes.push(...(await writeOrThrow(deps, snapshot, reopens)));
+  if (copies.length > 0) outcomes.push(...(await writeOrThrow(deps, snapshot, copies, { nowMs: now })));
+  if (reopens.length > 0) outcomes.push(...(await writeOrThrow(deps, snapshot, reopens, { nowMs: now })));
 
-  await writeOrThrow(deps, snapshot, [
-    { entity: 'task', entityId: taskId, set: { ...scheduleColumns(movedSchedule(schedule, next)), updatedAt: bump(original, now) } },
-  ]);
+  await writeOrThrow(
+    deps,
+    snapshot,
+    [{ entity: 'task', entityId: taskId, set: scheduleColumns(movedSchedule(schedule, next)) }],
+    { nowMs: now },
+  );
 
   const view = withCreated(snapshot, outcomes);
   return formatTask(view, view.findRow('task', copyId)!);
@@ -547,16 +546,15 @@ export function taskWriteTools(): ToolDef[] {
           reminders,
           tags: tags.map((t) => t.name),
           sortKey: before(first),
-          createdAt: now,
-          updatedAt: now,
           ...(repeatRule !== null && { repeatRule }),
           ...(schedule !== null && scheduleColumns(schedule)),
         };
-        const outcomes = await writeOrThrow(deps, snapshot, [
-          { entity: 'task', entityId: id, set },
-          ...tagIntents(snapshot, ctx.userId, tags, now),
-          ...checklistIntents(id, subtasks, now),
-        ]);
+        const outcomes = await writeOrThrow(
+          deps,
+          snapshot,
+          [{ entity: 'task', entityId: id, set }, ...tagIntents(snapshot, ctx.userId, tags), ...checklistIntents(id, subtasks, now)],
+          { nowMs: now },
+        );
         const view = withCreated(snapshot, outcomes);
         return formatTask(view, view.findRow('task', id)!);
       },
@@ -647,22 +645,24 @@ export function taskWriteTools(): ToolDef[] {
         if (rawTags !== undefined) {
           const tags = normalizeTagLabels(rawTags);
           set.tags = tags.map((t) => t.name);
-          extra.push(...tagIntents(snapshot, ctx.userId, tags, now));
+          extra.push(...tagIntents(snapshot, ctx.userId, tags));
         }
         if (subtasks !== undefined) {
           const old = snapshot
             .rows('checklistItem')
             .filter((c) => c.row.taskId === taskId && isNil(c.row.deletedAt) && isNil(c.row.purgedAt));
           for (const c of old) {
-            extra.push({ entity: 'checklistItem', entityId: String(c.row.id), set: { deletedAt: now, updatedAt: bump(c.row, now) } });
+            extra.push({ entity: 'checklistItem', entityId: String(c.row.id), set: { deletedAt: now } });
           }
           extra.push(...checklistIntents(taskId, subtasks, now));
         }
         if (Object.keys(set).length === 0 && extra.length === 0) {
           throw new Error('Nothing to update: give at least one field to change');
         }
-        set.updatedAt = bump(task.row, now);
-        const outcomes = await writeOrThrow(deps, snapshot, [{ entity: 'task', entityId: taskId, set }, ...extra]);
+        // touch: a tags- or subtasks-only edit still bumps the task's updatedAt.
+        const outcomes = await writeOrThrow(deps, snapshot, [{ entity: 'task', entityId: taskId, set, touch: true }, ...extra], {
+          nowMs: now,
+        });
         const view = withCreated(snapshot, outcomes);
         return formatTask(view, view.findRow('task', taskId)!);
       },
@@ -688,9 +688,7 @@ export function taskWriteTools(): ToolDef[] {
         const schedule = rowSchedule(task.row);
         if (rule !== null && schedule !== null) return completeOccurrence(deps, snapshot, task, rule, schedule, ctx);
         const now = Date.now();
-        await writeOrThrow(deps, snapshot, [
-          { entity: 'task', entityId: taskId, set: { status: 2, completedAt: now, updatedAt: bump(task.row, now) } },
-        ]);
+        await writeOrThrow(deps, snapshot, [{ entity: 'task', entityId: taskId, set: { status: 2, completedAt: now } }], { nowMs: now });
         return formatTask(snapshot, snapshot.findRow('task', taskId)!);
       },
     },
@@ -711,9 +709,7 @@ export function taskWriteTools(): ToolDef[] {
         const task = taskIn(snapshot, taskId, projectId);
         requireWritable(snapshot, projectId);
         const now = Date.now();
-        await writeOrThrow(deps, snapshot, [
-          { entity: 'task', entityId: taskId, set: { deletedAt: now, updatedAt: bump(task.row, now) } },
-        ]);
+        await writeOrThrow(deps, snapshot, [{ entity: 'task', entityId: taskId, set: { deletedAt: now } }], { nowMs: now });
         return { deleted: true, task_id: taskId, title: String(task.row.title ?? '') };
       },
     },
@@ -736,15 +732,12 @@ export function taskWriteTools(): ToolDef[] {
         const to = requireStr(args, 'to_project_id');
         const { snapshot, deps } = await openSession(ctx);
         assertHasData(snapshot);
-        const task = taskIn(snapshot, taskId, from);
+        taskIn(snapshot, taskId, from);
         requireLiveProject(snapshot, to);
         requireWritable(snapshot, from);
         requireWritable(snapshot, to);
         if (from !== to) {
-          const now = Date.now();
-          await writeOrThrow(deps, snapshot, [
-            { entity: 'task', entityId: taskId, set: { projectId: to, updatedAt: bump(task.row, now) } },
-          ]);
+          await writeOrThrow(deps, snapshot, [{ entity: 'task', entityId: taskId, set: { projectId: to } }]);
         }
         return formatTask(snapshot, snapshot.findRow('task', taskId)!);
       },
@@ -772,11 +765,10 @@ export function taskWriteTools(): ToolDef[] {
         requireWritable(snapshot, to);
         const tasks = from === to ? [] : openTasksOf(snapshot, from);
         if (tasks.length > 0) {
-          const now = Date.now();
           await writeOrThrow(
             deps,
             snapshot,
-            tasks.map((t): WriteIntent => ({ entity: 'task', entityId: idOf(t), set: { projectId: to, updatedAt: bump(t.row, now) } })),
+            tasks.map((t): WriteIntent => ({ entity: 'task', entityId: idOf(t), set: { projectId: to } })),
           );
         }
         return { moved: tasks.length, from_project_id: from, to_project_id: to, task_ids: tasks.map(idOf) };
