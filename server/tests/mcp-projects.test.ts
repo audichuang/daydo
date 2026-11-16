@@ -250,7 +250,7 @@ describe('M10 delete_project', () => {
     h.calls.length = 0;
     const r = await call(h, 'u-a', 'delete_project', { project_id: 'p1' });
     expect(r.json).toMatchObject({ deleted: true, project_id: 'p1', trashed_tasks: 2 });
-    expect(h.calls.map((c) => c.ops.map((o) => `${o.entity}:${String(o.entityId)}`))).toEqual([['task:t1', 'task:t2'], ['project:p1']]);
+    expect(h.calls.map((c) => c.ops.map((o) => `${String(o.entity)}:${String(o.entityId)}`))).toEqual([['task:t1', 'task:t2'], ['project:p1']]);
     const list = await call(h, 'u-a', 'list_projects');
     expect(list.json.map((p: any) => p.id)).toEqual(['inbox-u-a']);
     const snap = await h.snapshot('u-a');

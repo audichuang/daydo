@@ -45,7 +45,7 @@ function webConfig(clientSecret: string | undefined): WebIdentityConfig {
   };
 }
 
-function setup(clientSecret?: string | undefined) {
+function setup(clientSecret?: string) {
   const { db, sqlite } = createTestD1();
   sqlite.prepare('INSERT INTO user (id, createdAt, name) VALUES (?, ?, ?)').run('user-1', 0, 'Alice');
   sqlite
