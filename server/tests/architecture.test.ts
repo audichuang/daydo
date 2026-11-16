@@ -31,6 +31,43 @@ function matchingFiles(dirs: string[], pattern: RegExp): string[] {
   });
 }
 
+const LEDGER_TABLES = new Set(['projectMembership', 'listScopes', 'purgedProject']);
+
+/**
+ * Files with a value import (or re-export) of a membership ledger table from the schema, by alias
+ * (`@schema`) or relative path (`../db/schema`). Type-only imports and specifiers are ignored; a
+ * value namespace import counts, since it reaches every table.
+ */
+function ledgerValueImporters(dirs: string[]): string[] {
+  const statement = /\b(import|export)\s+(?!type\b)([^;]*?)\s+from\s+['"]([^'"]+)['"]/g;
+  return collectTsFiles(dirs).filter((rel) => {
+    const content = readFileSync(path.join(serverDir, rel), 'utf8');
+    for (const [, , clause, source] of content.matchAll(statement)) {
+      if (source !== '@schema' && !/(^|\/)db\/schema$/.test(source)) continue;
+      if (/^\*\s+as\s/.test(clause.trim())) return true;
+      const named = /\{([^}]*)\}/.exec(clause);
+      if (!named) continue;
+      for (const spec of named[1].split(',')) {
+        const parts = spec.trim().split(/\s+/);
+        if (parts[0] === 'type') continue;
+        if (LEDGER_TABLES.has(parts[0])) return true;
+      }
+    }
+    return false;
+  });
+}
+
+// The owner-or-editor write rule: 'owner' and 'editor' compared in one boolean chain, either
+// polarity and order, across line breaks. A three-way role parse (… || x === 'viewer') is not it.
+const OPERAND = String.raw`[\w$.\[\]'"]+`;
+const NOT_VIEWER = String.raw`(?!\s*(?:\|\||&&)\s*${OPERAND}\s*(?:===|!==)\s*'viewer')`;
+const WRITE_ROLE_PAIR = new RegExp(
+  [
+    String.raw`(?:===|!==)\s*'owner'\s*(?:\|\||&&)\s*${OPERAND}\s*(?:===|!==)\s*'editor'${NOT_VIEWER}`,
+    String.raw`(?:===|!==)\s*'editor'\s*(?:\|\||&&)\s*${OPERAND}\s*(?:===|!==)\s*'owner'${NOT_VIEWER}`,
+  ].join('|'),
+);
+
 describe('architecture guards', () => {
   it('updatedAt bump and duplicated value helpers stay centralized in writer/values', () => {
     expect(matchingFiles(['src'], /Math\.max\((now|nowMs|Date\.now\(\)), *Number\(/)).toEqual([
@@ -60,6 +97,26 @@ describe('architecture guards', () => {
     expect(matchingFiles(['src'], /\btransactionSync\b/)).toEqual([]);
     expect(matchingFiles(['src', 'routes', 'crons', 'durable-objects'], /\btransactionSync\b/)).toEqual([
       'durable-objects/scope.ts',
+    ]);
+  });
+
+  it('only src/membership/** value-imports the membership ledger tables (alias or relative path)', () => {
+    const importers = ledgerValueImporters(['src', 'routes', 'crons', 'middleware', 'durable-objects']);
+    expect(importers.filter((rel) => !rel.startsWith('src/membership/'))).toEqual([]);
+    // The matcher must still see the legitimate importers, or the check above proves nothing.
+    expect(importers.length).toBeGreaterThan(0);
+  });
+
+  it('serializePublicRow is only defined in entities.ts and called in src/scope/rowView.ts', () => {
+    expect(matchingFiles(['src', 'routes', 'crons', 'durable-objects'], /\bserializePublicRow\(/)).toEqual([
+      'src/scope/rowView.ts',
+      'src/sync/entities.ts',
+    ]);
+  });
+
+  it("the owner-or-editor write role check only appears in src/sync/access.ts", () => {
+    expect(matchingFiles(['src', 'routes', 'crons', 'middleware', 'durable-objects'], WRITE_ROLE_PAIR)).toEqual([
+      'src/sync/access.ts',
     ]);
   });
 });
