@@ -27,6 +27,7 @@
     "void": "^1.8.0"
   },
   "dependencies": {
+    "ical.js": "2.2.1",
     "jose": "^6.2.17"
   }
 }
