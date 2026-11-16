@@ -17,7 +17,7 @@
 - 正式環境前面是 Cloudflare Access（應用程式「DayDo API (iOS app only)」，只放行 service token）。部署、secrets 與部署後的 smoke 照 `README.md` 的 Deploy；service token 與 `JWT_SECRET` 在 1Password `Agent` vault（「DayDo Cloudflare Access service token」「DayDo server JWT_SECRET」）。
 - 改了 D1 schema 的部署會先套 migration 並留還原點。
 - void 固定 1.8.0：npm 設定只裝發布滿 3 天的版本，新版會被拒，不要改 npm 設定繞過。
-- Lint 用 oxlint（`npm run lint`，警告也算失敗，已含在 `npm run check`），不另加 ESLint 或 Prettier。`.oxlintrc.json` 規定模組間的 import 方向、禁止循環 import、檔案行數上限，並開了型別感知規則（例如忘了 await DO 或 D1 呼叫）；lint 表達不了的（重複的 updatedAt 計算、`u:` 字面值、驗證單點、`src/scope` 不得 async 等）在 `tests/architecture.test.ts`；這兩道擋下時改程式的結構，不要放寬規則。
+- Lint 用 oxlint（`npm run lint`，警告也算失敗，已含在 `npm run check`），不另加 ESLint 或 Prettier。`.oxlintrc.json` 規定模組間的 import 方向、禁止循環 import、檔案行數上限，並開了型別感知規則（例如忘了 await DO 或 D1 呼叫）；`createDb`／`Scope.get` 只在 `src/deps.ts`（其餘入口都跟 `productionAppDeps` 拿）；lint 表達不了的（重複的 updatedAt 計算、`u:` 字面值、驗證單點、`src/scope` 不得 async 等）在 `tests/architecture.test.ts`；這兩道擋下時改程式的結構，不要放寬規則。
 - 日常改動用 `npm run check:fast`（lint、typecheck、vitest），每張票結尾與合併前跑完整的 `npm run check`（含 e2e 與 `e2e:fault`）。
 
 ## MCP 與 ICS（細節在 `../spec/mcp.md`）
@@ -26,6 +26,6 @@
 - `src/mcp/`：JSON-RPC 傳輸、工具註冊與工具實作，工具清單以 `spec/mcp.md` 第 8 節為準。`src/oauth/`：OAuth 2.1（註冊、授權頁、token、refresh），金鑰由 `JWT_SECRET` 以 HKDF 衍生，不另設 secret。
 - `src/serverops/`：伺服器端讀 snapshot、寫 op（走與 `/sync/push` 相同的 Scope DO 路徑），MCP 與 ICS 都經它寫入，不繞過去直接寫 DO。`writer` 自己補 `updatedAt`（呼叫端傳 `nowMs`）與 schedule 成組；與 App `LocalDayDoAPI` 對齊的任務寫入（完成重複任務、checklist、標籤）在 `taskWrites.ts`，MCP 工具只做參數解析與格式化。
 - `src/domain/`：從 Swift 移植的規則（重複、提醒、排程、sortKey、標籤、uuid），以 `spec/fixtures` 的向量測試，行為要和 Swift 一致，改一邊就要改另一邊。
-- `src/ics/` 與 `crons/ics-sync.ts`：ICS 訂閱同步，cron 每 5 分鐘一輪；cron 內可用 `createDb`、`Scope.get`、`env`。
+- `src/ics/` 與 `crons/ics-sync.ts`：ICS 訂閱同步，cron 每 5 分鐘一輪；cron 經 `productionAppDeps(env)` 拿 db 與 Scope stub，`env` 用 handler 參數。
 - 正式環境新增的 secret 只有 `GOOGLE_WEB_CLIENT_SECRET`（1Password `Agent` vault「DayDo Google Web OAuth client (MCP)」）；Access 不動。MCP 的部署與合併後手動步驟在 `README.md`「MCP Server」。
 - 部署後或改了 auth／sync／OAuth／MCP 工具，要在正式環境證明行為時用 `.claude/skills/verify/`（信箱註冊、灌資料、`claude mcp login`、`claude -p` 斷言）；測試帳號 `pokemongo030501@gmail.com` 的 Gmail 在 ego-browser 第 8 個帳號。

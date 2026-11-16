@@ -30,3 +30,7 @@
 - **getNow**：`() => number`（型別 `GetNow`，`src/clock.ts`），每呼叫一次讀一次鐘；「可注入的時間」都用它。`now`／`nowMs` 則是已讀好的 epoch ms。
 - **systemNow**：`getNow` 的正式實作，`() => Date.now()`（不捕捉 `Date.now` 參照，spy 與 fake timers 才有效）。只能當預設值：`x ?? systemNow()` 或 `getNow ?? systemNow`，由架構測試把關。
 - **牆鐘讀取**：HLC、`serverTime`、lease、耗時量測直接寫 `Date.now()`，不經 `getNow`（注入值進不了 DO、舊的 now 不能流進 HLC）；這些檔案明列在 `tests/architecture.test.ts` 的 `Date.now` 護欄 allow。
+
+## 接線
+
+- **AppDeps**：入口（route、cron）對外的一包 `{ db, getScopeStub, getNow, mailer }`。正式環境由 `src/deps.ts` 的 `productionAppDeps(bindings)` 產生，測試由 `createScopeWorld().deps` 產生（`satisfies AppDeps`）。每呼叫一次 `productionAppDeps` 就開一個新的 `first-primary` D1 session，所以它放在原本開 session 的位置，不 memoize、不共用；`crons/ics-sync.ts` 的 OAuth 清理與 ICS 各開一個。設定（`void/env`）不在裡面，routes 照舊直接讀 `env`。

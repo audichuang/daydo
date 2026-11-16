@@ -52,6 +52,7 @@ server/
   src/ics/       types、parser、filters、store、fetch、engine、cron
   src/sync/serverClock.ts      共用的伺服器 HLC 時鐘單例（從 routes/sync/push.ts 移出）
   src/clock.ts                 GetNow／systemNow：可注入時間的預設值（牆鐘讀取例外見 tests/architecture.test.ts）
+  src/deps.ts                  AppDeps／productionAppDeps：入口唯一建 D1 session（first-primary）與取 Scope stub 的地方
 ```
 
 **MCP endpoint 放在主機根目錄 `https://daydo-mcp.audichuang.app/`**，與 REF 相同。
@@ -322,7 +323,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 ### 6.2 寫：`src/serverops/writer.ts`
 
 - 把 MCP／ICS 的意圖組成 op：`{opId, hlc, entity, entityId, op:'upsert', fields, row}`，呼叫 `executeSyncPush(db, {userId, deviceId:'mcp'|'ics', ops, getScopeStub, clock})`。
-  - db 用 `createDb(env.DB, {session:'first-primary'})`。
+  - db 用 `AppDeps.db`（`productionAppDeps` 開的 first-primary D1 session）。
   - clock 用 `src/sync/serverClock.ts` 的單例，與 `/sync/push` 共用。
   - 每批最多 200 個 op，超過就切塊；同一塊內「任務在前、子列在後」。
 - **id**：
@@ -534,7 +535,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 - `crons/ics-sync.ts`：`export const cron = "*/5 * * * *"`，handler 先 `await runOAuthCleanup(db, controller.scheduledTime)`（每小時一次，不會 throw，見 4.8），再直接 `await runIcsCron(env)`，**不用 `ctx.waitUntil`**。
   - Void 1.8.0 的 `handleScheduled` 會 await handler，並把失敗彙整成 `AggregateError`。用 `waitUntil` 就會吃掉失敗。
 - `runIcsCron`：
-  - 用 handler 參數的 `env` 建 db（`createDb(env.DB, {session:'first-primary'})`），用 `Scope.get` 取 DO。
+  - 用 handler 參數的 `env` 呼叫 `productionAppDeps(env)` 取 db（first-primary session）與 `getScopeStub`。
   - 依序同步到期來源，**每輪最多 5 個**，以限制單次執行的 subrequest 數與執行時間。
   - engine 吸收單一來源的錯誤（記在 `lastStatus`），所以 `partial` 不會讓 cron 失敗。只有 run 層級的失敗才 throw，例如 `dueSources` 查詢失敗。
 - 先做一個 spike，證明 cron 裡 `createDb`、`Scope.get` RPC、`env` 都能用。D1 方言下 Void 不包 `withRuntimeEnv`。spike 失敗就回頭調整設計，再做 ICS 其他票。
