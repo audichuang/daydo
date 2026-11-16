@@ -1,10 +1,15 @@
-import { entityHome, listScopes, projectMembership, purgedProject, user } from '@schema';
-import { and, eq, inArray, isNull, or, sql, type BatchItem } from 'void/db';
-import type {
-  PushOpResult,
-  ScopePurgeProjectResponse,
-  ScopePushResponse,
-} from '../../../durable-objects/scope';
+import { entityHome, user } from '@schema';
+import { and, eq, isNull, or, type BatchItem } from 'void/db';
+import type { PushOpResult, ScopePushResponse } from '../../../durable-objects/scope';
+import {
+  activeForUser,
+  claimOwner,
+  collectProjectIds,
+  decodeActiveRoles,
+  purgedAmong,
+  purgeProject,
+  registerListScope,
+} from '../../membership';
 import type { EntityName, MembershipRole } from '../entities';
 import type { AppDb, ScopeStub } from '../push';
 import { scopeOwnerId } from '../scopeName';
@@ -110,14 +115,7 @@ async function bindEntityHomes(
   const selectEndIdx = batch2Stmts.length;
 
   for (const pid of inBatchNewProjects) {
-    batch2Stmts.push(
-      db
-        .insert(projectMembership)
-        .select(
-          sql`SELECT ${pid}, ${userId}, 'owner', ${nowMs}, NULL WHERE EXISTS (SELECT 1 FROM entityHome WHERE entity = 'project' AND entityId = ${pid} AND scope = ${pusherScope}) AND NOT EXISTS (SELECT 1 FROM purgedProject WHERE projectId = ${pid}) AND NOT EXISTS (SELECT 1 FROM projectMembership WHERE projectId = ${pid})`,
-        )
-        .onConflictDoNothing(),
-    );
+    batch2Stmts.push(claimOwner(db, { projectId: pid, userId, pusherScope, nowMs }));
   }
 
   const batch2Results = (await db.batch(
@@ -235,14 +233,7 @@ async function reconcileListScopes(
 
   const batch3Stmts: BatchItem<'sqlite'>[] = [];
   for (const pid of projectOwnerBackfills) {
-    batch3Stmts.push(
-      db
-        .insert(projectMembership)
-        .select(
-          sql`SELECT ${pid}, ${userId}, 'owner', ${nowMs}, NULL WHERE EXISTS (SELECT 1 FROM entityHome WHERE entity = 'project' AND entityId = ${pid} AND scope = ${pusherScope}) AND NOT EXISTS (SELECT 1 FROM purgedProject WHERE projectId = ${pid}) AND NOT EXISTS (SELECT 1 FROM projectMembership WHERE projectId = ${pid})`,
-        )
-        .onConflictDoNothing(),
-    );
+    batch3Stmts.push(claimOwner(db, { projectId: pid, userId, pusherScope, nowMs }));
   }
 
   const seenListScope = new Set<string>();
@@ -253,52 +244,28 @@ async function reconcileListScopes(
     if (seenListScope.has(lsKey)) continue;
     seenListScope.add(lsKey);
     batch3Stmts.push(
-      db
-        .insert(listScopes)
-        .select(
-          sql`SELECT ${target.projectId}, ${target.scope} WHERE NOT EXISTS (SELECT 1 FROM purgedProject WHERE projectId = ${target.projectId}) AND EXISTS (SELECT 1 FROM projectMembership WHERE projectId = ${target.projectId} AND userId = ${userId} AND removedAt IS NULL AND role IN ('owner', 'editor'))`,
-        )
-        .onConflictDoNothing(),
+      registerListScope(db, { projectId: target.projectId, scope: target.scope, userId }),
     );
   }
 
   const purgedReadChunks = chunkArray(Array.from(listProjectsToRead), QUERY_CHUNK_SIZE);
   const purgedStartIdx = batch3Stmts.length;
   for (const chunk of purgedReadChunks) {
-    batch3Stmts.push(
-      db
-        .select({ projectId: purgedProject.projectId })
-        .from(purgedProject)
-        .where(inArray(purgedProject.projectId, chunk)),
-    );
+    batch3Stmts.push(purgedAmong(db, chunk));
   }
 
   const membershipReadIdx = batch3Stmts.length;
-  batch3Stmts.push(
-    db
-      .select({ projectId: projectMembership.projectId, role: projectMembership.role })
-      .from(projectMembership)
-      .where(and(eq(projectMembership.userId, userId), isNull(projectMembership.removedAt))),
-  );
+  batch3Stmts.push(activeForUser(db, userId));
 
   const batch3Results = (await db.batch(
     batch3Stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]],
   )) as Array<Array<Record<string, unknown>>>;
 
   for (let s = purgedStartIdx; s < membershipReadIdx; s += 1) {
-    for (const row of batch3Results[s]) {
-      purgedSet.add(String(row.projectId));
-    }
+    collectProjectIds(batch3Results[s], purgedSet);
   }
 
-  const refreshedMemberships: Record<string, MembershipRole> = {};
-  for (const row of batch3Results[membershipReadIdx] ?? []) {
-    const role = row.role;
-    if (role === 'owner' || role === 'editor' || role === 'viewer') {
-      refreshedMemberships[String(row.projectId)] = role;
-    }
-  }
-  return refreshedMemberships;
+  return decodeActiveRoles(batch3Results[membershipReadIdx] ?? []);
 }
 
 /**
@@ -397,78 +364,23 @@ async function dispatchScopeBatches(
     await pushRange(segmentStart, del.opIndex);
     segmentStart = del.opIndex + 1;
 
-    const purgeBatchResults = (await db.batch([
-      db
-        .insert(purgedProject)
-        .values({ projectId: del.projectId, purgedAt: nowMs })
-        .onConflictDoNothing(),
-      db
-        .update(projectMembership)
-        .set({ removedAt: nowMs })
-        .where(
-          and(
-            eq(projectMembership.projectId, del.projectId),
-            isNull(projectMembership.removedAt),
-          ),
-        ),
-      db
-        .select({ scope: listScopes.scope })
-        .from(listScopes)
-        .where(eq(listScopes.projectId, del.projectId)),
-    ])) as Array<Array<Record<string, unknown>>>;
-
-    const listedScopes = (purgeBatchResults[2] ?? []).map((r) => String(r.scope));
-    const scopesToPurge = Array.from(new Set([...listedScopes, del.homeScope]));
-    const settleResults = await Promise.allSettled(
-      scopesToPurge.map(async (targetScope) =>
-        getScopeStub(targetScope).purgeProject({
-          projectId: del.projectId,
-          purgedAt: nowMs,
-          opId: targetScope === del.homeScope ? del.opId : undefined,
-          pusherUserId: targetScope === del.homeScope ? userId : undefined,
-        }),
-      ),
-    );
-
-    const succeededScopes: string[] = [];
-    let homeResult: ScopePurgeProjectResponse | null = null;
-    let homeError: unknown = null;
-    for (let idx = 0; idx < scopesToPurge.length; idx += 1) {
-      const targetScope = scopesToPurge[idx];
-      const settled = settleResults[idx];
-      if (settled.status === 'fulfilled') {
-        succeededScopes.push(targetScope);
-        if (targetScope === del.homeScope) {
-          homeResult = settled.value;
-        }
-      } else if (targetScope === del.homeScope) {
-        homeError = settled.reason;
-      }
-    }
-
-    if (succeededScopes.length > 0) {
-      await db
-        .delete(listScopes)
-        .where(
-          and(
-            eq(listScopes.projectId, del.projectId),
-            inArray(listScopes.scope, succeededScopes),
-          ),
-        );
-    }
-
-    if (homeError !== null) {
-      throw homeError;
-    }
+    const homeResult = await purgeProject(db, {
+      projectId: del.projectId,
+      homeScope: del.homeScope,
+      opId: del.opId,
+      pusherUserId: userId,
+      purgedAt: nowMs,
+      getScopeStub,
+    });
 
     purgedSet.add(del.projectId);
     delete memberships[del.projectId];
-    extraServerTimes.push(homeResult!.serverTime);
+    extraServerTimes.push(homeResult.serverTime);
     results[del.opIndex] = {
       opId: del.opId,
       status: 'applied',
-      row: homeResult!.purgedRow,
-      clocks: homeResult!.clocks,
+      row: homeResult.purgedRow,
+      clocks: homeResult.clocks,
     };
   }
   await pushRange(segmentStart, rawOps.length);

@@ -1,5 +1,6 @@
-import { device, identity, projectMembership, session, user } from '@schema';
+import { device, identity, session, user } from '@schema';
 import { and, eq, gt, isNull, sql, type db } from 'void/db';
+import { activeProjectIds, decodeProjectIds } from '../membership';
 import type { ScopeStub } from '../sync/push';
 import { userScope } from '../sync/scopeName';
 import { generateRefreshToken, sha256Hex, signAccessToken } from './crypto';
@@ -40,10 +41,7 @@ async function resolveUserSyncState(
       .select({ meMemberId: user.meMemberId, avatarUrl: user.avatarUrl })
       .from(user)
       .where(eq(user.id, userId)),
-    database
-      .select({ projectId: projectMembership.projectId })
-      .from(projectMembership)
-      .where(and(eq(projectMembership.userId, userId), isNull(projectMembership.removedAt))),
+    activeProjectIds(database, userId),
   ]);
 
   const meMemberId =
@@ -52,7 +50,7 @@ async function resolveUserSyncState(
     userRows[0] && typeof userRows[0].avatarUrl === 'string' && userRows[0].avatarUrl.length > 0
       ? userRows[0].avatarUrl
       : null;
-  const readableProjectIds = membershipRows.map((r) => String(r.projectId));
+  const readableProjectIds = decodeProjectIds(membershipRows);
 
   let inboxProjectId: string | null = null;
   if (readableProjectIds.length > 0 && getScopeStub) {
