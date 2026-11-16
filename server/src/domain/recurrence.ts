@@ -71,9 +71,21 @@ export function formatRecurrence(r: Recurrence): string {
   return `RRULE:${parts.join(';')}`;
 }
 
+/**
+ * Largest INTERVAL we write: beyond it nextOccurrence can leave the supported year range or spend
+ * seconds walking weeks. Reading stays lenient so rules written elsewhere still parse.
+ */
+export const MAX_INTERVAL = 999;
+
+/** Parses a rule we are willing to write; null when unsupported or the interval is too large. */
+export function parseWritableRecurrence(rrule: string): Recurrence | null {
+  const r = parseRecurrence(rrule);
+  return r && r.interval <= MAX_INTERVAL ? r : null;
+}
+
 /** `RRULE:`-prefixed input is stored verbatim; bare rules are canonicalised. */
 export function validateRepeat(s: string): string {
-  const r = parseRecurrence(s);
+  const r = parseWritableRecurrence(s);
   if (!r) throw new Error(`Unsupported repeat rule: ${s}`);
   return s.toUpperCase().startsWith('RRULE:') ? s : formatRecurrence(r);
 }

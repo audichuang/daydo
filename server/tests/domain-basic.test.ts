@@ -113,6 +113,15 @@ describe('reminders', () => {
     }
   });
 
+  it('rejects offsets beyond a year, which would overflow the App\'s Int arithmetic', () => {
+    expect(parseReminder('-P366D')).toBe(-366 * 86400);
+    expect(parseReminder('P52W')).toBe(52 * 7 * 86400);
+    for (const bad of ['-P999999999999999D', 'P367D', 'P53W', 'PT8785H', 'P366DT1S', '-PT99999999999999999999S']) {
+      expect(parseReminder(bad), bad).toBeNull();
+      expect(() => parseReminderCsv(bad), bad).toThrow(/Invalid reminder trigger/);
+    }
+  });
+
   it('comma string input', () => {
     expect(parseReminderCsv('-PT24H, PT0S,, -PT15M ')).toEqual([
       'TRIGGER:-P1D',

@@ -44,6 +44,8 @@ function createHarness() {
   const { db } = createTestD1();
   const scopes = new Map<string, InstanceType<typeof ScopeObject>>();
   const calls: PushCall[] = [];
+  // One-shot: makes the matching push throw before the scope applies it (a DO failure).
+  const hooks: { failPush?: (input: Parameters<ScopeStub['push']>[0]) => boolean } = {};
   const clock = createServerHlcClock();
   const getScopeStub = (scope: string): ScopeStub => {
     let instance = scopes.get(scope);
@@ -61,6 +63,10 @@ function createHarness() {
       get(target, prop, receiver) {
         if (prop === 'push') {
           return (input: Parameters<ScopeStub['push']>[0]) => {
+            if (hooks.failPush?.(input)) {
+              hooks.failPush = undefined;
+              return Promise.reject(new Error(`injected failure in ${input.scope}`));
+            }
             calls.push({
               scope: input.scope,
               deviceId: input.deviceId,
@@ -81,7 +87,7 @@ function createHarness() {
     executeSyncPush(db, { userId, deviceId: 'dev-a', ops, getScopeStub, clock });
   const deps = (userId: string) => ({ db, userId, deviceId: 'mcp' as const, getScopeStub, clock });
   const snapshot = (userId: string) => loadSnapshot(db, userId, getScopeStub);
-  return { db, calls, deviceHlc, devicePush, deps, snapshot };
+  return { db, calls, hooks, deviceHlc, devicePush, deps, snapshot };
 }
 
 type Harness = ReturnType<typeof createHarness>;
@@ -305,7 +311,7 @@ describe('M10 delete_project', () => {
     h.calls.length = 0;
     const r = await call(h, 'u-a', 'delete_project', { project_id: 'p1' });
     expect(r.json).toMatchObject({ deleted: true, project_id: 'p1', trashed_tasks: 2 });
-    expect(h.calls[0]!.ops.map((o) => `${o.entity}:${String(o.entityId)}`)).toEqual(['task:t1', 'task:t2', 'project:p1']);
+    expect(h.calls.map((c) => c.ops.map((o) => `${o.entity}:${String(o.entityId)}`))).toEqual([['task:t1', 'task:t2'], ['project:p1']]);
     const list = await call(h, 'u-a', 'list_projects');
     expect(list.json.map((p: any) => p.id)).toEqual(['inbox-u-a']);
     const snap = await h.snapshot('u-a');
@@ -324,6 +330,31 @@ describe('M10 delete_project', () => {
     const snap = await h.snapshot('u-a');
     expect(snap.findRow('project', 'p1')?.row.deletedAt).toBeUndefined();
     expect(snap.findRow('task', 't1')?.row.deletedAt).toBeUndefined();
+  });
+
+  it('deletes the list only after every task is trashed, so a failed run can be retried', async () => {
+    const h = createHarness();
+    await seedShared(h, 'editor');
+    // u-b's task lives in u-b's scope, the list in u-a's.
+    const seeded = await executeSyncPush(h.db, {
+      userId: 'u-b', deviceId: 'dev-b', ops: [deviceOp(h, 'task', taskRow('tb', 'p1', { sortKey: 'b' }))],
+      getScopeStub: h.deps('u-b').getScopeStub, clock: h.deps('u-b').clock,
+    });
+    expect(seeded.results[0]?.status).toBe('applied');
+    h.hooks.failPush = (input) => input.deviceId === 'mcp' && input.scope === 'u:u-b';
+
+    const first = await call(h, 'u-a', 'delete_project', { project_id: 'p1' });
+    expect(first.isError).toBe(true);
+    expect((await h.snapshot('u-a')).findRow('project', 'p1')?.row.deletedAt).toBeUndefined();
+
+    const retry = await call(h, 'u-a', 'delete_project', { project_id: 'p1' });
+    expect(retry.isError, retry.text).toBe(false);
+    // t1 (u-a's scope) already landed in the failed run; the retry finishes tb.
+    expect(retry.json).toMatchObject({ deleted: true, trashed_tasks: 1 });
+    const snap = await h.snapshot('u-a');
+    expect(snap.findRow('task', 't1')?.row.deletedAt).toBeTypeOf('number');
+    expect(snap.findRow('project', 'p1')?.row.deletedAt).toBeTypeOf('number');
+    expect(snap.findRow('task', 'tb')?.row.deletedAt).toBeTypeOf('number');
   });
 
   it('refuses to delete the inbox', async () => {

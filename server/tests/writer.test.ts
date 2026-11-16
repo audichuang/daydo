@@ -399,6 +399,8 @@ describe('M9b writer: value validation', () => {
     ['timeZone', { entity: 'task', entityId: 't1', set: { timeZone: 'Mars/Olympus' } }],
     ['timeZone casing', { entity: 'task', entityId: 't1', set: { timeZone: 'asia/taipei' } }],
     ['reminder', { entity: 'task', entityId: 't1', set: { reminders: ['TRIGGER:soon'] } }],
+    ['reminder beyond a year', { entity: 'task', entityId: 't1', set: { reminders: ['TRIGGER:-P999999999999999D'] } }],
+    ['repeat interval above 999', { entity: 'task', entityId: 't1', set: { repeatRule: 'RRULE:FREQ=YEARLY;INTERVAL=8000' } }],
     ['repeat', { entity: 'task', entityId: 't1', set: { repeatRule: 'RRULE:FREQ=MONTHLY;BYMONTHDAY=-1' } }],
     ['sortKey ends in 0', { entity: 'task', entityId: 't1', set: { sortKey: 'i0' } }],
     ['sortKey empty', { entity: 'task', entityId: 't1', set: { sortKey: '' } }],

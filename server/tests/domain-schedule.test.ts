@@ -401,6 +401,15 @@ describe('recurrence', () => {
     expect(() => validateRepeat('every day')).toThrow('Unsupported repeat rule: every day');
   });
 
+  it('refuses to write an INTERVAL above 999, whose next occurrence would overflow or take seconds', () => {
+    expect(validateRepeat('RRULE:FREQ=DAILY;INTERVAL=999')).toBe('RRULE:FREQ=DAILY;INTERVAL=999');
+    for (const bad of ['RRULE:FREQ=YEARLY;INTERVAL=8000', 'FREQ=WEEKLY;INTERVAL=300000;BYDAY=MO', 'FREQ=DAILY;INTERVAL=1000']) {
+      expect(() => validateRepeat(bad), bad).toThrow(`Unsupported repeat rule: ${bad}`);
+    }
+    // Reading stays lenient so App-written rules still parse.
+    expect(parseRecurrence('RRULE:FREQ=YEARLY;INTERVAL=8000')?.interval).toBe(8000);
+  });
+
   it('rejects negative, zero and non-integer BYMONTHDAY', () => {
     for (const bad of ['RRULE:FREQ=MONTHLY;BYMONTHDAY=-1', 'RRULE:FREQ=MONTHLY;BYMONTHDAY=0', 'FREQ=MONTHLY;BYMONTHDAY=32', 'RRULE:FREQ=MONTHLY;BYMONTHDAY=1,15']) {
       expect(() => validateRepeat(bad), bad).toThrow(`Unsupported repeat rule: ${bad}`);

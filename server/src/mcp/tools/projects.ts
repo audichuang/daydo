@@ -181,12 +181,17 @@ export function projectTools(): ToolDef[] {
         const tasks = snapshot
           .rows('task')
           .filter((t) => t.row.projectId === id && t.row.deletedAt == null && t.row.purgedAt == null);
-        // Tasks first so a failed run never leaves tasks under a deleted list.
-        const intents: WriteIntent[] = [
-          ...tasks.map((t): WriteIntent => ({ entity: 'task', entityId: String(t.row.id), set: stamp(t.row) })),
-          { entity: 'project', entityId: id, set: stamp(project.row) },
-        ];
-        await writeOrThrow(deps, snapshot, intents);
+        // Tasks in their own push first: they may live in other members' scopes, which one push
+        // does not apply atomically. The list goes only once every task is trashed, so a failed
+        // run leaves the list live and a retry can finish it.
+        if (tasks.length > 0) {
+          await writeOrThrow(
+            deps,
+            snapshot,
+            tasks.map((t): WriteIntent => ({ entity: 'task', entityId: String(t.row.id), set: stamp(t.row) })),
+          );
+        }
+        await writeOrThrow(deps, snapshot, [{ entity: 'project', entityId: id, set: stamp(project.row) }]);
         return { deleted: true, project_id: id, name: String(project.row.name ?? ''), trashed_tasks: tasks.length };
       },
     },

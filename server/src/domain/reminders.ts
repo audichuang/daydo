@@ -1,6 +1,12 @@
 // Port of DayDoCore Reminders.swift (trigger parsing and canonical output).
 
-/** Parse a TickTick trigger string into seconds relative to the anchor; null if invalid. */
+/**
+ * Largest accepted offset (a year). The App multiplies with Swift Int, which traps on overflow,
+ * so an unbounded value written here would crash every member's App once synced.
+ */
+export const MAX_REMINDER_SECONDS = 366 * 86400;
+
+/** Parse a TickTick trigger string into seconds relative to the anchor; null if invalid or beyond a year. */
 export function parseReminder(trigger: string): number | null {
   let s = trigger.toUpperCase();
   if (s.startsWith('TRIGGER:')) s = s.slice(8);
@@ -36,6 +42,7 @@ export function parseReminder(trigger: string): number | null {
     else return null;
   }
   if (number !== '') return null;
+  if (total > MAX_REMINDER_SECONDS) return null;
   return sign * total;
 }
 

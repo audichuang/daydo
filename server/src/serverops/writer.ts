@@ -1,7 +1,7 @@
 // Server-side writer for MCP tools and ICS sync (spec/mcp.md 6.2): turns write intents into
 // sync ops, pushes them through executeSyncPush and reports the server's answer per intent.
 import { parseReminder } from '../domain/reminders';
-import { parseRecurrence } from '../domain/recurrence';
+import { MAX_INTERVAL, parseWritableRecurrence } from '../domain/recurrence';
 import { isValidDay, isValidTimeZone } from '../domain/schedule';
 import { isGeneratedKeyValid } from '../domain/sortKey';
 import { uuidv7 } from '../domain/uuid';
@@ -202,8 +202,8 @@ function validateValues(
         }
         break;
       case 'repeatRule':
-        if (!isNil(v) && !(typeof v === 'string' && parseRecurrence(v) !== null)) {
-          fail(field, 'unsupported RRULE');
+        if (!isNil(v) && !(typeof v === 'string' && parseWritableRecurrence(v) !== null)) {
+          fail(field, `unsupported RRULE or INTERVAL above ${MAX_INTERVAL}`);
         }
         break;
       case 'ownerId':

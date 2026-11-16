@@ -380,19 +380,24 @@ function copyIntent(snapshot: Snapshot, original: Record<string, unknown>, copyI
   };
 }
 
-/** Copies of the live checklist (v5 ids under the copy) and reopened originals, item by item. */
+/**
+ * Copies of the live checklist (v5 ids under the copy) and the reopened originals, kept apart:
+ * copies live in the completer's scope and originals in the task's, so one push is not atomic and
+ * the originals may only be reopened once every copy is stored.
+ */
 async function checklistCopyIntents(
   snapshot: Snapshot,
   items: readonly Record<string, unknown>[],
   copyId: string,
   now: number,
-): Promise<WriteIntent[]> {
-  const intents: WriteIntent[] = [];
+): Promise<{ copies: WriteIntent[]; reopens: WriteIntent[] }> {
+  const copies: WriteIntent[] = [];
+  const reopens: WriteIntent[] = [];
   for (const item of items) {
     const id = await uuidv5(`${copyId}|${String(item.id)}`);
     const existing = snapshot.findRow('checklistItem', id);
     if (!existing || (!isNil(existing.row.deletedAt) && isNil(existing.row.purgedAt))) {
-      intents.push({
+      copies.push({
         entity: 'checklistItem',
         entityId: id,
         set: {
@@ -409,16 +414,18 @@ async function checklistCopyIntents(
       });
     }
     if (Number(item.status ?? 0) !== 0) {
-      intents.push({ entity: 'checklistItem', entityId: String(item.id), set: { status: 0, updatedAt: bump(item, now) } });
+      reopens.push({ entity: 'checklistItem', entityId: String(item.id), set: { status: 0, updatedAt: bump(item, now) } });
     }
   }
-  return intents;
+  return { copies, reopens };
 }
 
 /**
  * Records a completed copy of the current occurrence and moves the task to its next one.
- * Three pushes in the App's order (copy, checklist, original): the original moves last, so a
- * failure leaves it on the same occurrence and a retry reuses the same v5 ids.
+ * The next occurrence is computed before anything is written, so a rule it cannot handle writes
+ * nothing. Then pushes in the App's order (copy, checklist copies, reopened checklist, original),
+ * each only after the previous one succeeded: the original moves last, so a failure leaves it on
+ * the same occurrence with its checklist intact, and a retry reuses the same v5 ids.
  */
 async function completeOccurrence(
   deps: WriterDeps,
@@ -438,6 +445,10 @@ async function completeOccurrence(
     .sort(bySortKey)
     .map((c) => ({ ...c.row }));
 
+  const today = wallClockAt(now, schedule.timeZone ?? scheduleContext(ctx).defaultTimeZone).day;
+  let next = nextOccurrence(rule, schedule.startDay);
+  for (let n = 0; next < today && n < MAX_CATCH_UP; n++) next = nextOccurrence(rule, next);
+
   const v5 = await uuidv5(`${taskId}|${schedule.startDay}|${schedule.startMinute ?? ''}`);
   let copyId = isNil(snapshot.findRow('task', v5)?.row.purgedAt) ? v5 : uuidv7(now);
   const outcomes: WriteOutcome[] = [];
@@ -453,12 +464,10 @@ async function completeOccurrence(
     outcomes.push(out);
   }
 
-  const checklist = await checklistCopyIntents(snapshot, items, copyId, now);
-  if (checklist.length > 0) outcomes.push(...(await writeOrThrow(deps, snapshot, checklist)));
+  const { copies, reopens } = await checklistCopyIntents(snapshot, items, copyId, now);
+  if (copies.length > 0) outcomes.push(...(await writeOrThrow(deps, snapshot, copies)));
+  if (reopens.length > 0) outcomes.push(...(await writeOrThrow(deps, snapshot, reopens)));
 
-  const today = wallClockAt(now, schedule.timeZone ?? scheduleContext(ctx).defaultTimeZone).day;
-  let next = nextOccurrence(rule, schedule.startDay);
-  for (let n = 0; next < today && n < MAX_CATCH_UP; n++) next = nextOccurrence(rule, next);
   await writeOrThrow(deps, snapshot, [
     { entity: 'task', entityId: taskId, set: { ...scheduleSet(movedSchedule(schedule, next)), updatedAt: bump(original, now) } },
   ]);
@@ -486,11 +495,11 @@ const TASK_FIELDS = {
   timezone: { type: 'string', description: 'IANA zone, e.g. Asia/Taipei. Inferred from the offset when omitted.' },
   reminder: {
     type: 'string',
-    description: 'One or more triggers, comma-separated, e.g. TRIGGER:-P1D,TRIGGER:-PT30M. Relative to the start (00:00 of the start day for all-day tasks). Needs a date.',
+    description: 'One or more triggers, comma-separated, e.g. TRIGGER:-P1D,TRIGGER:-PT30M. Relative to the start (00:00 of the start day for all-day tasks). Each at most a year (366 days) from the start. Needs a date.',
   },
   repeat: {
     type: 'string',
-    description: 'Calendar recurrence (RRULE), e.g. RRULE:FREQ=DAILY. Supported: FREQ=DAILY|WEEKLY|MONTHLY|YEARLY with INTERVAL, BYDAY, BYMONTHDAY. Needs a date. For genuinely repeating commitments only: completing one occurrence does NOT cancel the later ones.',
+    description: 'Calendar recurrence (RRULE), e.g. RRULE:FREQ=DAILY. Supported: FREQ=DAILY|WEEKLY|MONTHLY|YEARLY with INTERVAL (1-999), BYDAY, BYMONTHDAY. Needs a date. For genuinely repeating commitments only: completing one occurrence does NOT cancel the later ones.',
   },
   subtasks: { type: 'array', items: { type: 'string' }, description: 'Checklist item titles, in order.' },
   tags: { type: 'array', items: { type: 'string' }, description: 'Tag names; new tags are created.' },
