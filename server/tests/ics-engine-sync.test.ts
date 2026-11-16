@@ -1,43 +1,14 @@
 // M15a: ICS engine create and update paths (spec/mcp.md 9.3), against a real ScopeObject and the
 // in-memory ICS store. Scenarios follow REF engine.test, rewritten for DayDo rows.
-import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 import * as schema from '../db/schema';
 import { acceptInvite, createInvite, updateProjectMemberRole } from '../src/sharing';
-import { createServerHlcClock } from '../src/sync/hlc';
-import { executeSyncPush, type ScopeStub } from '../src/sync/push';
-import { executeSyncPull } from '../src/sync/pull';
+import { syncSource } from '../src/ics/engine';
 import { LEASE_TTL_MS, MemoryIcsStore, type IcsMapping } from '../src/ics/store';
 import { NO_DATA_MESSAGE } from '../src/serverops/writer';
 import { isGeneratedKeyValid } from '../src/domain/sortKey';
-import { createTestD1, createTestDoState } from './sqliteD1';
-
-vi.mock('cloudflare:workers', () => ({
-  DurableObject: class {
-    ctx: unknown;
-    env: unknown;
-    constructor(ctx: unknown, env: unknown) {
-      this.ctx = ctx;
-      this.env = env;
-    }
-  },
-}));
-
-vi.mock('void/durable', () => ({
-  defineDurableObject: (def: unknown) => def,
-}));
-
-vi.mock('void/db', async () => {
-  const orm = await import('drizzle-orm');
-  return {
-    ...orm,
-    createDb: (d1: D1Database) => drizzle(d1, { schema }),
-  };
-});
-
-const { default: Scope, ScopeObject } = await import('../durable-objects/scope');
-const { syncSource } = await import('../src/ics/engine');
+import { createScopeWorld } from './helpers/scopeWorld';
 
 const NOW = Date.parse('2026-10-01T00:00:00Z');
 const NOW_ISH = 1_700_000_000_000;
@@ -47,16 +18,7 @@ const event = (extra: string[] = [], uid = 'meeting-a') =>
   ['BEGIN:VEVENT', `UID:${uid}`, 'SUMMARY:Meeting', 'DTSTART:20261002T010000Z', 'DTEND:20261002T020000Z', ...extra, 'END:VEVENT'].join('\r\n');
 const calendar = (...events: string[]) => ['BEGIN:VCALENDAR', 'VERSION:2.0', ...events, 'END:VCALENDAR'].join('\r\n');
 
-interface PushCall {
-  scope: string;
-  deviceId: string;
-  ops: Array<Record<string, unknown>>;
-}
-
 function createHarness(initialFeed = calendar(event())) {
-  const { db } = createTestD1();
-  const scopes = new Map<string, InstanceType<typeof ScopeObject>>();
-  const calls: PushCall[] = [];
   // One-shot hooks around the next ICS push reaching a scope.
   const hooks: {
     beforeIcsPush?: () => Promise<unknown>;
@@ -65,48 +27,27 @@ function createHarness(initialFeed = calendar(event())) {
     /** Apply the ops, then lose the response. */
     loseIcsResponse?: boolean;
   } = {};
-  const clock = createServerHlcClock();
-  const getScopeStub = (scope: string): ScopeStub => {
-    let instance = scopes.get(scope);
-    if (!instance) {
-      const doState = createTestDoState();
-      const ScopeClass = Scope.class as unknown as new (
-        ctx: DurableObjectState,
-        env: { SYNC_FAULT: 'none' },
-      ) => InstanceType<typeof ScopeObject>;
-      instance = new ScopeClass(doState.ctx, { SYNC_FAULT: 'none' });
-      scopes.set(scope, instance);
-    }
-    const stub = instance as unknown as ScopeStub;
-    return new Proxy(stub, {
-      get(target, prop, receiver) {
-        if (prop === 'push') {
-          return async (input: Parameters<ScopeStub['push']>[0]) => {
-            if (input.deviceId === 'ics') {
-              if (hooks.beforeIcsPush) {
-                const hook = hooks.beforeIcsPush;
-                hooks.beforeIcsPush = undefined;
-                await hook();
-              }
-              if (hooks.failBeforeIcsPush) {
-                hooks.failBeforeIcsPush = false;
-                throw new Error('network down');
-              }
-            }
-            calls.push({ scope: input.scope, deviceId: input.deviceId, ops: input.ops as Array<Record<string, unknown>> });
-            const res = await target.push(input);
-            if (input.deviceId === 'ics' && hooks.loseIcsResponse) {
-              hooks.loseIcsResponse = false;
-              throw new Error('response lost');
-            }
-            return res;
-          };
+  const { db, calls, clock, getScopeStub, push, pull } = createScopeWorld({
+    onPush: async (input, proceed) => {
+      if (input.deviceId === 'ics') {
+        if (hooks.beforeIcsPush) {
+          const hook = hooks.beforeIcsPush;
+          hooks.beforeIcsPush = undefined;
+          await hook();
         }
-        const v = Reflect.get(target, prop, receiver) as unknown;
-        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
-      },
-    });
-  };
+        if (hooks.failBeforeIcsPush) {
+          hooks.failBeforeIcsPush = false;
+          throw new Error('network down');
+        }
+      }
+      const res = await proceed(input);
+      if (input.deviceId === 'ics' && hooks.loseIcsResponse) {
+        hooks.loseIcsResponse = false;
+        throw new Error('response lost');
+      }
+      return res;
+    },
+  });
 
   let feed = initialFeed;
   let feedStatus = 200;
@@ -118,9 +59,7 @@ function createHarness(initialFeed = calendar(event())) {
   const store = new MemoryIcsStore();
   let seq = 0;
   const deviceHlc = (ms = Date.now() - 60_000) => `${ms}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
-  const devicePush = (userId: string, ops: unknown[]) =>
-    executeSyncPush(db, { userId, deviceId: 'dev-a', ops, getScopeStub, clock });
-  const pull = (userId: string) => executeSyncPull(db, { userId, cursors: {}, limit: 1000, getScopeStub });
+  const devicePush = (userId: string, ops: unknown[]) => push(userId, 'dev-a', ops);
   const deps = { store, db, getScopeStub, clock, fetchOptions: { fetch: fakeFetch } };
   return {
     db,
@@ -131,7 +70,7 @@ function createHarness(initialFeed = calendar(event())) {
     getScopeStub,
     deviceHlc,
     devicePush,
-    pull,
+    pull: (userId: string) => pull(userId, { limit: 1000 }),
     setFeed(value: string) {
       feed = value;
     },
