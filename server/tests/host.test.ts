@@ -22,6 +22,8 @@ const NON_MCP_PATHS = [
   '/health',
   '/sync/pull',
   '/auth/apple',
+  '/auth/email/start',
+  '/auth/email/verify',
   '/authorizeX',
   '/registerx',
   '/token/x',

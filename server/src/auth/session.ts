@@ -2,7 +2,7 @@ import { device, identity, projectMembership, session, user } from '@schema';
 import { and, eq, gt, isNull, sql, type db } from 'void/db';
 import type { ScopeStub } from '../sync/push';
 import { generateRefreshToken, sha256Hex, signAccessToken } from './crypto';
-import { sanitizeHttpsAvatarUrl, type ProviderName } from './providers';
+import { sanitizeHttpsAvatarUrl, type IdentityProviderName } from './providers';
 
 const REFRESH_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const REFRESH_GRACE_MS = 10 * 60 * 1000;
@@ -154,7 +154,7 @@ async function issueSessionForExistingUser(
 export async function createSessionForIdentity(
   database: DatabaseClient,
   params: {
-    provider: ProviderName;
+    provider: IdentityProviderName;
     sub: string;
     email: string | null;
     avatarUrl?: string | null;

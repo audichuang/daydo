@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseClient } from '../src/auth/session';
 import {
   CODE_RETENTION_MS,
+  EMAIL_CODE_RETENTION_MS,
   PENDING_RETENTION_MS,
   REFRESH_RETENTION_MS,
   cleanupExpiredOAuth,
@@ -46,6 +47,15 @@ function insertRefresh(sqlite: DatabaseSync, refreshHash: string, expiresAt: num
     .run(refreshHash, expiresAt - 30 * DAY, expiresAt, revokedAt);
 }
 
+function insertEmailCode(sqlite: DatabaseSync, id: string, expiresAt: number, usedAt: number | null = null) {
+  sqlite
+    .prepare(
+      `INSERT INTO emailCode (id, email, codeHash, salt, attempts, createdAt, expiresAt, usedAt, pendingId, ipHash)
+       VALUES (?, 'a@example.com', 'h', 's', 0, ?, ?, ?, NULL, 'ip')`,
+    )
+    .run(id, expiresAt - 600_000, expiresAt, usedAt);
+}
+
 function ids(sqlite: DatabaseSync, table: string, key: string): string[] {
   return (sqlite.prepare(`SELECT ${key} AS k FROM ${table} ORDER BY ${key}`).all() as Array<{ k: string }>).map(
     (r) => r.k,
@@ -67,6 +77,10 @@ function seed(sqlite: DatabaseSync) {
   // Revoked long ago but expired recently: kept so reuse of the old token still revokes the family.
   insertRefresh(sqlite, 'r-revoked-recent-expiry', NOW - DAY, NOW - 40 * DAY);
   insertRefresh(sqlite, 'r-live', NOW + DAY);
+  insertEmailCode(sqlite, 'e-old', NOW - EMAIL_CODE_RETENTION_MS - 1);
+  insertEmailCode(sqlite, 'e-old-used', NOW - EMAIL_CODE_RETENTION_MS - 1, NOW - EMAIL_CODE_RETENTION_MS - 100);
+  insertEmailCode(sqlite, 'e-edge', NOW - EMAIL_CODE_RETENTION_MS);
+  insertEmailCode(sqlite, 'e-live', NOW + 1);
   sqlite
     .prepare('INSERT INTO oauthClient (clientId, clientName, redirectUris, ipHash, createdAt) VALUES (?, ?, ?, ?, ?)')
     .run('mcp-ancient', 'x', '[]', 'h', NOW - 400 * DAY);
@@ -82,21 +96,26 @@ describe('cleanupExpiredOAuth (spec/mcp.md 4.8)', () => {
     expect(PENDING_RETENTION_MS).toBe(DAY);
     expect(CODE_RETENTION_MS).toBe(DAY);
     expect(REFRESH_RETENTION_MS).toBe(30 * DAY);
+    expect(EMAIL_CODE_RETENTION_MS).toBe(DAY);
     seed(sqlite);
 
     const deleted = await cleanupExpiredOAuth(database, NOW);
-    expect(deleted).toEqual({ pending: 2, code: 1, refresh: 2 });
+    expect(deleted).toEqual({ pending: 2, code: 1, refresh: 2, emailCode: 2 });
     expect(ids(sqlite, 'oauthPending', 'id')).toEqual(['p-edge', 'p-expired-recent', 'p-open']);
     expect(ids(sqlite, 'oauthCode', 'codeHash')).toEqual(['c-edge', 'c-live']);
     expect(ids(sqlite, 'oauthRefresh', 'refreshHash')).toEqual(['r-edge', 'r-live', 'r-revoked-recent-expiry']);
     expect(ids(sqlite, 'oauthClient', 'clientId')).toEqual(['mcp-ancient']);
+    expect(ids(sqlite, 'emailCode', 'id')).toEqual(['e-edge', 'e-live']);
   });
 
   it('deletes at most `batch` rows per table per call', async () => {
     const { sqlite, database } = setup();
     for (let i = 0; i < 5; i++) insertPending(sqlite, `p-${i}`, NOW - 2 * DAY);
-    expect(await cleanupExpiredOAuth(database, NOW, 2)).toEqual({ pending: 2, code: 0, refresh: 0 });
+    expect(await cleanupExpiredOAuth(database, NOW, 2)).toEqual({ pending: 2, code: 0, refresh: 0, emailCode: 0 });
     expect(ids(sqlite, 'oauthPending', 'id')).toHaveLength(3);
+    for (let i = 0; i < 3; i++) insertEmailCode(sqlite, `e-${i}`, NOW - 2 * DAY);
+    expect(await cleanupExpiredOAuth(database, NOW, 2)).toEqual({ pending: 2, code: 0, refresh: 0, emailCode: 2 });
+    expect(ids(sqlite, 'emailCode', 'id')).toHaveLength(1);
   });
 });
 
@@ -120,7 +139,7 @@ describe('runOAuthCleanup (hourly from the 5-minute cron)', () => {
     await runOAuthCleanup(database, NOW);
     expect(ids(sqlite, 'oauthPending', 'id')).toHaveLength(3);
     expect(log).toHaveBeenCalledWith(
-      JSON.stringify({ event: 'oauth.cleanup', pending: 2, code: 1, refresh: 2 }),
+      JSON.stringify({ event: 'oauth.cleanup', pending: 2, code: 1, refresh: 2, emailCode: 2 }),
     );
   });
 

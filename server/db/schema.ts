@@ -185,6 +185,31 @@ export const oauthRefresh = sqliteTable(
   (t) => [index('oauthRefresh_familyId_idx').on(t.familyId)],
 );
 
+// Sign-in codes sent by email (spec/sync.md "信箱驗證碼", spec/mcp.md 4.2). Only a salted
+// SHA-256 of the code is stored; rows double as the per-address and per-IP rate-limit ledger.
+export const emailCode = sqliteTable(
+  'emailCode',
+  {
+    id: text('id').primaryKey(),
+    // Trimmed and lowercased.
+    email: text('email').notNull(),
+    codeHash: text('codeHash').notNull(),
+    salt: text('salt').notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    createdAt: integer('createdAt').notNull(),
+    expiresAt: integer('expiresAt').notNull(),
+    // Set when the code is consumed, or when a newer start for the same address replaces it.
+    usedAt: integer('usedAt'),
+    // The MCP authorize pending the code is bound to; null for App sign-in.
+    pendingId: text('pendingId'),
+    ipHash: text('ipHash').notNull(),
+  },
+  (t) => [
+    index('emailCode_email_createdAt_idx').on(t.email, t.createdAt),
+    index('emailCode_ipHash_createdAt_idx').on(t.ipHash, t.createdAt),
+  ],
+);
+
 // ICS subscription sync. See spec/mcp.md 9.2.
 export const icsSource = sqliteTable(
   'icsSource',
