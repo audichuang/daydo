@@ -47,7 +47,7 @@ server/
   crons/ics-sync.ts
   src/oauth/     tokens、metadata、cors、register、codes、refresh、token、authorize、webIdentity、pages、cleanup
   src/mcp/       protocol（JSON-RPC）、auth（Bearer）、registry（validateArgs、HINTS）、log、format、tools/{projects,tags,tasks,ics}.ts
-  src/serverops/ snapshot（讀）、writer（寫）
+  src/serverops/ snapshot（讀）、writer（寫）、values（schedule 欄位與比較）、taskWrites（與 App 對齊的任務寫入）
   src/domain/    uuid、sortKey、tags、reminders、schedule、recurrence（Swift 邏輯的 TS 移植）
   src/ics/       types、parser、filters、store、fetch、engine、cron
   src/sync/serverClock.ts      共用的伺服器 HLC 時鐘單例（從 routes/sync/push.ts 移出）
