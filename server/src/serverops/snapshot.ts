@@ -1,6 +1,7 @@
 import { user } from '@schema';
 import { eq } from 'void/db';
 import type { PullScopeRow } from '../../durable-objects/scope';
+import { listWriteDenial } from '../sync/access';
 import type { MembershipRole } from '../sync/entities';
 import { executeSyncPull } from '../sync/pull';
 import type { AppDb, ScopeStub } from '../sync/push';
@@ -8,6 +9,7 @@ import { userScope } from '../sync/scopeName';
 import type { WriteOutcome } from './writer';
 
 const PULL_LIMIT = 1000;
+const NO_PURGED: ReadonlySet<string> = new Set();
 /** Safety valve: a scope that keeps reporting hasMore without advancing its cursor is a bug. */
 const MAX_PAGES = 1000;
 
@@ -123,8 +125,8 @@ export async function loadSnapshot(
       );
     },
     canWrite(projectId: string) {
-      const role = memberships.get(projectId);
-      return role === 'owner' || role === 'editor';
+      // Pulls never return purged lists' memberships, so the role decides; the Scope DO re-checks.
+      return listWriteDenial(projectId, { memberships, purgedSet: NO_PURGED }) === null;
     },
   };
 }
