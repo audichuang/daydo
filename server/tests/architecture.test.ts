@@ -232,6 +232,41 @@ const GUARDS: Guard[] = [
     allow: ['src/auth/access.ts', 'src/auth/middleware.ts'],
     bad: ["import { env } from 'void/env';"],
   },
+  {
+    // Row builders live in tests/helpers/serverHarness.ts (exported there, so `export function` is not
+    // matched). The only local copy is mcp-ics's seedUser, which seeds a different shape the tests assert on.
+    name: 'test row builders are defined only in tests/helpers',
+    dirs: ['tests'],
+    pattern: /^(async )?function (projectRow|taskRow|deviceOp|seedUser|seedBasic)\(/m,
+    allow: ['tests/mcp-ics.test.ts'],
+    bad: [
+      'function projectRow(id: string) {',
+      'function taskRow(id: string, projectId: string) {',
+      'function deviceOp(h: Harness, entity: string) {',
+      'async function seedUser(h: Harness, userId: string) {',
+      'async function seedBasic(h: Harness) {',
+    ],
+  },
+  {
+    // The bad samples are built by concatenation: this file is scanned too, and a literal sample
+    // would match its own guard.
+    // task-writes keeps one case on a pinned clock: its device edit is stamped FIX_NOW + 10 and must
+    // still beat the server's own HLC, which only works when the HLC wall clock is FIX_NOW too.
+    name: 'no fake timers in tests',
+    dirs: ['tests'],
+    pattern: /\buseFakeTimers\b|\bsetSystemTime\b/,
+    allow: ['tests/task-writes.test.ts'],
+    bad: ['vi.use' + 'FakeTimers();', 'vi.set' + 'SystemTime(0);'],
+  },
+  {
+    // Same concatenation trick as above. scope.test.ts fixes the wall clock on purpose: it tests that
+    // the DO's serverTime stays monotonic, which is the HLC wall clock and cannot be injected.
+    name: 'Date.now is spied only where the HLC wall clock is under test',
+    dirs: ['tests'],
+    pattern: /spyOn\(\s*Date\b/,
+    allow: ['tests/scope.test.ts'],
+    bad: ['vi.spy' + "On(Date, 'now');"],
+  },
 ];
 
 /** Tool names in the first column of the spec/mcp.md section 8 table. */
