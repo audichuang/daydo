@@ -18,6 +18,8 @@ struct TimeBlockEditor: View {
     @State private var others: [TodoTask] = []
     @State private var allDayTitles: [String] = []
     @State private var dragStart: (Int, Int)?
+    @State private var moveStartHaptic = 0
+    @State private var snapHaptic = 0
     @GestureState private var isMoving = false
 
     static let pxPerMinute: CGFloat = 1
@@ -54,6 +56,8 @@ struct TimeBlockEditor: View {
 
             timeline
         }
+        .sensoryFeedback(.impact(weight: .light), trigger: moveStartHaptic)
+        .sensoryFeedback(.selection, trigger: snapHaptic)
         .onAppear {
             s = draft.allDay ? 9 * 60 : draft.start
             e = draft.allDay || draft.end <= draft.start ? s + 30 : draft.end
@@ -104,7 +108,7 @@ struct TimeBlockEditor: View {
                                 .padding(.horizontal, 11).frame(height: 30)
                                 .background(Capsule().fill(on ? accent.color : Palette.chip))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.press)
                         .accessibilityAddTraits(on ? .isSelected : [])
                     }
                 }
@@ -225,7 +229,7 @@ struct TimeBlockEditor: View {
                 guard case .second(true, let drag?) = value else { return }
                 if dragStart == nil {
                     dragStart = (s, e)
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    moveStartHaptic += 1
                 }
                 let (s0, e0) = dragStart!
                 let dm = Int((drag.translation.height / Self.pxPerMinute / 5).rounded()) * 5
@@ -236,7 +240,7 @@ struct TimeBlockEditor: View {
             }
             .onEnded { _ in
                 if dragStart != nil {
-                    UISelectionFeedbackGenerator().selectionChanged()
+                    snapHaptic += 1
                 }
                 dragStart = nil
             }
@@ -262,7 +266,7 @@ struct TimeBlockEditor: View {
             }
             .onEnded { _ in
                 dragStart = nil
-                UISelectionFeedbackGenerator().selectionChanged()
+                snapHaptic += 1
             }
     }
 

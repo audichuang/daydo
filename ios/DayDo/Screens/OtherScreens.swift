@@ -5,7 +5,9 @@ import DayDoCore
 struct SearchScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.isRegularWindow) private var isRegular
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var text = ""
+    @State private var lastText = ""
     @State private var activeOnly = false
     @State private var results: [TodoTask] = []
     @FocusState private var focused: Bool
@@ -47,9 +49,14 @@ struct SearchScreen: View {
                     VStack(spacing: 0) {
                         ForEach(Array(results.enumerated()), id: \.element.id) { i, t in
                             TaskRow(task: t, separator: i > 0, sectionId: "search")
+                                .transition(reduceMotion ? .opacity : .asymmetric(
+                                    insertion: .opacity.combined(with: .move(edge: .top)),
+                                    removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .top))
+                                ))
                         }
                     }
                     .card()
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .opacity(results.isEmpty ? 0 : 1)
                     if results.isEmpty {
                         Text(text.isEmpty ? (model.tags.isEmpty ? "輸入關鍵字開始搜尋" : "") : "找不到「\(text)」")
@@ -62,7 +69,7 @@ struct SearchScreen: View {
                                         Button { model.scope = .tag(tag.name); model.tab = .tasks } label: {
                                             TagChip(name: tag.name, label: tag.label, color: tag.color)
                                         }
-                                        .buttonStyle(.plain)
+                                        .buttonStyle(.press)
                                         .hoverEffect(.highlight)
                                     }
                                 }
@@ -81,10 +88,15 @@ struct SearchScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: SearchKey(text: text, activeOnly: activeOnly, revision: model.revision)) {
             do {
-                try await Task.sleep(for: .milliseconds(180))
+                if text != lastText {
+                    try await Task.sleep(for: .milliseconds(180))
+                }
+                lastText = text
                 let found = try await model.api.searchTasks(text: text, activeOnly: activeOnly)
                 guard !Task.isCancelled else { return }
-                results = found
+                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.86)) {
+                    results = found
+                }
             } catch is CancellationError {
                 return
             } catch {
@@ -148,6 +160,12 @@ struct SettingsScreen: View {
                 path.removeAll()
             }
         }
+        .onChange(of: path.isEmpty, initial: true) { _, isEmpty in
+            model.hasPushedNavigation = !isEmpty
+        }
+        .onDisappear {
+            model.hasPushedNavigation = false
+        }
         .task(id: model.revision) {
             do {
                 let all = try await model.api.listProjects(includeArchived: true)
@@ -207,7 +225,7 @@ struct SettingsScreen: View {
                                 .frame(minHeight: 58)
                                 .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Color.white.opacity(0.04)))
                             .hoverEffect(.highlight)
                             .accessibilityIdentifier("settings.accountRow")
 
@@ -218,7 +236,7 @@ struct SettingsScreen: View {
                             } label: {
                                 row(icon: "person.badge.plus", title: "加入共享清單")
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Color.white.opacity(0.04)))
                             .hoverEffect(.highlight)
                             .accessibilityIdentifier("settings.joinInvite")
 
@@ -242,7 +260,7 @@ struct SettingsScreen: View {
                                 .frame(minHeight: 52)
                                 .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Color.white.opacity(0.04)))
                             .hoverEffect(.highlight)
                             .accessibilityIdentifier("settings.signOut")
                         }
@@ -253,7 +271,7 @@ struct SettingsScreen: View {
                         NavigationLink(value: SettingsRoute.appearance) {
                             row(icon: "paintpalette", title: "外觀")
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Color.white.opacity(0.04)))
                         .hoverEffect(.highlight)
 
                         if !archivedProjects.isEmpty {
@@ -261,7 +279,7 @@ struct SettingsScreen: View {
                             NavigationLink(value: SettingsRoute.archivedProjects) {
                                 row(icon: "archivebox", title: "已封存的清單", value: "\(archivedProjects.count)")
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Color.white.opacity(0.04)))
                             .hoverEffect(.highlight)
                         }
                     }
@@ -271,7 +289,7 @@ struct SettingsScreen: View {
                         NavigationLink(value: SettingsRoute.data) {
                             row(icon: "externaldrive", title: "資料")
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Color.white.opacity(0.04)))
                         .hoverEffect(.highlight)
                     }
                     .card()
@@ -335,7 +353,7 @@ private struct AppearanceSettingsView: View {
                                         .padding(3)
                                         .overlay(Circle().strokeBorder(model.accentHex == hex ? Palette.text : .clear, lineWidth: 2))
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.press)
                                 .hoverEffect(.highlight)
                                 .accessibilityAddTraits(model.accentHex == hex ? .isSelected : [])
                             }

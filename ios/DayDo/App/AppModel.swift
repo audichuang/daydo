@@ -83,6 +83,7 @@ final class AppModel {
         }
     }
     var drawerOpen = false
+    var hasPushedNavigation = false
     var detailTaskId: String?
     var selectedTaskId: String? {
         didSet {
@@ -250,6 +251,8 @@ final class AppModel {
 
     /// Task ids currently executing `completeTask` to ignore double-taps.
     private(set) var completingIds: Set<String> = []
+    var completionHapticTrigger = 0
+    var uncompletionHapticTrigger = 0
 
     let reminders = ReminderScheduler()
     let notificationDelegate = NotificationDelegate()
@@ -415,19 +418,25 @@ final class AppModel {
 
     /// Completes or uncompletes a task while preventing double-tap re-entry.
     func toggleComplete(_ task: TodoTask) {
-        guard !isViewer(projectId: task.projectId) else { return }
+        guard task.deletedAt == nil, !isViewer(projectId: task.projectId) else { return }
         let id = task.id
+        guard !completingIds.contains(id) else { return }
         if task.isCompleted {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            uncompletionHapticTrigger += 1
             Task { await perform { try await $0.uncompleteTask(id: id) } }
             return
         }
-        guard completingIds.insert(id).inserted else { return }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        completingIds.insert(id)
+        completionHapticTrigger += 1
         let ifUpdatedAt = task.updatedAt
         Task {
-            defer { completingIds.remove(id) }
-            await perform { try await $0.completeTask(id: id, ifUpdatedAt: ifUpdatedAt) }
+            try? await Task.sleep(for: .milliseconds(350))
+            let updated = await perform { try await $0.completeTask(id: id, ifUpdatedAt: ifUpdatedAt) }
+            if updated != nil {
+                // Keep optimistic done state across the single runloop hop while screens reload.
+                try? await Task.sleep(for: .milliseconds(60))
+            }
+            completingIds.remove(id)
         }
     }
 
@@ -606,6 +615,7 @@ final class AppModel {
         scope = .smart(.today)
         tab = .tasks
         drawerOpen = false
+        hasPushedNavigation = false
         detailTaskId = nil
         selectedTaskId = nil
         pendingDetailTaskId = nil

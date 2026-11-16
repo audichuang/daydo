@@ -162,15 +162,16 @@ struct TaskDetailContent: View {
     @ViewBuilder var detail: some View {
         if let task {
             let readOnly = model.isViewer(projectId: task.projectId)
+            let isDone = task.isCompleted || model.completingIds.contains(task.id)
             VStack(spacing: 0) {
                 header(task, readOnly: readOnly)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        statusRow(task, readOnly: readOnly)
+                        statusRow(task, readOnly: readOnly, isDone: isDone)
                         TextField("任務標題", text: $title, axis: .vertical)
                             .txt(22, .bold)
-                            .foregroundStyle(task.isCompleted ? Palette.done : Palette.text)
-                            .strikethrough(task.isCompleted, color: Palette.done)
+                            .foregroundStyle(isDone ? Palette.done : Palette.text)
+                            .strikethrough(isDone, color: Palette.done)
                             .lineLimit(1...6)
                             .focused($focus, equals: .title)
                             .disabled(readOnly)
@@ -213,7 +214,7 @@ struct TaskDetailContent: View {
                         .frame(width: 40, height: 40)
                         .background(Circle().fill(Palette.control))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.press)
                 .hoverEffect(.highlight)
                 .accessibilityLabel(isLargeDetent ? "收合為半屏" : "展開為全屏")
             }
@@ -280,15 +281,15 @@ struct TaskDetailContent: View {
         .frame(height: isInline ? 56 : 68)
     }
 
-    func statusRow(_ task: TodoTask, readOnly: Bool) -> some View {
+    func statusRow(_ task: TodoTask, readOnly: Bool, isDone: Bool) -> some View {
         HStack(spacing: 4) {
             Button { toggleDone(task) } label: {
-                TaskCheckbox(done: task.isCompleted, priority: task.priority, size: 22).frame(width: 44, height: 44)
+                TaskCheckbox(done: isDone, priority: task.priority, size: 22).frame(width: 44, height: 44)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press(scale: 0.9, opacity: 0.85))
             .hoverEffect(.highlight)
             .disabled(readOnly)
-            .accessibilityLabel(task.isCompleted ? "取消完成" : "完成任務")
+            .accessibilityLabel(isDone ? "取消完成" : "完成任務")
 
             Button { openDate(task) } label: {
                 HStack(spacing: 8) {
@@ -300,7 +301,7 @@ struct TaskDetailContent: View {
                 .frame(minHeight: 40)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press(scale: 0.985, opacity: 0.92))
             .hoverEffect(.highlight)
             .disabled(readOnly)
             .accessibilityLabel("設定日期與時間：\(dateSummary(task))")
@@ -381,7 +382,7 @@ struct TaskDetailContent: View {
                             .frame(width: 30, height: 44)
                             .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.press(scale: 0.9, opacity: 0.85))
                     .hoverEffect(.highlight)
                     .disabled(readOnly)
                     .accessibilityLabel((item.isDone ? "取消完成：" : "完成：") + item.title)
@@ -454,7 +455,7 @@ struct TaskDetailContent: View {
                     .padding(.horizontal, 12).padding(.vertical, 10)
                     .card(12, color: Palette.raised)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.press(scale: 0.985, opacity: 0.92))
                 .hoverEffect(.highlight)
                 .contextMenu {
                     if !readOnly {

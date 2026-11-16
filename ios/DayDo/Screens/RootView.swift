@@ -13,6 +13,9 @@ struct RootView: View {
     @State private var splashDismissing = false
     @State private var splashRemoved = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+    @State private var edgeDrawerDrag: CGFloat = 0
+    @State private var edgeDrawerActive = false
+    @State private var rootWidth: CGFloat = 393
 
     private var isRegular: Bool { horizontalSizeClass == .regular }
 
@@ -35,21 +38,54 @@ struct RootView: View {
                             RegularSplitView(columnVisibility: $columnVisibility)
                         } else {
                             ZStack(alignment: .bottom) {
-                                Group {
-                                    switch model.tab {
-                                    case .tasks: TaskListScreen(scope: model.scope)
-                                    case .calendar: CalendarScreen()
-                                    case .search: SearchScreen()
-                                    case .settings: SettingsScreen()
+                                ZStack(alignment: .bottom) {
+                                    Group {
+                                        switch model.tab {
+                                        case .tasks: TaskListScreen(scope: model.scope).transition(.opacity)
+                                        case .calendar: CalendarScreen().transition(.opacity)
+                                        case .search: SearchScreen().transition(.opacity)
+                                        case .settings: SettingsScreen().transition(.opacity)
+                                        }
                                     }
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    .animation(.easeInOut(duration: 0.18), value: model.tab)
+
+                                    BottomNav(tab: $model.tab, todayDay: model.today.day)
+                                        .padding(.horizontal, 16)
+                                        .padding(.bottom, 4)
                                 }
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .gesture(
+                                    EdgePanGesture(
+                                        isEnabled: {
+                                            !model.drawerOpen && !model.hasActiveRootSheet && !model.hasPushedNavigation
+                                        },
+                                        onChanged: { tx in
+                                            edgeDrawerActive = true
+                                            edgeDrawerDrag = max(0, tx)
+                                        },
+                                        onEnded: { tx, vx in
+                                            let drawerW = min(rootWidth * 0.82, 340)
+                                            let shouldOpen = tx > drawerW * 0.5 || (vx > 500 && tx > 12)
+                                            if shouldOpen {
+                                                withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.32, dampingFraction: 0.86)) {
+                                                    model.drawerOpen = true
+                                                    edgeDrawerDrag = 0
+                                                    edgeDrawerActive = false
+                                                }
+                                            } else {
+                                                withAnimation(reduceMotion ? .easeOut(duration: 0.18) : .spring(response: 0.32, dampingFraction: 0.86)) {
+                                                    edgeDrawerDrag = 0
+                                                } completion: {
+                                                    if edgeDrawerDrag == 0 && !model.drawerOpen {
+                                                        edgeDrawerActive = false
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    )
+                                )
 
-                                BottomNav(tab: $model.tab, todayDay: model.today.day)
-                                    .padding(.horizontal, 16)
-                                    .padding(.bottom, 4)
-
-                                DrawerOverlay(open: $model.drawerOpen)
+                                DrawerOverlay(open: $model.drawerOpen, edgeDrag: edgeDrawerDrag, isDraggingEdge: edgeDrawerActive)
                             }
                         }
                     }
@@ -151,6 +187,10 @@ struct RootView: View {
             Text(model.errorMessage ?? "")
         }
         .environment(\.isRegularWindow, isRegular)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rootWidth = $0 }
+        .sensoryFeedback(.success, trigger: model.completionHapticTrigger)
+        .sensoryFeedback(.impact(weight: .light), trigger: model.uncompletionHapticTrigger)
+        .sensoryFeedback(.selection, trigger: model.tab) { _, _ in model.ready && model.isSignedIn }
     }
 }
 
@@ -159,8 +199,11 @@ struct TaskRef: Identifiable { let id: String }
 /// Floating glass navigation: 任務／日曆／搜尋／設定 (62pt high, 30pt from bottom).
 struct BottomNav: View {
     @Environment(\.accent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var tab: MainTab
     var todayDay: Int
+    @Namespace private var selectionNamespace
+    @State private var bounceCount: [MainTab: Int] = [:]
 
     var body: some View {
         HStack(spacing: 2) {
@@ -173,21 +216,40 @@ struct BottomNav: View {
         .frame(height: 62)
         .glassEffect(.regular.tint(Color(hex: "#242628").opacity(0.6)), in: .capsule)
         .shadow(color: .black.opacity(0.35), radius: 12, y: 8)
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.32, dampingFraction: 0.78), value: tab)
     }
 
     func item(_ t: MainTab, _ label: String, _ icon: String) -> some View {
         let on = tab == t
-        return Button { tab = t } label: {
+        return Button {
+            if tab != t {
+                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.32, dampingFraction: 0.78)) {
+                    tab = t
+                }
+            }
+            if !reduceMotion {
+                bounceCount[t, default: 0] += 1
+            }
+        } label: {
             VStack(spacing: 2) {
-                Image(systemName: icon).font(.system(size: 20, weight: .regular))
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .regular))
+                    .symbolEffect(.bounce, value: bounceCount[t, default: 0])
                 Text(label).font(.system(size: 11, weight: on ? .semibold : .regular))
             }
             .foregroundStyle(on ? accent.text : Palette.textNav)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Capsule().fill(on ? Color.white.opacity(0.08) : .clear))
+            .background {
+                if on {
+                    Capsule()
+                        .fill(Color.white.opacity(0.08))
+                        .matchedGeometryIfPresent(id: "bottomNavSelection", in: reduceMotion ? nil : selectionNamespace)
+                        .transition(.opacity)
+                }
+            }
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press(scale: 0.95, opacity: 0.9))
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
@@ -196,13 +258,14 @@ struct BottomNav: View {
 /// capsule of actions right; content scrolls under a fading gradient.
 struct ScreenHeader<Center: View, Trailing: View>: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ViewBuilder var center: Center
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
         HStack {
             GlassIconButton(systemName: "line.3.horizontal", label: "開啟清單抽屜") {
-                withAnimation(.snappy) { model.drawerOpen = true }
+                withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.32, dampingFraction: 0.86)) { model.drawerOpen = true }
             }
             Spacer()
             center
@@ -234,7 +297,7 @@ struct HeaderAction: View {
             Image(systemName: systemName).font(.system(size: 18, weight: .medium)).foregroundStyle(tint)
                 .frame(width: 44, height: 40).contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .hoverEffect(.highlight)
         .accessibilityLabel(label)
     }

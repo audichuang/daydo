@@ -7,10 +7,12 @@ struct TaskListScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
     @Environment(\.isRegularWindow) private var isRegular
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var scope: TaskScope
 
     @State private var sections: [TaskSection] = []
     @State private var loaded = false
+    @State private var loadedScope: TaskScope?
     @State private var limits: [TaskScope: Int] = [:]
     @State private var shareText: String?
     @AppStorage("closedSections") private var closedRaw = "completed"
@@ -32,22 +34,36 @@ struct TaskListScreen: View {
                 VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model.scopeTitle(scope)).txt(30, .bold).foregroundStyle(Palette.text)
-                        Text(subtitle).txt(14).foregroundStyle(Palette.textSecondary)
+                        Text(subtitle)
+                            .txt(14)
+                            .foregroundStyle(Palette.textSecondary)
+                            .contentTransition(reduceMotion ? .identity : .numericText())
+                            .animation(
+                                loadedScope == scope
+                                    ? (reduceMotion ? .easeOut(duration: 0.15) : .snappy(duration: 0.25))
+                                    : nil,
+                                value: subtitle
+                            )
                     }
                     .padding(.horizontal, 4)
 
-                    if loaded && sections.isEmpty {
-                        EmptyState(scope: scope)
+                    Group {
+                        if loaded && sections.isEmpty {
+                            EmptyState(scope: scope)
+                                .transition(.opacity)
+                        }
+                        ForEach(sections) { sec in
+                            SectionCard(section: sec, scope: scope, closed: closed.contains(sec.id)) { toggle(sec.id) }
+                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                        }
                     }
-                    ForEach(sections) { sec in
-                        SectionCard(section: sec, scope: scope, closed: closed.contains(sec.id)) { toggle(sec.id) }
-                    }
+                    .id(loadedScope)
                     if sections.contains(where: \.hasMore) {
                         Button { loadMore() } label: {
                             Text("載入更多").txt(13, .semibold).foregroundStyle(accent.text)
                                 .frame(maxWidth: .infinity, minHeight: 36)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.press)
                         .hoverEffect(.highlight)
                     } else if !sections.isEmpty {
                         Text("已顯示全部").txt(12).foregroundStyle(Palette.textFaint).frame(maxWidth: .infinity).padding(.vertical, 4)
@@ -100,7 +116,7 @@ struct TaskListScreen: View {
                 }
             }
             Button(model.compact ? "顯示詳情" : "隱藏詳情", systemImage: model.compact ? "eye" : "eye.slash") {
-                withAnimation(.snappy) { model.compact.toggle() }
+                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) { model.compact.toggle() }
             }
             Button(closed.contains("completed") ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle("completed") }
             if let overdue = sections.first(where: { $0.id == "overdue" }),
@@ -139,8 +155,21 @@ struct TaskListScreen: View {
         do {
             let loadedSections = try await model.api.listSections(scope, limit: limits[scope])
             guard !Task.isCancelled else { return }
-            sections = loadedSections
-            loaded = true
+            let shouldAnimate = loaded && loadedScope == scope
+            if shouldAnimate {
+                let anim: Animation = reduceMotion
+                    ? .easeOut(duration: 0.18)
+                    : .spring(response: 0.36, dampingFraction: 0.86)
+                withAnimation(anim) {
+                    sections = loadedSections
+                    loaded = true
+                    loadedScope = scope
+                }
+            } else {
+                sections = loadedSections
+                loaded = true
+                loadedScope = scope
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -158,7 +187,8 @@ struct TaskListScreen: View {
     func toggle(_ id: String) {
         var c = closed
         if c.contains(id) { c.remove(id) } else { c.insert(id) }
-        withAnimation(.snappy) { closedRaw = c.sorted().joined(separator: ",") }
+        let anim: Animation = reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.86)
+        withAnimation(anim) { closedRaw = c.sorted().joined(separator: ",") }
     }
 
     @ViewBuilder
@@ -206,6 +236,7 @@ struct TaskReload: Hashable { var scope: TaskScope; var revision: Int; var limit
 struct SectionCard: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var section: TaskSection
     var scope: TaskScope
     var closed: Bool
@@ -236,10 +267,13 @@ struct SectionCard: View {
                         Button("全部延到今天") {
                             model.postponeOverdue(tasks: section.tasks)
                         }
-                        .txt(13, .semibold).foregroundStyle(accent.text).padding(.trailing, 6).buttonStyle(.plain)
+                        .txt(13, .semibold).foregroundStyle(accent.text).padding(.trailing, 6).buttonStyle(.press)
                         .hoverEffect(.highlight)
                     }
-                    Text("\(section.tasks.count)").txt(13).foregroundStyle(Palette.textTertiary)
+                    Text("\(section.tasks.count)")
+                        .txt(13)
+                        .foregroundStyle(Palette.textTertiary)
+                        .contentTransition(reduceMotion ? .identity : .numericText())
                     Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textTertiary)
                         .rotationEffect(.degrees(closed ? -90 : 0))
                 }
@@ -247,17 +281,25 @@ struct SectionCard: View {
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press(scale: 0.99, opacity: 0.92))
             .hoverEffect(.highlight)
             .accessibilityValue(closed ? "已收合" : "已展開")
 
             if !closed {
-                ForEach(Array(section.tasks.enumerated()), id: \.element.id) { i, t in
-                    TaskRow(task: t, separator: i > 0, sectionId: section.id, inTrash: scope == .smart(.trash), selectsInline: true)
+                VStack(spacing: 0) {
+                    ForEach(Array(section.tasks.enumerated()), id: \.element.id) { i, t in
+                        TaskRow(task: t, separator: i > 0, sectionId: section.id, inTrash: scope == .smart(.trash), selectsInline: true)
+                            .transition(reduceMotion ? .opacity : .asymmetric(
+                                insertion: .opacity.combined(with: .move(edge: .top)),
+                                removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .top))
+                            ))
+                    }
                 }
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
             }
         }
         .card()
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
 
@@ -265,6 +307,7 @@ struct TaskRow: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
     @Environment(\.isRegularWindow) private var isRegularWindow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var task: TodoTask
     var separator: Bool
     var sectionId: String
@@ -279,21 +322,25 @@ struct TaskRow: View {
         usesInlineSelection && model.selectedTaskId == task.id
     }
 
+    private var isDone: Bool {
+        task.isCompleted || model.completingIds.contains(task.id)
+    }
+
     var body: some View {
         let compact = model.compact
         let pad: CGFloat = compact ? 9 : 12
         HStack(alignment: .top, spacing: 0) {
             Button { toggle() } label: {
-                TaskCheckbox(done: task.isCompleted, priority: task.priority)
+                TaskCheckbox(done: isDone, priority: task.priority)
                     .padding(.top, pad + 1)
                     .frame(width: 48, alignment: .top)
                     .frame(minHeight: 44, alignment: .top)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press(scale: 0.9, opacity: 0.85))
             .hoverEffect(.highlight)
             .disabled(inTrash || model.isViewer(projectId: task.projectId))
-            .accessibilityLabel((task.isCompleted ? "取消完成：" : "完成：") + task.title)
+            .accessibilityLabel((isDone ? "取消完成：" : "完成：") + task.title)
 
             Button {
                 model.openTask(task.id, inlineAvailable: usesInlineSelection)
@@ -301,8 +348,8 @@ struct TaskRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(task.title)
                         .txt(17, .medium)
-                        .foregroundStyle(task.isCompleted ? Palette.done : Palette.text)
-                        .strikethrough(task.isCompleted, color: Palette.done)
+                        .foregroundStyle(isDone ? Palette.done : Palette.text)
+                        .strikethrough(isDone, color: Palette.done)
                         .lineLimit(compact ? 1 : 2)
                         .multilineTextAlignment(.leading)
                     if !compact, !task.content.isEmpty {
@@ -310,13 +357,15 @@ struct TaskRow: View {
                     }
                     meta
                 }
+                .opacity(isDone ? 0.75 : 1)
+                .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.75), value: isDone)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, pad)
                 .padding(.trailing, 16)
                 .overlay(alignment: .top) { if separator && !isSelected { Rectangle().fill(Palette.separator).frame(height: 1) } }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press(scale: 0.985, opacity: 0.95, highlight: Color.white.opacity(0.05)))
             .hoverEffect(.highlight)
         }
         .background(isSelected ? accent.soft : .clear)
@@ -328,7 +377,7 @@ struct TaskRow: View {
         let project = model.project(task.projectId)
         let line = dateLine
         HStack(spacing: 10) {
-            if !line.isEmpty && !task.isCompleted {
+            if !line.isEmpty && !isDone {
                 Text(line).txt(13, .semibold).foregroundStyle(dateColor).lineLimit(1)
             }
             if !task.items.isEmpty {
@@ -340,7 +389,7 @@ struct TaskRow: View {
             if !task.attachments.isEmpty {
                 Label("\(task.attachments.count)", systemImage: "paperclip").labelStyle(MetaLabel())
             }
-            if task.repeat != nil && !task.isCompleted {
+            if task.repeat != nil && !isDone {
                 Image(systemName: "repeat").font(.system(size: 11)).foregroundStyle(Palette.textTertiary)
             }
             Spacer(minLength: 0)

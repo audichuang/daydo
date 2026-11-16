@@ -1055,4 +1055,112 @@ final class DayDoFlowTests: XCTestCase {
         app.open(URL(string: "daydo://today")!)
         XCTAssertTrue(app.buttons["完成：買鮮奶"].waitForExistence(timeout: 5), app.debugDescription)
     }
+
+    @MainActor
+    func testEdgeDragOpensDrawer() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+        XCTAssertTrue(app.buttons["開啟清單抽屜"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.buttons["drawer.settings"].exists)
+
+        let window = app.windows.firstMatch
+        let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5))
+        let mid = window.coordinate(withNormalizedOffset: CGVector(dx: 0.36, dy: 0.5))
+        let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.5))
+
+        // Drag halfway, capture screenshot on the main runloop while held, then release (< 50% -> snaps back).
+        nonisolated(unsafe) let testSelf = self
+        let midShotTimer = Timer(timeInterval: 0.55, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                testSelf.shot("46-drawer-half-drag")
+            }
+        }
+        RunLoop.current.add(midShotTimer, forMode: .common)
+        start.press(forDuration: 0.05, thenDragTo: mid, withVelocity: 300, thenHoldForDuration: 0.7)
+        midShotTimer.invalidate()
+
+        // Released before half -> snaps back closed; then drag past half -> opens drawer.
+        XCTAssertTrue(app.buttons["drawer.settings"].waitForNonExistence(timeout: 2), app.debugDescription)
+        start.press(forDuration: 0.05, thenDragTo: end)
+
+        XCTAssertTrue(app.buttons["drawer.settings"].waitForExistence(timeout: 3), app.debugDescription)
+        shot("47-drawer-edge-opened")
+    }
+
+    @MainActor
+    func testOptimisticTaskCompletionUpdatesLabelThenMovesToCompleted() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        let checkbox = app.buttons["完成：去全聯買菜"]
+        XCTAssertTrue(checkbox.waitForExistence(timeout: 5), app.debugDescription)
+        let completedHeader = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '已完成'")).firstMatch
+        XCTAssertTrue(completedHeader.waitForExistence(timeout: 3))
+        let initialDigits = completedHeader.label.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+        let initialCount = Int(initialDigits) ?? -1
+        XCTAssertGreaterThanOrEqual(initialCount, 0, "Expected numeric count in \(completedHeader.label)")
+        shot("43-complete-before")
+
+        // XCUITest's tap() spins the main runloop waiting for animation quiescence (~0.8-1s),
+        // which outlasts the 350ms window. Observe the optimistic state safely on the main runloop.
+        nonisolated(unsafe) var sawOptimistic = false
+        nonisolated(unsafe) let testSelf = self
+        nonisolated(unsafe) let optimisticUndo = app.buttons["取消完成：去全聯買菜"]
+        let pollTimer = Timer(timeInterval: 0.08, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                if !sawOptimistic && optimisticUndo.exists {
+                    sawOptimistic = true
+                    testSelf.shot("44-complete-optimistic")
+                }
+            }
+        }
+        RunLoop.current.add(pollTimer, forMode: .common)
+
+        checkbox.tap()
+        pollTimer.invalidate()
+
+        XCTAssertTrue(sawOptimistic || optimisticUndo.waitForExistence(timeout: 0.5), "Expected optimistic 取消完成 label within 350ms window")
+
+        // After ~350ms write + reload, the row leaves the active section and 已完成 count increments.
+        XCTAssertTrue(optimisticUndo.waitForNonExistence(timeout: 3), app.debugDescription)
+        let expectedCount = "\(initialCount + 1)"
+        let incremented = NSPredicate { _, _ in
+            completedHeader.exists && completedHeader.label.contains(expectedCount)
+        }
+        let exp = XCTNSPredicateExpectation(predicate: incremented, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [exp], timeout: 3), .completed, "Expected 已完成 count \(expectedCount), got: \(completedHeader.label)")
+        shot("45-complete-after")
+    }
+
+    @MainActor
+    func testCalendarHorizontalSwipeChangesMonth() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        app.buttons["日曆"].tap()
+        let title = app.buttons["calendarTitle"]
+        XCTAssertTrue(title.waitForExistence(timeout: 3), app.debugDescription)
+        let initialTitle = title.label
+
+        let window = app.windows.firstMatch
+        let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.28))
+        let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.28))
+        start.press(forDuration: 0.05, thenDragTo: end)
+
+        let monthChanged = NSPredicate { _, _ in
+            title.exists && title.label != initialTitle
+        }
+        let exp = XCTNSPredicateExpectation(predicate: monthChanged, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [exp], timeout: 3), .completed, "Expected calendar title to change from \(initialTitle), got \(title.label)")
+
+        let backStart = window.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.28))
+        let backEnd = window.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.28))
+        backStart.press(forDuration: 0.05, thenDragTo: backEnd)
+
+        let monthRestored = NSPredicate { _, _ in
+            title.exists && title.label == initialTitle
+        }
+        let expBack = XCTNSPredicateExpectation(predicate: monthRestored, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [expBack], timeout: 3), .completed, "Expected calendar title to return to \(initialTitle), got \(title.label)")
+    }
 }

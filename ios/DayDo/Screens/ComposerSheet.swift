@@ -22,6 +22,7 @@ struct ComposerSheet: View {
     @State private var addingTag = false
     @State private var tagText = ""
     @State private var added = 0
+    @State private var createdHaptic = 0
     @State private var isSubmitting = false
     @State private var contentHeight: CGFloat = 168
     @FocusState private var focus: Field?
@@ -61,6 +62,7 @@ struct ComposerSheet: View {
             toolbar
                 .padding(.top, 6)
         }
+        .sensoryFeedback(.impact(weight: .light), trigger: createdHaptic)
         .padding(.horizontal, 18)
         .padding(.top, 18)
         .padding(.bottom, 10)
@@ -126,7 +128,7 @@ struct ComposerSheet: View {
                 .frame(height: 40)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
             .accessibilityLabel("日期與時間：" + (dateLabel.isEmpty ? "無" : dateLabel))
             .accessibilityIdentifier("composerDate")
 
@@ -199,7 +201,7 @@ struct ComposerSheet: View {
                     .frame(width: 38, height: 38)
                     .background(Circle().fill(canSave ? accent.color : Palette.control))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
             .hoverEffect(.highlight)
             .disabled(!canSave)
             .accessibilityLabel("新增")
@@ -237,7 +239,7 @@ struct ComposerSheet: View {
             let created = await model.perform { try await $0.createTask(input) }
             isSubmitting = false
             guard let t = created else { return }
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            createdHaptic += 1
             if openDetail {
                 dismiss()
                 try? await Task.sleep(for: .milliseconds(350))

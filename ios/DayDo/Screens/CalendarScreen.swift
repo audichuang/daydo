@@ -26,6 +26,7 @@ struct CalendarScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
     @Environment(\.isRegularWindow) private var isRegular
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @AppStorage("calendarViewMode") private var modeRaw = CalMode.list.rawValue
     @AppStorage("calendarCollapsed") private var collapsed = false
@@ -36,6 +37,12 @@ struct CalendarScreen: View {
     @State private var memberFilter: String?
     @State private var projectFilter: String?
     @State private var tasks: [TodoTask] = []
+    @State private var hDragOffset: CGFloat = 0
+    @State private var collapseDragY: CGFloat = 0
+    @State private var shiftDir = 0
+    @State private var pageSequence = 0
+    @State private var dateSelectionHaptic = 0
+    @State private var pageShiftHaptic = 0
 
     var mode: CalMode { CalMode(rawValue: modeRaw) ?? .list }
     var sel: LocalDay { selected ?? model.today }
@@ -62,13 +69,16 @@ struct CalendarScreen: View {
                         .background(Circle().fill(accent.color))
                         .shadow(color: .black.opacity(0.35), radius: 10, y: 6)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.press(scale: 0.94, opacity: 0.9))
                 .hoverEffect(.lift)
                 .padding(.trailing, isRegular ? 24 : 18)
                 .padding(.bottom, isRegular ? 24 : 92)
                 .accessibilityLabel("新增任務")
             }
         }
+        .sensoryFeedback(.selection, trigger: dateSelectionHaptic)
+        .sensoryFeedback(.selection, trigger: modeRaw)
+        .sensoryFeedback(.impact(weight: .light), trigger: pageShiftHaptic)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if isRegular {
@@ -98,6 +108,8 @@ struct CalendarScreen: View {
         projectFilter = nil
         selected = day
         month = day.firstOfMonth
+        shiftDir = 0
+        pageSequence += 1
         if mode == .year {
             modeRaw = CalMode.list.rawValue
         }
@@ -128,7 +140,7 @@ struct CalendarScreen: View {
         Menu {
             ForEach(CalMode.allCases) { m in
                 Button {
-                    withAnimation(.snappy) { modeRaw = m.rawValue }
+                    withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) { modeRaw = m.rawValue }
                 } label: {
                     if m == mode { Label(m.label, systemImage: "checkmark") } else { Label(m.label, systemImage: m.icon) }
                 }
@@ -157,7 +169,7 @@ struct CalendarScreen: View {
         Button { goToday() } label: {
             Text(title).txt(18, .bold).foregroundStyle(Palette.text)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .hoverEffect(.highlight)
         .accessibilityLabel(title + "，點兩下回到今天")
         .accessibilityIdentifier("calendarTitle")
@@ -167,7 +179,7 @@ struct CalendarScreen: View {
     private var trailingActions: some View {
         if mode == .list {
             HeaderAction(systemName: timelineStyle ? "list.bullet.rectangle" : "calendar.day.timeline.left", label: timelineStyle ? "切換為卡片清單" : "切換為時間軸清單") {
-                withAnimation(.snappy) { timelineStyle.toggle() }
+                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) { timelineStyle.toggle() }
             }
         }
         Menu {
@@ -184,7 +196,11 @@ struct CalendarScreen: View {
                 }
             }
             if mode == .list {
-                Button(collapsed ? "展開整個月份" : "收合成單週", systemImage: "rectangle.compress.vertical") { withAnimation(.snappy) { collapsed.toggle() } }
+                Button(collapsed ? "展開整個月份" : "收合成單週", systemImage: "rectangle.compress.vertical") {
+                    withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.86)) {
+                        collapsed.toggle()
+                    }
+                }
             }
         } label: {
             Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
@@ -217,7 +233,7 @@ struct CalendarScreen: View {
                         .foregroundStyle(Palette.textNav).padding(.horizontal, 12).frame(height: 30)
                         .overlay(Capsule().strokeBorder(Palette.separator))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.press)
                 .accessibilityLabel("移除清單篩選：\(p.name)")
             }
             Spacer()
@@ -232,7 +248,7 @@ struct CalendarScreen: View {
                 .background(Capsule().fill(on ? Palette.text : .clear))
                 .overlay(Capsule().strokeBorder(on ? Palette.text : Palette.separator))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 
@@ -280,27 +296,37 @@ struct CalendarScreen: View {
     }
 
     func goToday() {
-        withAnimation(.snappy) {
+        dateSelectionHaptic += 1
+        shiftDir = 0
+        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) {
             selected = model.today
             month = model.today.firstOfMonth
+            pageSequence += 1
+        }
+    }
+
+    func applyShift(_ dir: Int) {
+        switch mode {
+        case .list where collapsed:
+            selected = sel.adding(days: 7 * dir)
+            month = selected!.firstOfMonth
+        case .list, .month:
+            month = shownMonth.adding(months: dir)
+            selected = month
+        case .year:
+            month = shownMonth.adding(months: 12 * dir)
+        case .week, .threeDay, .day:
+            selected = sel.adding(days: mode.dayCount * dir)
+            month = selected!.firstOfMonth
         }
     }
 
     func shift(_ dir: Int) {
-        withAnimation(.snappy) {
-            switch mode {
-            case .list where collapsed:
-                selected = sel.adding(days: 7 * dir)
-                month = selected!.firstOfMonth
-            case .list, .month:
-                month = shownMonth.adding(months: dir)
-                selected = month
-            case .year:
-                month = shownMonth.adding(months: 12 * dir)
-            case .week, .threeDay, .day:
-                selected = sel.adding(days: mode.dayCount * dir)
-                month = selected!.firstOfMonth
-            }
+        shiftDir = dir
+        pageShiftHaptic += 1
+        withAnimation(reduceMotion ? .easeOut(duration: 0.18) : .spring(response: 0.34, dampingFraction: 0.86)) {
+            applyShift(dir)
+            pageSequence += 1
         }
     }
 
@@ -309,81 +335,173 @@ struct CalendarScreen: View {
         model.composing = ComposeRequest(projectId: projectFilter, day: day, minute: minute)
     }
 
-    var swipe: some Gesture {
-        DragGesture(minimumDistance: 30).onEnded { v in
-            guard abs(v.translation.width) > abs(v.translation.height) * 1.5 else { return }
-            shift(v.translation.width < 0 ? 1 : -1)
+    private var pageTransition: AnyTransition {
+        if reduceMotion || shiftDir == 0 {
+            return .opacity
         }
+        return shiftDir > 0
+            ? .asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading))
+            : .asymmetric(insertion: .move(edge: .leading), removal: .move(edge: .trailing))
+    }
+
+    private func finishHorizontalSwipe(tx: CGFloat, vx: CGFloat) {
+        let projected = tx + vx * 0.12
+        if abs(tx) > 70 || (abs(vx) > 450 && abs(projected) > 40) {
+            let dir = projected < 0 ? 1 : -1
+            shiftDir = dir
+            pageShiftHaptic += 1
+            let anim: Animation = reduceMotion
+                ? .easeOut(duration: 0.18)
+                : .spring(response: 0.34, dampingFraction: 0.86)
+            withAnimation(anim) {
+                applyShift(dir)
+                pageSequence += 1
+                hDragOffset = 0
+            }
+        } else {
+            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.78)) {
+                hDragOffset = 0
+            }
+        }
+    }
+
+    private var horizontalOnlySwipe: CalendarPanGesture {
+        CalendarPanGesture(
+            allowLeftEdgeRightward: isRegular,
+            allowVertical: { false },
+            verticalShouldBegin: { _ in false },
+            onHorizontalChanged: { tx in
+                if !reduceMotion {
+                    hDragOffset = tx * 0.9
+                }
+            },
+            onHorizontalEnded: { tx, vx in
+                finishHorizontalSwipe(tx: tx, vx: vx)
+            }
+        )
     }
 
     // MARK: Content
 
     @ViewBuilder var content: some View {
-        switch mode {
-        case .list:
-            if isRegular {
-                GeometryReader { geo in
-                    if geo.size.width >= 720 {
-                        HStack(alignment: .top, spacing: 20) {
-                            ScrollView {
-                                dateGrid.gesture(swipe)
-                            }
-                            .scrollIndicators(.hidden)
-                            .frame(width: 360)
+        Group {
+            switch mode {
+            case .list:
+                if isRegular {
+                    GeometryReader { geo in
+                        if geo.size.width >= 720 {
+                            HStack(alignment: .top, spacing: 20) {
+                                ScrollView {
+                                    dateGrid
+                                }
+                                .scrollIndicators(.hidden)
+                                .frame(width: 360)
 
+                                ScrollView {
+                                    Group {
+                                        if timelineStyle { timelineAgenda } else { cardAgenda }
+                                    }
+                                    .padding(.bottom, 32)
+                                }
+                                .scrollIndicators(.hidden)
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.top, 8)
+                        } else {
                             ScrollView {
-                                Group {
+                                VStack(spacing: 12) {
+                                    dateGrid
                                     if timelineStyle { timelineAgenda } else { cardAgenda }
                                 }
+                                .padding(.horizontal, 16)
                                 .padding(.bottom, 32)
                             }
                             .scrollIndicators(.hidden)
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 8)
-                    } else {
-                        ScrollView {
-                            VStack(spacing: 12) {
-                                dateGrid.gesture(swipe)
-                                if timelineStyle { timelineAgenda } else { cardAgenda }
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 32)
+                    }
+                } else {
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            dateGrid
+                            if timelineStyle { timelineAgenda } else { cardAgenda }
                         }
-                        .scrollIndicators(.hidden)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 170)
                     }
+                    .scrollIndicators(.hidden)
                 }
-            } else {
+            case .year:
                 ScrollView {
-                    VStack(spacing: 12) {
-                        dateGrid.gesture(swipe)
-                        if timelineStyle { timelineAgenda } else { cardAgenda }
+                    ZStack {
+                        YearGrid(year: shownMonth.year, today: model.today, busy: busyDays, isRegular: isRegular, openMonth: { m in
+                            dateSelectionHaptic += 1
+                            shiftDir = 0
+                            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) {
+                                month = m
+                                selected = m
+                                modeRaw = CalMode.list.rawValue
+                                collapsed = false
+                                pageSequence += 1
+                            }
+                        }, openDay: { d in
+                            dateSelectionHaptic += 1
+                            shiftDir = 0
+                            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) {
+                                selected = d
+                                month = d.firstOfMonth
+                                modeRaw = CalMode.day.rawValue
+                                pageSequence += 1
+                            }
+                        })
+                        .id("year-\(pageSequence)")
+                        .transition(pageTransition)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 170)
+                    .offset(x: reduceMotion ? 0 : hDragOffset)
+                    .clipped()
+                    .padding(.horizontal, isRegular ? 24 : 16)
+                    .padding(.bottom, isRegular ? 32 : 170)
                 }
-                .scrollIndicators(.hidden)
+                .gesture(horizontalOnlySwipe)
+            case .month:
+                ScrollView {
+                    ZStack {
+                        eventMonth
+                            .id("month-\(pageSequence)")
+                            .transition(pageTransition)
+                    }
+                    .offset(x: reduceMotion ? 0 : hDragOffset)
+                    .clipped()
+                    .padding(.horizontal, isRegular ? 16 : 8)
+                    .padding(.bottom, isRegular ? 32 : 170)
+                }
+                .gesture(horizontalOnlySwipe)
+            case .week, .threeDay, .day:
+                ZStack {
+                    TimeGrid(days: rangeDays, tasks: filtered, today: model.today, selected: sel, isRegular: isRegular,
+                             openTask: { model.openTask($0, inlineAvailable: false) },
+                             tapSlot: { d, m in compose(day: d, minute: m) },
+                             tapDay: { d in
+                                dateSelectionHaptic += 1
+                                shiftDir = 0
+                                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) {
+                                    selected = d
+                                    modeRaw = CalMode.day.rawValue
+                                    pageSequence += 1
+                                }
+                             })
+                        .id("\(mode.rawValue)-\(pageSequence)")
+                        .transition(pageTransition)
+                }
+                .offset(x: reduceMotion ? 0 : hDragOffset)
+                .clipped()
+                .gesture(horizontalOnlySwipe)
             }
-        case .year:
-            ScrollView {
-                YearGrid(year: shownMonth.year, today: model.today, busy: busyDays, isRegular: isRegular, openMonth: { m in
-                    withAnimation(.snappy) { month = m; selected = m; modeRaw = CalMode.list.rawValue; collapsed = false }
-                }, openDay: { d in
-                    withAnimation(.snappy) { selected = d; month = d.firstOfMonth; modeRaw = CalMode.day.rawValue }
-                })
-                .padding(.horizontal, isRegular ? 24 : 16)
-                .padding(.bottom, isRegular ? 32 : 170)
-            }
-            .gesture(swipe)
-        case .month:
-            ScrollView { eventMonth.padding(.horizontal, isRegular ? 16 : 8).padding(.bottom, isRegular ? 32 : 170) }
-                .gesture(swipe)
-        case .week, .threeDay, .day:
-            TimeGrid(days: rangeDays, tasks: filtered, today: model.today, selected: sel, isRegular: isRegular,
-                     openTask: { model.openTask($0, inlineAvailable: false) },
-                     tapSlot: { d, m in compose(day: d, minute: m) },
-                     tapDay: { d in withAnimation(.snappy) { selected = d; modeRaw = CalMode.day.rawValue } })
-                .gesture(swipe)
+        }
+        .onChange(of: modeRaw) { _, _ in
+            hDragOffset = 0
+            collapseDragY = 0
+            shiftDir = 0
+            pageSequence += 1
         }
     }
 
@@ -402,41 +520,107 @@ struct CalendarScreen: View {
 
     var dateGrid: some View {
         let days = MonthLayout.gridDays(for: shownMonth)
-        let shown: [LocalDay] = collapsed ? {
-            let start = sel.adding(days: -sel.weekday)
-            return (0..<7).map { start.adding(days: $0) }
-        }() : days
+        let rowCount = max(1, days.count / 7)
+        let rowH: CGFloat = 50
+        let rowSpacing: CGFloat = 2
+        let fullGridHeight = CGFloat(rowCount) * rowH + CGFloat(rowCount - 1) * rowSpacing
+        let collapsedGridHeight = rowH
+        let travel = max(1, fullGridHeight - collapsedGridHeight)
+        let restProgress: CGFloat = collapsed ? 0 : 1
+        let progress: CGFloat = reduceMotion ? restProgress : min(1, max(0, restProgress + collapseDragY / travel))
+        let visibleGridHeight = collapsedGridHeight + (fullGridHeight - collapsedGridHeight) * progress
+        let selectedRow = days.firstIndex(of: sel).map { $0 / 7 } ?? 0
+        let gridOffsetY = -CGFloat(selectedRow) * (rowH + rowSpacing) * (1 - progress)
+
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
                 ForEach(LocalDay.weekdaySymbols, id: \.self) { Text($0).txt(12).foregroundStyle(Palette.textTertiary).frame(maxWidth: .infinity) }
             }
             .padding(.bottom, 6)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 2) {
-                ForEach(shown, id: \.self) { d in dayCell(d) }
+            ZStack(alignment: .top) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: rowSpacing) {
+                    ForEach(Array(days.enumerated()), id: \.element) { idx, d in
+                        dayCell(d, progress: progress)
+                            .accessibilityHidden(progress == 0 && idx / 7 != selectedRow)
+                    }
+                }
+                .offset(y: gridOffsetY)
+                .id("list-\(pageSequence)")
+                .transition(pageTransition)
             }
-            Button { withAnimation(.snappy) { collapsed.toggle() } } label: {
-                Capsule().fill(Palette.handle).frame(width: 36, height: 4).frame(maxWidth: .infinity, minHeight: 18)
+            .offset(x: reduceMotion ? 0 : hDragOffset)
+            .frame(height: visibleGridHeight, alignment: .top)
+            .clipped()
+
+            Button {
+                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.86)) {
+                    collapsed.toggle()
+                    collapseDragY = 0
+                }
+            } label: {
+                Capsule().fill(Palette.handle).frame(width: 36, height: 4).frame(maxWidth: .infinity, minHeight: 22)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
             .accessibilityLabel(collapsed ? "展開整個月份" : "收合成單週")
         }
         .padding(.top, 4)
-        .gesture(DragGesture(minimumDistance: 20).onEnded { v in
-            guard abs(v.translation.height) > abs(v.translation.width) else { return }
-            if v.translation.height < -30 && !collapsed { withAnimation(.snappy) { collapsed = true } }
-            if v.translation.height > 30 && collapsed { withAnimation(.snappy) { collapsed = false } }
-        })
+        .gesture(
+            CalendarPanGesture(
+                allowLeftEdgeRightward: isRegular,
+                allowVertical: { true },
+                verticalShouldBegin: { vy in (!collapsed && vy < 0) || (collapsed && vy > 0) },
+                onHorizontalChanged: { tx in
+                    if !reduceMotion {
+                        hDragOffset = tx * 0.9
+                    }
+                },
+                onHorizontalEnded: { tx, vx in
+                    finishHorizontalSwipe(tx: tx, vx: vx)
+                },
+                onVerticalChanged: { ty in
+                    if !reduceMotion {
+                        collapseDragY = ty
+                    }
+                },
+                onVerticalEnded: { ty, vy in
+                    let anim: Animation = reduceMotion
+                        ? .easeOut(duration: 0.15)
+                        : .spring(response: 0.34, dampingFraction: 0.86)
+                    withAnimation(anim) {
+                        if !collapsed && (ty < -45 || vy < -350) {
+                            collapsed = true
+                        } else if collapsed && (ty > 45 || vy > 350) {
+                            collapsed = false
+                        }
+                        collapseDragY = 0
+                    }
+                }
+            )
+        )
     }
 
-    func dayCell(_ d: LocalDay) -> some View {
-        let isSel = d == sel, isToday = d == model.today, inMonth = d.month == shownMonth.month || collapsed
+    func dayCell(_ d: LocalDay, progress: CGFloat) -> some View {
+        let isSel = d == sel, isToday = d == model.today, inMonth = d.month == shownMonth.month
+        let cellOpacity = inMonth ? 1.0 : (1.0 - 0.62 * Double(progress))
         var colors: [String] = []
         for t in filtered where t.schedule?.occurs(on: d) == true && !t.isCompleted {
             let c = model.project(t.projectId)?.color ?? "#5B6461"
             if !colors.contains(c) { colors.append(c) }
         }
         return Button {
-            withAnimation(.snappy) { selected = d; if d.month != shownMonth.month { month = d.firstOfMonth } }
+            dateSelectionHaptic += 1
+            let monthChanged = d.month != shownMonth.month
+            if monthChanged {
+                shiftDir = d > shownMonth ? 1 : -1
+            }
+            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) {
+                selected = d
+                if monthChanged {
+                    month = d.firstOfMonth
+                    pageSequence += 1
+                }
+            }
         } label: {
             VStack(spacing: 3) {
                 Text("\(d.day)")
@@ -452,9 +636,9 @@ struct CalendarScreen: View {
             .frame(maxWidth: .infinity, minHeight: 50)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press(scale: 0.92, opacity: 0.85))
         .hoverEffect(.highlight)
-        .opacity(inMonth ? 1 : 0.38)
+        .opacity(cellOpacity)
         .accessibilityLabel(DateText.full(d) + (colors.isEmpty ? "" : "，有項目"))
         .accessibilityAddTraits(isSel ? .isSelected : [])
     }
@@ -473,7 +657,7 @@ struct CalendarScreen: View {
             Button { compose(day: sel, minute: nil) } label: {
                 Text("這天沒有項目，點這裡新增").txt(14).foregroundStyle(Palette.textSecondary).frame(maxWidth: .infinity, minHeight: 64)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
         }
     }
 
@@ -512,7 +696,13 @@ struct CalendarScreen: View {
             .padding(.bottom, 4)
             ForEach(Array(layout.weeks.enumerated()), id: \.offset) { _, w in
                 WeekRow(week: w, month: shownMonth, selected: sel, today: model.today) { d in
-                    withAnimation(.snappy) { selected = d; modeRaw = CalMode.day.rawValue }
+                    dateSelectionHaptic += 1
+                    shiftDir = 0
+                    withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) {
+                        selected = d
+                        modeRaw = CalMode.day.rawValue
+                        pageSequence += 1
+                    }
                 } open: { id in model.openTask(id, inlineAvailable: false) }
             }
         }
@@ -525,23 +715,28 @@ struct CalReload: Hashable { var range: ClosedRange<LocalDay>; var member: Strin
 struct AgendaRow: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var task: TodoTask
     var day: LocalDay
+
+    private var isDone: Bool {
+        task.isCompleted || model.completingIds.contains(task.id)
+    }
 
     var body: some View {
         let project = model.project(task.projectId)
         HStack(alignment: .top, spacing: 12) {
             Button { toggle() } label: {
-                TaskCheckbox(done: task.isCompleted, priority: task.priority, size: 22).frame(width: 32, height: 34)
+                TaskCheckbox(done: isDone, priority: task.priority, size: 22).frame(width: 32, height: 34)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press(scale: 0.9, opacity: 0.85))
             .hoverEffect(.highlight)
             .disabled(model.isViewer(projectId: task.projectId))
-            .accessibilityLabel((task.isCompleted ? "取消完成：" : "完成：") + task.title)
+            .accessibilityLabel((isDone ? "取消完成：" : "完成：") + task.title)
             Button { model.openTask(task.id, inlineAvailable: false) } label: {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(task.title).txt(17, .medium).foregroundStyle(task.isCompleted ? Palette.done : Palette.text)
-                        .strikethrough(task.isCompleted, color: Palette.done).lineLimit(2).multilineTextAlignment(.leading)
+                    Text(task.title).txt(17, .medium).foregroundStyle(isDone ? Palette.done : Palette.text)
+                        .strikethrough(isDone, color: Palette.done).lineLimit(2).multilineTextAlignment(.leading)
                     if !task.content.isEmpty {
                         Text(task.content.split(whereSeparator: \.isNewline).first.map(String.init) ?? "").txt(14).foregroundStyle(Palette.textSecondary).lineLimit(1)
                     }
@@ -552,10 +747,12 @@ struct AgendaRow: View {
                         Text(project?.name ?? "").txt(14).foregroundStyle(Palette.textTertiary).lineLimit(1)
                     }
                 }
+                .opacity(isDone ? 0.75 : 1)
+                .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.75), value: isDone)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press(scale: 0.985, opacity: 0.95, highlight: Color.white.opacity(0.05)))
             .hoverEffect(.highlight)
         }
         .padding(.leading, 14).padding(.trailing, 16).padding(.vertical, 12)
@@ -604,7 +801,7 @@ struct TimelineAgendaRow: View {
                 .padding(.horizontal, 14).padding(.vertical, 12)
                 .card(14)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press(scale: 0.98, opacity: 0.92))
             .padding(.bottom, 12)
         }
     }
@@ -652,7 +849,7 @@ struct YearGrid: View {
                         Text("\(m)月").txt(isRegular ? 16 : 15, .bold).foregroundStyle(first.month == today.month && year == today.year ? accent.text : Palette.text)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.press)
                     .hoverEffect(.highlight)
                     .accessibilityLabel("\(year) 年 \(m) 月")
 
@@ -670,7 +867,7 @@ struct YearGrid: View {
                                         .frame(maxWidth: .infinity, minHeight: rowHeight)
                                         .contentShape(Rectangle())
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.press(scale: 0.9, opacity: 0.85))
                                 .hoverEffect(.highlight)
                                 .accessibilityIdentifier("yearDay.\(d)")
                                 .accessibilityLabel(DateText.full(d))
@@ -730,7 +927,7 @@ struct WeekRow: View {
                             .frame(width: colW, height: geo.size.height)
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.press(scale: 0.94, opacity: 0.88))
                         .opacity(d.month == month.month ? 1 : 0.4)
                         .accessibilityLabel(DateText.full(d))
                     }
@@ -754,7 +951,7 @@ struct WeekRow: View {
                         .background(RoundedRectangle(cornerRadius: 3).fill(color.opacity(done ? 0.1 : 0.28)))
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.press(scale: 0.96, opacity: 0.88))
                     .offset(x: colW * CGFloat(bar.startColumn) + 1.5, y: 36 + CGFloat(bar.lane) * laneH)
                 }
             }
@@ -814,7 +1011,7 @@ struct TimeGrid: View {
                             }
                             .frame(width: colW)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.press(scale: 0.94, opacity: 0.88))
                         .accessibilityLabel(DateText.full(d))
                     }
                 }
@@ -964,7 +1161,7 @@ struct TimeGrid: View {
             .background(RoundedRectangle(cornerRadius: 3).fill(color.opacity(0.28)))
             .clipShape(RoundedRectangle(cornerRadius: 3))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press(scale: 0.96, opacity: 0.88))
         .hoverEffect(.highlight)
     }
 
@@ -996,8 +1193,120 @@ struct TimeGrid: View {
             .background(RoundedRectangle(cornerRadius: 4).fill(color.opacity(done ? 0.12 : 0.3)))
             .clipShape(RoundedRectangle(cornerRadius: 4))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press(scale: 0.96, opacity: 0.88))
         .hoverEffect(.highlight)
         .accessibilityLabel(b.task.title + "，" + (b.task.schedule.map(DateText.range) ?? ""))
+    }
+}
+
+/// UIKit pan recognizer for calendar horizontal paging and vertical grid
+/// collapse/expand, keeping ScrollView vertical scrolling and taps responsive.
+private struct CalendarPanGesture: UIGestureRecognizerRepresentable {
+    var allowLeftEdgeRightward: Bool
+    var allowVertical: () -> Bool
+    var verticalShouldBegin: (CGFloat) -> Bool
+    var onHorizontalChanged: (CGFloat) -> Void
+    var onHorizontalEnded: (CGFloat, CGFloat) -> Void
+    var onVerticalChanged: ((CGFloat) -> Void)? = nil
+    var onVerticalEnded: ((CGFloat, CGFloat) -> Void)? = nil
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator {
+        Coordinator(
+            allowLeftEdgeRightward: allowLeftEdgeRightward,
+            allowVertical: allowVertical,
+            verticalShouldBegin: verticalShouldBegin,
+            onHorizontalChanged: onHorizontalChanged,
+            onHorizontalEnded: onHorizontalEnded,
+            onVerticalChanged: onVerticalChanged,
+            onVerticalEnded: onVerticalEnded
+        )
+    }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        context.coordinator.allowLeftEdgeRightward = allowLeftEdgeRightward
+        context.coordinator.allowVertical = allowVertical
+        context.coordinator.verticalShouldBegin = verticalShouldBegin
+        context.coordinator.onHorizontalChanged = onHorizontalChanged
+        context.coordinator.onHorizontalEnded = onHorizontalEnded
+        context.coordinator.onVerticalChanged = onVerticalChanged
+        context.coordinator.onVerticalEnded = onVerticalEnded
+    }
+
+    func handleUIGestureRecognizerAction(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        let t = recognizer.translation(in: recognizer.view)
+        let v = recognizer.velocity(in: recognizer.view)
+        switch recognizer.state {
+        case .began, .changed:
+            switch context.coordinator.activeAxis {
+            case .horizontal: onHorizontalChanged(t.x)
+            case .vertical: onVerticalChanged?(t.y)
+            case .none: break
+            }
+        case .ended, .cancelled, .failed:
+            let axis = context.coordinator.activeAxis
+            context.coordinator.activeAxis = .none
+            switch axis {
+            case .horizontal: onHorizontalEnded(t.x, v.x)
+            case .vertical: onVerticalEnded?(t.y, v.y)
+            case .none: break
+            }
+        default:
+            break
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        enum Axis { case none, horizontal, vertical }
+        var activeAxis: Axis = .none
+        var allowLeftEdgeRightward: Bool
+        var allowVertical: () -> Bool
+        var verticalShouldBegin: (CGFloat) -> Bool
+        var onHorizontalChanged: (CGFloat) -> Void
+        var onHorizontalEnded: (CGFloat, CGFloat) -> Void
+        var onVerticalChanged: ((CGFloat) -> Void)?
+        var onVerticalEnded: ((CGFloat, CGFloat) -> Void)?
+
+        init(
+            allowLeftEdgeRightward: Bool,
+            allowVertical: @escaping () -> Bool,
+            verticalShouldBegin: @escaping (CGFloat) -> Bool,
+            onHorizontalChanged: @escaping (CGFloat) -> Void,
+            onHorizontalEnded: @escaping (CGFloat, CGFloat) -> Void,
+            onVerticalChanged: ((CGFloat) -> Void)?,
+            onVerticalEnded: ((CGFloat, CGFloat) -> Void)?
+        ) {
+            self.allowLeftEdgeRightward = allowLeftEdgeRightward
+            self.allowVertical = allowVertical
+            self.verticalShouldBegin = verticalShouldBegin
+            self.onHorizontalChanged = onHorizontalChanged
+            self.onHorizontalEnded = onHorizontalEnded
+            self.onVerticalChanged = onVerticalChanged
+            self.onVerticalEnded = onVerticalEnded
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            let v = pan.velocity(in: pan.view)
+            if abs(v.x) > abs(v.y) * 1.25 {
+                let startX = pan.location(in: nil).x - pan.translation(in: nil).x
+                if !allowLeftEdgeRightward && startX <= 24 && v.x > 0 {
+                    return false
+                }
+                activeAxis = .horizontal
+                return true
+            }
+            if allowVertical(), abs(v.y) > abs(v.x) * 1.25, verticalShouldBegin(v.y) {
+                activeAxis = .vertical
+                return true
+            }
+            return false
+        }
     }
 }
