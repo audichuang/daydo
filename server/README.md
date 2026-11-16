@@ -157,6 +157,7 @@ Extra checks: `npm run e2e:ics` (ICS sync and cron) and `npm run e2e:mcp` (OAuth
 3. Apple Developer: Services ID `com.audichuang.daydo.web`, grouped under App ID `com.audichuang.daydo`; domain `daydo-mcp.audichuang.app`; Return URL `https://daydo-mcp.audichuang.app/authorize/apple/callback`.
 4. DNS / custom domain: add `daydo-mcp.audichuang.app` as a second `custom_domain` route on the same Worker in `void.config.ts` (`routes` next to `daydo-api.audichuang.app`), refresh `void.lock.json` with the Void command, then deploy once the user approves. Leave Cloudflare Access untouched: the Access application is bound to `daydo-api` only, and the MCP host skips Access by hostname.
 5. Workers plan: the Free plan (10 ms CPU per invocation) is not enough for ICS parsing or MCP snapshot reads. Use Paid, set `worker.limits.cpu_ms` in `void.config.ts` if needed, and check the plan's subrequest limit per invocation (reduce sources per cron run if necessary).
+6. Email: `audichuang.app` is enabled as a sending domain in Cloudflare Email Sending. Its onboarding added `_dmarc` with `p=reject` for the whole domain, and the root domain has no SPF, so any other service that sends as `@audichuang.app` must be added to SPF/DKIM first or its mail is rejected.
 
 ### After deploy (only when the user asks to deploy)
 

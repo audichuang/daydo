@@ -611,25 +611,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 
 ## 13. 合併後手動步驟（不在票內）
 
-1. `void secret put GOOGLE_WEB_CLIENT_SECRET`。值存在 1Password `Agent` vault，項目名稱「DayDo Google web client secret」。
-2. Google Cloud Console：確認網頁 client 的 redirect URI 有 `https://daydo-mcp.audichuang.app/authorize/google/callback` 與 `http://localhost:5173/authorize/google/callback`。
-3. Apple Developer：
-   - 建立 Services ID `com.audichuang.daydo.web`，群組在 App ID `com.audichuang.daydo` 之下。
-   - 網域 `daydo-mcp.audichuang.app`。
-   - Return URL `https://daydo-mcp.audichuang.app/authorize/apple/callback`。
-4. 部署後確認 `void.config.ts` 的第二個 custom domain 的 DNS 已生效。**不**動 Cloudflare Access：Access 應用程式只綁 `daydo-api`。
-5. 確認 Workers 方案：
-   - Free 方案每次執行只有 10ms CPU，不夠 ICS 解析，也不夠 MCP 讀完整 snapshot。
-   - 需要 Paid 方案，並視情況在 `void.config.ts` 設 `worker.limits.cpu_ms`。
-   - 同時查證該方案每次執行的 subrequest 上限，必要時調整每輪來源數。
-6. 部署（使用者明說時才做）後：
-   - 用 Claude、ChatGPT、Codex 連接 `https://daydo-mcp.audichuang.app/`，用真實 Apple 帳號在 Safari 與 Chrome 各登入一次。要確認三件事：
-     - **網頁 Apple `sub` 與 App 相同。**
-     - Apple form_post 帶得到 `SameSite=None` cookie。
-     - 三家 client 的 `/token` 請求都有帶 `client_id`。
-   - Google 帳號同樣驗一次。
-   - 對 `daydo-api` 跑 `npm run smoke:prod`，確認 Access 仍然擋住沒帶 token 的請求。
-   - 對 `daydo-mcp` 確認 `/sync/pull` 回 404。
+部署前的手動設定與部署後的驗收見 `server/README.md`「MCP Server」，只維護那一份。
 
 ## 14. 決策紀錄
 
