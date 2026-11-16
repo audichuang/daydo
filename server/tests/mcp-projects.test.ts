@@ -170,11 +170,11 @@ async function seedShared(h: Harness, role: 'viewer' | 'editor') {
 }
 
 describe('M10 registry', () => {
-  it('registers the eight tools with hints', () => {
-    const names = TOOL_DEFS.map((t) => t.name).sort();
-    expect(names).toEqual(
-      ['create_project', 'create_tag', 'delete_project', 'get_project', 'get_project_data', 'list_projects', 'list_tags', 'update_project'],
-    );
+  it('registers the project and tag tools with hints', () => {
+    const names = TOOL_DEFS.map((t) => t.name);
+    for (const n of ['create_project', 'create_tag', 'delete_project', 'get_project', 'get_project_data', 'list_projects', 'list_tags', 'update_project']) {
+      expect(names).toContain(n);
+    }
     for (const n of names) expect(HINTS[n]).toBeDefined();
     expect(HINTS.delete_project).toBe('destructive');
   });

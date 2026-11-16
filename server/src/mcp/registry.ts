@@ -2,6 +2,7 @@
 
 import { projectTools } from './tools/projects';
 import { tagTools } from './tools/tags';
+import { taskReadTools } from './tools/tasks';
 import type { AppDb, ScopeStub } from '../sync/push';
 
 export type Hint = 'read' | 'write' | 'idempotent-write' | 'idempotent-overwrite' | 'destructive';
@@ -41,12 +42,17 @@ export const HINTS: Record<string, Hint> = {
   delete_project: 'destructive',
   list_tags: 'read',
   create_tag: 'write',
+  list_recent_tasks: 'read',
+  list_tasks: 'read',
+  search_tasks: 'read',
+  get_task: 'read',
+  get_completed_tasks: 'read',
 };
 
 /** Only tools that fetch caller-supplied external URLs. */
 export const OPEN_WORLD = new Set<string>();
 
-export const TOOLS: readonly ToolDef[] = [...projectTools(), ...tagTools()];
+export const TOOLS: readonly ToolDef[] = [...projectTools(), ...tagTools(), ...taskReadTools()];
 
 export interface ToolDescriptor {
   name: string;
