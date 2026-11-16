@@ -343,7 +343,7 @@ const TASK_FIELDS = {
   timezone: { type: 'string', description: 'IANA zone, e.g. Asia/Taipei. Inferred from the offset when omitted.' },
   reminder: {
     type: 'string',
-    description: 'One or more triggers, comma-separated, e.g. TRIGGER:-P1D,TRIGGER:-PT30M. Relative to start (or the day, for all-day tasks). Needs a date.',
+    description: 'One or more triggers, comma-separated, e.g. TRIGGER:-P1D,TRIGGER:-PT30M. Relative to the start (00:00 of the start day for all-day tasks). Needs a date.',
   },
   repeat: {
     type: 'string',
@@ -435,7 +435,7 @@ export function taskWriteTools(): ToolDef[] {
       name: 'update_task',
       description:
         'Update fields of an existing task. Pass only the fields you want to change; omitted fields are kept.\n' +
-        '- The schedule is rebuilt only when `start` or `due` is given. `due` alone keeps the current start. `timezone` alone moves the task to that zone at the same wall-clock time. `all_day` needs `start` or `due`.\n' +
+        '- The schedule is rebuilt only when `start` or `due` is given. `start` alone removes the end; send both to keep a duration. `due` alone keeps the current start. `timezone` alone moves the task to that zone at the same wall-clock time. `all_day` needs `start` or `due`.\n' +
         '- `start: ""` removes the date, together with its reminders and repeat. `due: ""` removes only the end.\n' +
         '- `repeat: ""` stops repeating. `reminder` replaces all reminders (`""` removes them) and needs the task to have a date.\n' +
         '- `subtasks` replaces the WHOLE checklist with this list (omit to leave items untouched). `tags` replaces all tags.\n' +

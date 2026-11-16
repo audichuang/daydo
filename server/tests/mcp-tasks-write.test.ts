@@ -421,6 +421,16 @@ describe('M11b update_task', () => {
     expect(r.json).toMatchObject({ start: '2026-11-21T17:00:00+08:00', due: null, timezone: 'Asia/Taipei' });
   });
 
+  it("clears only the end with due:'', and dates a dateless task from due alone", async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    const r = await call(h, 'u-a', 'update_task', { project_id: 'p1', task_id: 't1', due: '' });
+    expect(r.json).toMatchObject({ start: '2026-11-20T09:00:00+08:00', due: null, timezone: 'Asia/Taipei', reminders: ['TRIGGER:PT0S'] });
+    const plain = await call(h, 'u-a', 'create_task', { project_id: 'p1', title: 'dateless' });
+    const dated = await call(h, 'u-a', 'update_task', { project_id: 'p1', task_id: plain.json.id, due: '2026-12-05' });
+    expect(dated.json).toMatchObject({ start: '2026-12-05', due: null, all_day: true });
+  });
+
   it('relabels the zone when only timezone is given, and rejects all_day without a date', async () => {
     const h = createHarness();
     await seedBasic(h);
