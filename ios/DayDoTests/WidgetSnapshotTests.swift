@@ -44,17 +44,29 @@ final class WidgetSnapshotTests: XCTestCase {
         }
 
         let specs: [(String, WidgetFamily, CGSize, AnyView)] = [
-            ("today-small", .systemSmall, CGSize(width: 170, height: 170), AnyView(TodayWidgetView(data: todayData, family: .systemSmall, accent: accent))),
-            ("today-medium", .systemMedium, CGSize(width: 364, height: 170), AnyView(TodayWidgetView(data: todayData, family: .systemMedium, accent: accent))),
-            ("today-large", .systemLarge, CGSize(width: 364, height: 382), AnyView(TodayWidgetView(data: todayData, family: .systemLarge, accent: accent))),
-            ("next-small", .systemSmall, CGSize(width: 170, height: 170), AnyView(NextWidgetView(data: nextData, family: .systemSmall, accent: accent))),
-            ("next-medium", .systemMedium, CGSize(width: 364, height: 170), AnyView(NextWidgetView(data: nextData, family: .systemMedium, accent: accent))),
-            ("next-large", .systemLarge, CGSize(width: 364, height: 382), AnyView(NextWidgetView(data: nextData, family: .systemLarge, accent: accent))),
-            ("calendar-small", .systemSmall, CGSize(width: 170, height: 170), AnyView(CalendarWidgetView(data: calData, family: .systemSmall, accent: accent))),
-            ("calendar-medium", .systemMedium, CGSize(width: 364, height: 170), AnyView(CalendarWidgetView(data: calData, family: .systemMedium, accent: accent))),
-            ("calendar-large", .systemLarge, CGSize(width: 364, height: 382), AnyView(CalendarWidgetView(data: calData, family: .systemLarge, accent: accent))),
+            ("today-small", .systemSmall, CGSize(width: 162, height: 162), AnyView(TodayWidgetView(data: todayData, family: .systemSmall, accent: accent))),
+            ("today-medium", .systemMedium, CGSize(width: 346, height: 162), AnyView(TodayWidgetView(data: todayData, family: .systemMedium, accent: accent))),
+            ("today-large", .systemLarge, CGSize(width: 346, height: 364), AnyView(TodayWidgetView(data: todayData, family: .systemLarge, accent: accent))),
+            ("next-small", .systemSmall, CGSize(width: 162, height: 162), AnyView(NextWidgetView(data: nextData, family: .systemSmall, accent: accent))),
+            ("next-medium", .systemMedium, CGSize(width: 346, height: 162), AnyView(NextWidgetView(data: nextData, family: .systemMedium, accent: accent))),
+            ("next-large", .systemLarge, CGSize(width: 346, height: 364), AnyView(NextWidgetView(data: nextData, family: .systemLarge, accent: accent))),
+            ("calendar-small", .systemSmall, CGSize(width: 162, height: 162), AnyView(CalendarWidgetView(data: calData, family: .systemSmall, accent: accent))),
+            ("calendar-medium", .systemMedium, CGSize(width: 346, height: 162), AnyView(CalendarWidgetView(data: calData, family: .systemMedium, accent: accent))),
+            ("calendar-large", .systemLarge, CGSize(width: 346, height: 364), AnyView(CalendarWidgetView(data: calData, family: .systemLarge, accent: accent))),
         ]
         _ = projectsById
+
+        // Verify 6-week month rendering at actual iPhone systemLarge size too.
+        let sixWeekCal = WidgetCalendarData.build(tasks: [], projectsById: [:], today: LocalDay(year: 2026, month: 8, day: 15))
+        XCTAssertEqual(sixWeekCal.monthLayout.weeks.count, 6)
+        let sixWeekRenderer = ImageRenderer(
+            content: CalendarWidgetView(data: sixWeekCal, family: .systemLarge, accent: accent)
+                .frame(width: 346, height: 364)
+                .background(WidgetPalette.background)
+                .environment(\.colorScheme, .dark)
+        )
+        sixWeekRenderer.scale = 2.0
+        XCTAssertNotNil(sixWeekRenderer.uiImage)
 
         for (name, family, size, content) in specs {
             let radius: CGFloat = family == .systemLarge ? 24 : 22

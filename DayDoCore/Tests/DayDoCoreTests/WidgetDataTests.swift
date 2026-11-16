@@ -164,17 +164,19 @@ extension FileBackedDatabaseTests {
         #expect(s1.timelineBlocks.count == 3)
         #expect(s1.timelineBlocks.first(where: { $0.task.id == "brief" })?.isPrimary == true)
 
-        // At 18:10 -> 18:00-18:30 brief is ongoing
+        // At 18:10 -> 18:00-18:30 brief is ongoing -> window starts at now's hour (18:00-23:00)
         let t1810 = today.date(minute: 18 * 60 + 10, in: taipei)
         let s2 = WidgetNextData.build(tasks: tasks, projectsById: projects, now: t1810, timeZone: taipei)
         #expect(s2.currentOrNext?.task.id == "brief")
         #expect(s2.currentOrNext?.isOngoing == true)
+        #expect(s2.windowStartHour == 18 && s2.windowEndHour == 23)
 
         // At 18:30 -> brief ended, dinner becomes currentOrNext
         let t1830 = today.date(minute: 18 * 60 + 30, in: taipei)
         let s3 = WidgetNextData.build(tasks: tasks, projectsById: projects, now: t1830, timeZone: taipei)
         #expect(s3.currentOrNext?.task.id == "dinner")
         #expect(s3.after.map(\.task.id) == ["gym"])
+        #expect(s3.windowStartHour == 18 && s3.windowEndHour == 23)
 
         // Timeline boundary dates from 17:30 include start/end of brief, dinner, gym + midnight
         let boundaries = WidgetNextData.timelineDates(tasks: tasks, from: t1730, timeZone: taipei)
@@ -197,6 +199,40 @@ extension FileBackedDatabaseTests {
         cal.timeZone = la
         let comps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: dates[1])
         #expect(comps.year == 2026 && comps.month == 3 && comps.day == 9 && comps.hour == 0 && comps.minute == 0)
+    }
+
+    @Test func nextTimelineWindowCoversAllFourAnchorRules() {
+        let today = day("2026-11-16")
+        let projects = ["work": makeProject("work", name: "工作", color: "#4AA8E8")]
+        let allDayTask = makeTask("ad", title: "全天活動", projectId: "work", schedule: .allDay(today))
+        let eveningTask = makeTask("ev", title: "簡報", projectId: "work", schedule: .timed(today, start: 18 * 60, end: 18 * 60 + 30, timeZone: "Asia/Taipei"))
+        let lateTask = makeTask("late", title: "深夜", projectId: "work", schedule: .timed(today, start: 22 * 60, end: 23 * 60, timeZone: "Asia/Taipei"))
+        let tomorrowTask = makeTask("tmr", title: "明早", projectId: "work", schedule: .timed(today.adding(days: 1), start: 10 * 60, end: 11 * 60, timeZone: "Asia/Taipei"))
+
+        // 1. Ongoing timed item -> starts at now's hour (14:48 with 14:00-16:00 -> 14:00-19:00).
+        let ongoing = makeTask("on", title: "進行中會議", projectId: "work", schedule: .timed(today, start: 14 * 60, end: 16 * 60, timeZone: "Asia/Taipei"))
+        let c1 = WidgetNextData.build(tasks: [ongoing, eveningTask], projectsById: projects, now: today.date(minute: 14 * 60 + 48, in: taipei), timeZone: taipei)
+        #expect(c1.windowStartHour == 14 && c1.windowEndHour == 19)
+
+        // 2. No ongoing, upcoming today -> 1 hour before first upcoming start, clamped >= now's hour.
+        let c2a = WidgetNextData.build(tasks: [eveningTask, allDayTask], projectsById: projects, now: today.date(minute: 14 * 60 + 48, in: taipei), timeZone: taipei)
+        #expect(c2a.windowStartHour == 17 && c2a.windowEndHour == 22)
+        let c2b = WidgetNextData.build(tasks: [eveningTask], projectsById: projects, now: today.date(minute: 17 * 60 + 40, in: taipei), timeZone: taipei)
+        #expect(c2b.windowStartHour == 17 && c2b.windowEndHour == 22)
+        let soonTask = makeTask("soon", title: "馬上", projectId: "work", schedule: .timed(today, start: 17 * 60 + 50, end: 18 * 60 + 20, timeZone: "Asia/Taipei"))
+        let c2c = WidgetNextData.build(tasks: [soonTask], projectsById: projects, now: today.date(minute: 17 * 60 + 40, in: taipei), timeZone: taipei)
+        #expect(c2c.windowStartHour == 17 && c2c.windowEndHour == 22)
+
+        // 3. No upcoming timed items today -> starts at now's hour and preserves all-day chips.
+        let c3 = WidgetNextData.build(tasks: [allDayTask, tomorrowTask], projectsById: projects, now: today.date(minute: 14 * 60 + 48, in: taipei), timeZone: taipei)
+        #expect(c3.windowStartHour == 14 && c3.windowEndHour == 19)
+        #expect(c3.allDayToday.map(\.task.id) == ["ad"])
+
+        // 4. End > 24:00 -> pulled back so 5-hour window ends at 24:00 (and never < 00:00).
+        let c4a = WidgetNextData.build(tasks: [lateTask], projectsById: projects, now: today.date(minute: 21 * 60 + 15, in: taipei), timeZone: taipei)
+        #expect(c4a.windowStartHour == 19 && c4a.windowEndHour == 24)
+        let c4b = WidgetNextData.build(tasks: [allDayTask], projectsById: projects, now: today.date(minute: 22 * 60 + 30, in: taipei), timeZone: taipei)
+        #expect(c4b.windowStartHour == 19 && c4b.windowEndHour == 24)
     }
 
     @Test func calendarDataBuildsTwoWeeksAcrossMonthBoundaryAndAdaptiveLanes() {

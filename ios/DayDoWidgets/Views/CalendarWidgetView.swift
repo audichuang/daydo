@@ -17,15 +17,17 @@ struct CalendarWidgetView: View {
                     wide(
                         data,
                         showMonthTitle: false,
-                        weeks: data.twoWeekLayout.weeks,
-                        maxLanes: 2
+                        weekCount: data.twoWeekLayout.weeks.count,
+                        capLanes: 2,
+                        layoutForLanes: { data.twoWeekLayout(maxLanes: $0) }
                     )
                 case .systemLarge:
                     wide(
                         data,
                         showMonthTitle: true,
-                        weeks: data.monthLayout.weeks,
-                        maxLanes: data.monthLayout.weeks.count >= 6 ? 2 : 3
+                        weekCount: data.monthLayout.weeks.count,
+                        capLanes: 3,
+                        layoutForLanes: { data.monthLayout(maxLanes: $0) }
                     )
                 default:
                     small(data)
@@ -95,8 +97,9 @@ struct CalendarWidgetView: View {
     private func wide(
         _ data: WidgetCalendarData,
         showMonthTitle: Bool,
-        weeks: [MonthLayout.Week],
-        maxLanes: Int
+        weekCount: Int,
+        capLanes: Int,
+        layoutForLanes: @escaping (Int) -> MonthLayout
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if showMonthTitle {
@@ -111,17 +114,37 @@ struct CalendarWidgetView: View {
             weekdayHeader
                 .padding(.bottom, 2)
 
-            ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
-                WidgetCalendarWeekView(
-                    week: week,
-                    month: data.month,
-                    today: data.today,
-                    maxLanes: maxLanes,
-                    projectColorsById: data.projectColorsById,
-                    accent: accent
-                )
+            GeometryReader { geo in
+                let count = max(1, weekCount)
+                let rowHeight = geo.size.height / CGFloat(count)
+                let maxLanes = Self.fittingLanes(rowHeight: rowHeight, cap: capLanes)
+                let layout = layoutForLanes(maxLanes)
+
+                VStack(spacing: 0) {
+                    ForEach(Array(layout.weeks.enumerated()), id: \.offset) { _, week in
+                        WidgetCalendarWeekView(
+                            week: week,
+                            month: data.month,
+                            today: data.today,
+                            maxLanes: maxLanes,
+                            projectColorsById: data.projectColorsById,
+                            accent: accent
+                        )
+                    }
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private static func fittingLanes(rowHeight: CGFloat, cap: Int) -> Int {
+        let headerH: CGFloat = 18
+        let laneStep: CGFloat = 12
+        let moreH: CGFloat = 11
+        let bottomMargin: CGFloat = 1
+        let availableForLanes = rowHeight - headerH - moreH - bottomMargin
+        let count = Int(floor(availableForLanes / laneStep))
+        return min(cap, max(1, count))
     }
 
     private var weekdayHeader: some View {
@@ -145,8 +168,8 @@ private struct WidgetCalendarWeekView: View {
     var accent: WidgetAccent
 
     var body: some View {
-        let headerH: CGFloat = maxLanes <= 2 ? 19 : 18
-        let laneStep: CGFloat = maxLanes <= 2 ? 13 : 12
+        let headerH: CGFloat = 18
+        let laneStep: CGFloat = 12
         let barH: CGFloat = 11
 
         GeometryReader { geo in

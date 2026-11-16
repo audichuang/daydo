@@ -245,26 +245,24 @@ public struct WidgetNextData: Equatable, Sendable {
         cal.timeZone = timeZone
         let comps = cal.dateComponents([.hour, .minute], from: now)
         let currentHour = comps.hour ?? 0
-        let nowMinute = currentHour * 60 + (comps.minute ?? 0)
 
-        let todayBlocks = DayLayout.blocks(for: active, on: today)
-        let upcomingTodayBlock = todayBlocks.first { $0.end > nowMinute }
-        let windowStartHour: Int
-        if let firstBlock = upcomingTodayBlock {
-            let firstStartHour = firstBlock.start / 60
-            if firstStartHour < currentHour {
-                windowStartHour = min(19, max(0, firstStartHour))
-            } else if firstStartHour < currentHour + 5 {
-                windowStartHour = min(19, max(0, currentHour))
-            } else {
-                windowStartHour = min(19, max(0, firstStartHour - 1))
-            }
+        let todayTimed = timedItems.filter { $0.task.schedule?.occurs(on: today) == true }
+        let hasOngoingToday = todayTimed.contains { $0.isOngoing }
+        let rawStartHour: Int
+        if hasOngoingToday {
+            rawStartHour = currentHour
+        } else if let firstUpcoming = todayTimed.first(where: { !$0.isOngoing }) {
+            let firstStartHour = cal.component(.hour, from: firstUpcoming.startDate)
+            rawStartHour = max(currentHour, firstStartHour - 1)
         } else {
-            windowStartHour = min(19, max(0, currentHour))
+            rawStartHour = currentHour
         }
+        let windowStartHour = min(19, max(0, rawStartHour))
         let windowEndHour = windowStartHour + 5
         let winStartMin = windowStartHour * 60
         let winEndMin = windowEndHour * 60
+
+        let todayBlocks = DayLayout.blocks(for: active, on: today)
 
         let clippedBlocks: [TimelineBlock] = todayBlocks.compactMap { b in
             guard b.end > winStartMin && b.start < winEndMin else { return nil }
@@ -351,6 +349,17 @@ public struct WidgetCalendarData: Sendable {
     public var twoWeekLayout: MonthLayout
     public var monthLayout: MonthLayout
     public var projectColorsById: [String: String]
+    private let orderedTasks: [TodoTask]
+
+    public func twoWeekLayout(maxLanes: Int) -> MonthLayout {
+        let twoWeekStart = today.adding(days: -today.weekday)
+        let twoWeekDays = (0..<14).map { twoWeekStart.adding(days: $0) }
+        return MonthLayout(days: twoWeekDays, tasks: orderedTasks, maxLanes: max(1, maxLanes))
+    }
+
+    public func monthLayout(maxLanes: Int) -> MonthLayout {
+        MonthLayout(days: miniDays, tasks: orderedTasks, maxLanes: max(1, maxLanes))
+    }
 
     public static func queryRange(for today: LocalDay) -> ClosedRange<LocalDay> {
         let grid = MonthLayout.gridDays(for: today)
@@ -399,7 +408,8 @@ public struct WidgetCalendarData: Sendable {
             daysWithEvents: daysWithEvents,
             twoWeekLayout: twoWeekLayout,
             monthLayout: monthLayout,
-            projectColorsById: colors
+            projectColorsById: colors,
+            orderedTasks: orderedTasks
         )
     }
 

@@ -245,8 +245,8 @@ struct NextWidgetView: View {
             }
 
             GeometryReader { geo in
-                let topPad: CGFloat = 6
-                let bottomPad: CGFloat = 8
+                let topPad: CGFloat = 7
+                let bottomPad: CGFloat = 10
                 let usableH = max(40, geo.size.height - topPad - bottomPad)
                 let gutter: CGFloat = 40
                 let trackW = max(40, geo.size.width - gutter)
@@ -265,6 +265,7 @@ struct NextWidgetView: View {
                                 .padding(.trailing, 4)
                                 .background(WidgetPalette.background)
                         }
+                        .frame(height: 12, alignment: .leading)
                         .offset(y: y - 6)
                     }
 
