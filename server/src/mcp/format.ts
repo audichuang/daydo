@@ -1,7 +1,7 @@
 // Output shapes for MCP tools (spec/mcp.md 8): snake_case project, task and tag objects.
 import { scheduleToAPI, type Schedule } from '../domain/schedule';
 import type { Snapshot, SnapshotRow } from '../serverops/snapshot';
-import { bySortKey, compareKeys } from '../serverops/values';
+import { bySortKey } from '../serverops/values';
 
 export const CONTENT_SUMMARY_LIMIT = 100;
 
@@ -12,8 +12,6 @@ function nil<T>(v: T | undefined | null): T | null {
 function absent(row: Record<string, unknown>, ...fields: string[]): boolean {
   return fields.every((f) => row[f] === undefined || row[f] === null);
 }
-
-export { bySortKey, compareKeys };
 
 /** Project with the caller's role; `can_write` tells the model not to try writing a read-only list. */
 export function formatProject(snapshot: Snapshot, p: SnapshotRow) {

@@ -22,9 +22,9 @@ import {
   patchTaskIntents,
   trashTaskIntent,
 } from '../../serverops/taskWrites';
-import { isNil, rowSchedule } from '../../serverops/values';
+import { bySortKey, compareKeys, isNil, rowSchedule } from '../../serverops/values';
 import { assertHasData, writeOrThrow } from '../../serverops/writer';
-import { bySortKey, compareKeys, formatTask, openTasksOf, summarizeTask } from '../format';
+import { formatTask, openTasksOf, summarizeTask } from '../format';
 import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../registry';
 import { openSession, requireWritableList } from './projects';
 

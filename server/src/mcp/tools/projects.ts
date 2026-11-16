@@ -6,7 +6,8 @@ import { loadSnapshot, type Snapshot, type SnapshotRow } from '../../serverops/s
 import { taskListDenial, trashTaskIntent } from '../../serverops/taskWrites';
 import { writeOrThrow, type WriterDeps } from '../../serverops/writer';
 import { userScope } from '../../sync/scopeName';
-import { bySortKey, compareKeys, formatProject, openTasksOf, summarizeTask } from '../format';
+import { formatProject, openTasksOf, summarizeTask } from '../format';
+import { bySortKey, compareKeys } from '../../serverops/values';
 import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../registry';
 
 export interface Session {
