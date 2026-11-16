@@ -362,7 +362,7 @@ struct CalendarScreen: View {
                 .gesture(swipe)
         case .week, .threeDay, .day:
             TimeGrid(days: rangeDays, tasks: filtered, today: model.today, selected: sel, isRegular: isRegular,
-                     openTask: { model.detailTaskId = $0 },
+                     openTask: { model.openTask($0, inlineAvailable: false) },
                      tapSlot: { d, m in compose(day: d, minute: m) },
                      tapDay: { d in withAnimation(.snappy) { selected = d; modeRaw = CalMode.day.rawValue } })
                 .gesture(swipe)
@@ -495,7 +495,7 @@ struct CalendarScreen: View {
             ForEach(Array(layout.weeks.enumerated()), id: \.offset) { _, w in
                 WeekRow(week: w, month: shownMonth, selected: sel, today: model.today) { d in
                     withAnimation(.snappy) { selected = d; modeRaw = CalMode.day.rawValue }
-                } open: { id in model.detailTaskId = id }
+                } open: { id in model.openTask(id, inlineAvailable: false) }
             }
         }
     }
@@ -520,7 +520,7 @@ struct AgendaRow: View {
             .hoverEffect(.highlight)
             .disabled(model.isViewer(projectId: task.projectId))
             .accessibilityLabel((task.isCompleted ? "取消完成：" : "完成：") + task.title)
-            Button { model.detailTaskId = task.id } label: {
+            Button { model.openTask(task.id, inlineAvailable: false) } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(task.title).txt(17, .medium).foregroundStyle(task.isCompleted ? Palette.done : Palette.text)
                         .strikethrough(task.isCompleted, color: Palette.done).lineLimit(2).multilineTextAlignment(.leading)
@@ -572,7 +572,7 @@ struct TimelineAgendaRow: View {
                 if !last { Rectangle().fill(Palette.separator).frame(width: 1.5).frame(maxHeight: .infinity) }
             }
             .frame(width: 14)
-            Button { model.detailTaskId = task.id } label: {
+            Button { model.openTask(task.id, inlineAvailable: false) } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(AgendaText.line(task, today: model.today, includeDay: task.schedule?.isMultiDay ?? false))
                         .txt(15, .medium).foregroundStyle(AgendaText.color(task, today: model.today, accent: accent))

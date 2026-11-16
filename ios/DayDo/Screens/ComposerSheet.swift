@@ -241,11 +241,7 @@ struct ComposerSheet: View {
             if openDetail {
                 dismiss()
                 try? await Task.sleep(for: .milliseconds(350))
-                if isRegularWindow && model.tab == .tasks {
-                    model.selectedTaskId = t.id
-                } else {
-                    model.detailTaskId = t.id
-                }
+                model.openTask(t.id, inlineAvailable: isRegularWindow)
             } else {
                 // Keep the composer open for the next task, like a quick-capture bar.
                 if title == snapTitle { title = "" }

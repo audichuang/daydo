@@ -184,6 +184,12 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
 /// `-DayDoScreen <name>` opens a screen directly (used for screenshots).
 @MainActor
 enum DebugLaunch {
+    private static var isRegularWindow: Bool {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let window = scenes.flatMap(\.windows).first(where: \.isKeyWindow) ?? scenes.flatMap(\.windows).first
+        return window?.traitCollection.horizontalSizeClass == .regular
+    }
+
     static func apply(to model: AppModel) async {
         let args = ProcessInfo.processInfo.arguments
 #if DEBUG
@@ -210,8 +216,10 @@ enum DebugLaunch {
         case "week": UserDefaults.standard.set("week", forKey: "calendarViewMode"); model.tab = .calendar
         case "search": model.tab = .search
         case "detail", "date", "time":
-            model.detailTaskId = tasks.first?.id
             if screen != "detail" { UserDefaults.standard.set(screen, forKey: "debugDetailPage") }
+            if let id = tasks.first?.id {
+                model.openTask(id, inlineAvailable: isRegularWindow)
+            }
         case "editlist": model.editingProjectId = model.projects.first { !$0.isInbox }?.id
         case "compose": model.composing = ComposeRequest(day: model.today)
         case "settings": model.tab = .settings

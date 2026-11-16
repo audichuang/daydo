@@ -296,11 +296,7 @@ struct TaskRow: View {
             .accessibilityLabel((task.isCompleted ? "取消完成：" : "完成：") + task.title)
 
             Button {
-                if usesInlineSelection {
-                    model.selectedTaskId = task.id
-                } else {
-                    model.detailTaskId = task.id
-                }
+                model.openTask(task.id, inlineAvailable: usesInlineSelection)
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(task.title)

@@ -62,11 +62,7 @@ struct RootView: View {
                                 && model.inlineDetailAllowsSelectionShortcuts,
                             selectedTaskId: model.selectedTaskId,
                             onReturn: { id in
-                                if isRegular {
-                                    model.detailFocusTrigger += 1
-                                } else {
-                                    model.detailTaskId = id
-                                }
+                                model.openTask(id, inlineAvailable: isRegular, focusIfAlreadyInline: true)
                             },
                             onDelete: { id in
                                 model.deleteSelectedTask(id: id)

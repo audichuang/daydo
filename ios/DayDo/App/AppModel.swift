@@ -104,13 +104,29 @@ final class AppModel {
     /// shown after that sheet is dismissed so unsaved edits are not replaced.
     var pendingDetailTaskId: String?
 
+    /// Opens a task's detail inline in the split view when in a regular-width
+    /// window on the Tasks tab; otherwise opens it as a root sheet.
+    func openTask(_ id: String, inlineAvailable: Bool, focusIfAlreadyInline: Bool = false) {
+        if inlineAvailable && tab == .tasks {
+            if selectedTaskId == id {
+                if focusIfAlreadyInline {
+                    detailFocusTrigger += 1
+                }
+            } else {
+                selectedTaskId = id
+            }
+        } else {
+            detailTaskId = id
+        }
+    }
+
     /// Opens a task's detail without replacing a sheet that is already open.
     func openDetailFromNotification(_ id: String) {
         if detailTaskId == id { return }
         if hasActiveRootSheet {
             pendingDetailTaskId = id
         } else {
-            detailTaskId = id
+            openTask(id, inlineAvailable: false)
         }
     }
 
@@ -205,7 +221,7 @@ final class AppModel {
         }
         if let next = pendingDetailTaskId {
             pendingDetailTaskId = nil
-            detailTaskId = next
+            openTask(next, inlineAvailable: false)
         }
     }
     var composing: ComposeRequest?
