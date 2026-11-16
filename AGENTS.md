@@ -50,7 +50,9 @@ ios/scripts/uitest.sh [iphone|ipad] [xcodebuild 參數…]   # UI 流程測試�
 常駐機：`DD iPhone 18 Pro`（iOS 27.2）；iPad 版面用 `DD iPad Pro 11`。
 
 - UI 測試一律走 `ios/scripts/uitest.sh`：依名稱找機器、等別的 `xcodebuild` 跑完再開始（Codex、agy 和其他 session 共用這兩台，同時跑會在啟動時失敗：`Failed to send signal 19`）、關掉平行測試。
-- 測試與互動驗收結束後，確認沒有其他 session 使用，再以 `xcrun simctl shutdown <UDID>` 關閉本次用過的 DD 常駐機（UDID 用 `xcrun simctl list devices` 查）；`uitest.sh` 不會自動關機。
+- `uitest.sh` 會先自己開機並等開機完成，xcodebuild 就不會在測完時把模擬器關掉。不要繞過腳本直接跑 `xcodebuild test`：模擬器若是 xcodebuild 開的，它測完就會關機，常常只開了 30 秒，PosterBoard 還在寫桌布資料。2026-11-17 就這樣把資料寫壞（膨脹到 5.7G），之後每次開機 PosterBoard 都當。
+- 整批工作（多輪測試加互動驗收）都做完，才用 `ios/scripts/uitest.sh down [iphone|ipad]` 關掉本次用過的 DD 常駐機，不要每跑一輪就關一次。不要直接 `xcrun simctl shutdown`：`down` 會先等別人的測試跑完再關，直接關曾在別的 session 開機 14 秒時把機器關掉。只關自己用過的那台。
+- Mac 跳出 PosterBoard 當機視窗時，查 `~/Library/Logs/DiagnosticReports` 裡含 `SimDevice.<UDID>` 的 `.ips`。堆疊有 `PRPosterDescriptor _initWithPath:` 就先關機，把 `data/Library/Application Support/` 下的 `PRBPosterExtensionDataStore`、`com.apple.PosterKit` 改名備份後重開機，系統會重建。確認沒有新的 `.ips` 再刪備份；常駐機不 `erase`。
 - 平行 UI 測試才開臨時機，命名 `DD tmp <任務名>`，用 `ios/scripts/uitest.sh "DD tmp <任務名>"` 跑。
 - DD worktree／暫存 review 專案收尾時，DerivedData 清理依 `~/.agents/AGENTS.md`「做事邊界」的 iOS 模擬器規則執行。
 - Xcode 27.2 沒有 Simulator.app，模擬器視窗改由 `Xcode.app/Contents/Applications/DeviceHub.app` 開啟（它也列出其他專案的機器，別按到別人的 Start）。
