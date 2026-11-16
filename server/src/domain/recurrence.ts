@@ -37,7 +37,8 @@ export function parseRecurrence(rrule: string): Recurrence | null {
         frequency = FREQUENCIES.includes(value) ? (value as Frequency) : null;
         break;
       case 'INTERVAL':
-        interval = Math.max(1, INT_RE.test(value) ? Number(value) : 1);
+        // Swift's Int() returns nil on overflow, falling back to 1.
+        interval = Math.max(1, INT_RE.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : 1);
         break;
       case 'BYDAY':
         byWeekday = value

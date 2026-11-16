@@ -296,40 +296,53 @@ describe('scheduleFromAPI', () => {
 describe('scheduleWithDue (update with only due)', () => {
   it('moves only the end of a zoned timed task', () => {
     const cur = sched('2026-11-15', 1080, '2026-11-15', 1110, 'Asia/Taipei');
-    expect(scheduleWithDue(cur, { due: '2026-11-15T20:00:00+08:00' })).toEqual(
+    expect(scheduleWithDue(cur, { due: '2026-11-15T20:00:00+08:00' }, ctx)).toEqual(
       sched('2026-11-15', 1080, '2026-11-15', 1200, 'Asia/Taipei'),
     );
-    expect(scheduleWithDue(cur, { due: '2026-11-15T12:00:00Z' })).toEqual(
+    expect(scheduleWithDue(cur, { due: '2026-11-15T12:00:00Z' }, ctx)).toEqual(
       sched('2026-11-15', 1080, '2026-11-15', 1200, 'Asia/Taipei'),
     );
   });
 
   it('keeps a floating task floating (no zone inference from the start)', () => {
     const cur = sched('2026-11-15', 570);
-    expect(scheduleWithDue(cur, { due: '2026-11-15T11:00' })).toEqual(
+    expect(scheduleWithDue(cur, { due: '2026-11-15T11:00' }, ctx)).toEqual(
       sched('2026-11-15', 570, '2026-11-15', 660),
     );
   });
 
+  it('converts an offset due on a floating task via DEFAULT_TIMEZONE and stays floating', () => {
+    const cur = sched('2026-11-15', 1140);
+    expect(scheduleWithDue(cur, { due: '2026-11-15T12:30:00Z' }, ctx)).toEqual(
+      sched('2026-11-15', 1140, '2026-11-15', 1230),
+    );
+    expect(scheduleWithDue(cur, { due: '2026-11-15T20:30:00+08:00' }, ctx)).toEqual(
+      sched('2026-11-15', 1140, '2026-11-15', 1230),
+    );
+    expect(
+      scheduleWithDue(cur, { due: '2026-11-15T12:30:00Z' }, { defaultTimeZone: 'Asia/Tokyo' }),
+    ).toEqual(sched('2026-11-15', 1140, '2026-11-15', 1290));
+  });
+
   it('works on wall-clock fields on a DST day', () => {
     const cur = sched('2026-03-08', 90, null, null, 'America/Los_Angeles');
-    expect(scheduleWithDue(cur, { due: '2026-03-08T04:00' })).toEqual(
+    expect(scheduleWithDue(cur, { due: '2026-03-08T04:00' }, ctx)).toEqual(
       sched('2026-03-08', 90, '2026-03-08', 240, 'America/Los_Angeles'),
     );
   });
 
   it('extends an all-day task and rejects due before start', () => {
     const cur = sched('2026-11-13', null);
-    expect(scheduleWithDue(cur, { due: '2026-11-16' })).toEqual(sched('2026-11-13', null, '2026-11-16'));
-    expect(() => scheduleWithDue(cur, { due: '2026-11-12' })).toThrow('due must not be before start');
+    expect(scheduleWithDue(cur, { due: '2026-11-16' }, ctx)).toEqual(sched('2026-11-13', null, '2026-11-16'));
+    expect(() => scheduleWithDue(cur, { due: '2026-11-12' }, ctx)).toThrow('due must not be before start');
   });
 
   it('honours an explicit timezone and validates it', () => {
     const cur = sched('2026-11-15', 1080, null, null, 'Asia/Taipei');
-    expect(scheduleWithDue(cur, { due: '2026-11-15T19:00', timeZone: 'Asia/Tokyo' })).toEqual(
+    expect(scheduleWithDue(cur, { due: '2026-11-15T19:00', timeZone: 'Asia/Tokyo' }, ctx)).toEqual(
       sched('2026-11-15', 1080, '2026-11-15', 1140, 'Asia/Tokyo'),
     );
-    expect(() => scheduleWithDue(cur, { due: '2026-11-15T19:00', timeZone: 'Bad/Zone' })).toThrow(
+    expect(() => scheduleWithDue(cur, { due: '2026-11-15T19:00', timeZone: 'Bad/Zone' }, ctx)).toThrow(
       'Unknown IANA time zone: Bad/Zone',
     );
   });
@@ -374,6 +387,8 @@ describe('recurrence', () => {
     });
     expect(parseRecurrence('RRULE:INTERVAL=2')).toBeNull();
     expect(parseRecurrence('RRULE:FREQ=HOURLY')).toBeNull();
+    // Swift's Int() overflows to nil and falls back to 1.
+    expect(validateRepeat('FREQ=DAILY;INTERVAL=99999999999999999999999')).toBe('RRULE:FREQ=DAILY');
     expect(formatRecurrence({ frequency: 'MONTHLY', interval: 2, byWeekday: [], byMonthDay: 15 })).toBe(
       'RRULE:FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=15',
     );

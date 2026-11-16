@@ -336,16 +336,24 @@ export function scheduleFromAPI(input: ScheduleInput, ctx: ScheduleContext): Sch
 /**
  * Update with only `due`: keeps the current start's wall-clock fields and
  * zone (a floating task stays floating) and rebuilds the end from `due`.
+ * A `timeZone` relabels the zone without moving the start's wall clock.
+ * On a floating task, a `due` with an offset is read as wall clock in
+ * `defaultTimeZone` (standing in for the device zone).
  */
 export function scheduleWithDue(
   cur: Schedule,
   input: { due: string; allDay?: boolean | null; timeZone?: string | null },
+  ctx: ScheduleContext,
 ): Schedule {
   checkZone(input.timeZone);
-  const pd = parse(input.due);
+  let pd = parse(input.due);
   const isAllDay = input.allDay ?? cur.startMinute === null;
+  const zone = input.timeZone ?? cur.timeZone;
+  if (zone === null && !isAllDay && pd.offsetSeconds !== null) {
+    pd = { ...wallClockAt(eventInstant(pd), ctx.defaultTimeZone), offsetSeconds: null };
+  }
   const ps: ParsedTime = { day: cur.startDay, minute: isAllDay ? null : cur.startMinute, offsetSeconds: null };
-  return build(ps, pd, isAllDay, input.timeZone ?? cur.timeZone);
+  return build(ps, pd, isAllDay, zone);
 }
 
 // MARK: - Output
