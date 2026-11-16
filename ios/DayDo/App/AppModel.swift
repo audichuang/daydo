@@ -249,10 +249,27 @@ final class AppModel {
     var textScale: Double { didSet { UserDefaults.standard.set(textScale, forKey: "textScale") } }
     var openFolders: Set<String> { didSet { UserDefaults.standard.set(Array(openFolders), forKey: "openFolders") } }
 
-    /// Task ids currently executing `completeTask` to ignore double-taps.
-    private(set) var completingIds: Set<String> = []
+    struct CompletingOccurrence: Equatable {
+        let token = UUID()
+        var startDay: LocalDay?
+        var startMinute: Int?
+    }
+
+    /// Optimistic visual completion state keyed by task id -> clicked occurrence.
+    private(set) var completingIds: [String: CompletingOccurrence] = [:]
+    /// Write re-entry lock keyed by task id -> invocation token; released as soon as
+    /// `completeTask` finishes for repeating tasks so the next occurrence can be tapped right away.
+    private var completingLocks: [String: UUID] = [:]
     var completionHapticTrigger = 0
     var uncompletionHapticTrigger = 0
+
+    func isCompleting(_ task: TodoTask) -> Bool {
+        guard let occ = completingIds[task.id] else { return false }
+        if task.repeat != nil {
+            return task.schedule?.startDay == occ.startDay && task.schedule?.startMinute == occ.startMinute
+        }
+        return true
+    }
 
     let reminders = ReminderScheduler()
     let notificationDelegate = NotificationDelegate()
@@ -420,19 +437,26 @@ final class AppModel {
     func toggleComplete(_ task: TodoTask) {
         guard task.deletedAt == nil, !isViewer(projectId: task.projectId) else { return }
         let id = task.id
-        guard !completingIds.contains(id) else { return }
+        guard completingLocks[id] == nil else { return }
         if task.isCompleted {
             uncompletionHapticTrigger += 1
             Task { await perform { try await $0.uncompleteTask(id: id) } }
             return
         }
-        completingIds.insert(id)
-        completionHapticTrigger += 1
         let clickedRepeat = task.repeat
-        let clickedStartDay = task.schedule?.startDay
-        let clickedStartMinute = task.schedule?.startMinute
+        let occ = CompletingOccurrence(startDay: task.schedule?.startDay, startMinute: task.schedule?.startMinute)
+        completingLocks[id] = occ.token
+        completingIds[id] = occ
+        completionHapticTrigger += 1
         Task {
-            defer { completingIds.remove(id) }
+            defer {
+                if completingLocks[id] == occ.token {
+                    completingLocks.removeValue(forKey: id)
+                }
+                if completingIds[id]?.token == occ.token {
+                    completingIds.removeValue(forKey: id)
+                }
+            }
             try? await Task.sleep(for: .milliseconds(350))
             guard let current = try? await api.getTask(id: id),
                   current.deletedAt == nil,
@@ -440,15 +464,20 @@ final class AppModel {
                 return
             }
             if clickedRepeat != nil || current.repeat != nil {
-                guard current.schedule?.startDay == clickedStartDay,
-                      current.schedule?.startMinute == clickedStartMinute else {
+                guard current.schedule?.startDay == occ.startDay,
+                      current.schedule?.startMinute == occ.startMinute else {
                     return
                 }
             }
             let updated = await perform { try await $0.completeTask(id: id, ifUpdatedAt: current.updatedAt) }
             if updated != nil {
-                // Hold optimistic state past the list removal spring (~0.6s) so fading rows
-                // stay checked, while repeating tasks still reset cleanly to their next occurrence.
+                if clickedRepeat != nil || current.repeat != nil {
+                    if completingLocks[id] == occ.token {
+                        completingLocks.removeValue(forKey: id)
+                    }
+                }
+                // Hold optimistic visual state past the list removal spring (~0.6s) so fading rows
+                // stay checked, while repeating tasks' next occurrence already renders unchecked.
                 try? await Task.sleep(for: .milliseconds(750))
             }
         }

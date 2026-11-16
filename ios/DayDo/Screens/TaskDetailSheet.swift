@@ -162,7 +162,7 @@ struct TaskDetailContent: View {
     @ViewBuilder var detail: some View {
         if let task {
             let readOnly = model.isViewer(projectId: task.projectId)
-            let isDone = task.isCompleted || model.completingIds.contains(task.id)
+            let isDone = task.isCompleted || model.isCompleting(task)
             VStack(spacing: 0) {
                 header(task, readOnly: readOnly)
                 ScrollView {

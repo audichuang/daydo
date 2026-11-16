@@ -323,7 +323,7 @@ struct TaskRow: View {
     }
 
     private var isDone: Bool {
-        task.isCompleted || model.completingIds.contains(task.id)
+        task.isCompleted || model.isCompleting(task)
     }
 
     var body: some View {
