@@ -19,7 +19,8 @@ import {
   parseHlc,
 } from '../src/sync/hlc';
 import { mergeOp, type MergeExistingState } from '../src/sync/merge';
-import { parsePushBatch } from '../src/sync/push/parse';
+import { toEnvelope } from '../src/sync/envelope';
+import { collectPushLookups } from '../src/sync/push/parse';
 import { planPushBatch, type PlanPushContext } from '../src/sync/push/plan';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -767,7 +768,7 @@ describe('sync push plan (pure)', () => {
   }
 
   it('rejects viewer write on a new task and does not bind entityHome', () => {
-    const parsed = parsePushBatch([makeNewTaskOp('op-1', 't-view', 'p1')]);
+    const parsed = collectPushLookups([makeNewTaskOp('op-1', 't-view', 'p1')].map(toEnvelope));
     const context = makeContext({
       knownHome: new Map([['project:p1', 'u:owner']]),
       memberships: { p1: 'viewer' },
@@ -792,10 +793,10 @@ describe('sync push plan (pure)', () => {
   });
 
   it('accepts editor write on a new task and in-batch child without mutating context', () => {
-    const parsed = parsePushBatch([
+    const parsed = collectPushLookups([
       makeNewTaskOp('op-1', 't-edit', 'p1'),
       makeNewChecklistOp('op-2', 'c-edit', 't-edit'),
-    ]);
+    ].map(toEnvelope));
     const originalHome = new Map([['project:p1', 'u:owner']]);
     const context = makeContext({
       knownHome: originalHome,
@@ -828,11 +829,11 @@ describe('sync push plan (pure)', () => {
   });
 
   it("registers an existing task's target list by write role alone, purged or not", () => {
-    const parsed = parsePushBatch([
+    const parsed = collectPushLookups([
       makeNewTaskOp('op-1', 't-gone', 'p-gone'),
       makeNewTaskOp('op-2', 't-view', 'p-view'),
       makeNewTaskOp('op-3', 't-gone-view', 'p-gone-view'),
-    ]);
+    ].map(toEnvelope));
     const plan = planPushBatch({
       pusherScope: 'u:editor',
       parsedOps: parsed.ops,
@@ -853,10 +854,10 @@ describe('sync push plan (pure)', () => {
 
   it('rejects in-batch child when parent task is rejected (Forbidden or id-in-other-scope)', () => {
     // 1. Parent rejected as viewer Forbidden -> child inherits Forbidden
-    const viewerBatch = parsePushBatch([
+    const viewerBatch = collectPushLookups([
       makeNewTaskOp('op-t-forbid', 't-forbid', 'p1'),
       makeNewChecklistOp('op-c-forbid', 'c-forbid', 't-forbid'),
-    ]);
+    ].map(toEnvelope));
     const viewerPlan = planPushBatch({
       pusherScope: 'u:viewer',
       parsedOps: viewerBatch.ops,
@@ -870,10 +871,10 @@ describe('sync push plan (pure)', () => {
     expect(viewerPlan.inBatchNewHome.size).toBe(0);
 
     // 2. Existing parent full-upsert in another scope -> child inherits id-in-other-scope
-    const collisionBatch = parsePushBatch([
+    const collisionBatch = collectPushLookups([
       makeNewTaskOp('op-t-collide', 't-existing', 'p1'),
       makeNewChecklistOp('op-c-collide', 'c-new', 't-existing'),
-    ]);
+    ].map(toEnvelope));
     const collisionPlan = planPushBatch({
       pusherScope: 'u:editor',
       parsedOps: collisionBatch.ops,
@@ -902,7 +903,7 @@ describe('sync push plan (pure)', () => {
       fields: [],
       row: {},
     };
-    const parsed = parsePushBatch([deleteOp]);
+    const parsed = collectPushLookups([deleteOp].map(toEnvelope));
 
     const ownerPlan = planPushBatch({
       pusherScope: 'u:owner',

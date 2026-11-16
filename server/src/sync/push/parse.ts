@@ -1,5 +1,5 @@
 import { isTaskChildEntity, parseEntityId, type EntityName } from '../entities';
-import { toEnvelope, type OpEnvelope } from '../envelope';
+import type { OpEnvelope } from '../envelope';
 
 export interface LookupPair {
   entity: EntityName;
@@ -16,11 +16,6 @@ export interface ParsedPushBatch {
 
 export function entityHomeKey(entity: EntityName, entityId: string): string {
   return `${entity}:${entityId}`;
-}
-
-/** Envelopes raw push ops (validating each once) and collects their D1 lookup keys. */
-export function parsePushBatch(rawOps: readonly unknown[]): ParsedPushBatch {
-  return collectPushLookups(rawOps.map(toEnvelope));
 }
 
 /**
