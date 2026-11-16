@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '../db/schema';
 import { compareHlc, MAX_FUTURE_DRIFT_MS } from '../src/sync/hlc';
+import { toEnvelope } from '../src/sync/envelope';
 import { executeSyncPush, type ScopeStub } from '../src/sync/push';
 import {
   createScopeWorld,
@@ -452,7 +453,7 @@ describe('Scope DO SYNC_FAULT=split-txn production guard', () => {
                 projectId: 'p-1',
                 title: `Task ${i}`,
               }),
-            ],
+            ].map(toEnvelope),
           }),
         ),
       );
@@ -1195,7 +1196,7 @@ describe('Scope DO T5a regression fixes', () => {
       memberships: { 'p-class': 'owner' },
       purgedProjects: [],
       meMemberId: null,
-      ops: [taskOp],
+      ops: [taskOp].map(toEnvelope),
     });
     expect(first.results[0].status).toBe('applied');
 
@@ -1207,7 +1208,7 @@ describe('Scope DO T5a regression fixes', () => {
       memberships: { 'p-class': 'owner' },
       purgedProjects: [],
       meMemberId: null,
-      ops: [taskOp],
+      ops: [taskOp].map(toEnvelope),
     });
     expect(replay.results[0].status).toBe('applied');
 
@@ -1220,7 +1221,7 @@ describe('Scope DO T5a regression fixes', () => {
       memberships: {},
       purgedProjects: [],
       meMemberId: null,
-      ops: [taskOp],
+      ops: [taskOp].map(toEnvelope),
     });
     expect(goneReplay.results[0]).toMatchObject({ status: 'applied', gone: true });
 
@@ -1244,7 +1245,7 @@ describe('Scope DO T5a regression fixes', () => {
           fields: ['id'],
           row: { id: 'task-other' },
         },
-      ],
+      ].map(toEnvelope),
     });
 
     serializeDbBatch(h.db);
@@ -1564,7 +1565,7 @@ describe('Scope DO T5a regression fixes', () => {
           fields: ['id'],
           row: { id: 'p-other' },
         },
-      ],
+      ].map(toEnvelope),
     });
 
     const opA = makeProjectOp({

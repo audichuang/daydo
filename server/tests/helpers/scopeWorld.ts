@@ -51,7 +51,8 @@ export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
       calls.push({
         scope: nextInput.scope,
         deviceId: nextInput.deviceId,
-        ops: nextInput.ops as Array<Record<string, unknown>>,
+        // Record the ops as sent; only object ops are ever routed to a scope, so rec is set.
+        ops: nextInput.ops.map((e) => e.rec as Record<string, unknown>),
       });
       return stub.push(nextInput);
     };

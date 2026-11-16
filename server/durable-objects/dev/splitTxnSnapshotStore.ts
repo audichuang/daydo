@@ -4,6 +4,7 @@ import {
   type EntityName,
   type StoredEntityState,
 } from '../../src/sync/entities';
+import type { OpEnvelope } from '../../src/sync/envelope';
 import type { OpAppliedRow, ScopeStore, TaskChildEntity } from '../scope';
 
 /**
@@ -22,13 +23,12 @@ export class SplitTxnSnapshotStore implements ScopeStore {
 
   constructor(
     private readonly backing: ScopeStore,
-    ops: unknown[],
+    ops: readonly OpEnvelope[],
   ) {
     this.counterValue = backing.getCounter();
     this.purgedProjectsSnapshot = backing.getPurgedProjects();
-    for (const raw of ops) {
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
-      const rec = raw as Record<string, unknown>;
+    for (const { rec } of ops) {
+      if (!rec) continue;
       if (typeof rec.opId === 'string' && rec.opId.length > 0 && !this.opAppliedMap.has(rec.opId)) {
         const existingOp = backing.getOpApplied(rec.opId);
         if (existingOp) this.opAppliedMap.set(rec.opId, existingOp);

@@ -71,7 +71,6 @@ export async function executeSyncPush(
     deviceId,
     pusherScope,
     nowMs,
-    rawOps: ops,
     parsedOps: parsed.ops,
     context,
     plan,

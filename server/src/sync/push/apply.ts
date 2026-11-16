@@ -11,6 +11,7 @@ import {
   registerListScope,
 } from '../../membership';
 import type { EntityName, MembershipRole } from '../entities';
+import type { OpEnvelope } from '../envelope';
 import type { AppDb, ScopeStub } from '../push';
 import { scopeOwnerId } from '../scopeName';
 import {
@@ -24,7 +25,7 @@ import type { ListScopeTarget, NewEntityHomeEntry, OwnerProjectDelete, PushPlan 
 
 interface ScopeResponseEntry {
   scope: string;
-  group: Array<{ index: number; op: unknown }>;
+  group: Array<{ index: number; op: OpEnvelope }>;
   response: ScopePushResponse;
 }
 
@@ -33,7 +34,6 @@ export interface ApplyPushPlanParams {
   deviceId: string;
   pusherScope: string;
   nowMs: number;
-  rawOps: readonly unknown[];
   parsedOps: readonly ParsedPushOp[];
   context: PushContext;
   plan: PushPlan;
@@ -279,7 +279,7 @@ async function dispatchScopeBatches(
     deviceId: string;
     pusherScope: string;
     nowMs: number;
-    rawOps: readonly unknown[];
+    parsedOps: readonly ParsedPushOp[];
     opTargetScope: readonly (string | null)[];
     ownerProjectDeletes: readonly OwnerProjectDelete[];
     purgedSet: Set<string>;
@@ -298,7 +298,7 @@ async function dispatchScopeBatches(
     deviceId,
     pusherScope,
     nowMs,
-    rawOps,
+    parsedOps,
     opTargetScope,
     ownerProjectDeletes,
     purgedSet,
@@ -313,7 +313,7 @@ async function dispatchScopeBatches(
   let boundMeMemberId: string | null = null;
 
   const pushRange = async (startIdx: number, endIdx: number): Promise<void> => {
-    const scopeGroups = new Map<string, Array<{ index: number; op: unknown }>>();
+    const scopeGroups = new Map<string, Array<{ index: number; op: OpEnvelope }>>();
     for (let i = startIdx; i < endIdx; i += 1) {
       const scope = opTargetScope[i];
       if (!scope) continue;
@@ -322,7 +322,7 @@ async function dispatchScopeBatches(
         group = [];
         scopeGroups.set(scope, group);
       }
-      group.push({ index: i, op: rawOps[i] });
+      group.push({ index: i, op: parsedOps[i] });
     }
     if (scopeGroups.size === 0) return;
 
@@ -383,7 +383,7 @@ async function dispatchScopeBatches(
       clocks: homeResult.clocks,
     };
   }
-  await pushRange(segmentStart, rawOps.length);
+  await pushRange(segmentStart, parsedOps.length);
 
   return { scopeResponses, extraServerTimes, boundMeMemberId };
 }
@@ -408,10 +408,11 @@ async function syncPusherProfile(
       if (scope !== pusherScope) continue;
       for (let j = 0; j < group.length; j += 1) {
         const res = response.results[j];
-        const opObj = group[j].op as Record<string, unknown>;
+        const opObj = group[j].op.rec;
         if (
           res.status === 'applied' &&
           res.row &&
+          opObj &&
           opObj.entity === 'member' &&
           opObj.entityId === effectiveMeMemberId &&
           opObj.op === 'upsert'
@@ -447,8 +448,7 @@ export async function applyPushPlan(
   db: AppDb,
   params: ApplyPushPlanParams,
 ): Promise<AppliedPushOutcome> {
-  const { userId, deviceId, pusherScope, nowMs, rawOps, parsedOps, context, plan, getScopeStub } =
-    params;
+  const { userId, deviceId, pusherScope, nowMs, parsedOps, context, plan, getScopeStub } = params;
 
   const results = [...plan.results];
   const opTargetScope = [...plan.opTargetScope];
@@ -485,7 +485,7 @@ export async function applyPushPlan(
     deviceId,
     pusherScope,
     nowMs,
-    rawOps,
+    parsedOps,
     opTargetScope,
     ownerProjectDeletes: plan.ownerProjectDeletes,
     purgedSet,

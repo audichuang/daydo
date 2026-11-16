@@ -11,13 +11,13 @@ import {
   isTaskChildEntity,
   parseEntityId,
   stateToDbValues,
-  validateSyncOp,
   type EntityName,
   type MembershipRole,
   type StoredEntityState,
 } from '../src/sync/entities';
 import { advanceServerHlc, clampHlc, type Hlc } from '../src/sync/hlc';
 import type { ListAccess } from '../src/sync/access';
+import type { OpEnvelope } from '../src/sync/envelope';
 import { mergeOp } from '../src/sync/merge';
 import { authorizeOp } from '../src/scope/authorize';
 import { rowView, type ScopeViewer } from '../src/scope/rowView';
@@ -40,7 +40,8 @@ export interface ScopePushInput {
   memberships: Record<string, MembershipRole>;
   purgedProjects: string[];
   meMemberId: string | null;
-  ops: unknown[];
+  /** Ops in push order, each validated once by the caller (invalid ones too: they reject here). */
+  ops: OpEnvelope[];
 }
 
 export interface ScopePushResponse {
@@ -639,17 +640,10 @@ export class ScopeObject extends DurableObject<CloudBindings> {
       });
     };
 
-    for (const raw of input.ops) {
-      const rec =
-        raw && typeof raw === 'object' && !Array.isArray(raw)
-          ? (raw as Record<string, unknown>)
-          : null;
-      const rawOpId = rec && typeof rec.opId === 'string' ? rec.opId : '';
-      const rawEntity =
-        rec && isEntityName(rec.entity) && typeof rec.entityId === 'string' && parseEntityId(rec.entity, rec.entityId)
-          ? rec.entity
-          : null;
-      const rawEntityId = rawEntity && rec ? (rec.entityId as string) : null;
+    for (const envelope of input.ops) {
+      const { rec, rawOpId } = envelope;
+      const rawEntityId = envelope.entityId;
+      const rawEntity = rawEntityId !== null ? envelope.entity : null;
 
       // 1. opId dedupe
       if (rawOpId.length > 0) {
@@ -727,7 +721,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
       }
 
       // 2. Validation
-      const validated = validateSyncOp(raw);
+      const validated = envelope.validated;
       if (!validated.ok) {
         rejectOp(validated.opId, validated.reason, rawEntity, rawEntityId);
         continue;
