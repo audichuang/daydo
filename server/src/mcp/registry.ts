@@ -1,0 +1,160 @@
+// MCP tool registry: definitions, behaviour hints, argument validation (spec/mcp.md 5, 8).
+// The tool list is empty in this ticket; later tickets register tools here.
+
+export type Hint = 'read' | 'write' | 'idempotent-write' | 'idempotent-overwrite' | 'destructive';
+
+export interface ToolSchema {
+  type: 'object';
+  properties: Record<string, { type?: string; description?: string; enum?: readonly string[] }>;
+  required?: readonly string[];
+}
+
+export interface ToolContext {
+  userId: string;
+  clientId: string | null;
+}
+
+export interface ToolDef {
+  name: string;
+  description: string;
+  inputSchema: ToolSchema;
+  run: (args: Record<string, unknown>, ctx: ToolContext) => Promise<unknown>;
+}
+
+/** Behaviour hints in one table so a new tool cannot ship without them. Hints are not a security boundary. */
+export const HINTS: Record<string, Hint> = {};
+
+/** Only tools that fetch caller-supplied external URLs. */
+export const OPEN_WORLD = new Set<string>();
+
+export const TOOLS: readonly ToolDef[] = [];
+
+export interface ToolDescriptor {
+  name: string;
+  description: string;
+  inputSchema: ToolSchema;
+  annotations: {
+    readOnlyHint: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint: boolean;
+  };
+}
+
+export function annotationsFor(name: string, hints: Record<string, Hint>, openWorld: ReadonlySet<string>) {
+  const hint = hints[name];
+  if (!hint) throw new Error(`Tool '${name}' has no HINTS entry`);
+  return {
+    readOnlyHint: hint === 'read',
+    ...(hint !== 'read' && { destructiveHint: hint === 'destructive' || hint === 'idempotent-overwrite' }),
+    ...(hint !== 'read' && {
+      idempotentHint: hint === 'idempotent-write' || hint === 'idempotent-overwrite' || hint === 'destructive',
+    }),
+    openWorldHint: openWorld.has(name),
+  };
+}
+
+export function describeTools(
+  tools: readonly ToolDef[],
+  hints: Record<string, Hint> = HINTS,
+  openWorld: ReadonlySet<string> = OPEN_WORLD,
+): ToolDescriptor[] {
+  return tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+    annotations: annotationsFor(t.name, hints, openWorld),
+  }));
+}
+
+export const TOOL_DEFS: ToolDescriptor[] = describeTools(TOOLS);
+
+/** Invalid-params error for a tool call; surfaced to the model as an isError tool result. */
+export class ToolValidationError extends Error {
+  readonly code = -32602;
+  readonly field: string;
+  constructor(field: string, message: string) {
+    super(message);
+    this.name = 'ToolValidationError';
+    this.field = field;
+  }
+}
+
+/** True for undefined, null, or an empty/whitespace-only string. */
+function isEmpty(v: unknown): boolean {
+  return v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+}
+
+/**
+ * Rejects calls whose arguments do not match the schema, before dispatch:
+ * required fields present, no undeclared fields (they would be dropped silently),
+ * enum fields carry one of their values.
+ */
+export function validateArgs(
+  name: string,
+  schema: ToolSchema | undefined,
+  args: Record<string, unknown>,
+): void {
+  for (const field of schema?.required ?? []) {
+    if (isEmpty(args[field])) {
+      throw new ToolValidationError(field, `Missing required argument '${field}' for tool '${name}'`);
+    }
+  }
+  const props = schema?.properties;
+  if (!props) return;
+  const accepted = Object.keys(props);
+  for (const key of Object.keys(args)) {
+    if (!Object.hasOwn(props, key)) {
+      throw new ToolValidationError(
+        key,
+        `Unknown argument '${key}' for tool '${name}'; it would be dropped silently. Accepted arguments: ${accepted.join(', ')}`,
+      );
+    }
+    const allowed = props[key]?.enum;
+    if (allowed && !isEmpty(args[key]) && !allowed.includes(args[key] as string)) {
+      throw new ToolValidationError(
+        key,
+        `Invalid value ${JSON.stringify(args[key])} for '${key}'; accepted: ${allowed.join(' | ')}`,
+      );
+    }
+  }
+}
+
+/** Reads a required string argument instead of coercing undefined to "undefined". */
+export function requireStr(args: Record<string, unknown>, field: string): string {
+  const v = args[field];
+  if (isEmpty(v)) throw new ToolValidationError(field, `Missing required argument '${field}'`);
+  return String(v);
+}
+
+/** Reads a required integer argument (number or digit string). */
+export function requireInt(args: Record<string, unknown>, field: string): number {
+  const v = args[field];
+  if (isEmpty(v)) throw new ToolValidationError(field, `Missing required argument '${field}'`);
+  const ok = (typeof v === 'number' && Number.isInteger(v)) || (typeof v === 'string' && /^\d+$/.test(v.trim()));
+  if (!ok) throw new ToolValidationError(field, `Argument '${field}' must be an integer`);
+  return Number(v);
+}
+
+export interface ToolResult {
+  content: { type: 'text'; text: string }[];
+  isError?: boolean;
+}
+
+/** Validates, runs and wraps a tool call; tool-level failures become isError results. */
+export async function handleToolCall(
+  name: string,
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+  tools: readonly ToolDef[] = TOOLS,
+): Promise<ToolResult> {
+  try {
+    const def = tools.find((t) => t.name === name);
+    if (!def) throw new Error(`Unknown tool '${name}'`);
+    validateArgs(name, def.inputSchema, args);
+    const result = await def.run(args, ctx);
+    return { content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result) }] };
+  } catch (e) {
+    return { content: [{ type: 'text', text: `Error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+  }
+}
