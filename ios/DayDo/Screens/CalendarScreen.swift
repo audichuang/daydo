@@ -687,7 +687,8 @@ struct CalendarScreen: View {
                         .transition(Motion.rowTransition(reduceMotion))
                 }
             }
-            .id(agendaContext)
+            // Switching day/filter swaps the list instantly; only same-context reloads play row transitions.
+            .transaction(value: agendaContext) { $0.animation = nil }
             Spacer().frame(height: 8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -706,7 +707,8 @@ struct CalendarScreen: View {
                         .transition(Motion.rowTransition(reduceMotion))
                 }
             }
-            .id(agendaContext)
+            // Switching day/filter swaps the list instantly; only same-context reloads play row transitions.
+            .transaction(value: agendaContext) { $0.animation = nil }
         }
     }
 

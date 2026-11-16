@@ -601,7 +601,8 @@ final class AppModelTests: XCTestCase {
         XCTAssertNotNil(model.completingIds[task.id])
 
         await clock.advance(by: .milliseconds(1))
-        await Task.yield()
+        // The sleeper resumes off the main actor first; give the release a bounded number of hops.
+        for _ in 0..<100 where !model.completingIds.isEmpty { await Task.yield() }
         XCTAssertTrue(model.completingIds.isEmpty, "Reduced-motion hold should release at Motion.layoutSettle(true)")
         if !model.completingIds.isEmpty {
             await clock.advance(by: Motion.layoutSettle(false))
