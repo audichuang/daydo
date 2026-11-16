@@ -199,4 +199,4 @@
 5. ✓ T5c Worker：成員與邀請 API、權限矩陣、成員投影、`listScopes` 與多範圍 pull、`gone` 與離開紀錄、加入時的 backfill、共享清單的 members 與 folderId 規則、永久刪除清單的通知。
 6. ✓ T6：Access 驗證、部署到 `daydo-api.audichuang.app`、對公開網址跑冒煙測試（`npm run smoke:prod`：Access 擋未帶 token 的請求、假 token 登入被拒）。完整登入與同步要真的 Apple／Google token，留到 T8 在手機上驗。
 7. T7 App：✓ T7a 同步引擎與兩台裝置收斂測試；✓ T7b 登入、登出與第一次登入；✓ T7c 共享清單。✓ T8 App：登入畫面、同步觸發、設定帳號區、邀請連結（分享、貼上加入、確認畫面）。
-8. WebSocket 通知；MCP（OAuth、工具、ICS 訂閱同步，見 `spec/mcp.md`）。
+8. WebSocket 通知；✓ MCP（OAuth、工具、ICS 訂閱同步，見 `spec/mcp.md`）。
