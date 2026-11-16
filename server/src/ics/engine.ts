@@ -6,7 +6,14 @@
 import { scheduleToAPI } from '../domain/schedule';
 import { before } from '../domain/sortKey';
 import { uuidv7 } from '../domain/uuid';
-import { loadSnapshot, type Snapshot } from '../serverops/snapshot';
+import { loadSnapshot } from '../serverops/snapshot';
+import {
+  createTaskIntent,
+  firstTaskSortKey,
+  patchTaskIntent,
+  taskListDenial,
+  trashTaskIntent,
+} from '../serverops/taskWrites';
 import { isNil, rowSchedule, sameValue, scheduleColumns } from '../serverops/values';
 import { assertHasData, pushIntents, type WriteIntent, type WriteOutcome } from '../serverops/writer';
 import type { ServerHlcClock } from '../sync/hlc';
@@ -162,26 +169,13 @@ function cancelDelta(row: Record<string, unknown>, now: number): Record<string, 
   return delta;
 }
 
-function createSet(
-  id: string,
-  projectId: string,
-  draft: TaskDraft,
-  source: IcsSource,
-  sortKey: string,
-): Record<string, unknown> {
-  return {
+function createIntent(id: string, projectId: string, draft: TaskDraft, source: IcsSource, sortKey: string): WriteIntent {
+  const { title, content, priority, reminders } = draft;
+  return createTaskIntent(
     id,
-    projectId,
-    title: draft.title,
-    content: draft.content,
-    priority: draft.priority,
-    status: 0,
-    reminders: draft.reminders,
-    tags: [],
-    sortKey,
-    importNote: `ICS：${source.name}`,
-    ...scheduleColumns(draft.schedule),
-  };
+    { projectId, title, content, priority, reminders, tags: [], sortKey },
+    { importNote: `ICS：${source.name}`, ...scheduleColumns(draft.schedule) },
+  );
 }
 
 function describeOutcome(o: WriteOutcome): string {
@@ -203,13 +197,6 @@ interface Planned {
   row: Record<string, unknown> | undefined;
   /** Fields to write on an existing row; empty means the row already matches. */
   delta: Record<string, unknown>;
-}
-
-function listWritable(snapshot: Snapshot, projectId: string): boolean {
-  const project = snapshot.findRow('project', projectId);
-  return (
-    !!project && isNil(project.row.deletedAt) && isNil(project.row.purgedAt) && snapshot.canWrite(projectId)
-  );
 }
 
 const isPurgedOutcome = (o: WriteOutcome) =>
@@ -325,7 +312,8 @@ export async function syncSource(
   try {
     const snapshot = await loadSnapshot(deps.db, userId, deps.getScopeStub);
     assertHasData(snapshot);
-    if (!listWritable(snapshot, source.projectId)) {
+    // An archived list keeps syncing; a missing or read-only one does not.
+    if (taskListDenial(snapshot, source.projectId, { allowArchived: true }) !== null) {
       throw new IcsError('The source list is missing or not writable for this account; nothing was written');
     }
 
@@ -617,30 +605,14 @@ export async function syncSource(
       record(p, 'skip', p.mapping!.taskId, p.row);
     }
 
-    const first = snapshot
-      .rows('task')
-      .filter((t) => t.row.projectId === source.projectId && typeof t.row.sortKey === 'string' && t.row.sortKey !== '')
-      .map((t) => String(t.row.sortKey))
-      .reduce<string | null>((a, b) => (a === null || b < a ? b : a), null);
-    const keys = sortKeysBefore(first, creates.length);
+    const keys = sortKeysBefore(firstTaskSortKey(snapshot, source.projectId), creates.length);
     const planned: Planned[] = [...creates, ...writes];
     const trash = removals.filter((r) => r.write);
     const intents: WriteIntent[] = [
-      ...creates.map((p, i): WriteIntent => {
-        const m = p.mapping!;
-        return { entity: 'task', entityId: m.taskId, set: createSet(m.taskId, m.projectId, p.draft!, source, keys[i]!) };
-      }),
-      ...writes.map((p): WriteIntent => ({
-        entity: 'task',
-        entityId: p.mapping!.taskId,
-        set: p.delta,
-      })),
+      ...creates.map((p, i) => createIntent(p.mapping!.taskId, p.mapping!.projectId, p.draft!, source, keys[i]!)),
+      ...writes.map((p) => patchTaskIntent(p.mapping!.taskId, p.delta)),
       // Source deletion is the one case ICS writes deletedAt: a soft delete the user can restore.
-      ...trash.map((r): WriteIntent => ({
-        entity: 'task',
-        entityId: r.mapping.taskId,
-        set: { deletedAt: nowMs },
-      })),
+      ...trash.map((r) => trashTaskIntent(r.mapping.taskId, nowMs)),
     ];
 
     /** Removals whose mapping may go: no write was needed, or the trash write was confirmed. */
