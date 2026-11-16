@@ -8,6 +8,7 @@ import {
   removeProjectMember,
   updateProjectMemberRole,
 } from '../src/sharing';
+import { executeSyncPull } from '../src/sync/pull';
 import { executeSyncPush, type ScopeStub } from '../src/sync/push';
 import { createScopeWorld, type ScopeWorld } from './helpers/scopeWorld';
 
@@ -202,6 +203,66 @@ describe('membership D1 batch layout', () => {
     const trace = await traced(h, () => h.pull(uB));
     expect(trace).toEqual({ batches: [2, 1, 1], direct: 0 });
     expect(await listScopesOf(h, 'p-1')).toEqual([]);
+  });
+
+  it('pull retry sends one delete per (project, scope) when two scopes of one list are pending', async () => {
+    const h = createScopeWorld();
+    const uC = 'user-c';
+    const scopeC = `u:${uC}`;
+    await seedUsers(h);
+    await h.db.insert(schema.user).values({ id: uC, name: 'Cara', createdAt: 1_700_000_000_000 });
+    await h.push(uA, 'dev-a', [
+      projectOp('op-p1', '1700000000000:0000:dev-a', 'p-1'),
+      projectOp('op-p2', '1700000000001:0000:dev-a', 'p-2'),
+    ]);
+    // B and C join both lists, so A's pull targets scopes B and C through the live list p-2.
+    for (const [projectId, userId] of [['p-1', uB], ['p-1', uC], ['p-2', uB], ['p-2', uC]] as const) {
+      const inv = await createInvite(h.db, { userId: uA, projectId, role: 'editor' });
+      await acceptInvite(h.db, { code: inv.code, userId, getScopeStub: h.getScopeStub });
+    }
+    // A member's scope joins listScopes once it holds a task of the list.
+    let n = 0;
+    for (const [projectId, userId] of [['p-1', uB], ['p-1', uC], ['p-2', uB], ['p-2', uC]] as const) {
+      const t = `t-${userId}-${projectId}`;
+      const pushed = await h.push(userId, `dev-${userId}`, [
+        taskOp(`op-${t}`, `170000000010${n++}:0000:dev-${userId}`, t, projectId),
+      ]);
+      expect(pushed.results[0].status).toBe('applied');
+    }
+    expect(await listScopesOf(h, 'p-1')).toEqual([scopeA, scopeB, scopeC]);
+    let failing = true;
+    const flaky = (scope: string): ScopeStub => {
+      const real = h.getScopeStub(scope);
+      if (scope !== scopeB && scope !== scopeC) return real;
+      return {
+        push: (i) => real.push(i),
+        pull: (i) => real.pull(i),
+        getInboxProjectId: (i) => real.getInboxProjectId(i),
+        getProjectInfo: (i) => real.getProjectInfo(i),
+        projectMember: (i) => real.projectMember(i),
+        async purgeProject(i) {
+          if (failing) throw new Error('Transient DO timeout');
+          return real.purgeProject(i);
+        },
+      };
+    };
+    const res = await executeSyncPush(h.db, {
+      userId: uA,
+      deviceId: 'dev-a',
+      ops: [deleteProjectOp('op-del', '1700000000010:0000:dev-a', 'p-1')],
+      getScopeStub: flaky,
+    });
+    expect(res.results[0].status).toBe('applied');
+    expect(await listScopesOf(h, 'p-1')).toEqual([scopeB, scopeC]);
+
+    failing = false;
+    const trace = await traced(h, () =>
+      executeSyncPull(h.db, { userId: uA, cursors: {}, limit: 500, getScopeStub: h.getScopeStub }),
+    );
+    // The last batch is the retry's cleanup: two statements, not one inArray delete for p-1.
+    expect(trace.batches.at(-1)).toBe(2);
+    expect(await listScopesOf(h, 'p-1')).toEqual([]);
+    expect(await listScopesOf(h, 'p-2')).toContain(scopeB);
   });
 
   it('createInvite reads requester membership, purge state, and home in one batch', async () => {
