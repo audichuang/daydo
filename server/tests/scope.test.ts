@@ -1,96 +1,20 @@
 import { eq } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/d1';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '../db/schema';
-import { compareHlc, createServerHlcClock, MAX_FUTURE_DRIFT_MS } from '../src/sync/hlc';
-import { executeSyncPull } from '../src/sync/pull';
+import { compareHlc, MAX_FUTURE_DRIFT_MS } from '../src/sync/hlc';
 import { executeSyncPush, type ScopeStub } from '../src/sync/push';
-import { createTestD1, createTestDoState } from './sqliteD1';
+import {
+  createScopeWorld,
+  ScopeClass,
+  shouldSplitTransaction,
+  type ScopeWorld,
+} from './helpers/scopeWorld';
+import { createTestDoState } from './sqliteD1';
 
-vi.mock('cloudflare:workers', () => ({
-  DurableObject: class {
-    ctx: unknown;
-    env: unknown;
-    constructor(ctx: unknown, env: unknown) {
-      this.ctx = ctx;
-      this.env = env;
-    }
-  },
-}));
-
-vi.mock('void/durable', () => ({
-  defineDurableObject: (def: unknown) => def,
-}));
-
-vi.mock('void/db', async () => {
-  const orm = await import('drizzle-orm');
-  return {
-    ...orm,
-    createDb: (d1: D1Database) => drizzle(d1, { schema }),
-  };
-});
-
-const { default: Scope, ScopeObject, shouldSplitTransaction } = await import(
-  '../durable-objects/scope'
-);
-
-interface Harness {
-  d1: D1Database;
-  db: ReturnType<typeof createTestD1>['db'];
-  sqlite: ReturnType<typeof createTestD1>['sqlite'];
-  scopes: Map<string, InstanceType<typeof ScopeObject>>;
-  scopeSqlites: Map<string, ReturnType<typeof createTestDoState>['sqlite']>;
-  getScopeStub: (scope: string) => ScopeStub;
-  push: (
-    userId: string,
-    deviceId: string,
-    ops: unknown[],
-  ) => ReturnType<typeof executeSyncPush>;
-  pull: (
-    userId: string,
-    opts?: { cursors?: Record<string, number>; backfill?: string[]; limit?: number },
-  ) => ReturnType<typeof executeSyncPull>;
-}
+type Harness = ScopeWorld;
 
 function createHarness(syncFault: 'none' | 'split-txn' = 'none'): Harness {
-  const { d1, db, sqlite } = createTestD1();
-  const scopes = new Map<string, InstanceType<typeof ScopeObject>>();
-  const scopeSqlites = new Map<string, ReturnType<typeof createTestDoState>['sqlite']>();
-  const clock = createServerHlcClock();
-
-  const getScopeStub = (scope: string): ScopeStub => {
-    let instance = scopes.get(scope);
-    if (!instance) {
-      const doState = createTestDoState();
-      const ScopeClass = Scope.class as unknown as new (
-        ctx: DurableObjectState,
-        env: { SYNC_FAULT: 'none' | 'split-txn' },
-      ) => InstanceType<typeof ScopeObject>;
-      instance = new ScopeClass(doState.ctx, { SYNC_FAULT: syncFault });
-      scopes.set(scope, instance);
-      scopeSqlites.set(scope, doState.sqlite);
-    }
-    return instance as unknown as ScopeStub;
-  };
-
-  return {
-    d1,
-    db,
-    sqlite,
-    scopes,
-    scopeSqlites,
-    getScopeStub,
-    push: (userId, deviceId, ops) =>
-      executeSyncPush(db, { userId, deviceId, ops, getScopeStub, clock }),
-    pull: (userId, opts) =>
-      executeSyncPull(db, {
-        userId,
-        cursors: opts?.cursors ?? {},
-        backfill: opts?.backfill,
-        limit: opts?.limit ?? 500,
-        getScopeStub,
-      }),
-  };
+  return createScopeWorld({ syncFault });
 }
 
 function makeProjectOp(params: {
@@ -505,11 +429,6 @@ describe('Scope DO SYNC_FAULT=split-txn production guard', () => {
 
   it('refuses split-txn and runs inside transactionSync when allowFaultInjection is false', async () => {
     const doState = createTestDoState();
-    const ScopeClass = Scope.class as unknown as new (
-      ctx: DurableObjectState,
-      env: { SYNC_FAULT: 'none' | 'split-txn' },
-      allowFaultInjection?: boolean,
-    ) => InstanceType<typeof ScopeObject>;
     const scope = new ScopeClass(doState.ctx, { SYNC_FAULT: 'split-txn' }, false);
 
     const origDev = import.meta.env.DEV;

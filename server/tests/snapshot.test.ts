@@ -1,56 +1,13 @@
-import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 import * as schema from '../db/schema';
 import { serverClock } from '../src/sync/serverClock';
 import { acceptInvite, createInvite } from '../src/sharing';
-import { createServerHlcClock } from '../src/sync/hlc';
-import { executeSyncPush, type ScopeStub } from '../src/sync/push';
 import { loadSnapshot } from '../src/serverops/snapshot';
-import { createTestD1, createTestDoState } from './sqliteD1';
-
-vi.mock('cloudflare:workers', () => ({
-  DurableObject: class {
-    ctx: unknown;
-    env: unknown;
-    constructor(ctx: unknown, env: unknown) {
-      this.ctx = ctx;
-      this.env = env;
-    }
-  },
-}));
-
-vi.mock('void/durable', () => ({
-  defineDurableObject: (def: unknown) => def,
-}));
-
-vi.mock('void/db', async () => {
-  const orm = await import('drizzle-orm');
-  return {
-    ...orm,
-    createDb: (d1: D1Database) => drizzle(d1, { schema }),
-  };
-});
-
-const { default: Scope, ScopeObject } = await import('../durable-objects/scope');
+import { createScopeWorld } from './helpers/scopeWorld';
 
 function createHarness() {
-  const { d1, db } = createTestD1();
-  const scopes = new Map<string, InstanceType<typeof ScopeObject>>();
-  const clock = createServerHlcClock();
-  const getScopeStub = (scope: string): ScopeStub => {
-    let instance = scopes.get(scope);
-    if (!instance) {
-      const doState = createTestDoState();
-      const ScopeClass = Scope.class as unknown as new (
-        ctx: DurableObjectState,
-        env: { SYNC_FAULT: 'none' },
-      ) => InstanceType<typeof ScopeObject>;
-      instance = new ScopeClass(doState.ctx, { SYNC_FAULT: 'none' });
-      scopes.set(scope, instance);
-    }
-    return instance as unknown as ScopeStub;
-  };
+  const { d1, db, getScopeStub, push } = createScopeWorld();
   let seq = 0;
   const hlc = () => `${1_700_000_000_000 + seq++}:0000:dev-a`;
   return {
@@ -58,8 +15,7 @@ function createHarness() {
     db,
     getScopeStub,
     hlc,
-    push: (userId: string, ops: unknown[]) =>
-      executeSyncPush(db, { userId, deviceId: 'dev-a', ops, getScopeStub, clock }),
+    push: (userId: string, ops: unknown[]) => push(userId, 'dev-a', ops),
   };
 }
 

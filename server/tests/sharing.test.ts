@@ -1,6 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/d1';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import * as schema from '../db/schema';
 import { sha256Hex } from '../src/auth/crypto';
 import {
@@ -14,74 +13,11 @@ import {
   updateProjectMemberRole,
 } from '../src/sharing';
 import { resolveMemberId } from '../src/sync/entities';
-import { createServerHlcClock } from '../src/sync/hlc';
-import { executeSyncPull } from '../src/sync/pull';
 import { executeSyncPush, type ScopeStub } from '../src/sync/push';
-import { createTestD1, createTestDoState } from './sqliteD1';
-
-vi.mock('cloudflare:workers', () => ({
-  DurableObject: class {
-    ctx: unknown;
-    env: unknown;
-    constructor(ctx: unknown, env: unknown) {
-      this.ctx = ctx;
-      this.env = env;
-    }
-  },
-}));
-
-vi.mock('void/durable', () => ({
-  defineDurableObject: (def: unknown) => def,
-}));
-
-vi.mock('void/db', async () => {
-  const orm = await import('drizzle-orm');
-  return {
-    ...orm,
-    createDb: (d1: D1Database) => drizzle(d1, { schema }),
-  };
-});
-
-const { default: Scope, ScopeObject } = await import('../durable-objects/scope');
+import { createScopeWorld } from './helpers/scopeWorld';
 
 function createHarness() {
-  const { d1, db } = createTestD1();
-  const scopes = new Map<string, InstanceType<typeof ScopeObject>>();
-  const clock = createServerHlcClock();
-
-  const getScopeStub = (scope: string): ScopeStub => {
-    let instance = scopes.get(scope);
-    if (!instance) {
-      const doState = createTestDoState();
-      const ScopeClass = Scope.class as unknown as new (
-        ctx: DurableObjectState,
-        env: { SYNC_FAULT: 'none' },
-      ) => InstanceType<typeof ScopeObject>;
-      instance = new ScopeClass(doState.ctx, { SYNC_FAULT: 'none' });
-      scopes.set(scope, instance);
-    }
-    return instance as unknown as ScopeStub;
-  };
-
-  return {
-    d1,
-    db,
-    scopes,
-    getScopeStub,
-    push: (userId: string, deviceId: string, ops: unknown[]) =>
-      executeSyncPush(db, { userId, deviceId, ops, getScopeStub, clock }),
-    pull: (
-      userId: string,
-      opts?: { cursors?: Record<string, number>; backfill?: string[]; limit?: number },
-    ) =>
-      executeSyncPull(db, {
-        userId,
-        cursors: opts?.cursors ?? {},
-        backfill: opts?.backfill,
-        limit: opts?.limit ?? 500,
-        getScopeStub,
-      }),
-  };
+  return createScopeWorld();
 }
 
 function makeMemberOp(params: {
