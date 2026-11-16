@@ -22,7 +22,7 @@ design/      設計稿
 
 ## 規則
 
-- UI 不直接碰資料庫：所有讀寫走 `DayDoAPI`（`LocalDayDoAPI` 是本機實作）。新增功能時先加 API 方法與 `spec/openapi.yaml`，再接 UI。
+- UI 不直接碰資料庫：所有讀寫走 `DayDoAPI`，App 只拿得到 `DeviceStore.api`（`any DayDoAPI`）；資料庫型別在 DayDoCore 內部，開檔一律經 `DayDoStorage`。清單角色權限由 API 寫入路徑檢查，UI 只負責隱藏按鈕。新增功能時先加 API 方法與 `spec/openapi.yaml`，再接 UI。
 - API 名稱與欄位對齊 ticktick-mcp（私有 repo `audichuang/ticktick-mcp` 的 `src/tools.ts`，本機沒有 clone，用 `gh api repos/audichuang/ticktick-mcp/contents/src/tools.ts --jq .content | base64 -d` 讀）：priority 0/1/3/5、status 0/2、`TRIGGER:` 提醒、RRULE、ISO 8601 `start`/`due` + `timezone` + `all_day`。之後的 MCP 直接沿用那套工具名。
 - Schema 為同步預留：id 由 client 產生（UUIDv7），時間戳是 epoch ms，刪除用 `deletedAt` 軟刪除，每次寫入在同一 transaction 寫一筆 `change`（outbox，含變更欄位名）。改 schema 用新的 migration，已有的不改。
 - 排序鍵用 `SortKey`（fractional index），不要重新編號。

@@ -91,16 +91,13 @@ final class AppModelTests: XCTestCase {
     private func makeModel(
         syncEnabled: Bool = false,
         transport: (any SyncTransport)? = nil
-    ) async throws -> (AppModel, LocalDayDoAPI) {
-        let db = try AppDatabase.inMemory()
-        let attachmentsDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let api = LocalDayDoAPI(database: db, attachmentsDirectory: attachmentsDir)
+    ) async throws -> (AppModel, DeviceStore) {
+        let store = try DeviceStore.inMemory()
         if !syncEnabled {
-            try await api.bootstrap()
+            try await store.bootstrap()
         }
         let model = AppModel(
-            api: api,
+            store: store,
             tokenStore: InMemorySyncTokenStore(),
             syncEnabled: syncEnabled,
             transport: transport
@@ -110,12 +107,13 @@ final class AppModelTests: XCTestCase {
         } else {
             await model.reloadData()
         }
-        return (model, api)
+        return (model, store)
     }
 
     func testSelectedTaskRemotelySoftDeletedThenDeleteDoesNotPurge() async throws {
         let transport = RemoteSoftDeleteTransport()
-        let (model, api) = try await makeModel(syncEnabled: true, transport: transport)
+        let (model, store) = try await makeModel(syncEnabled: true, transport: transport)
+        let api = store.api
         let project = try await api.createProject(CreateProjectInput(name: "家庭採買"))
         let task = try await api.createTask(CreateTaskInput(
             projectId: project.id,
@@ -144,9 +142,9 @@ final class AppModelTests: XCTestCase {
         let fetched = try await api.getTask(id: task.id)
         XCTAssertNotNil(fetched.deletedAt, "Task must remain soft-deleted, not purged")
 
-        let pending = try await api.pendingChanges(limit: 1000)
+        let hasPendingPurge = try await store.hasPendingChange(entity: "task", entityId: task.id, op: "delete")
         XCTAssertFalse(
-            pending.contains { $0.entity == "task" && $0.entityId == task.id && $0.op == "delete" },
+            hasPendingPurge,
             "Permanent delete op must not be queued outside Trash"
         )
 
@@ -156,7 +154,8 @@ final class AppModelTests: XCTestCase {
     }
 
     func testPurgeTaskOnlyAllowedInTrashWhenSoftDeleted() async throws {
-        let (model, api) = try await makeModel()
+        let (model, store) = try await makeModel()
+        let api = store.api
         let project = try await api.createProject(CreateProjectInput(name: "家庭採買"))
         let active = try await api.createTask(CreateTaskInput(
             projectId: project.id,
@@ -232,5 +231,46 @@ final class AppModelTests: XCTestCase {
 
         model.inlineDetailFocusedTaskId = "task-2"
         XCTAssertFalse(model.inlineDetailAllowsSelectionShortcuts)
+    }
+
+    func testOpenTaskRouting() async throws {
+        let (model, _) = try await makeModel()
+
+        // Regular width in Tasks tab selects inline without bumping focus by default.
+        model.tab = .tasks
+        model.openTask("task-1", inlineAvailable: true)
+        XCTAssertEqual(model.selectedTaskId, "task-1")
+        XCTAssertNil(model.detailTaskId)
+        XCTAssertEqual(model.detailFocusTrigger, 0)
+
+        // Tapping the same task again without focusIfAlreadyInline does not bump focus.
+        model.openTask("task-1", inlineAvailable: true)
+        XCTAssertEqual(model.detailFocusTrigger, 0)
+
+        // Keyboard Return on the already-selected inline task bumps detailFocusTrigger.
+        model.openTask("task-1", inlineAvailable: true, focusIfAlreadyInline: true)
+        XCTAssertEqual(model.detailFocusTrigger, 1)
+
+        // Regular width outside Tasks tab opens the sheet instead of inline selection.
+        model.tab = .calendar
+        model.openTask("task-2", inlineAvailable: true)
+        XCTAssertEqual(model.detailTaskId, "task-2")
+        XCTAssertEqual(model.selectedTaskId, "task-1")
+
+        // Compact width in Tasks tab opens the sheet (even with focusIfAlreadyInline).
+        model.detailTaskId = nil
+        model.tab = .tasks
+        model.openTask("task-3", inlineAvailable: false, focusIfAlreadyInline: true)
+        XCTAssertEqual(model.detailTaskId, "task-3")
+        XCTAssertEqual(model.detailFocusTrigger, 1)
+
+        // Notification open queues behind active sheet and opens as a sheet on flush.
+        model.openDetailFromNotification("task-4")
+        XCTAssertEqual(model.pendingDetailTaskId, "task-4")
+        XCTAssertEqual(model.detailTaskId, "task-3")
+        model.detailTaskId = nil
+        model.flushPendingPresentations()
+        XCTAssertNil(model.pendingDetailTaskId)
+        XCTAssertEqual(model.detailTaskId, "task-4")
     }
 }

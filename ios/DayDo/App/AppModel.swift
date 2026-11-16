@@ -36,19 +36,16 @@ struct PendingInvitePrompt: Identifiable, Equatable {
     fileprivate let requestId = UUID()
 }
 
-extension Project {
-    var isViewer: Bool { myRole == "viewer" }
-    var isOwner: Bool { myRole == "owner" }
-}
-
 /// App-wide state. Views read cached lookups (projects, tags, counts) from
 /// here and send every write through `api` (the same `DayDoAPI` contract the
 /// sync server and MCP will use).
 @MainActor
 @Observable
 final class AppModel {
-    let api: LocalDayDoAPI
+    private let store: DeviceStore
+    let api: any DayDoAPI
     let syncEngine: SyncEngine
+    let sharing: any ListSharing
     let tokenStore: any SyncTokenStore
     let syncEnabled: Bool
 
@@ -107,13 +104,29 @@ final class AppModel {
     /// shown after that sheet is dismissed so unsaved edits are not replaced.
     var pendingDetailTaskId: String?
 
+    /// Opens a task's detail inline in the split view when in a regular-width
+    /// window on the Tasks tab; otherwise opens it as a root sheet.
+    func openTask(_ id: String, inlineAvailable: Bool, focusIfAlreadyInline: Bool = false) {
+        if inlineAvailable && tab == .tasks {
+            if selectedTaskId == id {
+                if focusIfAlreadyInline {
+                    detailFocusTrigger += 1
+                }
+            } else {
+                selectedTaskId = id
+            }
+        } else {
+            detailTaskId = id
+        }
+    }
+
     /// Opens a task's detail without replacing a sheet that is already open.
     func openDetailFromNotification(_ id: String) {
         if detailTaskId == id { return }
         if hasActiveRootSheet {
             pendingDetailTaskId = id
         } else {
-            detailTaskId = id
+            openTask(id, inlineAvailable: false)
         }
     }
 
@@ -200,7 +213,7 @@ final class AppModel {
             flushManualInviteIfNeeded()
             return
         }
-        if syncEnabled, isSignedIn, pendingInviteCode != nil {
+        if isSignedIn, pendingInviteCode != nil {
             Task { [weak self] in
                 await self?.processPendingInviteIfNeeded()
             }
@@ -208,7 +221,7 @@ final class AppModel {
         }
         if let next = pendingDetailTaskId {
             pendingDetailTaskId = nil
-            detailTaskId = next
+            openTask(next, inlineAvailable: false)
         }
     }
     var composing: ComposeRequest?
@@ -240,23 +253,27 @@ final class AppModel {
     private var didAttemptGoogleAvatarSyncOnLaunch = false
 
     init(
-        api: LocalDayDoAPI,
+        store: DeviceStore,
         tokenStore: any SyncTokenStore = KeychainSyncTokenStore(),
         syncEnabled: Bool = !ProcessInfo.processInfo.arguments.contains("-DayDoSkipLogin"),
         transport: (any SyncTransport)? = nil
     ) {
-        self.api = api
+        self.store = store
+        self.api = store.api
         self.tokenStore = tokenStore
         self.syncEnabled = syncEnabled
         let resolvedTransport: any SyncTransport = transport ?? HTTPSyncTransport(
             baseURL: SyncConfig.baseURL,
             extraHeaders: SyncConfig.accessHeaders()
         )
-        self.syncEngine = SyncEngine(
-            database: api.database,
+        let engine = store.makeSyncEngine(
             transport: resolvedTransport,
             tokenStore: tokenStore
         )
+        self.syncEngine = engine
+        self.sharing = syncEnabled
+            ? RemoteListSharing(syncEngine: engine)
+            : store.makeLocalSharing()
         let d = UserDefaults.standard
         accentHex = d.string(forKey: "accent") ?? "#FF8A1E"
         compact = d.bool(forKey: "compact")
@@ -267,7 +284,7 @@ final class AppModel {
 
     var accent: AccentTheme { AccentTheme(hex: accentHex) }
     var me: Member? { members.first(where: \.isMe) }
-    var today: LocalDay { api.clock.today }
+    var today: LocalDay { store.today }
     var editableProjects: [Project] { projects.filter { !$0.isViewer } }
 
     func project(_ id: String?) -> Project? { projects.first { $0.id == id } }
@@ -285,9 +302,9 @@ final class AppModel {
 
     func launch() async {
         if !syncEnabled {
-            try? await api.bootstrap()
+            try? await store.bootstrap()
             if ProcessInfo.processInfo.arguments.contains("-DayDoDemo") {
-                try? await DemoData.load(into: api)
+                try? await DemoData.load(into: api, today: today)
             }
             await reloadData()
             isSignedIn = true
@@ -309,7 +326,7 @@ final class AppModel {
                 try? await syncEngine.syncNow()
             }
             if args.contains("-DayDoDemo") {
-                try? await DemoData.load(into: api)
+                try? await DemoData.load(into: api, today: today)
             }
             if args.contains("-DayDoDebugForcedSignOut") {
                 _ = try? await api.createTask(CreateTaskInput(title: "舊帳號未同步任務", start: today.description, allDay: true))
@@ -356,7 +373,7 @@ final class AppModel {
     /// Runs a write, then refreshes lookups, bumps the revision and
     /// reschedules local notifications.
     @discardableResult
-    func perform<T>(_ work: @escaping @Sendable (LocalDayDoAPI) async throws -> T) async -> T? {
+    func perform<T>(_ work: @escaping @Sendable (any DayDoAPI) async throws -> T) async -> T? {
         do {
             let result = try await work(api)
             await didWrite()
@@ -526,8 +543,7 @@ final class AppModel {
     }
 
     func unsyncedChangeCount() async -> Int {
-        let pending = (try? await api.pendingChanges(limit: 10000)) ?? []
-        return pending.filter { $0.entity != "projectInvite" }.count
+        (try? await store.unsyncedChangeCount()) ?? 0
     }
 
     func signOut() async {
@@ -695,7 +711,7 @@ final class AppModel {
 
     func handleIncomingInvite(code: String) {
         pendingInviteCode = code
-        guard ready, isSignedIn, syncEnabled else { return }
+        guard ready, isSignedIn else { return }
         Task { [weak self] in
             await self?.processPendingInviteIfNeeded()
         }
@@ -704,32 +720,16 @@ final class AppModel {
     func flushManualInviteIfNeeded() {
         guard let code = pendingManualInviteCode else { return }
         pendingManualInviteCode = nil
-        if syncEnabled {
-            handleIncomingInvite(code: code)
-        } else {
-#if DEBUG
-            invitePrompt = PendingInvitePrompt(
-                code: code,
-                info: InviteInfo(
-                    projectName: "家庭採買",
-                    inviterName: "小安",
-                    role: "editor",
-                    expiresAt: EpochMillis(Date().addingTimeInterval(7 * 86400).timeIntervalSince1970 * 1000)
-                ),
-                isLoading: false,
-                error: nil
-            )
-#endif
-        }
+        handleIncomingInvite(code: code)
     }
 
     func processPendingInviteIfNeeded() async {
-        guard syncEnabled, isSignedIn, !hasActiveRootSheet, let code = pendingInviteCode else { return }
+        guard isSignedIn, !hasActiveRootSheet, let code = pendingInviteCode else { return }
         pendingInviteCode = nil
         let prompt = PendingInvitePrompt(code: code, info: nil, isLoading: true, error: nil)
         invitePrompt = prompt
         do {
-            let info = try await syncEngine.inviteInfo(code: code)
+            let info = try await sharing.inviteInfo(code: code)
             guard invitePrompt?.requestId == prompt.requestId else { return }
             invitePrompt?.info = info
             invitePrompt?.isLoading = false
@@ -755,7 +755,7 @@ final class AppModel {
 
     func acceptPendingInvite(code: String) async throws {
         do {
-            let accepted = try await syncEngine.acceptInvite(code: code)
+            let accepted = try await sharing.acceptInvite(code: code)
             await reloadData()
             scope = .project(accepted.projectId)
             tab = .tasks

@@ -1,0 +1,600 @@
+import { entityHome, listScopes, projectMembership, purgedProject, user } from '@schema';
+import { and, eq, inArray, isNull, or, sql, type BatchItem } from 'void/db';
+import type {
+  PushOpResult,
+  ScopePurgeProjectResponse,
+  ScopePushResponse,
+} from '../../../durable-objects/scope';
+import type { EntityName, MembershipRole } from '../entities';
+import type { AppDb, ScopeStub } from '../push';
+import {
+  chunkArray,
+  PAIR_CHUNK_SIZE,
+  QUERY_CHUNK_SIZE,
+  type PushContext,
+} from './context';
+import { entityHomeKey, type ParsedPushOp } from './parse';
+import type { ListScopeTarget, NewEntityHomeEntry, OwnerProjectDelete, PushPlan } from './plan';
+
+interface ScopeResponseEntry {
+  scope: string;
+  group: Array<{ index: number; op: unknown }>;
+  response: ScopePushResponse;
+}
+
+export interface ApplyPushPlanParams {
+  userId: string;
+  deviceId: string;
+  pusherScope: string;
+  nowMs: number;
+  rawOps: readonly unknown[];
+  parsedOps: readonly ParsedPushOp[];
+  context: PushContext;
+  plan: PushPlan;
+  getScopeStub: (scope: string) => ScopeStub;
+}
+
+export interface AppliedPushOutcome {
+  results: PushOpResult[];
+  scopeServerTimes: string[];
+}
+
+/**
+ * D1 Batch 2: binds new entityHome ids and new project owner memberships,
+ * rejects ops lost to a concurrent scope race, and cleans up orphaned child bindings.
+ */
+async function bindEntityHomes(
+  db: AppDb,
+  params: {
+    userId: string;
+    pusherScope: string;
+    nowMs: number;
+    parsedOps: readonly ParsedPushOp[];
+    inBatchNewHome: ReadonlyMap<string, NewEntityHomeEntry>;
+    inBatchNewProjects: Set<string>;
+    opTargetScope: Array<string | null>;
+    results: Array<PushOpResult | null>;
+  },
+): Promise<void> {
+  const {
+    userId,
+    pusherScope,
+    nowMs,
+    parsedOps,
+    inBatchNewHome,
+    inBatchNewProjects,
+    opTargetScope,
+    results,
+  } = params;
+  if (inBatchNewHome.size === 0) return;
+
+  const entries = Array.from(inBatchNewHome.values());
+  const batch2Stmts: BatchItem<'sqlite'>[] = [];
+  for (const chunk of chunkArray(entries, 25)) {
+    batch2Stmts.push(
+      db
+        .insert(entityHome)
+        .values(
+          chunk.map((e) => ({
+            entity: e.entity,
+            entityId: e.entityId,
+            scope: e.desiredScope,
+          })),
+        )
+        .onConflictDoNothing()
+        .returning({ entity: entityHome.entity, entityId: entityHome.entityId }),
+    );
+  }
+
+  const selectStartIdx = batch2Stmts.length;
+  const selectChunks = chunkArray(entries, PAIR_CHUNK_SIZE);
+  for (const chunk of selectChunks) {
+    batch2Stmts.push(
+      db
+        .select({
+          entity: entityHome.entity,
+          entityId: entityHome.entityId,
+          scope: entityHome.scope,
+        })
+        .from(entityHome)
+        .where(
+          or(
+            ...chunk.map((e) =>
+              and(eq(entityHome.entity, e.entity), eq(entityHome.entityId, e.entityId)),
+            ),
+          ),
+        ),
+    );
+  }
+  const selectEndIdx = batch2Stmts.length;
+
+  for (const pid of inBatchNewProjects) {
+    batch2Stmts.push(
+      db
+        .insert(projectMembership)
+        .select(
+          sql`SELECT ${pid}, ${userId}, 'owner', ${nowMs}, NULL WHERE EXISTS (SELECT 1 FROM entityHome WHERE entity = 'project' AND entityId = ${pid} AND scope = ${pusherScope}) AND NOT EXISTS (SELECT 1 FROM purgedProject WHERE projectId = ${pid}) AND NOT EXISTS (SELECT 1 FROM projectMembership WHERE projectId = ${pid})`,
+        )
+        .onConflictDoNothing(),
+    );
+  }
+
+  const batch2Results = (await db.batch(
+    batch2Stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]],
+  )) as Array<Array<Record<string, unknown>>>;
+
+  const newlyWonKeys = new Set<string>();
+  for (let s = 0; s < selectStartIdx; s += 1) {
+    for (const row of batch2Results[s]) {
+      newlyWonKeys.add(`${String(row.entity)}:${String(row.entityId)}`);
+    }
+  }
+
+  const boundMap = new Map<string, string>();
+  for (let s = selectStartIdx; s < selectEndIdx; s += 1) {
+    for (const row of batch2Results[s]) {
+      boundMap.set(`${String(row.entity)}:${String(row.entityId)}`, String(row.scope));
+    }
+  }
+
+  const mismatchKeys = new Set<string>();
+  const mismatchTaskIds = new Set<string>();
+  for (const [key, entry] of inBatchNewHome) {
+    if (boundMap.get(key) !== entry.desiredScope) {
+      mismatchKeys.add(key);
+      if (entry.entity === 'task') {
+        mismatchTaskIds.add(entry.entityId);
+      }
+    }
+  }
+
+  const orphanCleanupKeys: Array<{ entity: EntityName; entityId: string }> = [];
+  for (let i = 0; i < parsedOps.length; i += 1) {
+    const { rawOpId, entity, entityId } = parsedOps[i];
+    if (!entity || !entityId || opTargetScope[i] === null) continue;
+    const key = entityHomeKey(entity, entityId);
+    const newEntry = inBatchNewHome.get(key);
+    if (mismatchKeys.has(key)) {
+      results[i] = {
+        opId: rawOpId,
+        status: 'rejected',
+        reason: 'id-in-other-scope',
+        row: null,
+        clocks: {},
+      };
+      opTargetScope[i] = null;
+      if (entity === 'project') {
+        inBatchNewProjects.delete(entityId);
+      }
+    } else if (newEntry?.parentTaskId && mismatchTaskIds.has(newEntry.parentTaskId)) {
+      results[i] = {
+        opId: rawOpId,
+        status: 'rejected',
+        reason: 'id-in-other-scope',
+        row: null,
+        clocks: {},
+      };
+      opTargetScope[i] = null;
+      if (newlyWonKeys.has(key)) {
+        newlyWonKeys.delete(key);
+        orphanCleanupKeys.push({ entity, entityId });
+      }
+    }
+  }
+
+  if (orphanCleanupKeys.length > 0) {
+    const cleanupStmts: BatchItem<'sqlite'>[] = [];
+    for (const chunk of chunkArray(orphanCleanupKeys, PAIR_CHUNK_SIZE)) {
+      cleanupStmts.push(
+        db
+          .delete(entityHome)
+          .where(
+            or(
+              ...chunk.map((k) =>
+                and(eq(entityHome.entity, k.entity), eq(entityHome.entityId, k.entityId)),
+              ),
+            ),
+          ),
+      );
+    }
+    await db.batch(cleanupStmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+  }
+}
+
+/**
+ * D1 Batch 3: backfills missing owner memberships on knownHome resend, inserts
+ * conditional listScopes entries, and refreshes purgedProject and active memberships.
+ */
+async function reconcileListScopes(
+  db: AppDb,
+  params: {
+    userId: string;
+    pusherScope: string;
+    nowMs: number;
+    projectOwnerBackfills: ReadonlySet<string>;
+    listScopeTargets: readonly ListScopeTarget[];
+    opTargetScope: readonly (string | null)[];
+    purgedSet: Set<string>;
+  },
+): Promise<Record<string, MembershipRole> | null> {
+  const {
+    userId,
+    pusherScope,
+    nowMs,
+    projectOwnerBackfills,
+    listScopeTargets,
+    opTargetScope,
+    purgedSet,
+  } = params;
+
+  const activeListTargets = listScopeTargets.filter((t) => opTargetScope[t.opIndex] !== null);
+  if (projectOwnerBackfills.size === 0 && activeListTargets.length === 0) {
+    return null;
+  }
+
+  const batch3Stmts: BatchItem<'sqlite'>[] = [];
+  for (const pid of projectOwnerBackfills) {
+    batch3Stmts.push(
+      db
+        .insert(projectMembership)
+        .select(
+          sql`SELECT ${pid}, ${userId}, 'owner', ${nowMs}, NULL WHERE EXISTS (SELECT 1 FROM entityHome WHERE entity = 'project' AND entityId = ${pid} AND scope = ${pusherScope}) AND NOT EXISTS (SELECT 1 FROM purgedProject WHERE projectId = ${pid}) AND NOT EXISTS (SELECT 1 FROM projectMembership WHERE projectId = ${pid})`,
+        )
+        .onConflictDoNothing(),
+    );
+  }
+
+  const seenListScope = new Set<string>();
+  const listProjectsToRead = new Set<string>();
+  for (const target of activeListTargets) {
+    listProjectsToRead.add(target.projectId);
+    const lsKey = `${target.projectId}:${target.scope}`;
+    if (seenListScope.has(lsKey)) continue;
+    seenListScope.add(lsKey);
+    batch3Stmts.push(
+      db
+        .insert(listScopes)
+        .select(
+          sql`SELECT ${target.projectId}, ${target.scope} WHERE NOT EXISTS (SELECT 1 FROM purgedProject WHERE projectId = ${target.projectId}) AND EXISTS (SELECT 1 FROM projectMembership WHERE projectId = ${target.projectId} AND userId = ${userId} AND removedAt IS NULL AND role IN ('owner', 'editor'))`,
+        )
+        .onConflictDoNothing(),
+    );
+  }
+
+  const purgedReadChunks = chunkArray(Array.from(listProjectsToRead), QUERY_CHUNK_SIZE);
+  const purgedStartIdx = batch3Stmts.length;
+  for (const chunk of purgedReadChunks) {
+    batch3Stmts.push(
+      db
+        .select({ projectId: purgedProject.projectId })
+        .from(purgedProject)
+        .where(inArray(purgedProject.projectId, chunk)),
+    );
+  }
+
+  const membershipReadIdx = batch3Stmts.length;
+  batch3Stmts.push(
+    db
+      .select({ projectId: projectMembership.projectId, role: projectMembership.role })
+      .from(projectMembership)
+      .where(and(eq(projectMembership.userId, userId), isNull(projectMembership.removedAt))),
+  );
+
+  const batch3Results = (await db.batch(
+    batch3Stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]],
+  )) as Array<Array<Record<string, unknown>>>;
+
+  for (let s = purgedStartIdx; s < membershipReadIdx; s += 1) {
+    for (const row of batch3Results[s]) {
+      purgedSet.add(String(row.projectId));
+    }
+  }
+
+  const refreshedMemberships: Record<string, MembershipRole> = {};
+  for (const row of batch3Results[membershipReadIdx] ?? []) {
+    const role = row.role;
+    if (role === 'owner' || role === 'editor' || role === 'viewer') {
+      refreshedMemberships[String(row.projectId)] = role;
+    }
+  }
+  return refreshedMemberships;
+}
+
+/**
+ * Executes ops in original batch order by flushing scope-grouped segments between
+ * owner project deletes so earlier edits run before purge and later ops see purged state.
+ */
+async function dispatchScopeBatches(
+  db: AppDb,
+  params: {
+    userId: string;
+    deviceId: string;
+    pusherScope: string;
+    nowMs: number;
+    rawOps: readonly unknown[];
+    opTargetScope: readonly (string | null)[];
+    ownerProjectDeletes: readonly OwnerProjectDelete[];
+    purgedSet: Set<string>;
+    memberships: Record<string, MembershipRole>;
+    meMemberId: string | null;
+    results: Array<PushOpResult | null>;
+    getScopeStub: (scope: string) => ScopeStub;
+  },
+): Promise<{
+  scopeResponses: ScopeResponseEntry[];
+  extraServerTimes: string[];
+  boundMeMemberId: string | null;
+}> {
+  const {
+    userId,
+    deviceId,
+    pusherScope,
+    nowMs,
+    rawOps,
+    opTargetScope,
+    ownerProjectDeletes,
+    purgedSet,
+    memberships,
+    meMemberId,
+    results,
+    getScopeStub,
+  } = params;
+
+  const extraServerTimes: string[] = [];
+  const scopeResponses: ScopeResponseEntry[] = [];
+  let boundMeMemberId: string | null = null;
+
+  const pushRange = async (startIdx: number, endIdx: number): Promise<void> => {
+    const scopeGroups = new Map<string, Array<{ index: number; op: unknown }>>();
+    for (let i = startIdx; i < endIdx; i += 1) {
+      const scope = opTargetScope[i];
+      if (!scope) continue;
+      let group = scopeGroups.get(scope);
+      if (!group) {
+        group = [];
+        scopeGroups.set(scope, group);
+      }
+      group.push({ index: i, op: rawOps[i] });
+    }
+    if (scopeGroups.size === 0) return;
+
+    const purgedList = Array.from(purgedSet);
+    const membershipsSnapshot = { ...memberships };
+    const currentMeMemberId = boundMeMemberId ?? meMemberId;
+    const groupEntries = Array.from(scopeGroups.entries());
+    const segmentResponses = await Promise.all(
+      groupEntries.map(async ([scope, group]) => {
+        const scopeUserId = scope.startsWith('u:') ? scope.slice(2) : scope;
+        const stub = getScopeStub(scope);
+        const response = await stub.push({
+          scope,
+          scopeUserId,
+          pusherUserId: userId,
+          deviceId,
+          memberships: membershipsSnapshot,
+          purgedProjects: purgedList,
+          meMemberId: scope === pusherScope ? currentMeMemberId : null,
+          ops: group.map((g) => g.op),
+        });
+        return { scope, group, response };
+      }),
+    );
+
+    for (const entry of segmentResponses) {
+      scopeResponses.push(entry);
+      for (let j = 0; j < entry.group.length; j += 1) {
+        results[entry.group[j].index] = entry.response.results[j];
+      }
+      if (entry.scope === pusherScope && entry.response.boundMeMemberId) {
+        boundMeMemberId = entry.response.boundMeMemberId;
+      }
+    }
+  };
+
+  let segmentStart = 0;
+  for (const del of ownerProjectDeletes) {
+    await pushRange(segmentStart, del.opIndex);
+    segmentStart = del.opIndex + 1;
+
+    const purgeBatchResults = (await db.batch([
+      db
+        .insert(purgedProject)
+        .values({ projectId: del.projectId, purgedAt: nowMs })
+        .onConflictDoNothing(),
+      db
+        .update(projectMembership)
+        .set({ removedAt: nowMs })
+        .where(
+          and(
+            eq(projectMembership.projectId, del.projectId),
+            isNull(projectMembership.removedAt),
+          ),
+        ),
+      db
+        .select({ scope: listScopes.scope })
+        .from(listScopes)
+        .where(eq(listScopes.projectId, del.projectId)),
+    ])) as Array<Array<Record<string, unknown>>>;
+
+    const listedScopes = (purgeBatchResults[2] ?? []).map((r) => String(r.scope));
+    const scopesToPurge = Array.from(new Set([...listedScopes, del.homeScope]));
+    const settleResults = await Promise.allSettled(
+      scopesToPurge.map(async (targetScope) =>
+        getScopeStub(targetScope).purgeProject({
+          projectId: del.projectId,
+          purgedAt: nowMs,
+          opId: targetScope === del.homeScope ? del.opId : undefined,
+          pusherUserId: targetScope === del.homeScope ? userId : undefined,
+        }),
+      ),
+    );
+
+    const succeededScopes: string[] = [];
+    let homeResult: ScopePurgeProjectResponse | null = null;
+    let homeError: unknown = null;
+    for (let idx = 0; idx < scopesToPurge.length; idx += 1) {
+      const targetScope = scopesToPurge[idx];
+      const settled = settleResults[idx];
+      if (settled.status === 'fulfilled') {
+        succeededScopes.push(targetScope);
+        if (targetScope === del.homeScope) {
+          homeResult = settled.value;
+        }
+      } else if (targetScope === del.homeScope) {
+        homeError = settled.reason;
+      }
+    }
+
+    if (succeededScopes.length > 0) {
+      await db
+        .delete(listScopes)
+        .where(
+          and(
+            eq(listScopes.projectId, del.projectId),
+            inArray(listScopes.scope, succeededScopes),
+          ),
+        );
+    }
+
+    if (homeError !== null) {
+      throw homeError;
+    }
+
+    purgedSet.add(del.projectId);
+    delete memberships[del.projectId];
+    extraServerTimes.push(homeResult!.serverTime);
+    results[del.opIndex] = {
+      opId: del.opId,
+      status: 'applied',
+      row: homeResult!.purgedRow,
+      clocks: homeResult!.clocks,
+    };
+  }
+  await pushRange(segmentStart, rawOps.length);
+
+  return { scopeResponses, extraServerTimes, boundMeMemberId };
+}
+
+async function syncPusherProfile(
+  db: AppDb,
+  params: {
+    userId: string;
+    pusherScope: string;
+    meMemberId: string | null;
+    boundMeMemberId: string | null;
+    scopeResponses: readonly ScopeResponseEntry[];
+  },
+): Promise<void> {
+  const { userId, pusherScope, meMemberId, boundMeMemberId, scopeResponses } = params;
+  const effectiveMeMemberId = boundMeMemberId ?? meMemberId;
+  let profileUpdate: { name: string | null; initial: string | null; color: string | null } | null =
+    null;
+
+  if (effectiveMeMemberId !== null) {
+    for (const { scope, group, response } of scopeResponses) {
+      if (scope !== pusherScope) continue;
+      for (let j = 0; j < group.length; j += 1) {
+        const res = response.results[j];
+        const opObj = group[j].op as Record<string, unknown>;
+        if (
+          res.status === 'applied' &&
+          res.row &&
+          opObj.entity === 'member' &&
+          opObj.entityId === effectiveMeMemberId &&
+          opObj.op === 'upsert'
+        ) {
+          profileUpdate = {
+            name: typeof res.row.name === 'string' ? res.row.name : null,
+            initial: typeof res.row.initial === 'string' ? res.row.initial : null,
+            color: typeof res.row.color === 'string' ? res.row.color : null,
+          };
+        }
+      }
+    }
+  }
+
+  if (boundMeMemberId !== null) {
+    await db
+      .update(user)
+      .set({ meMemberId: boundMeMemberId, ...profileUpdate })
+      .where(and(eq(user.id, userId), isNull(user.meMemberId)));
+  } else if (profileUpdate !== null && effectiveMeMemberId !== null) {
+    await db
+      .update(user)
+      .set(profileUpdate)
+      .where(and(eq(user.id, userId), eq(user.meMemberId, effectiveMeMemberId)));
+  }
+}
+
+/**
+ * Executes a planned sync push batch across D1 (entityHome bindings, listScopes,
+ * memberships, project purges, user profile) and the target Scope Durable Objects.
+ */
+export async function applyPushPlan(
+  db: AppDb,
+  params: ApplyPushPlanParams,
+): Promise<AppliedPushOutcome> {
+  const { userId, deviceId, pusherScope, nowMs, rawOps, parsedOps, context, plan, getScopeStub } =
+    params;
+
+  const results = [...plan.results];
+  const opTargetScope = [...plan.opTargetScope];
+  const inBatchNewProjects = new Set(plan.inBatchNewProjects);
+  const purgedSet = new Set(context.purgedSet);
+  let memberships: Record<string, MembershipRole> = { ...context.memberships };
+
+  await bindEntityHomes(db, {
+    userId,
+    pusherScope,
+    nowMs,
+    parsedOps,
+    inBatchNewHome: plan.inBatchNewHome,
+    inBatchNewProjects,
+    opTargetScope,
+    results,
+  });
+
+  const refreshedMemberships = await reconcileListScopes(db, {
+    userId,
+    pusherScope,
+    nowMs,
+    projectOwnerBackfills: plan.projectOwnerBackfills,
+    listScopeTargets: plan.listScopeTargets,
+    opTargetScope,
+    purgedSet,
+  });
+  if (refreshedMemberships !== null) {
+    memberships = refreshedMemberships;
+  }
+
+  const { scopeResponses, extraServerTimes, boundMeMemberId } = await dispatchScopeBatches(db, {
+    userId,
+    deviceId,
+    pusherScope,
+    nowMs,
+    rawOps,
+    opTargetScope,
+    ownerProjectDeletes: plan.ownerProjectDeletes,
+    purgedSet,
+    memberships,
+    meMemberId: context.meMemberId,
+    results,
+    getScopeStub,
+  });
+
+  await syncPusherProfile(db, {
+    userId,
+    pusherScope,
+    meMemberId: context.meMemberId,
+    boundMeMemberId,
+    scopeResponses,
+  });
+
+  return {
+    results: results as PushOpResult[],
+    scopeServerTimes: [
+      ...extraServerTimes,
+      ...scopeResponses.map((r) => r.response.serverTime),
+    ],
+  };
+}

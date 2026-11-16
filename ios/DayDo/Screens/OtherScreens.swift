@@ -420,16 +420,18 @@ private struct ArchivedProjectsView: View {
                                     ListDot(color: p.color, size: 9)
                                     Text(p.name).txt(15).foregroundStyle(Palette.text)
                                     Spacer()
-                                    Button("取消封存") {
-                                        var u = UpdateProjectInput(projectId: p.id)
-                                        u.archived = false
-                                        let input = u
-                                        Task { await model.perform { try await $0.updateProject(input) } }
+                                    if p.isOwner {
+                                        Button("取消封存") {
+                                            var u = UpdateProjectInput(projectId: p.id)
+                                            u.archived = false
+                                            let input = u
+                                            Task { await model.perform { try await $0.updateProject(input) } }
+                                        }
+                                        .txt(14, .semibold)
+                                        .foregroundStyle(accent.text)
+                                        .buttonStyle(.plain)
+                                        .hoverEffect(.highlight)
                                     }
-                                    .txt(14, .semibold)
-                                    .foregroundStyle(accent.text)
-                                    .buttonStyle(.plain)
-                                    .hoverEffect(.highlight)
                                 }
                                 .padding(.horizontal, 14)
                                 .frame(minHeight: 52)
@@ -476,7 +478,8 @@ private struct DataSettingsView: View {
                 VStack(spacing: 0) {
                     Button {
                         Task {
-                            await model.perform { try await DemoData.load(into: $0) }
+                            let today = model.today
+                            await model.perform { try await DemoData.load(into: $0, today: today) }
                             demoLoaded = true
                         }
                     } label: {

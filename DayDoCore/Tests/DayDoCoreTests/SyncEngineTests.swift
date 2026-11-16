@@ -3262,7 +3262,8 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         }
         try await ackAllChanges(in: db)
 
-        let accepted = try await engine.acceptInvite(code: "INV-CODE")
+        let sharing = RemoteListSharing(syncEngine: engine)
+        let accepted = try await sharing.acceptInvite(code: "INV-CODE")
         #expect(accepted.projectId == sharedId)
         #expect(accepted.role == "editor")
 
@@ -3334,23 +3335,34 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
             )
         }
 
+        let sharing = RemoteListSharing(syncEngine: engine)
+        let targetMember = ProjectMemberInfo(
+            memberId: "m2",
+            name: "User 2",
+            initial: "U",
+            color: "#4AA8E8",
+            isMe: false,
+            role: "editor",
+            userId: "u2"
+        )
+
         // 401 -> refresh -> retry succeeds.
-        let created = try await engine.createInvite(projectId: "p1", role: "editor")
+        let created = try await sharing.createInvite(projectId: "p1", role: "editor")
         #expect(created.code == "c1")
         #expect(created.url == "daydo://invite/c1")
         #expect(tokens.accessToken == "access-refreshed")
 
         await #expect(throws: SharingError.forbidden("Only the owner can revoke")) {
-            try await engine.revokeInvite(code: "forbidden-code")
+            try await sharing.revokeInvite(code: "forbidden-code")
         }
         await #expect(throws: SharingError.notFound("Invite not found")) {
-            _ = try await engine.inviteInfo(code: "missing-code")
+            _ = try await sharing.inviteInfo(code: "missing-code")
         }
         await #expect(throws: SharingError.conflict("Conflict updating role")) {
-            try await engine.changeMemberRole(projectId: "p1", userId: "u2", role: "viewer")
+            try await sharing.changeMemberRole(projectId: "p1", member: targetMember, role: "viewer")
         }
         await #expect(throws: SharingError.badRequest("Cannot remove owner")) {
-            try await engine.leaveProject(projectId: "p1")
+            try await sharing.leaveList(projectId: "p1")
         }
     }
 

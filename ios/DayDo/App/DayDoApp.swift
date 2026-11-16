@@ -10,17 +10,17 @@ struct DayDoApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        let (api, tokenStore) = Self.makeStorage()
+        let (store, tokenStore) = Self.makeStorage()
 #if DEBUG
         let useStub = ProcessInfo.processInfo.arguments.contains("-DayDoDebugStub")
         let effectiveTokenStore: any SyncTokenStore = useStub ? InMemorySyncTokenStore() : tokenStore
         let m = AppModel(
-            api: api,
+            store: store,
             tokenStore: effectiveTokenStore,
             transport: useStub ? DebugStubTransport() : nil
         )
 #else
-        let m = AppModel(api: api, tokenStore: tokenStore)
+        let m = AppModel(store: store, tokenStore: tokenStore)
 #endif
         _model = State(initialValue: m)
         UNUserNotificationCenter.current().delegate = m.notificationDelegate
@@ -30,20 +30,8 @@ struct DayDoApp: App {
         }
     }
 
-    static let appGroup = "group.com.audichuang.daydo"
-
-    /// The database lives in the App Group container so the widget extension
-    /// can read it. Falls back to Application Support when the group is not
-    /// provisioned (e.g. unsigned simulator builds).
-    static func storageDirectory() -> URL {
-        if let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) {
-            return group.appendingPathComponent("DayDo", isDirectory: true)
-        }
-        return URL.applicationSupportDirectory.appendingPathComponent("DayDo", isDirectory: true)
-    }
-
-    static func makeStorage() -> (LocalDayDoAPI, KeychainSyncTokenStore) {
-        let dir = storageDirectory()
+    static func makeStorage() -> (DeviceStore, KeychainSyncTokenStore) {
+        let dir = DayDoStorage.defaultDirectory()
         let tokenStore = KeychainSyncTokenStore()
         if ProcessInfo.processInfo.arguments.contains("-DayDoReset") {
             try? FileManager.default.removeItem(at: dir)
@@ -51,9 +39,8 @@ struct DayDoApp: App {
             tokenStore.clearAll()
         }
         do {
-            let db = try AppDatabase.open(at: dir.appendingPathComponent("daydo.sqlite"))
-            let api = LocalDayDoAPI(database: db, attachmentsDirectory: dir.appendingPathComponent("Attachments", isDirectory: true))
-            return (api, tokenStore)
+            let store = try DayDoStorage.openForApp(in: dir)
+            return (store, tokenStore)
         } catch {
             fatalError("Cannot open database: \(error)")
         }
@@ -128,7 +115,7 @@ actor ReminderScheduler {
     private var isRescheduling = false
     private var dirty = false
 
-    func reschedule(api: LocalDayDoAPI) async {
+    func reschedule(api: any DayDoAPI) async {
         if isRescheduling {
             dirty = true
             return
@@ -141,7 +128,7 @@ actor ReminderScheduler {
         } while dirty
     }
 
-    private func performReschedule(api: LocalDayDoAPI) async {
+    private func performReschedule(api: any DayDoAPI) async {
         let center = UNUserNotificationCenter.current()
         guard let upcoming = try? await api.upcomingReminders(limit: 60) else { return }
         let settings = await center.notificationSettings()
@@ -197,6 +184,12 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
 /// `-DayDoScreen <name>` opens a screen directly (used for screenshots).
 @MainActor
 enum DebugLaunch {
+    private static var isRegularWindow: Bool {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let window = scenes.flatMap(\.windows).first(where: \.isKeyWindow) ?? scenes.flatMap(\.windows).first
+        return window?.traitCollection.horizontalSizeClass == .regular
+    }
+
     static func apply(to model: AppModel) async {
         let args = ProcessInfo.processInfo.arguments
 #if DEBUG
@@ -223,8 +216,10 @@ enum DebugLaunch {
         case "week": UserDefaults.standard.set("week", forKey: "calendarViewMode"); model.tab = .calendar
         case "search": model.tab = .search
         case "detail", "date", "time":
-            model.detailTaskId = tasks.first?.id
             if screen != "detail" { UserDefaults.standard.set(screen, forKey: "debugDetailPage") }
+            if let id = tasks.first?.id {
+                model.openTask(id, inlineAvailable: isRegularWindow)
+            }
         case "editlist": model.editingProjectId = model.projects.first { !$0.isInbox }?.id
         case "compose": model.composing = ComposeRequest(day: model.today)
         case "settings": model.tab = .settings

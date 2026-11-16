@@ -30,7 +30,7 @@ public actor SyncEngine {
     public static let signedInUserIdMetaKey = "signedInUserId"
     public static let meAvatarUrlMetaKey = "meAvatarUrl"
 
-    public let database: AppDatabase
+    let database: AppDatabase
     private let transport: any SyncTransport
     private let tokenStore: any SyncTokenStore
     private let clock: Clock
@@ -49,7 +49,7 @@ public actor SyncEngine {
     private let encoder = Outbox.encoder
     private let decoder = JSONDecoder()
 
-    public init(
+    init(
         database: AppDatabase,
         transport: any SyncTransport,
         tokenStore: any SyncTokenStore,
@@ -288,79 +288,6 @@ public actor SyncEngine {
             return nil
         }
         return parseInviteCode(from: url)
-    }
-
-    public func createInvite(projectId: String, role: String, email: String? = nil) async throws -> CreatedInvite {
-        let body = try encoder.encode(CreateInviteRequest(projectId: projectId, role: role, email: email))
-        let data = try await sendAuthorizedSharing(method: "POST", path: "/invites", body: body)
-        return try decode(CreatedInvite.self, from: data)
-    }
-
-    public func inviteInfo(code: String) async throws -> InviteInfo {
-        let encoded = Self.percentEncodePathComponent(code)
-        let data = try await sendAuthorizedSharing(method: "GET", path: "/invites/\(encoded)", body: nil)
-        return try decode(InviteInfo.self, from: data)
-    }
-
-    @discardableResult
-    public func acceptInvite(code: String) async throws -> AcceptedInvite {
-        let encoded = Self.percentEncodePathComponent(code)
-        let data = try await sendAuthorizedSharing(method: "POST", path: "/invites/\(encoded)/accept", body: nil)
-        let accepted = try decode(AcceptedInvite.self, from: data)
-        try await database.writer.write { db in
-            try db.execute(
-                sql: """
-                    INSERT INTO projectMembership (projectId, scope, role, needsBackfill)
-                    VALUES (?, ?, ?, 1)
-                    ON CONFLICT(projectId) DO UPDATE SET
-                        scope = excluded.scope,
-                        role = excluded.role,
-                        needsBackfill = 1
-                    """,
-                arguments: [accepted.projectId, accepted.scope, accepted.role]
-            )
-        }
-        _ = try await syncNow()
-        return accepted
-    }
-
-    public func revokeInvite(code: String) async throws {
-        let encoded = Self.percentEncodePathComponent(code)
-        _ = try await sendAuthorizedSharing(method: "DELETE", path: "/invites/\(encoded)", body: nil)
-    }
-
-    public func changeMemberRole(projectId: String, userId: String, role: String) async throws {
-        let body = try encoder.encode(ChangeMemberRoleRequest(role: role))
-        let encodedProject = Self.percentEncodePathComponent(projectId)
-        let encodedUser = Self.percentEncodePathComponent(userId)
-        _ = try await sendAuthorizedSharing(
-            method: "PUT",
-            path: "/projects/\(encodedProject)/members/\(encodedUser)",
-            body: body
-        )
-    }
-
-    public func removeMember(projectId: String, userId: String) async throws {
-        let encodedProject = Self.percentEncodePathComponent(projectId)
-        let encodedUser = Self.percentEncodePathComponent(userId)
-        _ = try await sendAuthorizedSharing(
-            method: "DELETE",
-            path: "/projects/\(encodedProject)/members/\(encodedUser)",
-            body: nil
-        )
-    }
-
-    public func leaveProject(projectId: String) async throws {
-        guard let myUserId = try await signedInUserId, !myUserId.isEmpty else {
-            throw SyncError.signedOut
-        }
-        try await removeMember(projectId: projectId, userId: myUserId)
-    }
-
-    private static func percentEncodePathComponent(_ value: String) -> String {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
     private func runSyncLoop(generation: UInt64) async throws -> SyncSummary {
@@ -880,12 +807,7 @@ public actor SyncEngine {
         return try validateHTTPResponse(response)
     }
 
-    private func sendAuthorizedSharing(method: String, path: String, body: Data?) async throws -> Data {
-        let response = try await sendAuthorizedResponse(method: method, path: path, body: body)
-        return try validateSharingResponse(response)
-    }
-
-    private func sendAuthorizedResponse(method: String, path: String, body: Data?) async throws -> SyncHTTPResponse {
+    func sendAuthorizedResponse(method: String, path: String, body: Data?) async throws -> SyncHTTPResponse {
         let initialToken: String
         if let access = tokenStore.accessToken, !access.isEmpty {
             initialToken = access
@@ -998,36 +920,8 @@ public actor SyncEngine {
         throw SyncError.protocolError("HTTP \(response.status): \(bodyText)")
     }
 
-    private struct SharingErrorBody: Decodable {
-        let error: String?
-    }
-
-    private func validateSharingResponse(_ response: SyncHTTPResponse) throws -> Data {
-        if (200...299).contains(response.status) {
-            return response.body
-        }
-        let message: String = {
-            if let parsed = try? decoder.decode(SharingErrorBody.self, from: response.body),
-               let err = parsed.error, !err.isEmpty {
-                return err
-            }
-            let raw = String(data: response.body, encoding: .utf8) ?? ""
-            return raw.isEmpty ? "HTTP \(response.status)" : raw
-        }()
-        switch response.status {
-        case 400:
-            throw SharingError.badRequest(message)
-        case 403:
-            throw SharingError.forbidden(message)
-        case 404:
-            throw SharingError.notFound(message)
-        case 409:
-            throw SharingError.conflict(message)
-        case 429, 500...599:
-            throw nextRetryableError(statusCode: response.status, message: message)
-        default:
-            throw SyncError.protocolError("HTTP \(response.status): \(message)")
-        }
+    func recordRetryableFailure(statusCode: Int?, message: String) -> SyncError {
+        nextRetryableError(statusCode: statusCode, message: message)
     }
 
     private func nextRetryableError(statusCode: Int?, message: String) -> SyncError {
