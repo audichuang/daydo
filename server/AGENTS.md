@@ -6,8 +6,7 @@
 
 - `routes/`：HTTP 端點，檔名即路徑；`*.dev.ts` 只在開發建置掛上。邏輯放 `src/`（`auth`、`sync`、`scope`、`membership`、`sharing`、`mcp`、`oauth`、`serverops`、`domain`、`ics`），route 只做轉接。
 - `durable-objects/scope.ts` 只是 RPC 轉接器（開 `transactionSync`、持 HLC 狀態與故障開關）；Scope 帳本的規則在 `src/scope/`（schema、store、push 授權、成員投影、purge、pull、row 檢視），全部是同步函式。Worker↔DO 的 RPC 介面改動必須前後相容：部署期間新舊版本會混跑（`tests/scope-rpc-compat.test.ts` 會拿 main 的舊 DO 實跑）。
-- `src/membership/`：D1 的 `projectMembership`、`listScopes`、`purgedProject` 只由它讀寫，給可組進 `db.batch()` 的 statement，不自己 await，永久刪除清單的原子性靠同一個 batch。
-- `src/sync/envelope.ts` 是 `validateSyncOp` 唯一的呼叫點；清單寫入權限（owner／editor、已永久刪除）只在 `src/sync/access.ts` 判斷；`u:<userId>` 只由 `src/sync/scopeName.ts` 組。
+- 名詞（Scope ledger、D1 帳本、OpEnvelope、intent、purged 與 gone）見 `GLOSSARY.md`；`src/membership/` 給可組進 `db.batch()` 的 statement，永久刪除清單的原子性靠同一個 batch。
 - `middleware/01.access.ts`：正式環境的 Cloudflare Access 驗證。
 - `db/schema.ts` → `db/migrations/`：D1 schema；改完用 `npx void db generate` 產新 migration，已有的不改。
 
