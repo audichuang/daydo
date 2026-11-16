@@ -29,7 +29,7 @@
 
 - **getNow**：`() => number`（型別 `GetNow`，`src/clock.ts`），每呼叫一次讀一次鐘；「可注入的時間」都用它。`now`／`nowMs` 則是已讀好的 epoch ms。
 - **systemNow**：`getNow` 的正式實作，`() => Date.now()`（不捕捉 `Date.now` 參照，spy 與 fake timers 才有效）。只能當預設值：`x ?? systemNow()` 或 `getNow ?? systemNow`，由架構測試把關。
-- **牆鐘讀取**：HLC、`serverTime`、lease、耗時量測直接寫 `Date.now()`，不經 `getNow`（注入值進不了 DO、舊的 now 不能流進 HLC）；這些檔案明列在 `tests/architecture.test.ts` 的 `Date.now` 護欄 allow。
+- **牆鐘讀取**：HLC、`serverTime`、lease、耗時量測直接寫 `Date.now()`，不經 `getNow`（注入值進不了 DO、舊的 now 不能流進 HLC）。另有三處：`mail/mailer.ts` 的 dev mailbox `sentAt`；`ics/parser.ts` 的 `parseIcs` 預設 window；`sync/push.ts` 的 `nowMs` 同時用在 D1 戳記與 `serverTime`，拆開會改行為。這些檔案明列在 `tests/architecture.test.ts` 的 `Date.now` 護欄 allow。
 
 ## 接線
 
