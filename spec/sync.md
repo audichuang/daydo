@@ -77,13 +77,14 @@
 - refresh token 的 10 分鐘寬限：換發後 10 分鐘內、手機還沒用新 token 之前，持有舊 refresh token 的人能搶先換到新 session（要先偷到 Keychain 裡的 token）；真手機下次 refresh 時整條鏈會被撤銷。這是為了避免訊號差時回應遺失就被登出所接受的取捨。
 - 永久刪除清單在 App 還沒有入口；之後加入時，擁有者的其他裝置要另外收到清除通知（目前 pull 不再回傳那份清單，其他裝置會留著）。
 - refresh 寬限期內，後繼已被使用之後，另一個 client 又拿舊 token 來換，會讓整個 family 被撤銷，需要重新授權（需要異常的 client）。（MCP）
-- 沒用到的 DCR client、過期的 pending、code、refresh 列都不清理；`opApplied` 會隨 ICS 長期增長（家庭用量下可以接受）。
-- DCR 依 IP 限速，攻擊者換很多 IP 仍可灌入 client 列（只會讓表變大）。`/token` 與 `/authorize` 沒有限速：code 與 state 都是 256-bit 隨機值。
+- 過期的 OAuth 列由 cron 每小時清理（見 `spec/mcp.md`）；`opApplied` 會隨 ICS 長期增長（家庭用量下可以接受）。
+- DCR 與 `/authorize` 依 IP（IPv6 以 /64）限速，攻擊者換很多 IP 仍可灌入列（只會讓表變大）。`/token` 沒有限速：code 與 refresh 都是 256-bit 隨機值。
 - MCP 與 ICS 寫入要等 App 下次 pull 才看得到（沒有推播）。
 - 重複任務的副本與原任務若落在不同範圍（共享清單），兩邊的更新不是原子的，與 App 相同。
 - 在同一份來源中重新定義重複系列（改 FREQ、BYDAY、DTSTART，或單一事件改成重複）時，ICS 不寫入該 UID，每輪記一次錯誤，需要人工處理；同一來源的其他事件照常同步。只改結尾時刪掉的 slot 會移到垃圾桶。
 - ICS 任務被移到使用者看不到的清單時，該 mapping 每輪記一次錯誤，不重建。
 - ICS 的 `CATEGORIES` 不轉成標籤。
+- ICS 來源暫時回傳較舊版本的重複系列（SEQUENCE 倒退）時，只有舊版仍有場次落在時間窗內、與已匯入的場次重疊，才認得出是舊版並保留任務；若舊版的場次全在時間窗外，已匯入的場次會被當成移除、任務移到垃圾桶，新版回來後以新 id 重建（完成狀態與備註留在垃圾桶那筆）。要正常來源回退快取才會發生。
 
 ## 線上格式（App 與 Worker 共用，兩邊各自實作前先以這裡為準）
 
