@@ -81,7 +81,7 @@ public struct HLC: Hashable, Comparable, Sendable, CustomStringConvertible {
     // MARK: - SQLite meta state
 
     /// Returns the persisted `deviceId` in `meta`, creating one if absent.
-    public static func ensureDeviceId(in db: Database) throws -> String {
+    static func ensureDeviceId(in db: Database) throws -> String {
         if let existing = try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [deviceIdMetaKey]) {
             return existing.lowercased()
         }
@@ -90,14 +90,14 @@ public struct HLC: Hashable, Comparable, Sendable, CustomStringConvertible {
         return id
     }
 
-    public static func loadLast(in db: Database) throws -> HLC? {
+    static func loadLast(in db: Database) throws -> HLC? {
         guard let raw = try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [hlcMetaKey]) else {
             return nil
         }
         return HLC(raw)
     }
 
-    public static func saveLast(_ hlc: HLC, in db: Database) throws {
+    static func saveLast(_ hlc: HLC, in db: Database) throws {
         try db.execute(
             sql: "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             arguments: [hlcMetaKey, hlc.description]
@@ -106,7 +106,7 @@ public struct HLC: Hashable, Comparable, Sendable, CustomStringConvertible {
 
     /// Generates the next HLC for a local write and persists it (plus `deviceId` if absent)
     /// into `meta` in the current transaction.
-    public static func tick(in db: Database, now: EpochMillis) throws -> HLC {
+    static func tick(in db: Database, now: EpochMillis) throws -> HLC {
         let deviceId = try ensureDeviceId(in: db)
         let last = try loadLast(in: db)
         let next = Self.next(now: now, last: last, deviceId: deviceId)
@@ -116,7 +116,7 @@ public struct HLC: Hashable, Comparable, Sendable, CustomStringConvertible {
 
     /// Advances the persisted HLC past a newer `remote` HLC in the current transaction.
     @discardableResult
-    public static func receive(_ remote: HLC, in db: Database, now: EpochMillis) throws -> HLC {
+    static func receive(_ remote: HLC, in db: Database, now: EpochMillis) throws -> HLC {
         let deviceId = try ensureDeviceId(in: db)
         let last = try loadLast(in: db)
         let updated = Self.receive(remote: remote, now: now, last: last, deviceId: deviceId)

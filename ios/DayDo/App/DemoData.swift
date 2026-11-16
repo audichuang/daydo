@@ -4,8 +4,7 @@ import DayDoCore
 /// The sample data from the design boards, placed relative to today. Loaded
 /// on demand from Settings (and with `-DayDoDemo` for screenshots).
 enum DemoData {
-    static func load(into api: LocalDayDoAPI) async throws {
-        let today = api.clock.today
+    static func load(into api: any DayDoAPI, today: LocalDay) async throws {
         func d(_ offset: Int) -> LocalDay { today.adding(days: offset) }
         func t(_ offset: Int, _ s: Int, _ e: Int?) -> Schedule { .timed(d(offset), start: s, end: e, timeZone: TimeZone.current.identifier) }
 

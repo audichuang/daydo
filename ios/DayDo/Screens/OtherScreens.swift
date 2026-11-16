@@ -478,7 +478,8 @@ private struct DataSettingsView: View {
                 VStack(spacing: 0) {
                     Button {
                         Task {
-                            await model.perform { try await DemoData.load(into: $0) }
+                            let today = model.today
+                            await model.perform { try await DemoData.load(into: $0, today: today) }
                             demoLoaded = true
                         }
                     } label: {

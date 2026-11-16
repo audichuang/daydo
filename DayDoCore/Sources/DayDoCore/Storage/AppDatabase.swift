@@ -3,10 +3,10 @@ import GRDB
 import SQLite3
 
 /// Owns the SQLite file and its schema.
-public final class AppDatabase: Sendable {
-    public let writer: any DatabaseWriter
+final class AppDatabase: Sendable {
+    let writer: any DatabaseWriter
 
-    public init(_ writer: any DatabaseWriter) throws {
+    init(_ writer: any DatabaseWriter) throws {
         self.writer = writer
         try Self.migrator.migrate(writer)
     }
@@ -17,7 +17,7 @@ public final class AppDatabase: Sendable {
 
     /// File-backed read-write database with persistent WAL mode and file
     /// coordination so extension processes can safely open read-only readers.
-    public static func open(at url: URL) throws -> AppDatabase {
+    static func open(at url: URL) throws -> AppDatabase {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let coordinator = NSFileCoordinator(filePresenter: nil)
         var coordinatorError: NSError?
@@ -50,7 +50,7 @@ public final class AppDatabase: Sendable {
 
     /// Opens an existing, fully migrated database in read-only mode without
     /// creating files or running migrations.
-    public static func openReadOnly(at url: URL) throws -> AppDatabase {
+    static func openReadOnly(at url: URL) throws -> AppDatabase {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw StorageError.databaseNotFound(url)
         }
@@ -81,7 +81,7 @@ public final class AppDatabase: Sendable {
         return try result!.get()
     }
 
-    public static func inMemory() throws -> AppDatabase {
+    static func inMemory() throws -> AppDatabase {
         var config = Configuration()
         config.foreignKeysEnabled = true
         return try AppDatabase(try DatabaseQueue(configuration: config))

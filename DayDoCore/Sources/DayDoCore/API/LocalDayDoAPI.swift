@@ -3,12 +3,12 @@ import GRDB
 
 /// On-device implementation of `DayDoAPI` backed by SQLite. Every write
 /// appends to the `change` outbox in the same transaction.
-public final class LocalDayDoAPI: DayDoAPI {
-    public let database: AppDatabase
-    public let clock: Clock
-    public let attachmentsDirectory: URL
+final class LocalDayDoAPI: DayDoAPI {
+    let database: AppDatabase
+    let clock: Clock
+    let attachmentsDirectory: URL
 
-    public init(database: AppDatabase, clock: Clock = .system, attachmentsDirectory: URL) {
+    init(database: AppDatabase, clock: Clock = .system, attachmentsDirectory: URL) {
         self.database = database
         self.clock = clock
         self.attachmentsDirectory = attachmentsDirectory
@@ -20,10 +20,10 @@ public final class LocalDayDoAPI: DayDoAPI {
 
     // MARK: Bootstrap
 
-    public static let defaultLists: [(String, String)] = [("工作", "#4AA8E8"), ("個人", "#E98A5B"), ("購物", "#C77DDB")]
+    static let defaultLists: [(String, String)] = [("工作", "#4AA8E8"), ("個人", "#E98A5B"), ("購物", "#C77DDB")]
 
     /// Creates the local user, the inbox and starter lists on first launch.
-    public func bootstrap(meName: String = "我") async throws {
+    func bootstrap(meName: String = "我") async throws {
         let now = now()
         try await writer.write { db in
             try Self.bootstrap(meName: meName, in: db, now: now)
@@ -1400,9 +1400,31 @@ extension LocalDayDoAPI {
     }
 
     /// Outbox entries not yet pushed (phase 2 sync).
-    public func pendingChanges(limit: Int = 500) async throws -> [ChangeRecord] {
+    func pendingChanges(limit: Int = 500) async throws -> [ChangeRecord] {
         try await writer.read { db in
             try ChangeRecord.filter(Column("ackedAt") == nil).order(Column("seq")).limit(limit).fetchAll(db)
+        }
+    }
+
+    func unsyncedChangeCount() async throws -> Int {
+        try await writer.read { db in
+            // Invite records are tracked locally and do not go through the sync outbox count.
+            try ChangeRecord
+                .filter(Column("ackedAt") == nil && Column("entity") != "projectInvite")
+                .fetchCount(db)
+        }
+    }
+
+    func hasPendingChange(entity: String, entityId: String, op: String) async throws -> Bool {
+        try await writer.read { db in
+            try ChangeRecord
+                .filter(
+                    Column("ackedAt") == nil
+                        && Column("entity") == entity
+                        && Column("entityId") == entityId
+                        && Column("op") == op
+                )
+                .fetchCount(db) > 0
         }
     }
 }

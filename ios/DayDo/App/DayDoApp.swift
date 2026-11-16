@@ -10,17 +10,17 @@ struct DayDoApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        let (api, tokenStore) = Self.makeStorage()
+        let (store, tokenStore) = Self.makeStorage()
 #if DEBUG
         let useStub = ProcessInfo.processInfo.arguments.contains("-DayDoDebugStub")
         let effectiveTokenStore: any SyncTokenStore = useStub ? InMemorySyncTokenStore() : tokenStore
         let m = AppModel(
-            api: api,
+            store: store,
             tokenStore: effectiveTokenStore,
             transport: useStub ? DebugStubTransport() : nil
         )
 #else
-        let m = AppModel(api: api, tokenStore: tokenStore)
+        let m = AppModel(store: store, tokenStore: tokenStore)
 #endif
         _model = State(initialValue: m)
         UNUserNotificationCenter.current().delegate = m.notificationDelegate
@@ -30,7 +30,7 @@ struct DayDoApp: App {
         }
     }
 
-    static func makeStorage() -> (LocalDayDoAPI, KeychainSyncTokenStore) {
+    static func makeStorage() -> (DeviceStore, KeychainSyncTokenStore) {
         let dir = DayDoStorage.defaultDirectory()
         let tokenStore = KeychainSyncTokenStore()
         if ProcessInfo.processInfo.arguments.contains("-DayDoReset") {
@@ -39,8 +39,8 @@ struct DayDoApp: App {
             tokenStore.clearAll()
         }
         do {
-            let api = try DayDoStorage.openForApp(in: dir)
-            return (api, tokenStore)
+            let store = try DayDoStorage.openForApp(in: dir)
+            return (store, tokenStore)
         } catch {
             fatalError("Cannot open database: \(error)")
         }
@@ -115,7 +115,7 @@ actor ReminderScheduler {
     private var isRescheduling = false
     private var dirty = false
 
-    func reschedule(api: LocalDayDoAPI) async {
+    func reschedule(api: any DayDoAPI) async {
         if isRescheduling {
             dirty = true
             return
@@ -128,7 +128,7 @@ actor ReminderScheduler {
         } while dirty
     }
 
-    private func performReschedule(api: LocalDayDoAPI) async {
+    private func performReschedule(api: any DayDoAPI) async {
         let center = UNUserNotificationCenter.current()
         guard let upcoming = try? await api.upcomingReminders(limit: 60) else { return }
         let settings = await center.notificationSettings()

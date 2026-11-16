@@ -18,6 +18,57 @@ public enum StorageError: Error, LocalizedError, Sendable, Equatable {
     }
 }
 
+/// On-device store returned by `DayDoStorage.openForApp(...)`. Exposes the
+/// `DayDoAPI` command/query contract along with device-local lifecycle
+/// operations (bootstrap, clock, outbox status, and `SyncEngine` creation).
+public struct DeviceStore: Sendable {
+    private let localAPI: LocalDayDoAPI
+
+    init(localAPI: LocalDayDoAPI) {
+        self.localAPI = localAPI
+    }
+
+    public var api: any DayDoAPI { localAPI }
+
+    public var today: LocalDay { localAPI.clock.today }
+
+    public func bootstrap(meName: String = "我") async throws {
+        try await localAPI.bootstrap(meName: meName)
+    }
+
+    public func unsyncedChangeCount() async throws -> Int {
+        try await localAPI.unsyncedChangeCount()
+    }
+
+    public func hasPendingChange(entity: String, entityId: String, op: String) async throws -> Bool {
+        try await localAPI.hasPendingChange(entity: entity, entityId: entityId, op: op)
+    }
+
+    public func makeSyncEngine(
+        transport: any SyncTransport,
+        tokenStore: any SyncTokenStore
+    ) -> SyncEngine {
+        SyncEngine(
+            database: localAPI.database,
+            transport: transport,
+            tokenStore: tokenStore,
+            clock: localAPI.clock
+        )
+    }
+
+    /// Creates an isolated in-memory store for tests.
+    public static func inMemory(
+        clock: Clock = .system,
+        attachmentsDirectory: URL? = nil
+    ) throws -> DeviceStore {
+        let dir = attachmentsDirectory ?? FileManager.default.temporaryDirectory
+            .appendingPathComponent("daydo-tests-\(UUID().uuidString)", isDirectory: true)
+        let db = try AppDatabase.inMemory()
+        let api = LocalDayDoAPI(database: db, clock: clock, attachmentsDirectory: dir)
+        return DeviceStore(localAPI: api)
+    }
+}
+
 /// Owns where DayDo's on-device files live and how processes open them.
 public enum DayDoStorage {
     public static let appGroup = "group.com.audichuang.daydo"
@@ -57,13 +108,14 @@ public enum DayDoStorage {
     public static func openForApp(
         in directory: URL = defaultDirectory(),
         clock: Clock = .system
-    ) throws -> LocalDayDoAPI {
+    ) throws -> DeviceStore {
         let db = try AppDatabase.open(at: databaseURL(in: directory))
-        return LocalDayDoAPI(
+        let api = LocalDayDoAPI(
             database: db,
             clock: clock,
             attachmentsDirectory: attachmentsURL(in: directory)
         )
+        return DeviceStore(localAPI: api)
     }
 
     /// Opens an existing, migrated database read-only for extension processes
@@ -71,7 +123,7 @@ public enum DayDoStorage {
     public static func openReadOnly(
         in directory: URL = defaultDirectory(),
         clock: Clock = .system
-    ) throws -> LocalDayDoAPI {
+    ) throws -> any DayDoAPI {
         let db = try AppDatabase.openReadOnly(at: databaseURL(in: directory))
         return LocalDayDoAPI(
             database: db,

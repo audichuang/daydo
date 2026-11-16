@@ -91,16 +91,13 @@ final class AppModelTests: XCTestCase {
     private func makeModel(
         syncEnabled: Bool = false,
         transport: (any SyncTransport)? = nil
-    ) async throws -> (AppModel, LocalDayDoAPI) {
-        let db = try AppDatabase.inMemory()
-        let attachmentsDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let api = LocalDayDoAPI(database: db, attachmentsDirectory: attachmentsDir)
+    ) async throws -> (AppModel, DeviceStore) {
+        let store = try DeviceStore.inMemory()
         if !syncEnabled {
-            try await api.bootstrap()
+            try await store.bootstrap()
         }
         let model = AppModel(
-            api: api,
+            store: store,
             tokenStore: InMemorySyncTokenStore(),
             syncEnabled: syncEnabled,
             transport: transport
@@ -110,12 +107,13 @@ final class AppModelTests: XCTestCase {
         } else {
             await model.reloadData()
         }
-        return (model, api)
+        return (model, store)
     }
 
     func testSelectedTaskRemotelySoftDeletedThenDeleteDoesNotPurge() async throws {
         let transport = RemoteSoftDeleteTransport()
-        let (model, api) = try await makeModel(syncEnabled: true, transport: transport)
+        let (model, store) = try await makeModel(syncEnabled: true, transport: transport)
+        let api = store.api
         let project = try await api.createProject(CreateProjectInput(name: "家庭採買"))
         let task = try await api.createTask(CreateTaskInput(
             projectId: project.id,
@@ -144,9 +142,9 @@ final class AppModelTests: XCTestCase {
         let fetched = try await api.getTask(id: task.id)
         XCTAssertNotNil(fetched.deletedAt, "Task must remain soft-deleted, not purged")
 
-        let pending = try await api.pendingChanges(limit: 1000)
+        let hasPendingPurge = try await store.hasPendingChange(entity: "task", entityId: task.id, op: "delete")
         XCTAssertFalse(
-            pending.contains { $0.entity == "task" && $0.entityId == task.id && $0.op == "delete" },
+            hasPendingPurge,
             "Permanent delete op must not be queued outside Trash"
         )
 
@@ -156,7 +154,8 @@ final class AppModelTests: XCTestCase {
     }
 
     func testPurgeTaskOnlyAllowedInTrashWhenSoftDeleted() async throws {
-        let (model, api) = try await makeModel()
+        let (model, store) = try await makeModel()
+        let api = store.api
         let project = try await api.createProject(CreateProjectInput(name: "家庭採買"))
         let active = try await api.createTask(CreateTaskInput(
             projectId: project.id,

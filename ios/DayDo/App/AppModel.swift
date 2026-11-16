@@ -42,7 +42,8 @@ struct PendingInvitePrompt: Identifiable, Equatable {
 @MainActor
 @Observable
 final class AppModel {
-    let api: LocalDayDoAPI
+    private let store: DeviceStore
+    let api: any DayDoAPI
     let syncEngine: SyncEngine
     let tokenStore: any SyncTokenStore
     let syncEnabled: Bool
@@ -235,20 +236,20 @@ final class AppModel {
     private var didAttemptGoogleAvatarSyncOnLaunch = false
 
     init(
-        api: LocalDayDoAPI,
+        store: DeviceStore,
         tokenStore: any SyncTokenStore = KeychainSyncTokenStore(),
         syncEnabled: Bool = !ProcessInfo.processInfo.arguments.contains("-DayDoSkipLogin"),
         transport: (any SyncTransport)? = nil
     ) {
-        self.api = api
+        self.store = store
+        self.api = store.api
         self.tokenStore = tokenStore
         self.syncEnabled = syncEnabled
         let resolvedTransport: any SyncTransport = transport ?? HTTPSyncTransport(
             baseURL: SyncConfig.baseURL,
             extraHeaders: SyncConfig.accessHeaders()
         )
-        self.syncEngine = SyncEngine(
-            database: api.database,
+        self.syncEngine = store.makeSyncEngine(
             transport: resolvedTransport,
             tokenStore: tokenStore
         )
@@ -262,7 +263,7 @@ final class AppModel {
 
     var accent: AccentTheme { AccentTheme(hex: accentHex) }
     var me: Member? { members.first(where: \.isMe) }
-    var today: LocalDay { api.clock.today }
+    var today: LocalDay { store.today }
     var editableProjects: [Project] { projects.filter { !$0.isViewer } }
 
     func project(_ id: String?) -> Project? { projects.first { $0.id == id } }
@@ -280,9 +281,9 @@ final class AppModel {
 
     func launch() async {
         if !syncEnabled {
-            try? await api.bootstrap()
+            try? await store.bootstrap()
             if ProcessInfo.processInfo.arguments.contains("-DayDoDemo") {
-                try? await DemoData.load(into: api)
+                try? await DemoData.load(into: api, today: today)
             }
             await reloadData()
             isSignedIn = true
@@ -304,7 +305,7 @@ final class AppModel {
                 try? await syncEngine.syncNow()
             }
             if args.contains("-DayDoDemo") {
-                try? await DemoData.load(into: api)
+                try? await DemoData.load(into: api, today: today)
             }
             if args.contains("-DayDoDebugForcedSignOut") {
                 _ = try? await api.createTask(CreateTaskInput(title: "舊帳號未同步任務", start: today.description, allDay: true))
@@ -351,7 +352,7 @@ final class AppModel {
     /// Runs a write, then refreshes lookups, bumps the revision and
     /// reschedules local notifications.
     @discardableResult
-    func perform<T>(_ work: @escaping @Sendable (LocalDayDoAPI) async throws -> T) async -> T? {
+    func perform<T>(_ work: @escaping @Sendable (any DayDoAPI) async throws -> T) async -> T? {
         do {
             let result = try await work(api)
             await didWrite()
@@ -521,8 +522,7 @@ final class AppModel {
     }
 
     func unsyncedChangeCount() async -> Int {
-        let pending = (try? await api.pendingChanges(limit: 10000)) ?? []
-        return pending.filter { $0.entity != "projectInvite" }.count
+        (try? await store.unsyncedChangeCount()) ?? 0
     }
 
     func signOut() async {

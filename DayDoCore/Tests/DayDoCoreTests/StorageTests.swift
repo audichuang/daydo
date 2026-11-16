@@ -31,9 +31,9 @@ import Testing
         let clock = Clock.fixed(noon, timeZone: taipei)
         let createdId: String
         do {
-            let appAPI = try DayDoStorage.openForApp(in: dir, clock: clock)
-            try await appAPI.bootstrap()
-            let task = try await appAPI.createTask(CreateTaskInput(
+            let store = try DayDoStorage.openForApp(in: dir, clock: clock)
+            try await store.bootstrap()
+            let task = try await store.api.createTask(CreateTaskInput(
                 title: "Widget visible task",
                 start: "2026-11-15T09:00:00+0800",
                 timeZone: "Asia/Taipei"
@@ -58,14 +58,31 @@ import Testing
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let appAPI = try DayDoStorage.openForApp(in: dir, clock: .fixed(noon, timeZone: taipei))
-        try await appAPI.bootstrap()
+        let store = try DayDoStorage.openForApp(in: dir, clock: .fixed(noon, timeZone: taipei))
+        try await store.bootstrap()
 
         let readOnlyAPI = try DayDoStorage.openReadOnly(in: dir, clock: .fixed(noon, timeZone: taipei))
         await #expect(throws: Error.self) {
             _ = try await readOnlyAPI.createTask(CreateTaskInput(title: "Should fail"))
         }
-        #expect(try await appAPI.listTasks(TaskQuery()).isEmpty)
+        #expect(try await store.api.listTasks(TaskQuery()).isEmpty)
+    }
+
+    @Test func deviceStoreCountsUnsyncedChangesExcludingProjectInvites() async throws {
+        let store = try DeviceStore.inMemory(clock: .fixed(noon, timeZone: taipei))
+        #expect(store.today == LocalDay(year: 2026, month: 11, day: 15))
+        try await store.bootstrap()
+        let before = try await store.unsyncedChangeCount()
+        #expect(before > 0)
+
+        let project = try await store.api.createProject(CreateProjectInput(name: "Shared"))
+        let afterProject = try await store.unsyncedChangeCount()
+        #expect(afterProject == before + 2) // project + projectMember
+
+        _ = try await store.api.inviteMember(projectId: project.id, email: "a@example.com", role: "editor")
+        #expect(try await store.unsyncedChangeCount() == afterProject)
+        #expect(try await store.hasPendingChange(entity: "projectInvite", entityId: project.id, op: "upsert") == false)
+        #expect(try await store.hasPendingChange(entity: "project", entityId: project.id, op: "upsert") == true)
     }
 
     @Test func readOnlyOpenMissingFileThrowsWithoutCreatingIt() throws {

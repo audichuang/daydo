@@ -30,7 +30,7 @@ public actor SyncEngine {
     public static let signedInUserIdMetaKey = "signedInUserId"
     public static let meAvatarUrlMetaKey = "meAvatarUrl"
 
-    public let database: AppDatabase
+    let database: AppDatabase
     private let transport: any SyncTransport
     private let tokenStore: any SyncTokenStore
     private let clock: Clock
@@ -49,7 +49,7 @@ public actor SyncEngine {
     private let encoder = Outbox.encoder
     private let decoder = JSONDecoder()
 
-    public init(
+    init(
         database: AppDatabase,
         transport: any SyncTransport,
         tokenStore: any SyncTokenStore,
