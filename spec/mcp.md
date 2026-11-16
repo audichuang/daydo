@@ -10,7 +10,7 @@
   - 這個主機名不放 Cloudflare Access。
   - `daydo-api.audichuang.app` 維持原本的 Access。
 - OAuth 2.1：DCR、PKCE（S256）、JWT access token，每次都發 refresh token。
-  - `/authorize` 讓使用者用 DayDo 帳號登入，方式是 Google 網頁登入或 Sign in with Apple JS，登入後再按同意。
+  - `/authorize` 讓使用者用 DayDo 帳號登入，方式是 Google 網頁登入、Sign in with Apple JS 或信箱驗證碼，登入後再按同意。
 - 登入身分只對應既有的 `identity(provider, sub) → userId`，**不建立新帳號**。
 - MCP 工具沿用 REF `src/tools.ts` 的名稱與欄位，只搬 DayDo 有資料的工具（見第 8 節）。
 - ICS 行事曆訂閱：
@@ -99,6 +99,7 @@ server/
 
 | 表 | 欄位重點 |
 |---|---|
+| `emailCode` | `id`、`email`（小寫去空白）、`codeHash`（`SHA-256(code + salt)`）、`salt`、`attempts`、`createdAt`、`expiresAt`（10 分鐘）、`usedAt`、`pendingId`（MCP 授權頁發的碼綁定的 pending，App 登入為 null）、`ipHash`（限速用） |
 | `oauthClient` | `clientId`（`mcp-` 加隨機 base64url）、`clientName`、`redirectUris`（JSON）、`ipHash`（DCR 限速用）、`createdAt` |
 | `oauthPending` | `id`（32 bytes 隨機值，兼作給 Google／Apple 的 `state`）、`clientId`、`redirectUri`、`codeChallenge`、`scope`、`clientState`、`resource`、`bindHash`、`provider`、`nonce`（raw）、`userId`（callback 驗過後才填）、`consentTokenHash`、`createdAt`、`expiresAt`（10 分鐘）、`consumedAt`、`ipHash`（`/authorize` 限速用，可為 null） |
 | `oauthCode` | `codeHash`（主鍵）、`clientId`、`redirectUri`、`codeChallenge`、`scope`、`resource`、`userId`、`familyId`、`expiresAt`（120 秒）、`usedAt` |
@@ -153,7 +154,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
      - `redirect_uri` **精確等於**註冊值之一。
      - `resource`（可省略）滿足 `new URL(resource).origin === origin`。
    - 不符時顯示錯誤頁，**不**導回 `redirect_uri`，避免 open redirect。
-   - 通過後建立 `oauthPending`，設綁定 cookie，頁面顯示 Google 與 Apple 兩個按鈕。
+   - 通過後建立 `oauthPending`，設綁定 cookie，頁面顯示 Google、Apple 兩個按鈕與第三個選項「信箱」（見下方「信箱驗證碼」）。
    - 按鈕連到 `/authorize/start?pending=<id>&provider=…`。這是一支 GET，比對 cookie、把 provider 寫進 pending，再 302 到 provider；路徑在 `/authorize/` 底下。
 2. **Google**
    - 導向 `GOOGLE_AUTH_URL`（預設 `https://accounts.google.com/o/oauth2/v2/auth`），參數：
@@ -180,9 +181,14 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
      3. 帶 `error`（例如 `user_cancelled_authorize`）時與 Google 相同處理：顯示錯誤，不消耗 pending。
      4. 用既有的 `verifyAppleToken` 驗證，參數為 `audience=APPLE_WEB_AUDIENCE`、`nonce=rawNonce`。它比對 `payload.nonce === sha256Hex(raw)`，可以直接重用。
      5. 丟棄 `code`（沒有 client secret 可以換）。
+3b. **信箱驗證碼（第三個選項）**
+   - 使用者輸入信箱 → `POST /authorize/email/start`（帶 pending id，比對綁定 cookie；路徑在 `/authorize/` 底下）→ 寄碼並顯示輸入驗證碼的頁面 → `POST /authorize/email/verify`（pending id、email、code，同樣比對 cookie）。
+   - 限速與碼規則與 `spec/sync.md` 的信箱登入相同（碼 6 位、10 分鐘、一次性、每碼猜錯 5 次；每信箱 5 次／小時、每 IP 20 次／小時，與 App 共用額度，超過仍顯示「已寄出」但不寄信並記 log；同信箱 24 小時內兩種流程合計猜錯 10 次即鎖定，鎖定時 start 同樣顯示「已寄出」但不寄信，verify 顯示錯碼訊息）。碼綁定該 pending，不能拿來完成別的 pending，App 也不能用；新 start 只作廢同一個 pending 的舊碼，不影響 App 的碼與其他 pending 的碼。
+   - verify 成功後只做「綁定既有使用者」：查 `identity('email', <信箱>)`，找不到時顯示與 Google／Apple 相同的未知身分錯誤頁（**公開的 MCP 主機不註冊帳號**，使用者要先在 API 側用信箱登入建立帳號或用其他方式登入）；找到時接上下一步的條件式 UPDATE 與 consent token，之後與其他 provider 完全相同。
+   - `oauth.authorize` 的 log 結果沿用既有分類，信箱路徑的驗證碼錯誤記為 `provider_error`；log 不記驗證碼。
 4. **身分對應**
    - 只讀查詢 `SELECT userId FROM identity WHERE provider=? AND sub=?`。
-   - 找不到時顯示「這個 Google／Apple 帳號還沒有 DayDo 帳號，請先在 DayDo App 用同一個帳號登入一次」。**不建立帳號，也不呼叫 `createSessionForIdentity`。**
+   - 找不到時顯示「這個 Google／Apple／信箱帳號還沒有 DayDo 帳號，請先在 DayDo App 用同一個帳號登入一次」。**不建立帳號，也不呼叫 `createSessionForIdentity`。**
    - 找到時，用條件式 UPDATE（`userId IS NULL AND consumedAt IS NULL`）把 `userId` 寫回 pending，並產生一次性 consent token（D1 存雜湊）。之後 303 到 `GET /authorize?pending=<id>&ct=<consent token>`。
 5. **同意頁（`GET /authorize?pending=…&ct=…`）**
    - 比對 cookie、consent token，並確認 pending 已綁定 `userId`。
@@ -259,6 +265,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 
 - 由 ICS 的 5 分鐘 cron 在每個 UTC 整點後的第一輪執行（`scheduledTime` 落在整點後 5 分鐘內），每張表每次最多刪 500 列，用 `DELETE … WHERE pk IN (SELECT … LIMIT 500)`。
 - 刪除條件：
+  - `emailCode`：`expiresAt` 早於 1 天前（`EMAIL_CODE_RETENTION_MS` 取自跨碼鎖定的 24 小時窗，發出未滿 24 小時的列都留著）。
   - `oauthPending`：`expiresAt` 早於 1 天前。
   - `oauthCode`：`expiresAt` 早於 1 天前。
   - `oauthRefresh`：`expiresAt` 早於 30 天前。每一列都在發出後 30 天內到期，所以已撤銷的列也涵蓋在內；只看到期時間是為了讓撤銷過的列多留 30 天，期間重送舊 token 仍會撤銷整個 family。
@@ -544,10 +551,13 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 | `APPLE_WEB_AUDIENCE` | 預設 `com.audichuang.daydo.web` | Services ID |
 | `APPLE_AUTH_URL` | 預設官方網址 | e2e 覆寫 |
 | `DEFAULT_TIMEZONE` | 預設 `Asia/Taipei` | ICS 浮動時間、時區推斷、重複任務補進度的「今天」 |
+| `EMAIL` | Cloudflare Email Service `send_email` binding | 寄驗證碼，寄件人 `DayDo <no-reply@audichuang.app>`；開發建置改用可注入的記憶體 mailer，沒有此 binding 時 start 仍回 202 但不寄信並記 log |
 | `ICS_ALLOW_INSECURE_HOSTS` | optional，只在開發建置有效 | e2e 抓本機 fixture |
 
 - `JWT_SECRET` 沿用；MCP 的 access 金鑰與 refresh 金鑰都由它經 HKDF 衍生。
-- 正式環境唯一新增的 secret 是 `GOOGLE_WEB_CLIENT_SECRET`。
+- 正式環境唯一新增的 secret 是 `GOOGLE_WEB_CLIENT_SECRET`；信箱登入只新增 `EMAIL` binding，不是 secret。
+
+**E1 spike 結果（Void 1.8.0，`EMAIL` binding）**：Void 的 `CloudflareConfig` 型別有 `send_email`，`void.config.ts` 的 `cloudflare.send_email: [{ name: 'EMAIL' }]` 會原樣帶進 `vite build` 產物：`dist/ssr/wrangler.json` 有 `send_email`，`.cloudflare/output/v0/workers/default/worker.config.json` 的 `env.EMAIL` 是 `{type: 'send-email'}`；`void prepare` 也自動產生 `.void/bindings.d.ts`，讓 `c.env.EMAIL` 的型別是 `SendEmail`，`env.ts` 不用改。不需要退回 REST API。Void 內建的 `void/email` 的 `sendEmail` 讀的是名為 `SEND_EMAIL` 的 binding，所以不用它，由 `src/mail/mailer.ts` 直接呼叫 `env.EMAIL.send({from, to, subject, text, html})`（寄件人用物件形式 `{name:'DayDo', email:'no-reply@audichuang.app'}`）；`send` 不 throw，失敗只記 `mail.send` 與 Cloudflare 的錯誤代碼（`E_*`），不記主旨與內文。開發建置一律用模組層級的記憶體 mailer（每個收件人留最後一封），Void dev server 是單一 isolate，`npm run e2e` 驗證了一個請求寄出的信，下一個請求能從 `GET /test/mail?to=` 讀到。正式建置不含 `/test/mail`。實際寄送沒有測過：寄給任意收件人需要 Workers Paid，且寄件網域 `audichuang.app` 要先完成 Email Sending 的設定（SPF／DKIM），這是部署前的前置作業。另外 dev server 與 `vite build` 會依設定改寫 `void.lock.json` 的 `send_email`，部署時一起 commit。
 
 ## 11. 測試策略
 
@@ -596,6 +606,8 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 - 在同一份來源中重新定義重複系列（改 FREQ、BYDAY、DTSTART，或單一事件改成重複）時，ICS 不寫入該 UID，每輪記一次錯誤，需要人工處理；同一來源的其他事件照常同步。只改結尾時刪掉的 slot 會移到垃圾桶。
 - ICS 任務被移到使用者看不到的清單時，該 mapping 每輪記一次錯誤，不重建。
 - ICS 的 `CATEGORIES` 不轉成標籤。
+- iOS App 還沒有信箱登入畫面；信箱驗證碼只能經 API 與 MCP 授權頁使用，且同信箱不會與 Google／Apple 帳號合併。
+- 知道某人信箱的人可以故意用完他每小時的寄碼額度，或猜錯 10 次觸發 24 小時鎖定（阻斷服務，不會登入他的帳號）。
 
 ## 13. 合併後手動步驟（不在票內）
 

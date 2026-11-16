@@ -7,16 +7,21 @@ import {
   GOOGLE_WEB_CLIENT_ID,
   GOOGLE_WEB_CLIENT_SECRET,
   WEB_APPLE_AUDIENCE,
+  appEmailLogin,
   appLogin,
   appleCallback,
+  approveConsent,
   authorizeWithApple,
   beginAuthorize,
   callTool,
   countUsers,
+  emailAuthorizeStart,
+  emailAuthorizeVerify,
   googleCallback,
   mcpRpc,
   postJson,
   pullOwnScope,
+  readMailCode,
   registerClient,
   seedMemberAndInbox,
   startDevServer,
@@ -42,7 +47,7 @@ async function hostGate({ apiBase, mcpBase }) {
   assert.deepEqual(body.authorization_servers, [mcpBase]);
 
   // MCP paths are 404 on the API host.
-  for (const p of ['/', '/register', '/token', '/authorize', '/authorize/start', '/.well-known/oauth-authorization-server', '/.well-known/oauth-protected-resource']) {
+  for (const p of ['/', '/register', '/token', '/authorize', '/authorize/start', '/authorize/email/start', '/authorize/email/verify', '/.well-known/oauth-authorization-server', '/.well-known/oauth-protected-resource']) {
     const res = await fetch(`${apiBase}${p}`, { redirect: 'manual' });
     assert.equal(res.status, 404, `API host ${p} should be 404, got ${res.status}`);
   }
@@ -232,6 +237,64 @@ async function main() {
       assert.match(exchanged.text, /無法驗證登入結果/);
     }
     console.log('e2e-mcp: Google path passed');
+
+    // Email path: sign up with an email code on the API host, then authorize on the MCP host with
+    // an email code (wrong code first, then the right one) → consent → token → tools/list.
+    {
+      const email = `mcp-email-${randomUUID()}@example.com`;
+      const usersBefore = countUsers(env);
+      const login = await appEmailLogin(apiBase, email);
+      assert.equal(login.isNewAccount, true);
+      assert.equal(countUsers(env), usersBefore + 1);
+      const { inboxId: emailInbox } = await seedMemberAndInbox(apiBase, login);
+
+      const attempt = await beginAuthorize(mcpBase, { clientId, redirectUri: REDIRECT_URI });
+      const noCookie = await emailAuthorizeStart(mcpBase, attempt, email, { withCookie: false });
+      assert.equal(noCookie.status, 400, noCookie.text);
+      assert.match(noCookie.text, /同一個瀏覽器/);
+
+      const started = await emailAuthorizeStart(mcpBase, attempt, email.toUpperCase());
+      assert.equal(started.status, 200, started.text);
+      assert.match(started.text, /驗證碼已寄出/);
+      assert.match(started.text, /action="\/authorize\/email\/verify"/);
+      const code = await readMailCode(apiBase, email);
+
+      const wrong = await emailAuthorizeVerify(mcpBase, attempt, email, code === '000000' ? '111111' : '000000');
+      assert.equal(wrong.status, 400, wrong.text);
+      assert.match(wrong.text, /驗證碼錯誤/);
+
+      const verified = await emailAuthorizeVerify(mcpBase, attempt, email, code);
+      assert.equal(verified.status, 303, verified.text);
+      const authCode = await approveConsent(mcpBase, attempt, verified.location, REDIRECT_URI);
+      const token = await tokenRequest(mcpBase, {
+        grant_type: 'authorization_code',
+        code: authCode,
+        code_verifier: attempt.verifier,
+        redirect_uri: REDIRECT_URI,
+        client_id: clientId,
+      });
+      assert.equal(token.status, 200, JSON.stringify(token.data));
+      const emailList = await mcpRpc(mcpBase, token.data.access_token, 'tools/list');
+      assert.equal(emailList.status, 200, JSON.stringify(emailList.data));
+      assert(emailList.data.result.tools.some((t) => t.name === 'create_task'));
+
+      const emailTitle = `MCP email e2e ${randomUUID()}`;
+      const emailTask = await callTool(mcpBase, token.data.access_token, 'create_task', { project_id: emailInbox, title: emailTitle });
+      assert.notEqual(emailTask.isError, true, toolText(emailTask));
+      const rows = await pullOwnScope(apiBase, login);
+      assert(rows.some((r) => r.entity === 'task' && r.row?.title === emailTitle), 'email user did not pull the MCP task');
+
+      // An address without a DayDo account: the code works but no account is bound or created.
+      const before = countUsers(env);
+      const stranger = `mcp-email-unknown-${randomUUID()}@example.com`;
+      const unknownAttempt = await beginAuthorize(mcpBase, { clientId, redirectUri: REDIRECT_URI });
+      assert.equal((await emailAuthorizeStart(mcpBase, unknownAttempt, stranger)).status, 200);
+      const unknown = await emailAuthorizeVerify(mcpBase, unknownAttempt, stranger, await readMailCode(apiBase, stranger));
+      assert.equal(unknown.status, 403, unknown.text);
+      assert.match(unknown.text, /還沒有 DayDo 帳號/);
+      assert.equal(countUsers(env), before, 'MCP email authorize must not create a user');
+    }
+    console.log('e2e-mcp: email path passed');
 
     // An App account that never synced: OAuth works, create_task is a tool error.
     {

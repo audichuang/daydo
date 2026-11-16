@@ -14,6 +14,8 @@ const MCP_PATHS = [
   '/authorize/start',
   '/authorize/google/callback',
   '/authorize/apple/callback',
+  '/authorize/email/start',
+  '/authorize/email/verify',
   '/.well-known/oauth-authorization-server',
   '/.well-known/oauth-protected-resource',
 ];
@@ -22,6 +24,8 @@ const NON_MCP_PATHS = [
   '/health',
   '/sync/pull',
   '/auth/apple',
+  '/auth/email/start',
+  '/auth/email/verify',
   '/authorizeX',
   '/registerx',
   '/token/x',

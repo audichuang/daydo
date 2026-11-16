@@ -24,3 +24,4 @@
 - `src/domain/`：從 Swift 移植的規則（重複、提醒、排程、sortKey、標籤、uuid），以 `spec/fixtures` 的向量測試，行為要和 Swift 一致，改一邊就要改另一邊。
 - `src/ics/` 與 `crons/ics-sync.ts`：ICS 訂閱同步，cron 每 5 分鐘一輪；cron 內可用 `createDb`、`Scope.get`、`env`。
 - 正式環境新增的 secret 只有 `GOOGLE_WEB_CLIENT_SECRET`（1Password `Agent` vault「DayDo Google Web OAuth client (MCP)」）；Access 不動。MCP 的部署與合併後手動步驟在 `README.md`「MCP Server」。
+- 部署後或改了 auth／sync／OAuth／MCP 工具，要在正式環境證明行為時用 `.claude/skills/verify/`（信箱註冊、灌資料、`claude mcp login`、`claude -p` 斷言）；測試帳號 `pokemongo030501@gmail.com` 的 Gmail 在 ego-browser 第 8 個帳號。

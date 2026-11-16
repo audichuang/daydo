@@ -311,7 +311,80 @@ async function main() {
     const authData = await authRes.json();
     assert.equal(authData.userId, appleLogin1.data.user.id);
 
-    console.log('e2e: all 7 auth & session assertions passed');
+    // 8. Dev mailer: a message sent in one request is readable from the next (single isolate)
+    const mailTo = `e2e-${randomUUID()}@example.com`;
+    const sentMail = await postJson(baseUrl, '/test/mail', { to: mailTo, code: '135790' });
+    assert.equal(sentMail.status, 200);
+    assert.deepEqual(sentMail.data, { ok: true });
+    const readMail = await fetch(`${baseUrl}/test/mail?to=${encodeURIComponent(mailTo.toUpperCase())}`);
+    assert.equal(readMail.status, 200);
+    const mailBody = await readMail.json();
+    assert.equal(mailBody.to, mailTo);
+    assert.equal(mailBody.subject, '你的 DayDo 驗證碼');
+    assert.equal(mailBody.code, '135790');
+    assert.match(mailBody.html, /135790/);
+    const noMail = await fetch(`${baseUrl}/test/mail?to=${encodeURIComponent(`none-${mailTo}`)}`);
+    assert.equal(noMail.status, 404);
+
+    // 9. Email sign-in code: sign-up, then login as the same user; the code is read through the
+    // dev mail route. A random CF-Connecting-IP keeps reruns clear of the per-IP hourly limit.
+    const emailIp = `198.51.100.${1 + Math.floor(Math.random() * 254)}-${randomUUID()}`;
+    const postEmail = async (routePath, body) => {
+      const res = await fetch(`${baseUrl}${routePath}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': emailIp },
+        body: JSON.stringify(body),
+      });
+      return { status: res.status, data: await res.json().catch(() => null) };
+    };
+    const readCode = async (address) => {
+      const res = await fetch(`${baseUrl}/test/mail?to=${encodeURIComponent(address)}`);
+      assert.equal(res.status, 200, `no mail for ${address}`);
+      const { code } = await res.json();
+      assert.match(code, /^\d{6}$/);
+      return code;
+    };
+    // Same address as the Apple and Google identities above: email accounts are never merged.
+    const emailAddress = sharedEmail;
+    const badStart = await postEmail('/auth/email/start', { email: 'not-an-email', deviceId });
+    assert.equal(badStart.status, 400);
+
+    const emailStart1 = await postEmail('/auth/email/start', { email: `  ${emailAddress.toUpperCase()} `, deviceId });
+    assert.equal(emailStart1.status, 202);
+    assert.deepEqual(emailStart1.data, { sent: true });
+    const emailCode1 = await readCode(emailAddress);
+    const wrongCode = emailCode1 === '000000' ? '111111' : '000000';
+    const emailWrong = await postEmail('/auth/email/verify', { email: emailAddress, code: wrongCode, deviceId });
+    assert.equal(emailWrong.status, 401);
+
+    const emailSignUp = await postEmail('/auth/email/verify', { email: emailAddress, code: emailCode1, deviceId });
+    assert.equal(emailSignUp.status, 200, `email verify failed: ${JSON.stringify(emailSignUp.data)}`);
+    assert.deepEqual(Object.keys(emailSignUp.data).sort(), Object.keys(googleLogin.data).sort());
+    assert.equal(emailSignUp.data.isNewAccount, true);
+    assert.equal(emailSignUp.data.hasData, false);
+    assert.notEqual(emailSignUp.data.user.id, appleLogin1.data.user.id);
+    assert.notEqual(emailSignUp.data.user.id, googleLogin.data.user.id);
+
+    const emailReuse = await postEmail('/auth/email/verify', { email: emailAddress, code: emailCode1, deviceId });
+    assert.equal(emailReuse.status, 401);
+    assert.deepEqual(emailReuse.data, emailWrong.data);
+
+    const emailStart2 = await postEmail('/auth/email/start', { email: emailAddress, deviceId });
+    assert.equal(emailStart2.status, 202);
+    const emailLogin = await postEmail('/auth/email/verify', { email: emailAddress, code: await readCode(emailAddress), deviceId });
+    assert.equal(emailLogin.status, 200);
+    assert.equal(emailLogin.data.isNewAccount, false);
+    assert.equal(emailLogin.data.user.id, emailSignUp.data.user.id);
+
+    const emailAuthed = await fetch(`${baseUrl}/test/protected`, {
+      headers: { Authorization: `Bearer ${emailLogin.data.accessToken}` },
+    });
+    assert.equal(emailAuthed.status, 200);
+    assert.equal((await emailAuthed.json()).userId, emailSignUp.data.user.id);
+    const emailRefreshed = await postJson(baseUrl, '/auth/refresh', { refreshToken: emailLogin.data.refreshToken });
+    assert.equal(emailRefreshed.status, 200);
+
+    console.log('e2e: all 9 auth & session assertions passed');
   } finally {
     process.off('SIGINT', cleanup);
     process.off('SIGTERM', cleanup);

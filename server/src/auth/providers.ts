@@ -1,10 +1,14 @@
 import { createRemoteJWKSet, jwtVerify, type CryptoKey, type JWTVerifyGetKey, type JWTVerifyOptions } from 'jose';
 import { sha256Hex } from './crypto';
 
+/** Providers that sign in with an identity token (App and MCP web sign-in buttons). */
 export type ProviderName = 'apple' | 'google';
 
+/** Every `identity.provider` value: the token providers plus email sign-in codes. */
+export type IdentityProviderName = ProviderName | 'email';
+
 export interface VerifiedIdentity {
-  provider: ProviderName;
+  provider: IdentityProviderName;
   sub: string;
   email: string | null;
   avatarUrl?: string | null;

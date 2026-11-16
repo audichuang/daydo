@@ -1,9 +1,10 @@
-import { oauthCode, oauthPending, oauthRefresh } from '@schema';
+import { emailCode, oauthCode, oauthPending, oauthRefresh } from '@schema';
 import { inArray, lt } from 'void/db';
+import { EMAIL_LOCKOUT_WINDOW_MS } from '../auth/email';
 import type { DatabaseClient } from '../auth/session';
 import { logEvent } from '../mcp/log';
 
-// Purges expired OAuth rows (spec/mcp.md 4.8). Runs from the 5-minute ICS cron on the first
+// Purges expired OAuth and email sign-in code rows (spec/mcp.md 4.8). Runs from the 5-minute ICS cron on the first
 // tick of each UTC hour. oauthClient rows are kept: once pending/code/refresh rows are gone,
 // an unused client cannot be told apart from one used long ago, and deleting a live client
 // would break its reconnection.
@@ -11,6 +12,9 @@ import { logEvent } from '../mcp/log';
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const PENDING_RETENTION_MS = DAY_MS;
 export const CODE_RETENTION_MS = DAY_MS;
+// The per-address lockout sums attempts over codes issued in the last 24 hours. A code expires
+// after it is issued, so keying on expiry with the same window keeps every row the sum still needs.
+export const EMAIL_CODE_RETENTION_MS = EMAIL_LOCKOUT_WINDOW_MS;
 // Keyed on expiry only: every row expires within 30 days of issue, and a revoked row must
 // outlive its expiry so a replayed old token still revokes its family.
 export const REFRESH_RETENTION_MS = 30 * DAY_MS;
@@ -21,6 +25,7 @@ export interface CleanupCounts {
   pending: number;
   code: number;
   refresh: number;
+  emailCode: number;
 }
 
 /** Deletes at most `batch` rows per table past their retention; returns how many went. */
@@ -69,7 +74,20 @@ export async function cleanupExpiredOAuth(
       ),
     )
     .returning({ id: oauthRefresh.refreshHash });
-  return { pending: pending.length, code: code.length, refresh: refresh.length };
+  const emailCodes = await database
+    .delete(emailCode)
+    .where(
+      inArray(
+        emailCode.id,
+        database
+          .select({ id: emailCode.id })
+          .from(emailCode)
+          .where(lt(emailCode.expiresAt, now - EMAIL_CODE_RETENTION_MS))
+          .limit(batch),
+      ),
+    )
+    .returning({ id: emailCode.id });
+  return { pending: pending.length, code: code.length, refresh: refresh.length, emailCode: emailCodes.length };
 }
 
 /** True on the first 5-minute tick of a UTC hour. */

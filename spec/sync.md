@@ -6,7 +6,7 @@
 
 | 主題 | 決定 |
 |---|---|
-| 登入 | Sign in with Apple＋Google，**必須登入才能使用** App。Google iOS client：`710830841029-g836eiphrs51fm45f9fgtleg95foohv0.apps.googleusercontent.com`（Google Cloud 專案 `daydo-514804`，測試模式，測試使用者要加進名單）。 |
+| 登入 | Sign in with Apple＋Google＋信箱驗證碼（passwordless），**必須登入才能使用** App。Google iOS client：`710830841029-g836eiphrs51fm45f9fgtleg95foohv0.apps.googleusercontent.com`（Google Cloud 專案 `daydo-514804`，測試模式，測試使用者要加進名單）。 |
 | 衝突 | 同一欄位以修改時間決定，後改的贏；時間用 HLC。**伺服器合併後的資料列是唯一正確答案**，App 一律照它覆蓋（只保留本機未送出且較新的欄位）。 |
 | 時鐘 | 伺服器把快 5 分鐘以上的 HLC 校正成伺服器時間；push 回應帶 `serverTime`，App 用它推進自己的 HLC，同一台裝置的修改不會被自己蓋掉。 |
 | 多人架構 | 以服務多人為前提：每個使用者一個 Durable Object（**範圍**），存在 DO 自帶的 SQLite。每筆資料永遠住在**建立它的人**的範圍（子項目、附件、留言住在所屬任務的範圍），「在哪份清單」只是資料上的欄位：移進別人建立的共享清單也只是改欄位，資料不搬家。共享、轉移擁有者只改 D1 的權限。看一份共享清單時，從每個存有它資料的範圍各拿一部分。pull 每個範圍各一個游標。（原本寫「每份共享清單一個 DO」，後來改成「清單住在建立者範圍」，兩者都會在移動任務時跨 DO 搬資料、中間有空檔，2026-11-15 使用者同意改成資料不搬家。） |
@@ -69,6 +69,8 @@
 
 ## 已知限制（正常使用不會碰到，先不處理）
 
+- iOS App 還沒有信箱登入畫面；信箱驗證碼目前只能透過 API 與 MCP 授權頁使用。
+- 知道某人信箱的人可以故意用完他每小時 5 次的寄碼額度，或猜錯 10 次觸發 24 小時鎖定，讓他暫時無法用信箱登入（阻斷服務，不會因此登入他的帳號）；Google／Apple 登入不受影響。
 - 同一個子項目 id 同時指向兩個不同任務、兩個請求又同時送出時，路由可能被清掉（需異常 client）。
 - 共享清單的 editor 能把清單的 `isInbox` 改成 true（App 不會這樣送）。
 - 兩台舊版手機在同一瞬間第一次登入，可能各自上傳一個收件匣。
@@ -153,11 +155,18 @@
 
 - **Apple**：App 用 `ASAuthorizationAppleIDProvider` 取得 `identityToken`（帶 nonce）。Worker 用 Apple JWKS 驗證：`iss = https://appleid.apple.com`、`aud = com.audichuang.daydo`、nonce 雜湊相符。
 - **Google**：App 用 GoogleSignIn SDK 取得 `idToken`。Worker 用 Google JWKS 驗證：`iss` 是 `accounts.google.com` 或 `https://accounts.google.com`，`aud` 等於 iOS OAuth client id。
+- **信箱驗證碼**：不用密碼。`POST /auth/email/start` 寄 6 位數驗證碼，`POST /auth/email/verify` 驗證後發 token；第一次驗證成功時建立 user 與 identity（註冊 = 驗證）。身分為 `('email', <小寫並去頭尾空白的信箱>)`，**不與同信箱的 Google／Apple 帳號自動合併**（沿用下一條規則）。
+  - 驗證碼：6 位數字、10 分鐘有效、一次性（條件式 UPDATE 消耗）；D1 只存 `SHA-256(code + 該列的 salt)`，不存明碼；每組碼最多猜錯 5 次，超過即作廢（`attempts` 只記猜錯，猜對不算）；重新 start 只讓同一流程的舊碼失效：App 登入（`pendingId` 為 null）只作廢該信箱的 App 碼，MCP 授權頁只作廢同一個 pending 的碼；verify 只接受自己流程的碼（App 只認 `pendingId` 為 null 的碼，MCP 只認該 pending 的碼）。表為 `emailCode`。
+  - 限速：每個信箱每小時最多 5 次 start；每個來源 IP（`CF-Connecting-IP`，IPv6 取 /64）每小時最多 20 次 start（App 與 MCP 授權頁共用這兩個額度）。超過上限仍回 202 但不寄信（只記 log）。
+  - 跨碼鎖定：同一信箱在 24 小時內發出的碼（兩種流程合計）累計猜錯 10 次就鎖定，不另加欄位，直接加總 `emailCode.attempts`。鎖定期間 start 仍回 202（MCP 頁仍顯示「已寄出」）但不寄信、不建碼，log 記 `locked`；verify 一律回與錯碼相同的 401（MCP 頁顯示同樣的錯碼訊息），即使碼正確也不消耗。猜錯次數的檢查與扣次數在同一個條件式 UPDATE 內，並發猜測無法超過上限。那些碼發出滿 24 小時後自動解除。
+  - `start` 一律回 `202 {sent:true}`，不透露該信箱是否已有帳號。
+  - 信件：Cloudflare Email Service 的 `send_email` binding（名稱 `EMAIL`），寄件人 `DayDo <no-reply@audichuang.app>`，主旨「你的 DayDo 驗證碼」，純文字與 HTML 兩份，內含驗證碼與「10 分鐘內有效」的說明。開發建置使用可注入的記憶體 mailer，並提供僅開發建置掛上的路由（`routes/test/*.dev.ts`）讀取某信箱最後一組碼；正式環境不記驗證碼。
+  - 過期的 `emailCode` 列由既有的每小時 OAuth 清理一併刪除，保留到過期後 24 小時，跨碼鎖定要加總的列都還在。
 - 帳號用 `(provider, sub)` 識別，不用 email 自動合併帳號：Apple 可能給隱藏的轉寄 email。要讓兩種登入方式共用同一個帳號，登入後在設定裡手動連結。
 - Worker 自己發 token：access token 為 JWT，1 小時；refresh token 90 天，每次使用就換一組新的，D1 只存雜湊值。
 - **refresh 寬限期**：正常換發後 10 分鐘內且後繼 token 尚未被使用時，以舊 refresh token 重試視為遺失回應重試，撤銷該未使用的後繼 token 並換發新的一組；其餘重複使用撤銷整條 session 鏈並回 401。
 - 登入與 refresh 回應另帶 `hasData`（伺服器上已經有這個使用者的收件匣，等同 `inboxProjectId` 不是 null）、`meMemberId`（綁定的「我」，還沒有就是 null）、`inboxProjectId`（自己範圍裡的收件匣，還沒有就是 null）、`avatarUrl`（D1 `user.avatarUrl`，可為 null）。App 依「已定的決策」的第一次登入規則處理。
-- **網頁登入（MCP 授權頁）**：Google 用網頁 client（`GOOGLE_WEB_CLIENT_ID`／`GOOGLE_WEB_CLIENT_SECRET`），Apple 用 Services ID `com.audichuang.daydo.web`；帳號仍以 `(provider, sub)` 識別，與 App 登入是同一個帳號。細節見 `spec/mcp.md`。
+- **網頁登入（MCP 授權頁）**：Google 用網頁 client（`GOOGLE_WEB_CLIENT_ID`／`GOOGLE_WEB_CLIENT_SECRET`），Apple 用 Services ID `com.audichuang.daydo.web`，另有信箱驗證碼（只綁定既有帳號，不註冊）；帳號仍以 `(provider, sub)` 識別，與 App 登入是同一個帳號。細節見 `spec/mcp.md`。
 - **Cloudflare Access**：正式環境每個請求都要通過 Access（App 帶 service token），Worker 再驗 `Cf-Access-Jwt-Assertion`（簽章、`aud` 等於 Access 應用程式的 AUD）。本機開發與 e2e 用環境變數關掉這一層，只在開發建置有效。
 - App Store 規定：可以建立帳號的 App 必須能在 App 裡刪除帳號。刪除時要一併撤銷 Apple 的授權（需要 authorization code 和 client secret）。
 
@@ -167,6 +176,8 @@
 |---|---|---|
 | POST | `/auth/apple` | `{identityToken, nonce, deviceId}` → `{accessToken, refreshToken, user, isNewAccount, hasData, meMemberId, inboxProjectId, avatarUrl}` |
 | POST | `/auth/google` | `{idToken, deviceId}` → 同上 |
+| POST | `/auth/email/start` | `{email, deviceId}` → `202 {sent:true}`（一律回 202，不透露帳號是否存在；超過限速也回 202 但不寄信） |
+| POST | `/auth/email/verify` | `{email, code, deviceId}` → 與 `/auth/google` 相同形狀：`{accessToken, refreshToken, user, isNewAccount, hasData, meMemberId, inboxProjectId, avatarUrl}`；第一次成功時建立帳號；碼錯、過期、已用、超過 5 次一律 401 同一種錯誤 |
 | POST | `/auth/refresh` | `{refreshToken}` → `{accessToken, refreshToken, hasData, meMemberId, inboxProjectId, avatarUrl}` |
 | PUT | `/me/avatar` | `{avatarUrl}`（限 `https:` 且 host 為 `googleusercontent.com`、最多 2048 字元）→ `{avatarUrl}`，更新 D1 `user.avatarUrl` |
 | POST | `/auth/link` | 已登入時連結另一種登入方式（之後做） |

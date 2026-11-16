@@ -1,11 +1,14 @@
 import { identity, oauthClient, oauthPending, user } from '@schema';
 import { and, count, eq, gt, isNotNull, isNull } from 'void/db';
 import { sha256Hex } from '../auth/crypto';
+import { normalizeEmail, startEmailCode, verifyEmailCode } from '../auth/email';
 import { AuthVerificationError, verifyAppleToken, type ProviderName, type VerifiedIdentity } from '../auth/providers';
 import type { DatabaseClient } from '../auth/session';
+import type { Mailer } from '../mail/mailer';
+import { logEvent } from '../mcp/log';
 import { createAuthorizationCode } from './codes';
 import { SCOPES, requestOrigin } from './metadata';
-import { consentPage, errorPage, loginPage } from './pages';
+import { consentPage, emailCodePage, errorPage, loginPage } from './pages';
 import { ipRateKey } from './register';
 import { randomB64url } from './tokens';
 import {
@@ -18,8 +21,8 @@ import {
 } from './webIdentity';
 
 // OAuth 2.1 authorization endpoint (spec/mcp.md 4.4). The browser that starts the flow gets
-// a random bind cookie named after the pending (D1 stores its hash); both callbacks, the consent page and the consent
-// POST compare it, so the browser that signs in must be the browser that started.
+// a random bind cookie named after the pending (D1 stores its hash); both callbacks, both email steps, the consent
+// page and the consent POST compare it, so the browser that signs in must be the browser that started.
 
 const BIND_COOKIE_PREFIX = 'daydo_oauth_bind_';
 const BIND_COOKIE_ID_LENGTH = 16;
@@ -47,7 +50,9 @@ const MESSAGES = {
   wrongBrowser: '請在開始授權的同一個瀏覽器繼續。',
   cancelled: '登入已取消，請重新開始：可以再按一次登入按鈕。',
   providerError: '無法驗證登入結果，請再試一次。',
-  unknownIdentity: '這個 Google／Apple 帳號還沒有 DayDo 帳號，請先在 DayDo App 用同一個帳號登入一次。',
+  unknownIdentity: '這個 Google／Apple／信箱帳號還沒有 DayDo 帳號，請先在 DayDo App 用同一個帳號登入一次。',
+  invalidEmail: '請輸入有效的信箱地址。',
+  wrongCode: '驗證碼錯誤或已失效，請再試一次，或重新寄送驗證碼。',
   tooManyRequests: '這個網路位址開始的授權次數太多，請稍後再試。',
 } as const;
 
@@ -208,6 +213,7 @@ async function beginAuthorization(request: Request, deps: AuthorizeDeps, now: nu
         ? `/authorize/start?pending=${encodeURIComponent(pendingId)}&provider=${provider}`
         : null,
     })),
+    pendingId,
     setCookie: bindCookieHeader(pendingId, bindToken),
   });
 }
@@ -454,4 +460,98 @@ export async function handleAppleCallback(
     throw error;
   }
   return bindIdentity(request, deps, check.pending, verified);
+}
+
+// ---------------------------------------------------------------------------
+// Email sign-in code (spec/mcp.md 4.4 3b): POST /authorize/email/start mails a code bound to the
+// pending, POST /authorize/email/verify checks it and binds an EXISTING user. Codes, limits,
+// attempts and the per-address lockout are the shared store in src/auth/email.ts.
+
+/** Records `email` as the pending's provider while it is still open and unbound. */
+async function markEmailProvider(database: DatabaseClient, pendingId: string, now: number): Promise<boolean> {
+  const [updated] = await database
+    .update(oauthPending)
+    .set({ provider: 'email' })
+    .where(
+      and(
+        eq(oauthPending.id, pendingId),
+        isNull(oauthPending.consumedAt),
+        isNull(oauthPending.userId),
+        gt(oauthPending.expiresAt, now),
+      ),
+    )
+    .returning({ id: oauthPending.id });
+  return Boolean(updated);
+}
+
+/**
+ * Like GET /authorize/start, a cookie mismatch here only refuses (the pending is kept). The code
+ * page is the same whether the code was mailed, the address was locked out, the address or IP
+ * was over its limit, or the mail failed, and the identity table is not read, so it reveals
+ * nothing about accounts. The new code replaces only this pending's older code.
+ */
+export async function handleAuthorizeEmailStart(
+  request: Request,
+  form: Record<string, unknown>,
+  deps: AuthorizeDeps,
+  mailer: Mailer,
+): Promise<Response> {
+  const now = deps.now ?? Date.now();
+  const pending = await loadOpenPending(deps.database, stringField(form, 'pending'), now);
+  if (!pending || pending.userId !== null) return errorPage(MESSAGES.expired);
+  if (!(await cookieMatches(request, pending))) return errorPage(MESSAGES.wrongBrowser);
+
+  const email = normalizeEmail(form.email);
+  if (!email) return errorPage(MESSAGES.invalidEmail);
+  if (!(await markEmailProvider(deps.database, pending.id, now))) return errorPage(MESSAGES.expired);
+
+  await startEmailCode(deps.database, {
+    email,
+    ip: request.headers.get('CF-Connecting-IP'),
+    mailer,
+    pendingId: pending.id,
+    now,
+  });
+  return emailCodePage({ pendingId: pending.id, email });
+}
+
+function logEmailAuthorize(outcome: 'ok' | 'unknown_identity' | 'provider_error' | 'bind_mismatch' | 'invalid_request'): void {
+  logEvent(outcome === 'ok' ? 'log' : 'warn', 'oauth.authorize', { provider: 'email', outcome });
+}
+
+/**
+ * Like a provider callback: the pending must have been started with email, and a cookie mismatch
+ * ends it. A wrong code re-shows the form (the pending is kept; the code store limits attempts).
+ */
+export async function handleAuthorizeEmailVerify(
+  request: Request,
+  form: Record<string, unknown>,
+  deps: AuthorizeDeps,
+): Promise<Response> {
+  const now = deps.now ?? Date.now();
+  const pending = await loadOpenPending(deps.database, stringField(form, 'pending'), now);
+  if (!pending || pending.provider !== 'email' || pending.userId !== null) {
+    logEmailAuthorize('invalid_request');
+    return errorPage(MESSAGES.expired);
+  }
+  if (!(await cookieMatches(request, pending))) {
+    await endPending(deps.database, pending.id, now);
+    logEmailAuthorize('bind_mismatch');
+    return errorPage(MESSAGES.bindMismatch);
+  }
+
+  const email = normalizeEmail(form.email);
+  if (!email) {
+    logEmailAuthorize('invalid_request');
+    return errorPage(MESSAGES.invalidEmail);
+  }
+  const code = stringField(form, 'code').trim();
+  if (!(await verifyEmailCode(deps.database, { email, code, pendingId: pending.id, now }))) {
+    logEmailAuthorize('provider_error');
+    return emailCodePage({ pendingId: pending.id, email, error: MESSAGES.wrongCode }, 400);
+  }
+
+  const response = await bindIdentity(request, deps, pending, { provider: 'email', sub: email, email });
+  logEmailAuthorize(response.status === 303 ? 'ok' : response.status === 403 ? 'unknown_identity' : 'invalid_request');
+  return response;
 }
