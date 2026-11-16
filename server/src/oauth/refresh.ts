@@ -2,7 +2,8 @@ import { oauthRefresh, user } from '@schema';
 import { and, eq, gt, isNull, sql } from 'void/db';
 import { sha256Hex } from '../auth/crypto';
 import type { DatabaseClient } from '../auth/session';
-import { randomB64url, successorToken } from './tokens';
+import { randomB64url } from '../base64url';
+import { successorToken } from './tokens';
 
 // MCP refresh tokens (spec/mcp.md 4.5). Deliberately differs from the App's session.ts
 // (spec 15.6): the successor is HMAC(K_refresh, presented token), so concurrent requests and

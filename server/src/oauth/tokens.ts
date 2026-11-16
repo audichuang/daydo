@@ -1,4 +1,5 @@
 import { SignJWT, jwtVerify } from 'jose';
+import { b64url } from '../base64url';
 
 // MCP OAuth token keys and access JWTs (spec/mcp.md 4.5, 4.6). Keys are derived from
 // JWT_SECRET with distinct HKDF labels, so MCP and App tokens never verify each other.
@@ -9,12 +10,6 @@ const ACCESS_INFO = 'mcp-access-v1';
 const REFRESH_INFO = 'mcp-refresh-v1';
 export const MCP_ACCESS_TTL_SECONDS = 3600;
 const ACCESS_TYP = 'at+jwt';
-
-function b64url(bytes: Uint8Array): string {
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
 
 async function hkdf(secret: string, info: string): Promise<Uint8Array> {
   const ikm = await crypto.subtle.importKey('raw', encoder.encode(secret), 'HKDF', false, ['deriveBits']);
@@ -49,10 +44,6 @@ export async function successorToken(secret: string, presentedToken: string): Pr
 /** Base64url SHA-256, used for PKCE S256 code_challenge checks. */
 export async function sha256b64url(input: string): Promise<string> {
   return b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(input))));
-}
-
-export function randomB64url(byteLength = 32): string {
-  return b64url(crypto.getRandomValues(new Uint8Array(byteLength)));
 }
 
 export interface McpAccessClaims {

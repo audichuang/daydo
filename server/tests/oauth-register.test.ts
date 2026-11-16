@@ -5,7 +5,8 @@ import { sha256Hex, signAccessToken } from '../src/auth/crypto';
 import type { DatabaseClient } from '../src/auth/session';
 import { withCors } from '../src/oauth/cors';
 import { authorizationServerMetadata, protectedResourceMetadata } from '../src/oauth/metadata';
-import { DCR_LIMIT_PER_HOUR, ipRateKey, registerClient } from '../src/oauth/register';
+import { ipRateKey } from '../src/ipRateKey';
+import { DCR_LIMIT_PER_HOUR, registerClient } from '../src/oauth/register';
 import {
   mcpAccessKey,
   mcpRefreshKey,

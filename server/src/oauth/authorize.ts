@@ -5,12 +5,12 @@ import { normalizeEmail, startEmailCode, verifyEmailCode } from '../auth/email';
 import { AuthVerificationError, verifyAppleToken, type ProviderName, type VerifiedIdentity } from '../auth/providers';
 import type { DatabaseClient } from '../auth/session';
 import type { Mailer } from '../mail/mailer';
+import { randomB64url } from '../base64url';
+import { ipRateKey } from '../ipRateKey';
 import { logEvent } from '../log';
 import { createAuthorizationCode } from './codes';
 import { SCOPES, requestOrigin } from './metadata';
 import { consentPage, emailCodePage, errorPage, loginPage } from './pages';
-import { ipRateKey } from './register';
-import { randomB64url } from './tokens';
 import {
   PROVIDER_LABELS,
   WEB_PROVIDERS,

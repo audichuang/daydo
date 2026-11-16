@@ -2,7 +2,7 @@ import { oauthCode } from '@schema';
 import { and, eq, gt, isNull } from 'void/db';
 import { sha256Hex } from '../auth/crypto';
 import type { DatabaseClient } from '../auth/session';
-import { randomB64url } from './tokens';
+import { randomB64url } from '../base64url';
 
 // Authorization codes (spec/mcp.md 4.2, 4.4 step 6, 4.5). D1 stores only the SHA-256 of
 // the code; each code starts a new refresh family.
