@@ -1,9 +1,8 @@
 import { defineHandler } from 'void';
-import { createDb } from 'void/db';
 import { env } from 'void/env';
-import { Scope } from '../../durable-objects/scope';
 import { AuthVerificationError, verifyGoogleToken } from '../../src/auth/providers';
 import { createSessionForIdentity } from '../../src/auth/session';
+import { productionAppDeps } from '../../src/deps';
 import { nonEmptyString, readJsonObject } from '../../src/http';
 
 export const POST = defineHandler(async (c) => {
@@ -36,12 +35,12 @@ export const POST = defineHandler(async (c) => {
     throw error;
   }
 
-  const primaryDb = createDb(c.env.DB, { session: 'first-primary' });
-  const result = await createSessionForIdentity(primaryDb, {
+  const deps = productionAppDeps(c.env);
+  const result = await createSessionForIdentity(deps.db, {
     ...verified,
     deviceId,
     jwtSecret: env.JWT_SECRET,
-    getScopeStub: (scope) => Scope.get(scope),
+    getScopeStub: deps.getScopeStub,
   });
   return c.json(result, 200);
 });
