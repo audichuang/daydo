@@ -1,22 +1,24 @@
-import { createDb } from 'void/db';
 import { systemNow } from '../clock';
+import { productionAppDeps, type AppBindings } from '../deps';
 import { logEvent } from '../log';
-import { productionToolServices } from '../mcp/services';
+import { toolServices } from '../mcp/services';
 import { syncDueSources, ICS_SOURCES_PER_RUN, type IcsEngineDeps } from './engine';
 import { D1IcsStore } from './store';
 
 export interface IcsCronEnv {
-  DB: Parameters<typeof createDb>[0];
+  DB: AppBindings['DB'];
   DEFAULT_TIMEZONE?: string;
   ICS_ALLOW_INSECURE_HOSTS?: string;
 }
 
 function productionDeps(env: IcsCronEnv): IcsEngineDeps {
-  const services = productionToolServices(createDb(env.DB, { session: 'first-primary' }), env);
+  const app = productionAppDeps(env);
+  const services = toolServices(app, env);
   return {
     store: new D1IcsStore(services.db),
     db: services.db,
     getScopeStub: services.getScopeStub,
+    getNow: app.getNow,
     ...(services.defaultTimeZone && { defaultTimeZone: services.defaultTimeZone }),
     ...(services.ics?.fetchOptions && { fetchOptions: services.ics.fetchOptions }),
   };

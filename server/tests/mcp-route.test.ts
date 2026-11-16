@@ -37,7 +37,9 @@ vi.mock('../durable-objects/scope', async (importOriginal) => {
 
 const { POST } = await import('../routes/index');
 const postMcp = POST as unknown as (c: CloudContext) => Promise<Response>;
-const { productionToolServices } = await import('../src/mcp/services');
+const { toolServices } = await import('../src/mcp/services');
+const { productionAppDeps } = await import('../src/deps');
+const { systemNow } = await import('../src/clock');
 
 function context(d1: D1Database, body: unknown, token: string): CloudContext {
   const raw = new Request(`${ORIGIN}/`, {
@@ -104,24 +106,28 @@ describe('POST / (MCP route)', () => {
   });
 });
 
-describe('productionToolServices', () => {
+describe('toolServices', () => {
   const { d1 } = createTestD1();
   const db = drizzle(d1, { schema }) as never;
+  const deps = { db, getScopeStub: (): never => { throw new Error('unused'); }, getNow: systemNow };
 
   it('passes DEFAULT_TIMEZONE and only non-empty insecure ICS hosts', () => {
-    const s = productionToolServices(db, { DEFAULT_TIMEZONE: 'Europe/Paris', ICS_ALLOW_INSECURE_HOSTS: '127.0.0.1, localhost' });
+    const s = toolServices(deps, { DEFAULT_TIMEZONE: 'Europe/Paris', ICS_ALLOW_INSECURE_HOSTS: '127.0.0.1, localhost' });
     expect(s.db).toBe(db);
     expect(s.defaultTimeZone).toBe('Europe/Paris');
     expect(s.ics?.fetchOptions?.insecureHosts).toEqual(['127.0.0.1', 'localhost']);
 
-    const bare = productionToolServices(db, { ICS_ALLOW_INSECURE_HOSTS: ' ' });
+    const bare = toolServices(deps, { ICS_ALLOW_INSECURE_HOSTS: ' ' });
     expect(bare.defaultTimeZone).toBeUndefined();
     expect(bare.ics).toBeUndefined();
   });
+});
+
+describe('productionAppDeps', () => {
+  const { d1 } = createTestD1();
 
   it('resolves scope stubs through Scope.get', () => {
-    const s = productionToolServices(db, {});
-    s.getScopeStub('u:x');
+    productionAppDeps({ DB: d1 }).getScopeStub('u:x');
     expect(scopeGets).toEqual(['u:x']);
   });
 });

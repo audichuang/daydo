@@ -1,9 +1,9 @@
 import { defineHandler } from 'void';
-import { createDb } from 'void/db';
 import { env } from 'void/env';
+import { productionAppDeps } from '../src/deps';
 import { authenticateMcp } from '../src/mcp/auth';
 import { handleMcpPost, PROTOCOL_VERSION, SERVER_INFO } from '../src/mcp/protocol';
-import { productionToolServices } from '../src/mcp/services';
+import { toolServices } from '../src/mcp/services';
 import { withCors } from '../src/oauth/cors';
 import { protectedResourceMetadata, requestOrigin } from '../src/oauth/metadata';
 
@@ -21,9 +21,9 @@ export const GET = defineHandler((c) =>
 );
 
 export const POST = defineHandler(async (c) => {
-  const db = createDb(c.env.DB, { session: 'first-primary' });
-  const principal = await authenticateMcp(c.req.raw, { database: db, secret: env.JWT_SECRET });
+  const deps = productionAppDeps(c.env);
+  const principal = await authenticateMcp(c.req.raw, { database: deps.db, secret: env.JWT_SECRET });
   if (principal instanceof Response) return withCors(principal);
-  const ctx = { ...principal, services: productionToolServices(db, env) };
+  const ctx = { ...principal, services: toolServices(deps, env) };
   return withCors(await handleMcpPost(c.req.raw, ctx, c.req.header('CF-Ray') ?? null));
 });

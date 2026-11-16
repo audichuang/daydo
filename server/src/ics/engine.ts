@@ -48,7 +48,7 @@ const SERIES_REDEFINED = 'Recurring series definition changed; review correspond
 
 export interface IcsEngineDeps {
   store: IcsStore;
-  /** `createDb(env.DB, { session: 'first-primary' })`. */
+  /** `AppDeps.db` (first-primary D1 session). */
   db: AppDb;
   getScopeStub: (scope: string) => ScopeStub;
   /** Defaults to the isolate-wide clock shared with /sync/push. */

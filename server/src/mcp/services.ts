@@ -1,8 +1,6 @@
-// Production ToolServices, shared by the MCP route (routes/index.ts) and the ICS cron.
-import { Scope } from '../../durable-objects/scope';
+// ToolServices from AppDeps, shared by the MCP route (routes/index.ts) and the ICS cron.
+import type { AppDeps } from '../deps';
 import { parseInsecureHosts } from '../ics/fetch';
-import type { AppDb } from '../sync/push';
-import type { ScopeStub } from '../scope/api';
 import type { ToolServices } from './toolkit';
 
 export interface ToolServicesEnv {
@@ -10,12 +8,13 @@ export interface ToolServicesEnv {
   ICS_ALLOW_INSECURE_HOSTS?: string;
 }
 
-/** `db` is `createDb(env.DB, { session: 'first-primary' })`, reused from the caller. */
-export function productionToolServices(db: AppDb, env: ToolServicesEnv): ToolServices {
+/** `deps.db` is the caller's AppDeps session, reused as is. */
+export function toolServices(deps: Pick<AppDeps, 'db' | 'getScopeStub' | 'getNow'>, env: ToolServicesEnv): ToolServices {
   const insecureHosts = parseInsecureHosts(env.ICS_ALLOW_INSECURE_HOSTS);
   return {
-    db,
-    getScopeStub: (scope) => Scope.get(scope) as unknown as ScopeStub,
+    db: deps.db,
+    getScopeStub: deps.getScopeStub,
+    getNow: deps.getNow,
     ...(env.DEFAULT_TIMEZONE && { defaultTimeZone: env.DEFAULT_TIMEZONE }),
     ...(insecureHosts.length > 0 && { ics: { fetchOptions: { insecureHosts } } }),
   };

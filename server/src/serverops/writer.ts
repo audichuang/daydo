@@ -52,7 +52,7 @@ export interface WriteOptions {
 }
 
 export interface WriterDeps {
-  /** `createDb(env.DB, { session: 'first-primary' })`. */
+  /** `AppDeps.db` (first-primary D1 session). */
   db: AppDb;
   userId: string;
   deviceId: 'mcp' | 'ics';

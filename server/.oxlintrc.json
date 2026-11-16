@@ -76,7 +76,7 @@
             "patterns": [
               {
                 "regex": "(^|/)durable-objects(/|$)",
-                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+                "message": "src/** must not import durable-objects/ (except src/deps.ts)."
               },
               {
                 "regex": "^(\\.\\./)+(auth|oauth|sharing|serverops|mcp|ics|mail|routes|crons|middleware)(/|$)",
@@ -110,7 +110,7 @@
               },
               {
                 "regex": "(^|/)durable-objects(/|$)",
-                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+                "message": "src/** must not import durable-objects/ (except src/deps.ts)."
               },
               {
                 "regex": "^(\\.\\./)+(auth|oauth|sharing|serverops|mcp|ics|mail|routes|crons|middleware)(/|$)",
@@ -144,7 +144,7 @@
               },
               {
                 "regex": "(^|/)durable-objects(/|$)",
-                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+                "message": "src/** must not import durable-objects/ (except src/deps.ts)."
               },
               {
                 "regex": "^(\\.\\./)+(membership|auth|oauth|sharing|serverops|mcp|ics|mail|routes|crons|middleware)(/|$)",
@@ -178,7 +178,7 @@
               },
               {
                 "regex": "(^|/)durable-objects(/|$)",
-                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+                "message": "src/** must not import durable-objects/ (except src/deps.ts)."
               },
               {
                 "group": ["**", "!./**"],
@@ -212,7 +212,7 @@
               },
               {
                 "regex": "(^|/)durable-objects(/|$)",
-                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+                "message": "src/** must not import durable-objects/ (except src/deps.ts)."
               },
               {
                 "regex": "^(\\.\\./)+(oauth|mcp|ics|serverops)(/|$)",
@@ -246,7 +246,7 @@
               },
               {
                 "regex": "(^|/)durable-objects(/|$)",
-                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+                "message": "src/** must not import durable-objects/ (except src/deps.ts)."
               },
               {
                 "regex": "^(\\.\\./)+(mcp|ics|oauth|sharing|auth)(/|$)",
@@ -281,7 +281,7 @@
               },
               {
                 "regex": "(^|/)durable-objects(/|$)",
-                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+                "message": "src/** must not import durable-objects/ (except src/deps.ts)."
               },
               {
                 "regex": "^(\\.\\./)+sync/(push|pull|merge|entities)(/|$)",
@@ -316,7 +316,7 @@
               },
               {
                 "regex": "(^|/)durable-objects(/|$)",
-                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+                "message": "src/** must not import durable-objects/ (except src/deps.ts)."
               },
               {
                 "regex": "^(\\.\\./)+sync/(push|pull|merge|entities)(/|$)",
@@ -329,7 +329,7 @@
       }
     },
     {
-      "files": ["src/mcp/services.ts"],
+      "files": ["src/deps.ts"],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -393,7 +393,7 @@
         "src/serverops/**",
         "src/mcp/tools/**",
         "src/ics/**",
-        "src/mcp/services.ts"
+        "src/deps.ts"
       ],
       "rules": {
         "no-restricted-imports": [
@@ -416,7 +416,7 @@
               },
               {
                 "regex": "(^|/)durable-objects(/|$)",
-                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+                "message": "src/** must not import durable-objects/ (except src/deps.ts)."
               }
             ]
           }
