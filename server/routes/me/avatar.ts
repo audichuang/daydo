@@ -1,8 +1,8 @@
 import { defineHandler } from 'void';
-import { createDb } from 'void/db';
 import { requireUser } from '../../src/auth/middleware';
 import { sanitizeGoogleAvatarUrl } from '../../src/auth/providers';
 import { updateUserAvatar } from '../../src/auth/session';
+import { productionAppDeps } from '../../src/deps';
 import { readJsonObject } from '../../src/http';
 
 export const PUT = defineHandler(async (c) => {
@@ -22,8 +22,8 @@ export const PUT = defineHandler(async (c) => {
     );
   }
 
-  const db = createDb(c.env.DB, { session: 'first-primary' });
-  const result = await updateUserAvatar(db, { userId, avatarUrl });
+  const deps = productionAppDeps(c.env);
+  const result = await updateUserAvatar(deps.db, { userId, avatarUrl });
   if (!result) {
     return c.json({ error: 'User not found' }, 404);
   }

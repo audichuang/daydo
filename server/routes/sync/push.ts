@@ -1,7 +1,6 @@
 import { defineHandler } from 'void';
-import { createDb } from 'void/db';
-import { Scope } from '../../durable-objects/scope';
 import { requireUser } from '../../src/auth/middleware';
+import { productionAppDeps } from '../../src/deps';
 import { nonEmptyString, readJsonObject } from '../../src/http';
 import { MAX_OPS_PER_PUSH } from '../../src/sync/envelope';
 import { executeSyncPush } from '../../src/sync/push';
@@ -29,12 +28,12 @@ export const POST = defineHandler(async (c) => {
     return c.json({ error: `ops exceeds maximum batch size of ${MAX_OPS_PER_PUSH}` }, 400);
   }
 
-  const db = createDb(c.env.DB, { session: 'first-primary' });
-  const result = await executeSyncPush(db, {
+  const deps = productionAppDeps(c.env);
+  const result = await executeSyncPush(deps.db, {
     userId,
     deviceId,
     ops: body.ops,
-    getScopeStub: (scope) => Scope.get(scope),
+    getScopeStub: deps.getScopeStub,
     clock: serverClock,
   });
 

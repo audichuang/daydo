@@ -1,7 +1,6 @@
 import { defineHandler } from 'void';
-import { createDb } from 'void/db';
-import { Scope } from '../../durable-objects/scope';
 import { requireUser } from '../../src/auth/middleware';
+import { productionAppDeps } from '../../src/deps';
 import { readJsonObject } from '../../src/http';
 import { executeSyncPull } from '../../src/sync/pull';
 
@@ -65,13 +64,13 @@ export const POST = defineHandler(async (c) => {
     limit = Math.min(body.limit, MAX_PULL_LIMIT);
   }
 
-  const db = createDb(c.env.DB, { session: 'first-primary' });
-  const result = await executeSyncPull(db, {
+  const deps = productionAppDeps(c.env);
+  const result = await executeSyncPull(deps.db, {
     userId,
     cursors,
     backfill,
     limit,
-    getScopeStub: (scope) => Scope.get(scope),
+    getScopeStub: deps.getScopeStub,
   });
 
   return c.json(result, 200);
