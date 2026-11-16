@@ -293,6 +293,8 @@ final class AppModel {
         let initialAccent = d.string(forKey: "accent") ?? "#FF8A1E"
         accentHex = initialAccent
         Self.sharedDefaults?.set(initialAccent, forKey: "accent")
+        let initialShowCompleted = d.object(forKey: "calendarShowCompleted") as? Bool ?? true
+        Self.sharedDefaults?.set(initialShowCompleted, forKey: "calendarShowCompleted")
         compact = d.bool(forKey: "compact")
         textScale = d.object(forKey: "textScale") as? Double ?? 1
         openFolders = Set(d.stringArray(forKey: "openFolders") ?? [])
@@ -623,6 +625,11 @@ final class AppModel {
     }
 
     // MARK: - Widgets
+
+    func syncCalendarShowCompletedToWidget(_ showCompleted: Bool) {
+        Self.sharedDefaults?.set(showCompleted, forKey: "calendarShowCompleted")
+        scheduleWidgetReload()
+    }
 
     func scheduleWidgetReload() {
         widgetReloadTask?.cancel()

@@ -86,11 +86,16 @@ struct CalendarScreen: View {
         .task(id: CalReload(range: range, member: memberFilter, completed: showCompleted, revision: model.revision)) { await load() }
         .onAppear { applyPendingCalendarDay() }
         .onChange(of: model.calendarNavigationTrigger) { _, _ in applyPendingCalendarDay() }
+        .onChange(of: showCompleted) { _, newValue in
+            model.syncCalendarShowCompletedToWidget(newValue)
+        }
     }
 
     private func applyPendingCalendarDay() {
         guard let day = model.calendarNavigationDay else { return }
         model.calendarNavigationDay = nil
+        memberFilter = nil
+        projectFilter = nil
         selected = day
         month = day.firstOfMonth
         if mode == .year {
@@ -228,6 +233,7 @@ struct CalendarScreen: View {
                 .overlay(Capsule().strokeBorder(on ? Palette.text : Palette.separator))
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 
     // MARK: Data

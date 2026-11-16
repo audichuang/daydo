@@ -220,4 +220,55 @@ import Testing
         #expect(aug.monthLayout.weeks.count == 6)
         #expect(aug.month == day("2026-08-01"))
     }
+
+    @Test func calendarDataExcludesCompletedTasksWhenHidden() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("daydo-widget-cal-hide-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let nov15 = day("2026-11-15")
+        let now = nov15.date(minute: 12 * 60, in: taipei)
+        let clock = Clock.fixed(now, timeZone: taipei)
+
+        do {
+            let store = try DayDoStorage.openForApp(in: dir, clock: clock)
+            try await store.bootstrap()
+            // Nov 11: only a completed task -> dot disappears when hidden.
+            let doneOnly = try await store.api.createTask(CreateTaskInput(
+                title: "已完成事件",
+                start: "2026-11-11",
+                allDay: true
+            ))
+            _ = try await store.api.completeTask(id: doneOnly.id)
+            // Nov 15: 2 active + 2 completed -> with maxLanes=2 in twoWeekLayout,
+            // completed tasks cause +2 overflow when shown and 0 overflow when hidden.
+            _ = try await store.api.createTask(CreateTaskInput(title: "未完成 A", start: "2026-11-15", allDay: true))
+            _ = try await store.api.createTask(CreateTaskInput(title: "未完成 B", start: "2026-11-15", allDay: true))
+            let done1 = try await store.api.createTask(CreateTaskInput(title: "已完成 C", start: "2026-11-15", allDay: true))
+            _ = try await store.api.completeTask(id: done1.id)
+            let done2 = try await store.api.createTask(CreateTaskInput(title: "已完成 D", start: "2026-11-15", allDay: true))
+            _ = try await store.api.completeTask(id: done2.id)
+        }
+
+        let readAPI = try DayDoStorage.openReadOnly(in: dir, clock: clock)
+
+        let shown = try #require(
+            try await WidgetCalendarData.loadTimeline(from: readAPI, now: now, timeZone: taipei, includeCompleted: true).first?.data
+        )
+        #expect(shown.daysWithEvents.contains(day("2026-11-11")))
+        #expect(shown.twoWeekLayout.weeks[0].overflow[0] == 2)
+        #expect(shown.monthLayout.weeks[1].bars.contains(where: { $0.task.title == "已完成事件" }))
+        #expect(shown.monthLayout.weeks[2].overflow[0] == 1)
+
+        let hidden = try #require(
+            try await WidgetCalendarData.loadTimeline(from: readAPI, now: now, timeZone: taipei, includeCompleted: false).first?.data
+        )
+        #expect(!hidden.daysWithEvents.contains(day("2026-11-11")))
+        #expect(hidden.daysWithEvents.contains(day("2026-11-15")))
+        #expect(hidden.twoWeekLayout.weeks[0].overflow[0] == nil)
+        #expect(hidden.twoWeekLayout.weeks[0].bars.map(\.task.title).sorted() == ["未完成 A", "未完成 B"])
+        #expect(!hidden.monthLayout.weeks[1].bars.contains(where: { $0.task.title == "已完成事件" }))
+        #expect(hidden.monthLayout.weeks[2].overflow[0] == nil)
+        #expect(hidden.monthLayout.weeks[2].bars.allSatisfy { !$0.task.isCompleted })
+    }
 }

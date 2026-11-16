@@ -176,6 +176,14 @@ struct CalendarEntry: TimelineEntry {
 }
 
 struct CalendarProvider: TimelineProvider {
+    private static func showCompletedPreference() -> Bool {
+        let defaults = UserDefaults(suiteName: DayDoStorage.appGroup)
+        if let value = defaults?.object(forKey: "calendarShowCompleted") as? Bool {
+            return value
+        }
+        return true
+    }
+
     func placeholder(in context: Context) -> CalendarEntry {
         let now = Date()
         let today = LocalDay(date: now, in: .current)
@@ -187,13 +195,19 @@ struct CalendarProvider: TimelineProvider {
         let now = Date()
         let tz = TimeZone.current
         let accent = WidgetAccent.fromSharedDefaults()
+        let includeCompleted = Self.showCompletedPreference()
         let finish = SendableBox(call: completion)
         Task {
             guard let api = WidgetStoreReader.openAPI() else {
                 finish.call(CalendarEntry(date: now, data: nil, accent: accent))
                 return
             }
-            let data = try? await WidgetCalendarData.loadTimeline(from: api, now: now, timeZone: tz).first?.data
+            let data = try? await WidgetCalendarData.loadTimeline(
+                from: api,
+                now: now,
+                timeZone: tz,
+                includeCompleted: includeCompleted
+            ).first?.data
             finish.call(CalendarEntry(date: now, data: data, accent: accent))
         }
     }
@@ -202,6 +216,7 @@ struct CalendarProvider: TimelineProvider {
         let now = Date()
         let tz = TimeZone.current
         let accent = WidgetAccent.fromSharedDefaults()
+        let includeCompleted = Self.showCompletedPreference()
         let finish = SendableBox(call: completion)
         Task {
             guard let api = WidgetStoreReader.openAPI() else {
@@ -210,7 +225,12 @@ struct CalendarProvider: TimelineProvider {
                 return
             }
             do {
-                let snapshots = try await WidgetCalendarData.loadTimeline(from: api, now: now, timeZone: tz)
+                let snapshots = try await WidgetCalendarData.loadTimeline(
+                    from: api,
+                    now: now,
+                    timeZone: tz,
+                    includeCompleted: includeCompleted
+                )
                 let entries = snapshots.map { CalendarEntry(date: $0.date, data: $0.data, accent: accent) }
                 finish.call(Timeline(entries: entries, policy: .atEnd))
             } catch {

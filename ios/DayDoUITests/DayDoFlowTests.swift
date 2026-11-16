@@ -1018,6 +1018,30 @@ final class DayDoFlowTests: XCTestCase {
         app.open(URL(string: "daydo://calendar")!)
         XCTAssertTrue(app.buttons["calendarTitle"].waitForExistence(timeout: 5), app.debugDescription)
 
+        // Apply both member and project filters on Calendar, then open daydo://calendar/<today>
+        // and verify filters reset to "全部" so tasks are not hidden.
+        let memberChip = app.buttons["小安"]
+        XCTAssertTrue(memberChip.waitForExistence(timeout: 3), app.debugDescription)
+        memberChip.tap()
+        XCTAssertTrue(memberChip.isSelected)
+
+        app.buttons["更多選項"].tap()
+        let filterMenu = app.buttons["清單篩選"]
+        XCTAssertTrue(filterMenu.waitForExistence(timeout: 3), app.debugDescription)
+        filterMenu.tap()
+        let inboxFilter = app.buttons["收件匣"]
+        XCTAssertTrue(inboxFilter.waitForExistence(timeout: 3), app.debugDescription)
+        inboxFilter.tap()
+
+        XCTAssertTrue(app.buttons["移除清單篩選：收件匣"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(app.buttons["完成：買鮮奶"].exists)
+
+        app.open(URL(string: "daydo://calendar/\(dayString(offset: 0))")!)
+        XCTAssertTrue(app.buttons["移除清單篩選：收件匣"].waitForNonExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons["全部"].isSelected)
+        XCTAssertFalse(app.buttons["小安"].isSelected)
+        XCTAssertTrue(app.buttons["完成：買鮮奶"].waitForExistence(timeout: 5), app.debugDescription)
+
         // Open task detail via widget task deep link.
         app.open(URL(string: "daydo://task/debug-shared-task-1")!)
         let titleField = app.descendants(matching: .any)["taskTitleField"]

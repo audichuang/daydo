@@ -364,10 +364,12 @@ public struct WidgetCalendarData: Sendable {
     public static func build(
         tasks: [TodoTask],
         projectsById: [String: Project],
-        today: LocalDay
+        today: LocalDay,
+        includeCompleted: Bool = true
     ) -> WidgetCalendarData {
+        let filtered = includeCompleted ? tasks : tasks.filter { !$0.isCompleted }
         // Put active tasks ahead of completed ones so active items win lanes on ties.
-        let orderedTasks = tasks.filter { !$0.isCompleted } + tasks.filter(\.isCompleted)
+        let orderedTasks = filtered.filter { !$0.isCompleted } + filtered.filter(\.isCompleted)
         let month = today.firstOfMonth
         let miniDays = MonthLayout.gridDays(for: month)
         var daysWithEvents: Set<LocalDay> = []
@@ -404,7 +406,8 @@ public struct WidgetCalendarData: Sendable {
     public static func loadTimeline(
         from api: any DayDoAPI,
         now: Date,
-        timeZone: TimeZone
+        timeZone: TimeZone,
+        includeCompleted: Bool = true
     ) async throws -> [(date: Date, data: WidgetCalendarData)] {
         let today = LocalDay(date: now, in: timeZone)
         let tomorrow = today.adding(days: 1)
@@ -419,11 +422,11 @@ public struct WidgetCalendarData: Sendable {
         let tasks = try await api.listTasks(TaskQuery(
             from: range.lowerBound,
             to: range.upperBound,
-            includeCompleted: true
+            includeCompleted: includeCompleted
         ))
 
-        let todayData = build(tasks: tasks, projectsById: projectsById, today: today)
-        let tomorrowData = build(tasks: tasks, projectsById: projectsById, today: tomorrow)
+        let todayData = build(tasks: tasks, projectsById: projectsById, today: today, includeCompleted: includeCompleted)
+        let tomorrowData = build(tasks: tasks, projectsById: projectsById, today: tomorrow, includeCompleted: includeCompleted)
         return [(now, todayData), (nextMidnight, tomorrowData)]
     }
 }
