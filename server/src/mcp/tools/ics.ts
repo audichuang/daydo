@@ -8,7 +8,7 @@ import { D1IcsStore, MIN_SYNC_INTERVAL_SEC, type AddSourceInput, type IcsSource,
 import type { IcsFilter } from '../../ics/types';
 import { NO_DATA_MESSAGE } from '../../serverops/writer';
 import { requireInt, requireStr, ToolValidationError, type ToolContext, type ToolDef, type ToolServices } from '../registry';
-import { openSession } from './projects';
+import { openSession, requireWritableList } from './projects';
 
 const isEmpty = (v: unknown) => v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
 
@@ -134,12 +134,7 @@ export function icsTools(): ToolDef[] {
 
         const { snapshot } = await openSession(ctx);
         if (snapshot.meMemberId === null) throw new Error(NO_DATA_MESSAGE);
-        if (!snapshot.liveProjects().some((p) => String(p.row.id) === projectId)) {
-          throw new Error(`Unknown project_id '${projectId}'; call list_projects first`);
-        }
-        if (!snapshot.canWrite(projectId)) {
-          throw new Error(`Project '${projectId}' is read-only for you (role: ${snapshot.memberships.get(projectId) ?? 'none'})`);
-        }
+        requireWritableList(snapshot, projectId);
         return describeSource(await storeOf(ctx).addSource(ctx.userId, input));
       },
     },

@@ -3,8 +3,8 @@
 import { uniqueProjectKey } from '../../domain/sortKey';
 import { uuidv7 } from '../../domain/uuid';
 import { loadSnapshot, type Snapshot, type SnapshotRow } from '../../serverops/snapshot';
-import { taskListDenial } from '../../serverops/taskWrites';
-import { writeOrThrow, type WriteIntent, type WriterDeps } from '../../serverops/writer';
+import { taskListDenial, trashTaskIntent } from '../../serverops/taskWrites';
+import { writeOrThrow, type WriterDeps } from '../../serverops/writer';
 import { userScope } from '../../sync/scopeName';
 import { bySortKey, compareKeys, formatProject, openTasksOf, summarizeTask } from '../format';
 import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../registry';
@@ -191,12 +191,7 @@ export function projectTools(): ToolDef[] {
         // does not apply atomically. The list goes only once every task is trashed, so a failed
         // run leaves the list live and a retry can finish it.
         if (tasks.length > 0) {
-          await writeOrThrow(
-            deps,
-            snapshot,
-            tasks.map((t): WriteIntent => ({ entity: 'task', entityId: String(t.row.id), set: { deletedAt: now } })),
-            { nowMs: now },
-          );
+          await writeOrThrow(deps, snapshot, tasks.map((t) => trashTaskIntent(String(t.row.id), now)), { nowMs: now });
         }
         await writeOrThrow(deps, snapshot, [{ entity: 'project', entityId: id, set: { deletedAt: now } }], { nowMs: now });
         return { deleted: true, project_id: id, name: String(project.row.name ?? ''), trashed_tasks: tasks.length };
