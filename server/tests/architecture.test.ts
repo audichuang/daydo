@@ -71,8 +71,8 @@ interface Guard {
   pattern: RegExp;
   /** Exactly the files allowed to match. Ratchet: entries may only be removed, never added. */
   allow: string[];
-  /** A snippet that violates the rule; proves the pattern is not hollow. */
-  bad: string;
+  /** Snippets that violate the rule, one per alternative of the pattern; proves none is hollow. */
+  bad: string[];
 }
 
 const ALL = ['src', 'routes', 'crons', 'durable-objects'];
@@ -83,91 +83,111 @@ const GUARDS: Guard[] = [
     dirs: ['src'],
     pattern: /Math\.max\((now|nowMs|Date\.now\(\)), *Number\(/,
     allow: ['src/serverops/writer.ts'],
-    bad: 'const updatedAt = Math.max(nowMs, Number(row.updatedAt) + 1);',
+    bad: [
+      'const updatedAt = Math.max(nowMs, Number(row.updatedAt) + 1);',
+      'const updatedAt = Math.max(now, Number(row.updatedAt) + 1);',
+      'const updatedAt = Math.max(Date.now(), Number(row.updatedAt) + 1);',
+    ],
   },
   {
     name: 'value helpers are not redefined outside serverops/values.ts',
     dirs: ['src'],
     pattern: /\bconst (bump|isNil|sameValue|SCHEDULE_KEYS)\b/,
     allow: [],
-    bad: 'const isNil = (v: unknown) => v == null;',
+    bad: [
+      'const isNil = (v: unknown) => v == null;',
+      'const bump = (n: number) => n + 1;',
+      'const sameValue = Object.is;',
+      "const SCHEDULE_KEYS = ['dueAt'];",
+    ],
   },
   {
     name: "'u:' scope prefix literal only in src/sync/scopeName.ts",
     dirs: ALL,
-    pattern: /'u:'|`u:/,
+    pattern: /['"`]u:/,
     allow: ['src/sync/scopeName.ts'],
-    bad: "const scope = 'u:' + userId;",
+    bad: ["const scope = 'u:' + userId;", 'const scope = "u:" + userId;', 'const scope = `u:${userId}`;'],
   },
   {
-    name: 'validateSyncOp only defined in entities.ts and called in envelope.ts',
+    name: 'validateSyncOp is called only in envelope.ts (the definition is excluded)',
     dirs: ALL,
-    pattern: /\bvalidateSyncOp\(/,
-    allow: ['src/sync/entities.ts', 'src/sync/envelope.ts'],
-    bad: 'const parsed = validateSyncOp(op);',
+    pattern: /(?<!function )\bvalidateSyncOp\(/,
+    allow: ['src/sync/envelope.ts'],
+    bad: ['const parsed = validateSyncOp(op);', 'return envelopeOf(raw, validateSyncOp(raw));'],
   },
   {
     name: 'src/scope/** contains no async or await',
     dirs: ['src/scope'],
     pattern: /\b(async|await)\b/,
     allow: [],
-    bad: 'export async function load() {}',
+    bad: ['export async function load() {}', 'const row = await fetchRow();'],
   },
   {
     name: 'transactionSync only in durable-objects/scope.ts',
     dirs: ALL,
     pattern: /\btransactionSync\b/,
     allow: ['durable-objects/scope.ts'],
-    bad: 'this.ctx.storage.transactionSync(() => push());',
+    bad: ['this.ctx.storage.transactionSync(() => push());'],
   },
   {
-    name: 'serializePublicRow only defined in entities.ts and called in src/scope/rowView.ts',
+    name: 'serializePublicRow is called only in src/scope/rowView.ts (the definition is excluded)',
     dirs: ALL,
-    pattern: /\bserializePublicRow\(/,
-    allow: ['src/scope/rowView.ts', 'src/sync/entities.ts'],
-    bad: 'return serializePublicRow(row);',
+    pattern: /(?<!function )\bserializePublicRow\(/,
+    allow: ['src/scope/rowView.ts'],
+    bad: ['return serializePublicRow(row);', 'const out = rows.map((r) => serializePublicRow(r));'],
   },
   {
     name: 'owner-or-editor write role check only in src/sync/access.ts',
     dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
     pattern: WRITE_ROLE_PAIR,
     allow: ['src/sync/access.ts'],
-    bad: "if (member.role !== 'owner' &&\n    member.role !== 'editor') return deny();",
+    bad: [
+      "if (member.role !== 'owner' &&\n    member.role !== 'editor') return deny();",
+      "if (member.role === 'editor' || member.role === 'owner') return ok();",
+    ],
   },
   {
     name: 'no randomUUID in data layers (ids are client-side or UUIDv7)',
-    dirs: ['src/serverops', 'src/mcp', 'src/sync', 'src/scope', 'src/domain', 'src/sharing'],
+    dirs: ['src/serverops', 'src/mcp', 'src/sync', 'src/scope', 'src/domain', 'src/sharing', 'src/ics', 'src/membership'],
     pattern: /\brandomUUID\b/,
-    allow: [],
-    bad: 'const id = crypto.randomUUID();',
+    // The ICS sync lease token is not a data id.
+    allow: ['src/ics/engine.ts'],
+    bad: ['const id = crypto.randomUUID();', "import { randomUUID } from 'node:crypto';"],
   },
   {
     name: 'routes/** do not query the database directly',
     dirs: ['routes'],
-    pattern: /\bdb\.(select|insert|update|delete|batch|run|query)\b/,
+    // Any receiver (db, primaryDb, database, ...) calling a query method, or raw env.DB use other than
+    // passing it straight on (`createDb(c.env.DB, ...)`, `deps(c.env.DB)`).
+    pattern: /\.(select|insert|update|delete|batch|run|prepare)\(|\.DB\b(?!\s*[,)])/,
     allow: [],
-    bad: 'const rows = await db.select().from(user);',
+    bad: [
+      'const rows = await db.select().from(user);',
+      "const database = createDb(c.env.DB, { session: 'first-primary' }); database.run(sql);",
+      "await c.env.DB.prepare('DELETE FROM user').run();",
+      'const raw = c.env.DB;',
+    ],
   },
   {
     name: 'src/membership/statements.ts contains no async or await',
     dirs: ['src/membership/statements.ts'],
     pattern: /\b(async|await)\b/,
     allow: [],
-    bad: 'const rows = await db.select();',
+    bad: ['const rows = await db.select();', 'export async function load() {}', 'const row = await fetchRow();'],
   },
   {
     name: 'src/mcp and src/ics do not call getScopeStub (they write via serverops)',
     dirs: ['src/mcp', 'src/ics'],
     pattern: /\bgetScopeStub\(/,
     allow: [],
-    bad: "const stub = services.getScopeStub('u:1');",
+    bad: ["const stub = services.getScopeStub(scope);"],
   },
   {
     name: 'Date.now() in domain, serverops and scope stays in its frozen files',
     dirs: ['src/domain', 'src/serverops', 'src/scope'],
     pattern: /\bDate\.now\(\)/,
     allow: ['src/domain/uuid.ts', 'src/scope/push.ts', 'src/serverops/writer.ts'],
-    bad: 'const nowMs = Date.now();',
+    bad: ['const nowMs = Date.now();'],
   },
 ];
 
@@ -182,7 +202,8 @@ function specToolNames(): string[] {
 describe('architecture guards', () => {
   it.each(GUARDS)('$name', ({ dirs, pattern, allow, bad }) => {
     expect(pattern.global || pattern.sticky, 'stateful regex flags').toBe(false);
-    expect(pattern.test(bad), 'pattern does not match its bad sample').toBe(true);
+    expect(bad.length, 'no bad samples').toBeGreaterThan(0);
+    for (const sample of bad) expect(pattern.test(sample), `pattern misses bad sample: ${sample}`).toBe(true);
     expect(matchingFiles(dirs, pattern)).toEqual([...allow].sort());
   });
 
