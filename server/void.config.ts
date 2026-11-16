@@ -13,6 +13,10 @@ export default defineConfig({
       {
         "pattern": "daydo-api.audichuang.app",
         "custom_domain": true
+      },
+      {
+        "pattern": "daydo-mcp.audichuang.app",
+        "custom_domain": true
       }
     ]
   }
