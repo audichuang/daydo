@@ -140,7 +140,7 @@ struct CalendarScreen: View {
         Menu {
             ForEach(CalMode.allCases) { m in
                 Button {
-                    withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) { modeRaw = m.rawValue }
+                    withAnimation(Motion.toggle(reduceMotion)) { modeRaw = m.rawValue }
                 } label: {
                     if m == mode { Label(m.label, systemImage: "checkmark") } else { Label(m.label, systemImage: m.icon) }
                 }
@@ -179,7 +179,7 @@ struct CalendarScreen: View {
     private var trailingActions: some View {
         if mode == .list {
             HeaderAction(systemName: timelineStyle ? "list.bullet.rectangle" : "calendar.day.timeline.left", label: timelineStyle ? "切換為卡片清單" : "切換為時間軸清單") {
-                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) { timelineStyle.toggle() }
+                withAnimation(Motion.toggle(reduceMotion)) { timelineStyle.toggle() }
             }
         }
         Menu {
@@ -197,7 +197,7 @@ struct CalendarScreen: View {
             }
             if mode == .list {
                 Button(collapsed ? "展開整個月份" : "收合成單週", systemImage: "rectangle.compress.vertical") {
-                    withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.86)) {
+                    withAnimation(Motion.layout(reduceMotion)) {
                         collapsed.toggle()
                     }
                 }
@@ -298,7 +298,7 @@ struct CalendarScreen: View {
     func goToday() {
         dateSelectionHaptic += 1
         shiftDir = 0
-        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) {
+        withAnimation(Motion.toggle(reduceMotion)) {
             selected = model.today
             month = model.today.firstOfMonth
             pageSequence += 1
@@ -324,7 +324,7 @@ struct CalendarScreen: View {
     func shift(_ dir: Int) {
         shiftDir = dir
         pageShiftHaptic += 1
-        withAnimation(reduceMotion ? .easeOut(duration: 0.18) : .spring(response: 0.34, dampingFraction: 0.86)) {
+        withAnimation(Motion.page(reduceMotion)) {
             applyShift(dir)
             pageSequence += 1
         }
@@ -350,16 +350,13 @@ struct CalendarScreen: View {
             let dir = projected < 0 ? 1 : -1
             shiftDir = dir
             pageShiftHaptic += 1
-            let anim: Animation = reduceMotion
-                ? .easeOut(duration: 0.18)
-                : .spring(response: 0.34, dampingFraction: 0.86)
-            withAnimation(anim) {
+            withAnimation(Motion.page(reduceMotion)) {
                 applyShift(dir)
                 pageSequence += 1
                 hDragOffset = 0
             }
         } else {
-            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.78)) {
+            withAnimation(Motion.pageSnapBack(reduceMotion)) {
                 hDragOffset = 0
             }
         }
@@ -436,7 +433,7 @@ struct CalendarScreen: View {
                         YearGrid(year: shownMonth.year, today: model.today, busy: busyDays, isRegular: isRegular, openMonth: { m in
                             dateSelectionHaptic += 1
                             shiftDir = 0
-                            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) {
+                            withAnimation(Motion.toggle(reduceMotion)) {
                                 month = m
                                 selected = m
                                 modeRaw = CalMode.list.rawValue
@@ -446,7 +443,7 @@ struct CalendarScreen: View {
                         }, openDay: { d in
                             dateSelectionHaptic += 1
                             shiftDir = 0
-                            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) {
+                            withAnimation(Motion.toggle(reduceMotion)) {
                                 selected = d
                                 month = d.firstOfMonth
                                 modeRaw = CalMode.day.rawValue
@@ -483,7 +480,7 @@ struct CalendarScreen: View {
                              tapDay: { d in
                                 dateSelectionHaptic += 1
                                 shiftDir = 0
-                                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) {
+                                withAnimation(Motion.toggle(reduceMotion)) {
                                     selected = d
                                     modeRaw = CalMode.day.rawValue
                                     pageSequence += 1
@@ -554,7 +551,7 @@ struct CalendarScreen: View {
             .clipped()
 
             Button {
-                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.86)) {
+                withAnimation(Motion.layout(reduceMotion)) {
                     collapsed.toggle()
                     collapseDragY = 0
                 }
@@ -585,10 +582,7 @@ struct CalendarScreen: View {
                     }
                 },
                 onVerticalEnded: { ty, vy in
-                    let anim: Animation = reduceMotion
-                        ? .easeOut(duration: 0.15)
-                        : .spring(response: 0.34, dampingFraction: 0.86)
-                    withAnimation(anim) {
+                    withAnimation(Motion.layout(reduceMotion)) {
                         if !collapsed && (ty < -45 || vy < -350) {
                             collapsed = true
                         } else if collapsed && (ty > 45 || vy > 350) {
@@ -615,7 +609,7 @@ struct CalendarScreen: View {
             if monthChanged {
                 shiftDir = d > shownMonth ? 1 : -1
             }
-            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) {
+            withAnimation(Motion.toggle(reduceMotion)) {
                 selected = d
                 if monthChanged {
                     month = d.firstOfMonth
@@ -699,7 +693,7 @@ struct CalendarScreen: View {
                 WeekRow(week: w, month: shownMonth, selected: sel, today: model.today) { d in
                     dateSelectionHaptic += 1
                     shiftDir = 0
-                    withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) {
+                    withAnimation(Motion.toggle(reduceMotion)) {
                         selected = d
                         modeRaw = CalMode.day.rawValue
                         pageSequence += 1
@@ -749,7 +743,7 @@ struct AgendaRow: View {
                     }
                 }
                 .opacity(isDone ? 0.75 : 1)
-                .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.75), value: isDone)
+                .animation(Motion.check(reduceMotion), value: isDone)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }

@@ -48,7 +48,7 @@ struct RootView: View {
                                         }
                                     }
                                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                    .animation(.easeInOut(duration: 0.18), value: model.tab)
+                                    .animation(Motion.tabContent(reduceMotion), value: model.tab)
 
                                     BottomNav(tab: $model.tab, todayDay: model.today.day)
                                         .padding(.horizontal, 16)
@@ -67,13 +67,13 @@ struct RootView: View {
                                             let drawerW = min(rootWidth * 0.82, 340)
                                             let shouldOpen = tx > drawerW * 0.5 || (vx > 500 && tx > 12)
                                             if shouldOpen {
-                                                withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.32, dampingFraction: 0.86)) {
+                                                withAnimation(Motion.drawer(reduceMotion)) {
                                                     model.drawerOpen = true
                                                     edgeDrawerDrag = 0
                                                     edgeDrawerActive = false
                                                 }
                                             } else {
-                                                withAnimation(reduceMotion ? .easeOut(duration: 0.18) : .spring(response: 0.32, dampingFraction: 0.86)) {
+                                                withAnimation(Motion.drawer(reduceMotion)) {
                                                     edgeDrawerDrag = 0
                                                 } completion: {
                                                     if edgeDrawerDrag == 0 && !model.drawerOpen {
@@ -137,9 +137,7 @@ struct RootView: View {
                 try? await Task.sleep(for: minDisplay - elapsed)
             }
             guard !Task.isCancelled else { return }
-            let animation: Animation = reduceMotion
-                ? .easeOut(duration: 0.25)
-                : (model.isSignedIn ? .easeOut(duration: 0.45) : .spring(duration: 0.45, bounce: 0.1))
+            let animation = (model.isSignedIn ? Motion.launch : Motion.signIn)(reduceMotion)
             withAnimation(animation) {
                 splashDismissing = true
             } completion: {
@@ -216,14 +214,14 @@ struct BottomNav: View {
         .frame(height: 62)
         .glassEffect(.regular.tint(Color(hex: "#242628").opacity(0.6)), in: .capsule)
         .shadow(color: .black.opacity(0.35), radius: 12, y: 8)
-        .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.32, dampingFraction: 0.78), value: tab)
+        .animation(Motion.tab(reduceMotion), value: tab)
     }
 
     func item(_ t: MainTab, _ label: String, _ icon: String) -> some View {
         let on = tab == t
         return Button {
             if tab != t {
-                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.32, dampingFraction: 0.78)) {
+                withAnimation(Motion.tab(reduceMotion)) {
                     tab = t
                 }
             }
@@ -265,7 +263,7 @@ struct ScreenHeader<Center: View, Trailing: View>: View {
     var body: some View {
         HStack {
             GlassIconButton(systemName: "line.3.horizontal", label: "開啟清單抽屜") {
-                withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.32, dampingFraction: 0.86)) { model.drawerOpen = true }
+                withAnimation(Motion.drawer(reduceMotion)) { model.drawerOpen = true }
             }
             Spacer()
             center

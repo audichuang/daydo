@@ -8,6 +8,7 @@ import DayDoCore
 /// and committed with 儲存 (which lights up once something changed); toggles apply immediately.
 struct TaskDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var taskId: String
 
     @State private var detent: PresentationDetent = .fraction(0.56)
@@ -19,10 +20,10 @@ struct TaskDetailSheet: View {
             isInline: false,
             isLargeDetent: detent == .large,
             onToggleDetent: {
-                withAnimation(.snappy) { detent = detent == .large ? .fraction(0.56) : .large }
+                withAnimation(Motion.toggle(reduceMotion)) { detent = detent == .large ? .fraction(0.56) : .large }
             },
             onExpandForDate: {
-                withAnimation(.snappy) { detent = .large }
+                withAnimation(Motion.toggle(reduceMotion)) { detent = .large }
             },
             onDirtyChange: { dirty = $0 },
             onClose: { dismiss() }
@@ -52,6 +53,7 @@ struct TaskDetailContent: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var taskId: String
     var isInline: Bool = false
     var isLargeDetent: Bool = false
@@ -475,7 +477,7 @@ struct TaskDetailContent: View {
                 Text(note).txt(13).foregroundStyle(Palette.textMuted).lineSpacing(3)
             }
             if let raw = task.sourceRaw {
-                Button(showRaw ? "收合原文" : "查看原文") { withAnimation(.snappy) { showRaw.toggle() } }
+                Button(showRaw ? "收合原文" : "查看原文") { withAnimation(Motion.toggle(reduceMotion)) { showRaw.toggle() } }
                     .txt(13, .semibold).foregroundStyle(accent.text)
                     .padding(.horizontal, 12).frame(height: 34)
                     .overlay(Capsule().strokeBorder(Color(hex: "#33363A")))
@@ -604,7 +606,7 @@ struct TaskDetailContent: View {
     func openDate(_ task: TodoTask) {
         draft = DateDraft(task: task, today: model.today)
         onExpandForDate?()
-        withAnimation(.snappy) {
+        withAnimation(Motion.toggle(reduceMotion)) {
             page = .date
         }
     }

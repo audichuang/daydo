@@ -24,6 +24,7 @@ struct DateEditorFlow: View {
 
 struct DatePanel: View {
     @Environment(\.accent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var draft: DateDraft
     var today: LocalDay
     var cancel: () -> Void
@@ -91,7 +92,7 @@ struct DatePanel: View {
     }
 
     func tabButton(_ title: String, _ i: Int) -> some View {
-        Button { withAnimation(.snappy) { tab = i; expanded = nil } } label: {
+        Button { withAnimation(Motion.toggle(reduceMotion)) { tab = i; expanded = nil } } label: {
             Text(title).txt(15, .semibold)
                 .foregroundStyle(tab == i ? .white : Palette.textSecondary)
                 .padding(.horizontal, 18).frame(height: 36)
@@ -112,7 +113,7 @@ struct DatePanel: View {
                 if expanded == "time" {
                     VStack(spacing: 6) {
                         wheel(minute: draft.start) { setStartTime($0) }
-                        Button("不設時間（全天）") { withAnimation(.snappy) { draft.allDay = true; expanded = nil } }
+                        Button("不設時間（全天）") { withAnimation(Motion.toggle(reduceMotion)) { draft.allDay = true; expanded = nil } }
                             .txt(14, .semibold).foregroundStyle(accent.text).buttonStyle(.plain).padding(.bottom, 10)
                     }
                 }
@@ -170,7 +171,7 @@ struct DatePanel: View {
 
     func row(_ icon: String, _ label: String, _ value: String, key: String, highlight: Bool) -> some View {
         Button {
-            withAnimation(.snappy) { expanded = expanded == key ? nil : key }
+            withAnimation(Motion.toggle(reduceMotion)) { expanded = expanded == key ? nil : key }
         } label: {
             rowLabel(icon, label, value, highlight: highlight)
         }

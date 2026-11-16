@@ -11,6 +11,8 @@
 - `RootView`：根容器、底部分頁（任務／日曆／搜尋／設定）與共用 `ScreenHeader`。設計板的底欄有「共享」沒有「設定」，現在的分頁是刻意改的。
 - 沒有板的：`ComposerSheet` 鍵盤上方的快速新增、`OtherScreens` 搜尋與設定、`SignInView`、分享與邀請的幾個 sheet（第二階段新增）。
 
+改動畫、轉場、手勢或觸覺前讀 `ios/MOTION.md`。
+
 ## Widget（`DayDoWidgets/`，板號 6a、6b）
 
 - 讀 App Group 裡同一個 SQLite，資料與 timeline 規則在 DayDoCore 的 `Domain/WidgetData.swift`。改資料形狀或 timeline 要一起改三個 Widget View 與 `DayDoTests/WidgetSnapshotTests`。
@@ -20,4 +22,6 @@
 ## 踩過的雷
 
 - iPad 版面：開任務詳情一律由 `AppModel` 決定內嵌或 sheet，畫面不要自己判斷；內嵌詳情、垃圾桶、設定子頁都在 iPad 上出過資料遺失或遮擋的 bug，改這幾處要用 `ios/scripts/uitest.sh ipad` 跑過。
+- 先改畫面、延遲寫入的樂觀更新：寫入前要重讀任務的最新狀態，否則等待期間同一任務的存檔會把這次動作吞掉。重複任務完成後 id 不變、只換成下一次，樂觀狀態要記「哪一次」，不能只記 id。
+- 被 `.clipped()` 裁掉或收合起來看不見的內容仍然點得到，要另外關掉點擊（日曆收合成單週時，隱藏的那幾週曾經點得到）。
 - UI 測試不要假設現在的時段（日曆測試曾因此在某些時間失敗），也不要假設通知授權已處理。

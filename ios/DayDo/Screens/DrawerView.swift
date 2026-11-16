@@ -54,14 +54,14 @@ struct DrawerOverlay: View {
                                 }
                                 .onEnded { v in
                                     guard open, !rowDragging else {
-                                        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.82)) {
+                                        withAnimation(Motion.rowSwipe(reduceMotion)) {
                                             drag = 0
                                         }
                                         return
                                     }
                                     let shouldClose = v.translation.width < -width * 0.4 || v.predictedEndTranslation.width < -width * 0.5
                                     if shouldClose { close() }
-                                    withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.82)) {
+                                    withAnimation(Motion.rowSwipe(reduceMotion)) {
                                         drag = 0
                                     }
                                 }
@@ -69,14 +69,14 @@ struct DrawerOverlay: View {
                         .transition(reduceMotion ? .opacity : .move(edge: .leading))
                 }
             }
-            .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.32, dampingFraction: 0.86), value: open)
+            .animation(Motion.drawer(reduceMotion), value: open)
             .sensoryFeedback(.impact(weight: .light), trigger: open)
         }
     }
 
     func close() {
         rowDragging = false
-        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.32, dampingFraction: 0.86)) {
+        withAnimation(Motion.drawer(reduceMotion)) {
             open = false
         }
     }
@@ -306,7 +306,7 @@ struct DrawerView: View {
     func isCurrent(_ s: TaskScope) -> Bool { model.tab == .tasks && model.scope == s }
 
     func closeSwipe() {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) { swipedId = nil }
+        withAnimation(Motion.rowSwipe(reduceMotion)) { swipedId = nil }
     }
 
     func pick(_ s: TaskScope) {
@@ -341,7 +341,7 @@ struct DrawerView: View {
                         .txt(12)
                         .foregroundStyle(current ? accent.text : Palette.textTertiary)
                         .contentTransition(reduceMotion ? .identity : .numericText())
-                        .animation(reduceMotion ? .easeOut(duration: 0.15) : .snappy(duration: 0.25), value: count)
+                        .animation(Motion.count(reduceMotion), value: count)
                         .transition(.opacity)
                 }
             }
@@ -362,7 +362,7 @@ struct DrawerView: View {
             row(icon: Image(systemName: "folder"), title: f.name, count: children.reduce(0) { $0 + $1.activeCount }, current: false, indent: false,
                 trailing: AnyView(Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textTertiary).rotationEffect(.degrees(open ? 90 : 0)))) {
                 if swipedId != nil { closeSwipe(); return }
-                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) {
+                withAnimation(Motion.toggle(reduceMotion)) {
                     if open { model.openFolders.remove(f.id) } else { model.openFolders.insert(f.id) }
                 }
             }
@@ -377,7 +377,7 @@ struct DrawerView: View {
                 VStack(spacing: 2) {
                     ForEach(children) { p in listRow(p, indent: true) }
                 }
-                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+                .transition(Motion.expandTransition(reduceMotion))
             }
         }
         .clipped()
@@ -445,6 +445,7 @@ struct DrawerView: View {
 /// Progressive horizontal swipe actions for drawer list rows:
 /// 1 button (刪除) -> 2 buttons (編輯, 刪除) -> 3 buttons (置頂, 編輯, 刪除).
 private struct SwipeableListRow<Content: View>: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var project: Project
     @Binding var swipedId: String?
     @Binding var activeDrag: Bool
@@ -525,7 +526,7 @@ private struct SwipeableListRow<Content: View>: View {
                     } else {
                         target = -stop3
                     }
-                    withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
+                    withAnimation(Motion.rowSwipeSettle(reduceMotion)) {
                         baseOffset = target
                         dragDelta = 0
                     }
@@ -537,7 +538,7 @@ private struct SwipeableListRow<Content: View>: View {
         )
         .onChange(of: swipedId) { _, newValue in
             if newValue != project.id && baseOffset != 0 {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                withAnimation(Motion.rowSwipe(reduceMotion)) {
                     baseOffset = 0
                     dragDelta = 0
                 }
@@ -546,7 +547,7 @@ private struct SwipeableListRow<Content: View>: View {
     }
 
     private func close() {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+        withAnimation(Motion.rowSwipe(reduceMotion)) {
             baseOffset = 0
             dragDelta = 0
             if swipedId == project.id { swipedId = nil }
@@ -565,7 +566,7 @@ private struct SwipeableListRow<Content: View>: View {
         .buttonStyle(.plain)
         .scaleEffect(visible ? 1 : 0.3)
         .opacity(visible ? 1 : 0)
-        .animation(.spring(response: 0.28, dampingFraction: 0.68), value: visible)
+        .animation(Motion.popup(reduceMotion), value: visible)
         .allowsHitTesting(visible)
         .accessibilityLabel(label)
         .accessibilityHidden(!visible)

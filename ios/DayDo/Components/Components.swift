@@ -29,12 +29,7 @@ struct PressButtonStyle: ButtonStyle {
                 }
                 .scaleEffect(pressed && !reduceMotion ? scale : 1)
                 .opacity(pressed ? opacity : 1)
-                .animation(
-                    reduceMotion
-                        ? .easeOut(duration: 0.1)
-                        : .spring(response: 0.24, dampingFraction: 0.72),
-                    value: pressed
-                )
+                .animation(Motion.press(reduceMotion), value: pressed)
         }
     }
 }
@@ -87,7 +82,7 @@ struct TaskCheckbox: View {
                 }
             }
             .frame(width: size, height: size)
-            .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.62), value: done)
+            .animation(Motion.checkbox(reduceMotion), value: done)
     }
 }
 

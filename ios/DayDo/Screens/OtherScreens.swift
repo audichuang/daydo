@@ -49,10 +49,7 @@ struct SearchScreen: View {
                     VStack(spacing: 0) {
                         ForEach(Array(results.enumerated()), id: \.element.id) { i, t in
                             TaskRow(task: t, separator: i > 0, sectionId: "search")
-                                .transition(reduceMotion ? .opacity : .asymmetric(
-                                    insertion: .opacity.combined(with: .move(edge: .top)),
-                                    removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .top))
-                                ))
+                                .transition(Motion.rowTransition(reduceMotion))
                         }
                     }
                     .card()
@@ -94,7 +91,7 @@ struct SearchScreen: View {
                 lastText = text
                 let found = try await model.api.searchTasks(text: text, activeOnly: activeOnly)
                 guard !Task.isCancelled else { return }
-                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.86)) {
+                withAnimation(Motion.layout(reduceMotion)) {
                     results = found
                 }
             } catch is CancellationError {

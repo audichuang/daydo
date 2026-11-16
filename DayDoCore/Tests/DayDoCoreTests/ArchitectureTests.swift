@@ -86,6 +86,26 @@ private let guards: [Guard] = [
         allow: [],
         bad: [#"Text("尚未開放")"#, #"Text("僅存於這台裝置")"#]
     ),
+    Guard(
+        name: "animation curves are centralized in ios/DayDo/Components/Motion.swift",
+        directories: ["ios/DayDo"],
+        pattern: #"(?:\bAnimation)?\.(spring|snappy|bouncy|smooth|easeOut|easeIn|easeInOut|linear|timingCurve|interpolatingSpring)\b|\bAnimation\.default\b"#,
+        allow: ["ios/DayDo/Components/Motion.swift"],
+        bad: [
+            "withAnimation(.snappy) {",
+            ".animation(.spring(response: 0.3, dampingFraction: 0.8), value: x)",
+            ".easeOut(duration: 0.15)",
+            "withAnimation(.smooth)",
+            "withAnimation(.bouncy) {",
+            "withAnimation(.easeIn(duration: 0.2)) {",
+            "withAnimation(.easeInOut(duration: 0.2)) {",
+            "withAnimation(.linear(duration: 0.2)) {",
+            "withAnimation(.timingCurve(0.2, 0, 0, 1, duration: 0.3)) {",
+            "withAnimation(.interpolatingSpring(stiffness: 170, damping: 15)) {",
+            "withAnimation(Animation.spring(response: 0.3, dampingFraction: 0.8)) {",
+            "withAnimation(Animation.default) {",
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {

@@ -38,12 +38,7 @@ struct TaskListScreen: View {
                             .txt(14)
                             .foregroundStyle(Palette.textSecondary)
                             .contentTransition(reduceMotion ? .identity : .numericText())
-                            .animation(
-                                loadedScope == scope
-                                    ? (reduceMotion ? .easeOut(duration: 0.15) : .snappy(duration: 0.25))
-                                    : nil,
-                                value: subtitle
-                            )
+                            .animation(loadedScope == scope ? Motion.count(reduceMotion) : nil, value: subtitle)
                     }
                     .padding(.horizontal, 4)
 
@@ -116,7 +111,7 @@ struct TaskListScreen: View {
                 }
             }
             Button(model.compact ? "顯示詳情" : "隱藏詳情", systemImage: model.compact ? "eye" : "eye.slash") {
-                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .snappy) { model.compact.toggle() }
+                withAnimation(Motion.toggle(reduceMotion)) { model.compact.toggle() }
             }
             Button(closed.contains("completed") ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle("completed") }
             if let overdue = sections.first(where: { $0.id == "overdue" }),
@@ -157,10 +152,7 @@ struct TaskListScreen: View {
             guard !Task.isCancelled else { return }
             let shouldAnimate = loaded && loadedScope == scope
             if shouldAnimate {
-                let anim: Animation = reduceMotion
-                    ? .easeOut(duration: 0.18)
-                    : .spring(response: 0.36, dampingFraction: 0.86)
-                withAnimation(anim) {
+                withAnimation(Motion.layout(reduceMotion)) {
                     sections = loadedSections
                     loaded = true
                     loadedScope = scope
@@ -187,8 +179,7 @@ struct TaskListScreen: View {
     func toggle(_ id: String) {
         var c = closed
         if c.contains(id) { c.remove(id) } else { c.insert(id) }
-        let anim: Animation = reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.86)
-        withAnimation(anim) { closedRaw = c.sorted().joined(separator: ",") }
+        withAnimation(Motion.layout(reduceMotion)) { closedRaw = c.sorted().joined(separator: ",") }
     }
 
     @ViewBuilder
@@ -289,13 +280,10 @@ struct SectionCard: View {
                 VStack(spacing: 0) {
                     ForEach(Array(section.tasks.enumerated()), id: \.element.id) { i, t in
                         TaskRow(task: t, separator: i > 0, sectionId: section.id, inTrash: scope == .smart(.trash), selectsInline: true)
-                            .transition(reduceMotion ? .opacity : .asymmetric(
-                                insertion: .opacity.combined(with: .move(edge: .top)),
-                                removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .top))
-                            ))
+                            .transition(Motion.rowTransition(reduceMotion))
                     }
                 }
-                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+                .transition(Motion.expandTransition(reduceMotion))
             }
         }
         .card()
@@ -358,7 +346,7 @@ struct TaskRow: View {
                     meta
                 }
                 .opacity(isDone ? 0.75 : 1)
-                .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.75), value: isDone)
+                .animation(Motion.check(reduceMotion), value: isDone)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, pad)
                 .padding(.trailing, 16)

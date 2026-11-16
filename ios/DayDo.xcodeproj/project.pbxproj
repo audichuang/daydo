@@ -41,6 +41,7 @@
 		B6932C6011DDA88EB6338216 /* CalendarWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A7F8C84AE26E0C8B8272408 /* CalendarWidgetView.swift */; };
 		BA3665B45AB6639B842BBA89 /* WidgetSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 769FB898F8CB816D3209FD16 /* WidgetSnapshotTests.swift */; };
 		BA526A6B810BD3379EC9BA14 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6984AFAE49745EDDDFF3BDB4 /* AppModel.swift */; };
+		C71F91C87DBE76BFE8A2BC0C /* Motion.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDC36FD5853DC2385FA65F35 /* Motion.swift */; };
 		D5B392650E0271184B023696 /* DayDoWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D30F5C2B4335B32BA231501 /* DayDoWidgetsBundle.swift */; };
 		D6E8515463547C7474484DF0 /* DayDoWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 90C4A324F918B192D9D68EE1 /* DayDoWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		EAB896BF06D1DA77E283DF5E /* DayDoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4677FEEE4764DF9B66BB6C5A /* DayDoCore */; };
@@ -128,9 +129,10 @@
 		DFFE20E498B56F159D6BDC5C /* DayDo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DayDo.entitlements; sourceTree = "<group>"; };
 		E45AF04A64333352B5667B17 /* DrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerView.swift; sourceTree = "<group>"; };
 		EC3484874C0CCBD966338B4D /* AppModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelTests.swift; sourceTree = "<group>"; };
+		EDC36FD5853DC2385FA65F35 /* Motion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Motion.swift; sourceTree = "<group>"; };
 		F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		F68BFC5798449FCFE7B82212 /* DayDoCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DayDoCore; path = ../DayDoCore; sourceTree = SOURCE_ROOT; };
-		"TEMP_2931D3A8-0A93-4F5E-B6DF-77FAD3D4DA80" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		"TEMP_E42DF44F-548D-4081-ADFF-AFAF3543DD0D" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -207,6 +209,7 @@
 			isa = PBXGroup;
 			children = (
 				B385BD7500B9C55FC5E7A64A /* Components.swift */,
+				EDC36FD5853DC2385FA65F35 /* Motion.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -305,10 +308,10 @@
 			path = DayDoUITests;
 			sourceTree = "<group>";
 		};
-		"TEMP_DECCC0E6-3FFE-4B85-B495-EE0451DE20D1" /* ios */ = {
+		"TEMP_882D173F-3B31-44CB-8E60-5066DDA4896B" /* ios */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_2931D3A8-0A93-4F5E-B6DF-77FAD3D4DA80" /* Config.xcconfig */,
+				"TEMP_E42DF44F-548D-4081-ADFF-AFAF3543DD0D" /* Config.xcconfig */,
 			);
 			path = ios;
 			sourceTree = "<group>";
@@ -514,6 +517,7 @@
 				712BE556E14C8FEB3EDA5C9F /* JoinInviteSheet.swift in Sources */,
 				2B68D0A20FBE89F153D00562 /* KeychainSyncTokenStore.swift in Sources */,
 				7D0D980B5B52B78EF1CA32AF /* MeProfileSheet.swift in Sources */,
+				C71F91C87DBE76BFE8A2BC0C /* Motion.swift in Sources */,
 				7454858BA67E1C4407B53A26 /* OtherScreens.swift in Sources */,
 				23FCC3E72501BB4E763CA638 /* RootView.swift in Sources */,
 				291183E9EBCB11282851A4F3 /* ShareListSheet.swift in Sources */,
@@ -599,7 +603,7 @@
 		};
 		739B74DBC48851785BC9AAA2 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_2931D3A8-0A93-4F5E-B6DF-77FAD3D4DA80" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_E42DF44F-548D-4081-ADFF-AFAF3543DD0D" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
@@ -712,7 +716,7 @@
 		};
 		B97B517B54A6D8DCCD7DFE92 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_2931D3A8-0A93-4F5E-B6DF-77FAD3D4DA80" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_E42DF44F-548D-4081-ADFF-AFAF3543DD0D" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
