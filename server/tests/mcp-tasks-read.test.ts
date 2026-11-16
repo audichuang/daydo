@@ -1,96 +1,21 @@
-import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import * as schema from '../db/schema';
 import { acceptInvite, createInvite } from '../src/sharing';
-import { loadSnapshot } from '../src/serverops/snapshot';
-import { handleToolCall, HINTS, TOOL_DEFS } from '../src/mcp/registry';
-import { createScopeWorld } from './helpers/scopeWorld';
+import {
+  HINTS,
+  TOOL_DEFS,
+} from '../src/mcp/registry';
+import {
+  call,
+  createServerHarness,
+  deviceOp,
+  NOW_ISH,
+  projectRow,
+  seedBasic,
+  seedUser,
+  taskRow,
+} from './helpers/serverHarness';
 
-function createHarness() {
-  const { db, calls, clock, getScopeStub, push } = createScopeWorld();
-  let seq = 0;
-  // Device HLCs sit in the past unless a test asks for a lead.
-  const deviceHlc = (ms = Date.now() - 60_000) => `${ms}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
-  const devicePush = (userId: string, ops: unknown[]) => push(userId, 'dev-a', ops);
-  const deps = (userId: string) => ({ db, userId, deviceId: 'mcp' as const, getScopeStub, clock });
-  const snapshot = (userId: string) => loadSnapshot(db, userId, getScopeStub);
-  return { db, calls, deviceHlc, devicePush, deps, snapshot };
-}
-
-type Harness = ReturnType<typeof createHarness>;
-
-const NOW_ISH = 1_700_000_000_000;
-
-function projectRow(id: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, name: id, viewMode: 'list', kind: 'TASK', isInbox: false, ownerId: 'm-a',
-    sortKey: 'a0', showInSmart: 'all', notifyMode: 'all', createdAt: NOW_ISH, updatedAt: NOW_ISH,
-    ...extra,
-  };
-}
-
-function taskRow(id: string, projectId: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, projectId, title: id, content: '', priority: 0, status: 0, sortKey: 'a0',
-    reminders: [], tags: [], createdAt: NOW_ISH, updatedAt: NOW_ISH, ...extra,
-  };
-}
-
-function deviceOp(h: Harness, entity: string, row: Record<string, unknown>, hlc = h.deviceHlc()) {
-  return {
-    opId: `dev-${entity}-${String(row.id)}-${hlc}`,
-    hlc,
-    entity,
-    entityId: String(row.id),
-    op: 'upsert',
-    fields: Object.keys(row),
-    row,
-  };
-}
-
-async function seedUser(h: Harness, userId: string, memberId: string | null, withInbox = true) {
-  await h.db.insert(schema.user).values({
-    id: userId, name: userId, initial: userId[0], color: '#007AFF', avatarUrl: null,
-    createdAt: NOW_ISH,
-  });
-  if (memberId) {
-    await h.db.update(schema.user).set({ meMemberId: memberId }).where(eq(schema.user.id, userId));
-  }
-  if (withInbox) {
-    const res = await h.devicePush(userId, [
-      deviceOp(h, 'project', projectRow(`inbox-${userId}`, { isInbox: true, ownerId: memberId ?? '' })),
-    ]);
-    expect(res.results[0]?.status).toBe('applied');
-  }
-}
-
-/** u-a with inbox, list p1 and task t1 (scheduled). */
-async function seedBasic(h: Harness) {
-  await seedUser(h, 'u-a', 'm-a');
-  const res = await h.devicePush('u-a', [
-    deviceOp(h, 'project', projectRow('p1')),
-    deviceOp(
-      h,
-      'task',
-      taskRow('t1', 'p1', {
-        startDay: '2026-11-20', startMinute: 540, endDay: '2026-11-20', endMinute: 600,
-        timeZone: 'Asia/Taipei', reminders: ['TRIGGER:PT0S'],
-      }),
-    ),
-  ]);
-  expect(res.results.map((r) => r.status)).toEqual(['applied', 'applied']);
-}
-
-
-async function call(h: Harness, userId: string, name: string, args: Record<string, unknown> = {}) {
-  const res = await handleToolCall(name, args, {
-    userId,
-    clientId: 'test',
-    services: { db: h.db, getScopeStub: h.deps(userId).getScopeStub },
-  });
-  const text = res.content[0]!.text;
-  return { isError: res.isError === true, text, json: res.isError ? null : (JSON.parse(text) as any) };
-}
+type Harness = ReturnType<typeof createServerHarness>;
 
 /** u-a (owner of p1, with t1), u-b as `role` on p1. */
 async function seedShared(h: Harness, role: 'viewer' | 'editor') {
@@ -101,7 +26,6 @@ async function seedShared(h: Harness, role: 'viewer' | 'editor') {
     code: invite.code, userId: 'u-b', getScopeStub: (s) => h.deps('u-b').getScopeStub(s), nowMs: Date.now(),
   });
 }
-
 
 const READ_TOOLS = ['list_recent_tasks', 'list_tasks', 'search_tasks', 'get_task', 'get_completed_tasks'];
 
@@ -117,7 +41,7 @@ describe('M11a registry', () => {
 
 describe('M11a list_recent_tasks', () => {
   it('orders by updatedAt desc, honours limit, active_only and tag', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     await h.devicePush('u-a', [
       deviceOp(h, 'task', taskRow('t2', 'p1', { updatedAt: NOW_ISH + 30, tags: ['work'] })),
@@ -135,7 +59,7 @@ describe('M11a list_recent_tasks', () => {
   });
 
   it('rejects an unknown or archived project and a bad limit', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     await h.devicePush('u-a', [deviceOp(h, 'project', projectRow('pa', { archivedAt: NOW_ISH }))]);
     expect((await call(h, 'u-a', 'list_recent_tasks', { project_id: 'nope' })).isError).toBe(true);
@@ -146,7 +70,7 @@ describe('M11a list_recent_tasks', () => {
 
 describe('M11a visibility', () => {
   it('hides trashed tasks and tasks of trashed or archived projects in every read tool', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     await h.devicePush('u-a', [
       deviceOp(h, 'project', projectRow('p-arch', { archivedAt: NOW_ISH })),
@@ -167,7 +91,7 @@ describe('M11a visibility', () => {
   });
 
   it('shows tasks of a shared list to the member', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedShared(h, 'viewer');
     const list = await call(h, 'u-b', 'list_tasks');
     expect(list.json.map((t: any) => t.id)).toEqual(['t1']);
@@ -179,7 +103,7 @@ describe('M11a visibility', () => {
 
 describe('M11a list_tasks / get_completed_tasks', () => {
   it('list_tasks returns open tasks by sortKey, optionally for one project', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     await h.devicePush('u-a', [
       deviceOp(h, 'project', projectRow('p2', { sortKey: 'b' })),
@@ -195,7 +119,7 @@ describe('M11a list_tasks / get_completed_tasks', () => {
   });
 
   it('get_completed_tasks orders by completedAt desc and filters by project', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     await h.devicePush('u-a', [
       deviceOp(h, 'project', projectRow('p2')),
@@ -212,7 +136,7 @@ describe('M11a list_tasks / get_completed_tasks', () => {
 
 describe('M11a search_tasks', () => {
   it('matches title, content, tags and checklist titles case-insensitively; open before done, newest first', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     await h.devicePush('u-a', [
       deviceOp(h, 'task', taskRow('s-title', 'p1', { title: 'Buy MILK', updatedAt: NOW_ISH + 1 })),
@@ -230,7 +154,7 @@ describe('M11a search_tasks', () => {
   });
 
   it('caps results at 200', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const ops = Array.from({ length: 205 }, (_, i) => deviceOp(h, 'task', taskRow(`m${i}`, 'p1', { title: 'zzz', updatedAt: NOW_ISH + i })));
     for (let i = 0; i < ops.length; i += 100) await h.devicePush('u-a', ops.slice(i, i + 100));
@@ -242,7 +166,7 @@ describe('M11a search_tasks', () => {
 
 describe('M11a get_task and summaries', () => {
   it('returns the full record, and errors when project_id does not match', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     await h.devicePush('u-a', [
       deviceOp(h, 'project', projectRow('p2')),
@@ -258,7 +182,7 @@ describe('M11a get_task and summaries', () => {
   });
 
   it('list tools cut content to 100 characters and turn items into a count', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     await h.devicePush('u-a', [
       deviceOp(h, 'task', taskRow('t5', 'p1', { content: 'y'.repeat(150), updatedAt: NOW_ISH + 5 })),

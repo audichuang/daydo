@@ -1,17 +1,26 @@
-import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
-import * as schema from '../db/schema';
 import { acceptInvite, createInvite } from '../src/sharing';
 import { executeSyncPush } from '../src/sync/push';
-import { loadSnapshot } from '../src/serverops/snapshot';
-import { handleToolCall, HINTS, TOOL_DEFS } from '../src/mcp/registry';
+import {
+  HINTS,
+  TOOL_DEFS,
+} from '../src/mcp/registry';
 import { advancingNow } from './helpers/advancingClock';
-import { createScopeWorld, type ScopePushInput } from './helpers/scopeWorld';
+import type { ScopePushInput } from './helpers/scopeWorld';
+import {
+  call,
+  createServerHarness,
+  deviceOp,
+  NOW_ISH,
+  seedBasic,
+  seedUser,
+  taskRow,
+} from './helpers/serverHarness';
 
 function createHarness() {
   // One-shot: makes the matching push throw before the scope applies it (a DO failure).
   const hooks: { failPush?: (input: ScopePushInput) => boolean } = {};
-  const { db, calls, clock, getScopeStub, push } = createScopeWorld({
+  const world = createServerHarness({
     onPush: (input, proceed) => {
       if (hooks.failPush?.(input)) {
         hooks.failPush = undefined;
@@ -20,89 +29,10 @@ function createHarness() {
       return proceed(input);
     },
   });
-  let seq = 0;
-  // Device HLCs sit in the past unless a test asks for a lead.
-  const deviceHlc = (ms = Date.now() - 60_000) => `${ms}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
-  const devicePush = (userId: string, ops: unknown[]) => push(userId, 'dev-a', ops);
-  const deps = (userId: string) => ({ db, userId, deviceId: 'mcp' as const, getScopeStub, clock });
-  const snapshot = (userId: string) => loadSnapshot(db, userId, getScopeStub);
-  return { db, calls, hooks, deviceHlc, devicePush, deps, snapshot };
+  return { ...world, hooks };
 }
 
 type Harness = ReturnType<typeof createHarness>;
-
-const NOW_ISH = 1_700_000_000_000;
-
-function projectRow(id: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, name: id, viewMode: 'list', kind: 'TASK', isInbox: false, ownerId: 'm-a',
-    sortKey: 'a0', showInSmart: 'all', notifyMode: 'all', createdAt: NOW_ISH, updatedAt: NOW_ISH,
-    ...extra,
-  };
-}
-
-function taskRow(id: string, projectId: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, projectId, title: id, content: '', priority: 0, status: 0, sortKey: 'a0',
-    reminders: [], tags: [], createdAt: NOW_ISH, updatedAt: NOW_ISH, ...extra,
-  };
-}
-
-function deviceOp(h: Harness, entity: string, row: Record<string, unknown>, hlc = h.deviceHlc()) {
-  return {
-    opId: `dev-${entity}-${String(row.id)}-${hlc}`,
-    hlc,
-    entity,
-    entityId: String(row.id),
-    op: 'upsert',
-    fields: Object.keys(row),
-    row,
-  };
-}
-
-async function seedUser(h: Harness, userId: string, memberId: string | null, withInbox = true) {
-  await h.db.insert(schema.user).values({
-    id: userId, name: userId, initial: userId[0], color: '#007AFF', avatarUrl: null,
-    createdAt: NOW_ISH,
-  });
-  if (memberId) {
-    await h.db.update(schema.user).set({ meMemberId: memberId }).where(eq(schema.user.id, userId));
-  }
-  if (withInbox) {
-    const res = await h.devicePush(userId, [
-      deviceOp(h, 'project', projectRow(`inbox-${userId}`, { isInbox: true, ownerId: memberId ?? '' })),
-    ]);
-    expect(res.results[0]?.status).toBe('applied');
-  }
-}
-
-/** u-a with inbox, list p1 and task t1 (scheduled). */
-async function seedBasic(h: Harness) {
-  await seedUser(h, 'u-a', 'm-a');
-  const res = await h.devicePush('u-a', [
-    deviceOp(h, 'project', projectRow('p1')),
-    deviceOp(
-      h,
-      'task',
-      taskRow('t1', 'p1', {
-        startDay: '2026-11-20', startMinute: 540, endDay: '2026-11-20', endMinute: 600,
-        timeZone: 'Asia/Taipei', reminders: ['TRIGGER:PT0S'],
-      }),
-    ),
-  ]);
-  expect(res.results.map((r) => r.status)).toEqual(['applied', 'applied']);
-}
-
-
-async function call(h: Harness, userId: string, name: string, args: Record<string, unknown> = {}) {
-  const res = await handleToolCall(name, args, {
-    userId,
-    clientId: 'test',
-    services: { db: h.db, getScopeStub: h.deps(userId).getScopeStub },
-  });
-  const text = res.content[0]!.text;
-  return { isError: res.isError === true, text, json: res.isError ? null : (JSON.parse(text) as any) };
-}
 
 /** u-a (owner of p1, with t1), u-b as `role` on p1. */
 async function seedShared(h: Harness, role: 'viewer' | 'editor') {

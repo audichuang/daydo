@@ -1,9 +1,6 @@
-import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import * as schema from '../db/schema';
 import { acceptInvite, createInvite } from '../src/sharing';
 import { parseHlc } from '../src/sync/hlc';
-import { loadSnapshot } from '../src/serverops/snapshot';
 import {
   NO_DATA_MESSAGE,
   WriteError,
@@ -13,86 +10,19 @@ import {
   type WriteIntent,
 } from '../src/serverops/writer';
 import { MAX_OPS_PER_PUSH } from '../src/sync/envelope';
-import { createScopeWorld } from './helpers/scopeWorld';
-
-function createHarness() {
-  const { db, calls, clock, getScopeStub, push } = createScopeWorld();
-  let seq = 0;
-  // Device HLCs sit in the past unless a test asks for a lead.
-  const deviceHlc = (ms = Date.now() - 60_000) => `${ms}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
-  const devicePush = (userId: string, ops: unknown[]) => push(userId, 'dev-a', ops);
-  const deps = (userId: string) => ({ db, userId, deviceId: 'mcp' as const, getScopeStub, clock });
-  const snapshot = (userId: string) => loadSnapshot(db, userId, getScopeStub);
-  return { db, calls, deviceHlc, devicePush, deps, snapshot };
-}
-
-type Harness = ReturnType<typeof createHarness>;
-
-const NOW_ISH = 1_700_000_000_000;
-
-function projectRow(id: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, name: id, viewMode: 'list', kind: 'TASK', isInbox: false, ownerId: 'm-a',
-    sortKey: 'a0', showInSmart: 'all', notifyMode: 'all', createdAt: NOW_ISH, updatedAt: NOW_ISH,
-    ...extra,
-  };
-}
-
-function taskRow(id: string, projectId: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, projectId, title: id, content: '', priority: 0, status: 0, sortKey: 'a0',
-    reminders: [], tags: [], createdAt: NOW_ISH, updatedAt: NOW_ISH, ...extra,
-  };
-}
-
-function deviceOp(h: Harness, entity: string, row: Record<string, unknown>, hlc = h.deviceHlc()) {
-  return {
-    opId: `dev-${entity}-${String(row.id)}-${hlc}`,
-    hlc,
-    entity,
-    entityId: String(row.id),
-    op: 'upsert',
-    fields: Object.keys(row),
-    row,
-  };
-}
-
-async function seedUser(h: Harness, userId: string, memberId: string | null, withInbox = true) {
-  await h.db.insert(schema.user).values({
-    id: userId, name: userId, initial: userId[0], color: '#007AFF', avatarUrl: null,
-    createdAt: NOW_ISH,
-  });
-  if (memberId) {
-    await h.db.update(schema.user).set({ meMemberId: memberId }).where(eq(schema.user.id, userId));
-  }
-  if (withInbox) {
-    const res = await h.devicePush(userId, [
-      deviceOp(h, 'project', projectRow(`inbox-${userId}`, { isInbox: true, ownerId: memberId ?? '' })),
-    ]);
-    expect(res.results[0]?.status).toBe('applied');
-  }
-}
-
-/** u-a with inbox, list p1 and task t1 (scheduled). */
-async function seedBasic(h: Harness) {
-  await seedUser(h, 'u-a', 'm-a');
-  const res = await h.devicePush('u-a', [
-    deviceOp(h, 'project', projectRow('p1')),
-    deviceOp(
-      h,
-      'task',
-      taskRow('t1', 'p1', {
-        startDay: '2026-11-20', startMinute: 540, endDay: '2026-11-20', endMinute: 600,
-        timeZone: 'Asia/Taipei', reminders: ['TRIGGER:PT0S'],
-      }),
-    ),
-  ]);
-  expect(res.results.map((r) => r.status)).toEqual(['applied', 'applied']);
-}
+import {
+  createServerHarness,
+  deviceOp,
+  NOW_ISH,
+  projectRow,
+  seedBasic,
+  seedUser,
+  taskRow,
+} from './helpers/serverHarness';
 
 describe('M9b writer: no-data account', () => {
   it('rejects writes when meMemberId is missing, before pushing anything', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedUser(h, 'u-a', null);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
@@ -105,7 +35,7 @@ describe('M9b writer: no-data account', () => {
   });
 
   it('rejects writes when the account has no inbox', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedUser(h, 'u-a', 'm-a', false);
     const snap = await h.snapshot('u-a');
     await expect(pushIntents(h.deps('u-a'), snap, [])).rejects.toThrow(NO_DATA_MESSAGE);
@@ -115,7 +45,7 @@ describe('M9b writer: no-data account', () => {
 
 describe('M9b writer: ops and HLC', () => {
   it('creates a new row with a fresh UUIDv7 opId and the mcp device id', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
@@ -131,7 +61,7 @@ describe('M9b writer: ops and HLC', () => {
   });
 
   it('updates a row the phone stamped ahead of the server clock (max clock + 1)', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const lead = Date.now() + 3 * 60_000;
     const res = await h.devicePush('u-a', [
@@ -153,7 +83,7 @@ describe('M9b writer: ops and HLC', () => {
   });
 
   it('reports fields that lost to a phone edit after the snapshot, without resending', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     const lead = Date.now() + 3 * 60_000;
@@ -187,7 +117,7 @@ describe('M9b writer: ops and HLC', () => {
   });
 
   it('increments the counter for several ops on the same row in one call', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
@@ -202,7 +132,7 @@ describe('M9b writer: ops and HLC', () => {
   });
 
   it('chunks at 200 ops with tasks ahead of their child rows', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
@@ -228,7 +158,7 @@ describe('M9b writer: ops and HLC', () => {
   });
 
   it('flags a tombstoned row as purged instead of an LWW loss', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     await h.devicePush('u-a', [
@@ -248,7 +178,7 @@ describe('M9b writer: ops and HLC', () => {
   });
 
   it('keeps caller order for lists and tasks (tasks trashed before their list)', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
@@ -263,7 +193,7 @@ describe('M9b writer: ops and HLC', () => {
 
 describe('M9b writer: permissions', () => {
   it('turns a viewer list write into the server Forbidden error', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     await seedUser(h, 'u-b', 'm-b');
     const invite = await createInvite(h.db, {
@@ -289,7 +219,7 @@ describe('M9b writer: permissions', () => {
 
 describe('M9b writer: schedule group', () => {
   it('sends all five schedule fields when only the due changes', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
@@ -311,7 +241,7 @@ describe('M9b writer: schedule group', () => {
   });
 
   it('sends only the delta for an existing row, never the key or createdAt', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
@@ -326,7 +256,7 @@ describe('writer: createdAt and updatedAt stamps', () => {
   const LATER = NOW_ISH + 5_000;
 
   it('stamps a new row with createdAt and updatedAt from nowMs', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
@@ -339,7 +269,7 @@ describe('writer: createdAt and updatedAt stamps', () => {
   });
 
   it('bumps updatedAt on a delta write: nowMs, or one past a row stamped ahead of it', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
@@ -352,7 +282,7 @@ describe('writer: createdAt and updatedAt stamps', () => {
   });
 
   it('keeps an updatedAt the caller gives', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
@@ -361,7 +291,7 @@ describe('writer: createdAt and updatedAt stamps', () => {
   });
 
   it('refuses a write with no delta and pushes nothing (no bare updatedAt bump)', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
@@ -374,7 +304,7 @@ describe('writer: createdAt and updatedAt stamps', () => {
   });
 
   it('touch writes only updatedAt', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
@@ -429,7 +359,7 @@ describe('M9b writer: value validation', () => {
   ];
 
   it.each(bad)('blocks %s before pushing', async (_name, intent) => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
@@ -438,7 +368,7 @@ describe('M9b writer: value validation', () => {
   });
 
   it('accepts good values, verbatim copied sort keys and untouched legacy values', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     const now = Date.now();

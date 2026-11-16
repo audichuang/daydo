@@ -1,109 +1,26 @@
-import { eq } from 'drizzle-orm';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import * as schema from '../db/schema';
 import { acceptInvite, createInvite } from '../src/sharing';
-import { loadSnapshot } from '../src/serverops/snapshot';
-import { handleToolCall, HINTS, TOOL_DEFS } from '../src/mcp/registry';
+import {
+  HINTS,
+  TOOL_DEFS,
+} from '../src/mcp/registry';
 import { uuidv5 } from '../src/domain/uuid';
 import { advancingNow } from './helpers/advancingClock';
-import { createScopeWorld } from './helpers/scopeWorld';
+import {
+  call,
+  createServerHarness,
+  deviceOp,
+  projectRow,
+  seedBasic,
+  seedUser,
+  taskRow,
+  pulled,
+} from './helpers/serverHarness';
 
-function createHarness() {
-  const { db, calls, clock, getScopeStub, push, pull } = createScopeWorld();
-  let seq = 0;
-  // Device HLCs sit in the past unless a test asks for a lead.
-  const deviceHlc = (ms = Date.now() - 60_000) => `${ms}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
-  const devicePush = (userId: string, ops: unknown[]) => push(userId, 'dev-a', ops);
-  const deps = (userId: string) => ({ db, userId, deviceId: 'mcp' as const, getScopeStub, clock });
-  const snapshot = (userId: string) => loadSnapshot(db, userId, getScopeStub);
-  return {
-    db,
-    calls,
-    deviceHlc,
-    devicePush,
-    deps,
-    snapshot,
-    pull: (userId: string) => pull(userId, { limit: 1000 }),
-  };
-}
-
-type Harness = ReturnType<typeof createHarness>;
-
-const NOW_ISH = 1_700_000_000_000;
-
-function projectRow(id: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, name: id, viewMode: 'list', kind: 'TASK', isInbox: false, ownerId: 'm-a',
-    sortKey: 'a0', showInSmart: 'all', notifyMode: 'all', createdAt: NOW_ISH, updatedAt: NOW_ISH,
-    ...extra,
-  };
-}
-
-function taskRow(id: string, projectId: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, projectId, title: id, content: '', priority: 0, status: 0, sortKey: 'a0',
-    reminders: [], tags: [], createdAt: NOW_ISH, updatedAt: NOW_ISH, ...extra,
-  };
-}
-
-function deviceOp(h: Harness, entity: string, row: Record<string, unknown>, hlc = h.deviceHlc()) {
-  return {
-    opId: `dev-${entity}-${String(row.id)}-${hlc}`,
-    hlc,
-    entity,
-    entityId: String(row.id),
-    op: 'upsert',
-    fields: Object.keys(row),
-    row,
-  };
-}
-
-async function seedUser(h: Harness, userId: string, memberId: string | null, withInbox = true) {
-  await h.db.insert(schema.user).values({
-    id: userId, name: userId, initial: userId[0], color: '#007AFF', avatarUrl: null,
-    createdAt: NOW_ISH,
-  });
-  if (memberId) {
-    await h.db.update(schema.user).set({ meMemberId: memberId }).where(eq(schema.user.id, userId));
-  }
-  if (withInbox) {
-    const res = await h.devicePush(userId, [
-      deviceOp(h, 'project', projectRow(`inbox-${userId}`, { isInbox: true, ownerId: memberId ?? '' })),
-    ]);
-    expect(res.results[0]?.status).toBe('applied');
-  }
-}
-
-/** u-a with inbox, list p1 and task t1 (scheduled). */
-async function seedBasic(h: Harness) {
-  await seedUser(h, 'u-a', 'm-a');
-  const res = await h.devicePush('u-a', [
-    deviceOp(h, 'project', projectRow('p1')),
-    deviceOp(
-      h,
-      'task',
-      taskRow('t1', 'p1', {
-        startDay: '2026-11-20', startMinute: 540, endDay: '2026-11-20', endMinute: 600,
-        timeZone: 'Asia/Taipei', reminders: ['TRIGGER:PT0S'],
-      }),
-    ),
-  ]);
-  expect(res.results.map((r) => r.status)).toEqual(['applied', 'applied']);
-}
-
-
-async function call(h: Harness, userId: string, name: string, args: Record<string, unknown> = {}) {
-  const res = await handleToolCall(name, args, {
-    userId,
-    clientId: 'test',
-    services: { db: h.db, getScopeStub: h.deps(userId).getScopeStub },
-  });
-  const text = res.content[0]!.text;
-  return { isError: res.isError === true, text, json: res.isError ? null : (JSON.parse(text) as any) };
-}
+type Harness = ReturnType<typeof createServerHarness>;
 
 /** u-a (owner of p1, with t1), u-b as `role` on p1. */
 async function seedShared(h: Harness, role: 'viewer' | 'editor') {
@@ -113,20 +30,6 @@ async function seedShared(h: Harness, role: 'viewer' | 'editor') {
   await acceptInvite(h.db, {
     code: invite.code, userId: 'u-b', getScopeStub: (s) => h.deps('u-b').getScopeStub(s), nowMs: Date.now(),
   });
-}
-
-
-type PullRes = Awaited<ReturnType<Harness['pull']>>;
-
-function pulled(res: PullRes, entity: string, key: string): Record<string, unknown> | undefined {
-  for (const s of res.scopes) {
-    for (const r of s.rows) {
-      if (r.entity !== entity || 'gone' in r) continue;
-      const id = entity === 'tag' ? r.row.name : r.row.id;
-      if (id === key) return r.row as Record<string, unknown>;
-    }
-  }
-  return undefined;
 }
 
 const mcpOps = (h: Harness) => h.calls.filter((c) => c.deviceId === 'mcp').flatMap((c) => c.ops);
@@ -190,7 +93,7 @@ describe('M12 registry', () => {
 
 describe('M12 complete_task, one-off tasks', () => {
   it('writes status=2 with completedAt and returns the completed task', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     h.calls.length = 0;
     const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 't1' });
@@ -203,7 +106,7 @@ describe('M12 complete_task, one-off tasks', () => {
   });
 
   it('returns an already completed task unchanged without pushing', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     await h.devicePush('u-a', [deviceOp(h, 'task', { id: 't1', status: 2, completedAt: 123 })]);
     h.calls.length = 0;
@@ -214,7 +117,7 @@ describe('M12 complete_task, one-off tasks', () => {
   });
 
   it('errors when the task is in another project, and for viewers, without pushing', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedShared(h, 'viewer');
     h.calls.length = 0;
     const wrong = await call(h, 'u-a', 'complete_task', { project_id: 'inbox-u-a', task_id: 't1' });
@@ -230,7 +133,7 @@ describe('M12 complete_task, one-off tasks', () => {
 describe('M12 complete_task, repeating tasks', () => {
   // App alignment (push order, fixture ops, ids, catch-up) is in task-writes.test.ts.
   it('returns the completed copy with its checklist copy for the App fixture', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     const project = fixtureOp('01a1dd5b-fc88-7f98-9743-8bbff3400c35').row;
     const task = fixtureOp(FIX_TASK_ID).row;
     const item = fixtureOp('01a1dd5b-fc8a-7648-b8cc-9f08d7e42a43').row;
@@ -252,7 +155,7 @@ describe('M12 complete_task, repeating tasks', () => {
   it('takes today from the task zone, or DEFAULT_TIMEZONE for floating tasks', async () => {
     vi.setSystemTime(Date.parse('2026-11-15T17:00:00Z')); // 2026-11-16 01:00 in Asia/Taipei
     for (const [timeZone, expected] of [['UTC', '2026-11-15'], [null, '2026-11-16'], ['Asia/Taipei', '2026-11-16']] as const) {
-      const h = createHarness();
+      const h = createServerHarness();
       await seedRepeating(h, { startDay: '2026-11-10', endDay: '2026-11-10', timeZone, repeatRule: 'RRULE:FREQ=DAILY' });
       const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
       expect(r.isError, r.text).toBe(false);
@@ -261,7 +164,7 @@ describe('M12 complete_task, repeating tasks', () => {
   });
 
   it('refuses a rule whose next occurrence cannot be computed before writing anything', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedRepeating(h, { repeatRule: 'RRULE:FREQ=YEARLY;INTERVAL=8000' });
     h.calls.length = 0;
     const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
@@ -275,7 +178,7 @@ describe('complete_task carries one now into every stamp', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it('stamps a one-off completion with the same now for completedAt and updatedAt', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedBasic(h);
     advancingNow(FIX_NOW);
     const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 't1' });
@@ -286,7 +189,7 @@ describe('complete_task carries one now into every stamp', () => {
   });
 
   it('stamps the completed copy of a repeating task with one now', async () => {
-    const h = createHarness();
+    const h = createServerHarness();
     await seedRepeating(h);
     advancingNow(FIX_NOW);
     const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
