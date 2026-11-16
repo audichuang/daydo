@@ -4,7 +4,13 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { parseRecurrence } from '../src/domain/recurrence';
 import { addDays } from '../src/domain/schedule';
 import { normalizeTagLabels } from '../src/domain/tags';
@@ -294,13 +300,13 @@ const serverCalls = (h: Harness) => h.calls.filter((c) => c.deviceId === 'mcp');
 const serverOps = (h: Harness) => serverCalls(h).flatMap((c) => c.ops);
 
 /** Completes the current occurrence of `taskId` as `userId` would through any server caller. */
-async function complete(h: Harness, userId: string, taskId: string, defaultTimeZone = 'Asia/Taipei') {
+async function complete(h: Harness, userId: string, taskId: string, defaultTimeZone = 'Asia/Taipei', nowMs = FIX_NOW) {
   const snapshot = await h.snapshot(userId);
   const task = snapshot.findRow('task', taskId)!;
   const rule = parseRecurrence(String(task.row.repeatRule))!;
   const result = await completeOccurrence(h.deps(userId), snapshot, task, rule, rowSchedule(task.row)!, {
     defaultTimeZone,
-    nowMs: Date.now(),
+    nowMs,
   });
   const view = withCreated(snapshot, result.outcomes);
   const items = view
@@ -332,11 +338,8 @@ const isV7 = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-
 const repCopyId = (day = '2026-11-15', minute: string | number = 540) => uuidv5(`rep|${day}|${minute}`);
 
 describe('completeOccurrence', () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(FIX_NOW);
-  });
-
+  // Only the case below needs the HLC wall clock pinned too (see its comment); everything else
+  // passes `nowMs` explicitly and runs on the real clock.
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -438,6 +441,10 @@ describe('completeOccurrence', () => {
   });
 
   it('only completes an existing open copy, and leaves an existing completed copy alone', async () => {
+    // The device edit below is stamped FIX_NOW + 10 and must still beat the server's own HLC, so
+    // the HLC wall clock is pinned to FIX_NOW here (a real clock would stamp the server later).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FIX_NOW);
     const h = createHarness();
     await seedRepeating(h);
     const v5 = await repCopyId();
@@ -484,7 +491,7 @@ describe('completeOccurrence', () => {
   });
 
   it('takes today from the task zone, or from defaultTimeZone for a floating task', async () => {
-    vi.setSystemTime(Date.parse('2026-11-15T17:00:00Z')); // 2026-11-16 01:00 in Asia/Taipei
+    const nowMs = Date.parse('2026-11-15T17:00:00Z'); // 2026-11-16 01:00 in Asia/Taipei
     const cases = [
       ['UTC', 'Asia/Taipei', '2026-11-15'],
       ['Asia/Taipei', 'UTC', '2026-11-16'],
@@ -494,7 +501,7 @@ describe('completeOccurrence', () => {
     for (const [timeZone, defaultTimeZone, expected] of cases) {
       const h = createHarness();
       await seedRepeating(h, { startDay: '2026-11-10', endDay: '2026-11-10', timeZone, repeatRule: 'RRULE:FREQ=DAILY' });
-      await complete(h, 'u-a', 'rep', defaultTimeZone);
+      await complete(h, 'u-a', 'rep', defaultTimeZone, nowMs);
       expect(pulled(await h.pull('u-a'), 'task', 'rep')?.startDay, `${timeZone} / ${defaultTimeZone}`).toBe(expected);
     }
   });

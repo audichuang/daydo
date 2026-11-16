@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  describe,
+  expect,
+  it,
+} from 'vitest';
+import type { GetNow } from '../src/clock';
 import { acceptInvite, createInvite } from '../src/sharing';
 import {
   HINTS,
@@ -72,14 +77,11 @@ async function seedRepeating(h: Harness, extra: Record<string, unknown> = {}) {
 
 const repCopyId = (day = '2026-11-15', minute: string | number = 540) => uuidv5(`rep|${day}|${minute}`);
 
-beforeEach(() => {
-  vi.useFakeTimers({ toFake: ['Date'] });
-  vi.setSystemTime(FIX_NOW);
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-});
+// Tools read business time from the injected getNow (the App's clock for the fixture by default).
+// The HLC wall clock stays real, as in production.
+function createHarness(getNow: GetNow = () => FIX_NOW) {
+  return createServerHarness({ getNow });
+}
 
 describe('M12 registry', () => {
   it('registers complete_task as idempotent-write without TickTick or habit wording', () => {
@@ -93,7 +95,7 @@ describe('M12 registry', () => {
 
 describe('M12 complete_task, one-off tasks', () => {
   it('writes status=2 with completedAt and returns the completed task', async () => {
-    const h = createServerHarness();
+    const h = createHarness();
     await seedBasic(h);
     h.calls.length = 0;
     const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 't1' });
@@ -106,7 +108,7 @@ describe('M12 complete_task, one-off tasks', () => {
   });
 
   it('returns an already completed task unchanged without pushing', async () => {
-    const h = createServerHarness();
+    const h = createHarness();
     await seedBasic(h);
     await h.devicePush('u-a', [deviceOp(h, 'task', { id: 't1', status: 2, completedAt: 123 })]);
     h.calls.length = 0;
@@ -117,7 +119,7 @@ describe('M12 complete_task, one-off tasks', () => {
   });
 
   it('errors when the task is in another project, and for viewers, without pushing', async () => {
-    const h = createServerHarness();
+    const h = createHarness();
     await seedShared(h, 'viewer');
     h.calls.length = 0;
     const wrong = await call(h, 'u-a', 'complete_task', { project_id: 'inbox-u-a', task_id: 't1' });
@@ -133,7 +135,7 @@ describe('M12 complete_task, one-off tasks', () => {
 describe('M12 complete_task, repeating tasks', () => {
   // App alignment (push order, fixture ops, ids, catch-up) is in task-writes.test.ts.
   it('returns the completed copy with its checklist copy for the App fixture', async () => {
-    const h = createServerHarness();
+    const h = createHarness();
     const project = fixtureOp('01a1dd5b-fc88-7f98-9743-8bbff3400c35').row;
     const task = fixtureOp(FIX_TASK_ID).row;
     const item = fixtureOp('01a1dd5b-fc8a-7648-b8cc-9f08d7e42a43').row;
@@ -153,9 +155,9 @@ describe('M12 complete_task, repeating tasks', () => {
   });
 
   it('takes today from the task zone, or DEFAULT_TIMEZONE for floating tasks', async () => {
-    vi.setSystemTime(Date.parse('2026-11-15T17:00:00Z')); // 2026-11-16 01:00 in Asia/Taipei
+    const now = Date.parse('2026-11-15T17:00:00Z'); // 2026-11-16 01:00 in Asia/Taipei
     for (const [timeZone, expected] of [['UTC', '2026-11-15'], [null, '2026-11-16'], ['Asia/Taipei', '2026-11-16']] as const) {
-      const h = createServerHarness();
+      const h = createHarness(() => now);
       await seedRepeating(h, { startDay: '2026-11-10', endDay: '2026-11-10', timeZone, repeatRule: 'RRULE:FREQ=DAILY' });
       const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
       expect(r.isError, r.text).toBe(false);
@@ -164,7 +166,7 @@ describe('M12 complete_task, repeating tasks', () => {
   });
 
   it('refuses a rule whose next occurrence cannot be computed before writing anything', async () => {
-    const h = createServerHarness();
+    const h = createHarness();
     await seedRepeating(h, { repeatRule: 'RRULE:FREQ=YEARLY;INTERVAL=8000' });
     h.calls.length = 0;
     const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
@@ -176,7 +178,7 @@ describe('M12 complete_task, repeating tasks', () => {
 
 describe('complete_task carries one now into every stamp', () => {
   it('stamps a one-off completion with the same now for completedAt and updatedAt', async () => {
-    const h = createServerHarness({ getNow: advancingNow(FIX_NOW) });
+    const h = createHarness(advancingNow(FIX_NOW));
     await seedBasic(h);
     const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 't1' });
     expect(r.isError, r.text).toBe(false);
@@ -186,7 +188,7 @@ describe('complete_task carries one now into every stamp', () => {
   });
 
   it('stamps the completed copy of a repeating task with one now', async () => {
-    const h = createServerHarness({ getNow: advancingNow(FIX_NOW) });
+    const h = createHarness(advancingNow(FIX_NOW));
     await seedRepeating(h);
     const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
     expect(r.isError, r.text).toBe(false);
