@@ -59,7 +59,6 @@ export interface SyncOptions {
 const zeroStats = (): SyncStats => ({ created: 0, updated: 0, skipped: 0, deleted: 0, errors: 0 });
 const errMsg = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const identity = (uid: string, occurrenceId = '') => JSON.stringify([uid, occurrenceId]);
-const bump = (row: Record<string, unknown>, now: number) => Math.max(now, Number(row.updatedAt ?? 0) + 1);
 
 /** Hash only source-owned semantic values, never DTSTAMP or SEQUENCE (REF eventFingerprint). */
 export async function eventFingerprint(event: ParsedEvent): Promise<string> {
@@ -169,7 +168,6 @@ function createSet(
   draft: TaskDraft,
   source: IcsSource,
   sortKey: string,
-  now: number,
 ): Record<string, unknown> {
   return {
     id,
@@ -182,8 +180,6 @@ function createSet(
     tags: [],
     sortKey,
     importNote: `ICS：${source.name}`,
-    createdAt: now,
-    updatedAt: now,
     ...scheduleColumns(draft.schedule),
   };
 }
@@ -632,18 +628,18 @@ export async function syncSource(
     const intents: WriteIntent[] = [
       ...creates.map((p, i): WriteIntent => {
         const m = p.mapping!;
-        return { entity: 'task', entityId: m.taskId, set: createSet(m.taskId, m.projectId, p.draft!, source, keys[i]!, nowMs) };
+        return { entity: 'task', entityId: m.taskId, set: createSet(m.taskId, m.projectId, p.draft!, source, keys[i]!) };
       }),
       ...writes.map((p): WriteIntent => ({
         entity: 'task',
         entityId: p.mapping!.taskId,
-        set: { ...p.delta, updatedAt: bump(p.row!, nowMs) },
+        set: p.delta,
       })),
       // Source deletion is the one case ICS writes deletedAt: a soft delete the user can restore.
       ...trash.map((r): WriteIntent => ({
         entity: 'task',
         entityId: r.mapping.taskId,
-        set: { deletedAt: nowMs, updatedAt: bump(r.row!, nowMs) },
+        set: { deletedAt: nowMs },
       })),
     ];
 
@@ -658,6 +654,7 @@ export async function syncSource(
           { db: deps.db, userId, deviceId: 'ics', getScopeStub: deps.getScopeStub, clock: deps.clock },
           snapshot,
           intents,
+          { nowMs },
         );
       } catch (error) {
         // Unknown result: mappings keep their state and the next run reads what actually landed.
