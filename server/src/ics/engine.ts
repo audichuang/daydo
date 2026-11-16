@@ -3,10 +3,11 @@
 // so a lost response or a restart retries the same id. A mapping's fingerprint is committed only after
 // the push response row shows every intended field applied; a removed event's mapping is deleted only
 // after its task is confirmed in the trash.
-import { scheduleToAPI, type Schedule } from '../domain/schedule';
+import { scheduleToAPI } from '../domain/schedule';
 import { before } from '../domain/sortKey';
 import { uuidv7 } from '../domain/uuid';
 import { loadSnapshot, type Snapshot } from '../serverops/snapshot';
+import { isNil, rowSchedule, sameValue, scheduleColumns } from '../serverops/values';
 import { assertHasData, pushIntents, type WriteIntent, type WriteOutcome } from '../serverops/writer';
 import type { ServerHlcClock } from '../sync/hlc';
 import type { AppDb, ScopeStub } from '../sync/push';
@@ -28,7 +29,6 @@ export const ICS_MAX_WINDOW_DAYS = 3650;
 /** Sources synced per cron run (spec/mcp.md 9.5): bounds subrequests and run time. */
 export const ICS_SOURCES_PER_RUN = 5;
 const DAY_MS = 86_400_000;
-const SCHEDULE_KEYS = ['startDay', 'startMinute', 'endDay', 'endMinute', 'timeZone'] as const;
 const CANCELLED_PREFIX = '[已取消] ';
 /** Abort a run that would remove most of the imported set (e.g. an empty or truncated-but-valid feed). */
 const MASS_DELETE_RATIO = 0.5;
@@ -59,9 +59,6 @@ export interface SyncOptions {
 const zeroStats = (): SyncStats => ({ created: 0, updated: 0, skipped: 0, deleted: 0, errors: 0 });
 const errMsg = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const identity = (uid: string, occurrenceId = '') => JSON.stringify([uid, occurrenceId]);
-const isNil = (v: unknown) => v === undefined || v === null;
-const sameValue = (a: unknown, b: unknown) =>
-  JSON.stringify(isNil(a) ? null : a) === JSON.stringify(isNil(b) ? null : b);
 const bump = (row: Record<string, unknown>, now: number) => Math.max(now, Number(row.updatedAt ?? 0) + 1);
 
 /** Hash only source-owned semantic values, never DTSTAMP or SEQUENCE (REF eventFingerprint). */
@@ -130,21 +127,6 @@ function sortKeysBefore(first: string | null, n: number): string[] {
   return Array.from({ length: n }, (_, i) => `${prefix}${i.toString(36).padStart(width, '0')}i`);
 }
 
-function scheduleSet(s: Schedule): Record<string, unknown> {
-  return Object.fromEntries(SCHEDULE_KEYS.map((k) => [k, s[k]]));
-}
-
-function rowSchedule(row: Record<string, unknown>): Schedule | null {
-  if (typeof row.startDay !== 'string') return null;
-  return {
-    startDay: row.startDay,
-    startMinute: typeof row.startMinute === 'number' ? row.startMinute : null,
-    endDay: typeof row.endDay === 'string' ? row.endDay : null,
-    endMinute: typeof row.endMinute === 'number' ? row.endMinute : null,
-    timeZone: typeof row.timeZone === 'string' ? row.timeZone : null,
-  };
-}
-
 /**
  * The ICS-owned fields that differ from the row, plus a reopen when the source changed and the row
  * does not show it yet. A row already matching the draft means the write landed earlier (lost
@@ -154,9 +136,9 @@ function ownedDelta(row: Record<string, unknown>, draft: TaskDraft, reopen: bool
   const delta: Record<string, unknown> = {};
   if (!sameValue(row.title, draft.title)) delta.title = draft.title;
   if (!sameValue(row.content, draft.content)) delta.content = draft.content;
-  const schedule = scheduleSet(draft.schedule);
+  const schedule = scheduleColumns(draft.schedule);
   // The schedule is one LWW group: send all five when any differs.
-  if (SCHEDULE_KEYS.some((k) => !sameValue(row[k], schedule[k]))) Object.assign(delta, schedule);
+  if (Object.entries(schedule).some(([k, v]) => !sameValue(row[k], v))) Object.assign(delta, schedule);
   if (reopen && row.status === 2 && Object.keys(delta).length > 0) {
     delta.status = 0;
     delta.completedAt = null;
@@ -202,7 +184,7 @@ function createSet(
     importNote: `ICS：${source.name}`,
     createdAt: now,
     updatedAt: now,
-    ...scheduleSet(draft.schedule),
+    ...scheduleColumns(draft.schedule),
   };
 }
 
