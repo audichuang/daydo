@@ -249,6 +249,31 @@ export async function appLogin(apiBase, providers, sub, deviceId = `dev-${random
   return { ...res.data, deviceId: deviceId.toLowerCase() };
 }
 
+/** A fresh CF-Connecting-IP: the local D1 persists across runs and email starts are limited per IP. */
+export function randomIp() {
+  return `198.51.100.${1 + Math.floor(Math.random() * 254)}-${randomUUID()}`;
+}
+
+/** The sign-in code last mailed to `email`, read from the dev mailbox (API host only). */
+export async function readMailCode(apiBase, email) {
+  const res = await fetch(`${apiBase}/test/mail?to=${encodeURIComponent(email)}`);
+  assert.equal(res.status, 200, `no mail for ${email}`);
+  const body = await res.json();
+  assert.match(body.code ?? '', /^\d{6}$/, `no code in mail for ${email}`);
+  return body.code;
+}
+
+/** App sign-up/login with an email code on the API host; same result shape as appLogin. */
+export async function appEmailLogin(apiBase, email, deviceId = `dev-${randomUUID()}`) {
+  const headers = { 'Content-Type': 'application/json', 'CF-Connecting-IP': randomIp() };
+  const start = await fetch(`${apiBase}/auth/email/start`, { method: 'POST', headers, body: JSON.stringify({ email, deviceId }) });
+  assert.equal(start.status, 202, `email start failed: ${start.status}`);
+  const code = await readMailCode(apiBase, email);
+  const res = await postJson(`${apiBase}/auth/email/verify`, { email, code, deviceId });
+  assert.equal(res.status, 200, `App email login failed: ${JSON.stringify(res.data)}`);
+  return { ...res.data, deviceId: deviceId.toLowerCase() };
+}
+
 function makeHlc(ms, counter, deviceId) {
   return `${String(ms).padStart(13, '0')}:${String(counter).padStart(4, '0')}:${deviceId}`;
 }
@@ -382,6 +407,20 @@ export async function appleCallback(mcpBase, providers, attempt, { sub, nonceHas
     { state: attempt.pendingId, id_token: idToken, code: 'apple-code-discarded' },
     withCookie ? { Cookie: attempt.cookie } : {},
   );
+}
+
+/** POST /authorize/email/start from the login page's email form. */
+export async function emailAuthorizeStart(mcpBase, attempt, email, { withCookie = true } = {}) {
+  return postForm(
+    `${mcpBase}/authorize/email/start`,
+    { pending: attempt.pendingId, email },
+    { 'CF-Connecting-IP': randomIp(), ...(withCookie ? { Cookie: attempt.cookie } : {}) },
+  );
+}
+
+/** POST /authorize/email/verify from the code page. */
+export async function emailAuthorizeVerify(mcpBase, attempt, email, code) {
+  return postForm(`${mcpBase}/authorize/email/verify`, { pending: attempt.pendingId, email, code }, { Cookie: attempt.cookie });
 }
 
 export async function googleCallback(mcpBase, attempt, params) {

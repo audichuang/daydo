@@ -31,6 +31,10 @@ const STYLE = `
             background: #2563eb; color: white; cursor: pointer; }
   .button.secondary { background: #e5e7eb; color: #111; }
   .button.disabled { background: #e5e7eb; color: #888; cursor: default; }
+  .divider { margin: 1.5rem 0 0.25rem; text-align: center; }
+  .error { color: #b91c1c; }
+  input[type=email], input[type=text] { display: block; box-sizing: border-box; width: 100%; margin-top: 0.75rem;
+            padding: 0.75rem; font-size: 1rem; border: 1px solid #ccc; border-radius: 8px; }
   ul { padding-left: 1.25rem; }
 `;
 
@@ -60,7 +64,12 @@ export interface ProviderButton {
   href: string | null;
 }
 
-export function loginPage(params: { clientName: string; buttons: ProviderButton[]; setCookie: string }): Response {
+export function loginPage(params: {
+  clientName: string;
+  buttons: ProviderButton[];
+  pendingId: string;
+  setCookie: string;
+}): Response {
   const buttons = params.buttons
     .map((b) =>
       b.href
@@ -73,8 +82,40 @@ export function loginPage(params: { clientName: string; buttons: ProviderButton[
     '登入 DayDo',
     `<h1>登入 DayDo</h1>
 <p class="muted">「${esc(params.clientName)}」要求存取你的 DayDo。請用你在 DayDo App 登入的帳號繼續：</p>
-${buttons}`,
+${buttons}
+<p class="muted divider">或用信箱驗證碼登入</p>
+<form method="post" action="/authorize/email/start">
+  <input type="hidden" name="pending" value="${esc(params.pendingId)}">
+  <input type="email" name="email" required autocomplete="email" placeholder="你在 DayDo 使用的信箱">
+  <button class="button secondary" type="submit">寄送驗證碼</button>
+</form>`,
     { 'Set-Cookie': params.setCookie },
+  );
+}
+
+/**
+ * Code entry after POST /authorize/email/start. Shown whether or not a mail went out (limits,
+ * unknown address), so the page never reveals either. `error` re-shows it after a wrong code.
+ */
+export function emailCodePage(params: { pendingId: string; email: string; error?: string }, status = 200): Response {
+  const pending = `<input type="hidden" name="pending" value="${esc(params.pendingId)}">
+  <input type="hidden" name="email" value="${esc(params.email)}">`;
+  const error = params.error ? `<p class="error">${esc(params.error)}</p>\n` : '';
+  return page(
+    status,
+    '輸入驗證碼',
+    `<h1>輸入驗證碼</h1>
+${error}<p>驗證碼已寄出到 <strong>${esc(params.email)}</strong>，10 分鐘內有效。</p>
+<p class="muted">只有已經用這個信箱登入過 DayDo 的帳號可以繼續。</p>
+<form method="post" action="/authorize/email/verify">
+  ${pending}
+  <input type="text" name="code" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="6 位數驗證碼">
+  <button class="button" type="submit">繼續</button>
+</form>
+<form method="post" action="/authorize/email/start">
+  ${pending}
+  <button class="button secondary" type="submit">重新寄送驗證碼</button>
+</form>`,
   );
 }
 

@@ -14,6 +14,8 @@ const MCP_PATHS = [
   '/authorize/start',
   '/authorize/google/callback',
   '/authorize/apple/callback',
+  '/authorize/email/start',
+  '/authorize/email/verify',
   '/.well-known/oauth-authorization-server',
   '/.well-known/oauth-protected-resource',
 ];
