@@ -9,7 +9,8 @@ import {
   handleAuthorizeStart,
   type AuthorizeDeps,
 } from '../src/oauth/authorize';
-import { handleGoogleCallback, type WebIdentityConfig } from '../src/oauth/webIdentity';
+import { handleGoogleCallback } from '../src/oauth/googleCallback';
+import type { WebIdentityConfig } from '../src/oauth/webIdentity';
 import { createTestD1 } from './sqliteD1';
 
 const ORIGIN = 'https://daydo-mcp.audichuang.app';
@@ -45,7 +46,7 @@ function webConfig(clientSecret: string | undefined): WebIdentityConfig {
   };
 }
 
-function setup(clientSecret?: string | undefined) {
+function setup(clientSecret?: string) {
   const { db, sqlite } = createTestD1();
   sqlite.prepare('INSERT INTO user (id, createdAt, name) VALUES (?, ?, ?)').run('user-1', 0, 'Alice');
   sqlite

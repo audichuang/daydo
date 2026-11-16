@@ -2,7 +2,8 @@
 // (no SSE, no session). Auth is enforced upstream (auth.ts); this only dispatches.
 import pkg from '../../package.json' with { type: 'json' };
 import { logCall, type CallMeta } from './log';
-import { handleToolCall, TOOL_DEFS, type ToolContext, type ToolDescriptor, type ToolResult } from './registry';
+import { handleToolCall, TOOL_DEFS, type ToolDescriptor, type ToolResult } from './registry';
+import type { ToolContext } from './toolkit';
 
 export const PROTOCOL_VERSION = '2025-06-18';
 export const SERVER_INFO = { name: 'daydo', version: pkg.version };

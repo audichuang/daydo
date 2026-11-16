@@ -1,7 +1,8 @@
 import { defineHandler } from 'void';
 import { createDb } from 'void/db';
 import { env } from 'void/env';
-import { handleGoogleCallback, webIdentityConfigFromEnv } from '../../../src/oauth/webIdentity';
+import { handleGoogleCallback } from '../../../src/oauth/googleCallback';
+import { webIdentityConfigFromEnv } from '../../../src/oauth/webIdentity';
 
 // Google redirects back with a top-level GET (code, state, or error).
 export const GET = defineHandler(async (c) =>

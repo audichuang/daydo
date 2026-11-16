@@ -2,33 +2,27 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { TOOL_DEFS } from '../src/mcp/registry';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const serverDir = path.resolve(__dirname, '..');
 
-function collectTsFiles(dirs: string[]): string[] {
+/** Server-relative .ts paths under each target; a target may be a directory or a single file. */
+function collectTsFiles(targets: string[]): string[] {
   const out: string[] = [];
-  const walk = (absDir: string): void => {
-    for (const entry of readdirSync(absDir)) {
-      const abs = path.join(absDir, entry);
-      if (statSync(abs).isDirectory()) {
-        walk(abs);
-      } else if (entry.endsWith('.ts')) {
-        out.push(path.relative(serverDir, abs).replace(/\\/g, '/'));
-      }
+  const visit = (abs: string): void => {
+    if (statSync(abs).isDirectory()) {
+      for (const entry of readdirSync(abs)) visit(path.join(abs, entry));
+    } else if (abs.endsWith('.ts')) {
+      out.push(path.relative(serverDir, abs).replace(/\\/g, '/'));
     }
   };
-  for (const dir of dirs) {
-    walk(path.join(serverDir, dir));
-  }
+  for (const target of targets) visit(path.join(serverDir, target));
   return out.sort();
 }
 
-function matchingFiles(dirs: string[], pattern: RegExp): string[] {
-  return collectTsFiles(dirs).filter((rel) => {
-    const content = readFileSync(path.join(serverDir, rel), 'utf8');
-    return pattern.test(content);
-  });
+function matchingFiles(targets: string[], pattern: RegExp): string[] {
+  return collectTsFiles(targets).filter((rel) => pattern.test(readFileSync(path.join(serverDir, rel), 'utf8')));
 }
 
 const LEDGER_TABLES = new Set(['projectMembership', 'listScopes', 'purgedProject']);
@@ -69,36 +63,148 @@ const WRITE_ROLE_PAIR = new RegExp(
   ].join('|'),
 );
 
+interface Guard {
+  name: string;
+  /** Directories or files scanned (server-relative). */
+  dirs: string[];
+  /** Must not carry the `g` or `y` flag: `.test` would become stateful. */
+  pattern: RegExp;
+  /** Exactly the files allowed to match. Ratchet: entries may only be removed, never added. */
+  allow: string[];
+  /** Snippets that violate the rule, one per alternative of the pattern; proves none is hollow. */
+  bad: string[];
+}
+
+const ALL = ['src', 'routes', 'crons', 'durable-objects'];
+
+const GUARDS: Guard[] = [
+  {
+    name: 'updatedAt bump stays in serverops/writer.ts',
+    dirs: ['src'],
+    pattern: /Math\.max\((now|nowMs|Date\.now\(\)), *Number\(/,
+    allow: ['src/serverops/writer.ts'],
+    bad: [
+      'const updatedAt = Math.max(nowMs, Number(row.updatedAt) + 1);',
+      'const updatedAt = Math.max(now, Number(row.updatedAt) + 1);',
+      'const updatedAt = Math.max(Date.now(), Number(row.updatedAt) + 1);',
+    ],
+  },
+  {
+    name: 'value helpers are not redefined outside serverops/values.ts',
+    dirs: ['src'],
+    pattern: /\bconst (bump|isNil|sameValue|SCHEDULE_KEYS)\b/,
+    allow: [],
+    bad: [
+      'const isNil = (v: unknown) => v == null;',
+      'const bump = (n: number) => n + 1;',
+      'const sameValue = Object.is;',
+      "const SCHEDULE_KEYS = ['dueAt'];",
+    ],
+  },
+  {
+    name: "'u:' scope prefix literal only in src/sync/scopeName.ts",
+    dirs: ALL,
+    pattern: /['"`]u:/,
+    allow: ['src/sync/scopeName.ts'],
+    bad: ["const scope = 'u:' + userId;", 'const scope = "u:" + userId;', 'const scope = `u:${userId}`;'],
+  },
+  {
+    name: 'validateSyncOp is called only in envelope.ts (the definition is excluded)',
+    dirs: ALL,
+    pattern: /(?<!function )\bvalidateSyncOp\(/,
+    allow: ['src/sync/envelope.ts'],
+    bad: ['const parsed = validateSyncOp(op);', 'return envelopeOf(raw, validateSyncOp(raw));'],
+  },
+  {
+    name: 'src/scope/** contains no async or await',
+    dirs: ['src/scope'],
+    pattern: /\b(async|await)\b/,
+    allow: [],
+    bad: ['export async function load() {}', 'const row = await fetchRow();'],
+  },
+  {
+    name: 'transactionSync only in durable-objects/scope.ts',
+    dirs: ALL,
+    pattern: /\btransactionSync\b/,
+    allow: ['durable-objects/scope.ts'],
+    bad: ['this.ctx.storage.transactionSync(() => push());'],
+  },
+  {
+    name: 'serializePublicRow is called only in src/scope/rowView.ts (the definition is excluded)',
+    dirs: ALL,
+    pattern: /(?<!function )\bserializePublicRow\(/,
+    allow: ['src/scope/rowView.ts'],
+    bad: ['return serializePublicRow(row);', 'const out = rows.map((r) => serializePublicRow(r));'],
+  },
+  {
+    name: 'owner-or-editor write role check only in src/sync/access.ts',
+    dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
+    pattern: WRITE_ROLE_PAIR,
+    allow: ['src/sync/access.ts'],
+    bad: [
+      "if (member.role !== 'owner' &&\n    member.role !== 'editor') return deny();",
+      "if (member.role === 'editor' || member.role === 'owner') return ok();",
+    ],
+  },
+  {
+    name: 'no randomUUID in data layers (ids are client-side or UUIDv7)',
+    dirs: ['src/serverops', 'src/mcp', 'src/sync', 'src/scope', 'src/domain', 'src/sharing', 'src/ics', 'src/membership'],
+    pattern: /\brandomUUID\b/,
+    // The ICS sync lease token is not a data id.
+    allow: ['src/ics/engine.ts'],
+    bad: ['const id = crypto.randomUUID();', "import { randomUUID } from 'node:crypto';"],
+  },
+  {
+    name: 'routes/** do not query the database directly',
+    dirs: ['routes'],
+    // Any receiver (db, primaryDb, database, ...) calling a query method, or raw env.DB use other than
+    // passing it straight on (`createDb(c.env.DB, ...)`, `deps(c.env.DB)`).
+    pattern: /\.(select|insert|update|delete|batch|run|prepare)\(|\.DB\b(?!\s*[,)])/,
+    allow: [],
+    bad: [
+      'const rows = await db.select().from(user);',
+      "const database = createDb(c.env.DB, { session: 'first-primary' }); database.run(sql);",
+      "await c.env.DB.prepare('DELETE FROM user').run();",
+      'const raw = c.env.DB;',
+    ],
+  },
+  {
+    name: 'src/membership/statements.ts contains no async or await',
+    dirs: ['src/membership/statements.ts'],
+    pattern: /\b(async|await)\b/,
+    allow: [],
+    bad: ['const rows = await db.select();', 'export async function load() {}', 'const row = await fetchRow();'],
+  },
+  {
+    name: 'src/mcp and src/ics do not call getScopeStub (they write via serverops)',
+    dirs: ['src/mcp', 'src/ics'],
+    pattern: /\bgetScopeStub\(/,
+    allow: [],
+    bad: ["const stub = services.getScopeStub(scope);"],
+  },
+  {
+    name: 'Date.now() in domain, serverops and scope stays in its frozen files',
+    dirs: ['src/domain', 'src/serverops', 'src/scope'],
+    pattern: /\bDate\.now\(\)/,
+    allow: ['src/domain/uuid.ts', 'src/scope/push.ts', 'src/serverops/writer.ts'],
+    bad: ['const nowMs = Date.now();'],
+  },
+];
+
+/** Tool names in the first column of the spec/mcp.md section 8 table. */
+function specToolNames(): string[] {
+  const spec = readFileSync(path.resolve(serverDir, '../spec/mcp.md'), 'utf8');
+  const section = /^## 8\. .*$([\s\S]*?)^## 9\. /m.exec(spec);
+  if (!section) throw new Error('spec/mcp.md section 8 not found');
+  return [...section[1].matchAll(/^\| `([a-z_]+)` \|/gm)].map((m) => m[1]).sort();
+}
+
 describe('architecture guards', () => {
-  it('updatedAt bump and duplicated value helpers stay centralized in writer/values', () => {
-    expect(matchingFiles(['src'], /Math\.max\((now|nowMs|Date\.now\(\)), *Number\(/)).toEqual([
-      'src/serverops/writer.ts',
-    ]);
-    expect(matchingFiles(['src'], /\bconst (bump|isNil|sameValue|SCHEDULE_KEYS)\b/)).toEqual([]);
-  });
-
-  it("'u:' scope prefix literal only appears in src/sync/scopeName.ts", () => {
-    expect(matchingFiles(['src', 'routes', 'crons', 'durable-objects'], /'u:'|`u:/)).toEqual([
-      'src/sync/scopeName.ts',
-    ]);
-  });
-
-  it('validateSyncOp is only defined in entities.ts and called in envelope.ts', () => {
-    expect(matchingFiles(['src', 'routes', 'crons', 'durable-objects'], /\bvalidateSyncOp\(/)).toEqual([
-      'src/sync/entities.ts',
-      'src/sync/envelope.ts',
-    ]);
-  });
-
-  it('src/scope/** contains no async or await', () => {
-    expect(matchingFiles(['src/scope'], /\b(async|await)\b/)).toEqual([]);
-  });
-
-  it('transactionSync only appears in durable-objects/scope.ts', () => {
-    expect(matchingFiles(['src'], /\btransactionSync\b/)).toEqual([]);
-    expect(matchingFiles(['src', 'routes', 'crons', 'durable-objects'], /\btransactionSync\b/)).toEqual([
-      'durable-objects/scope.ts',
-    ]);
+  it.each(GUARDS)('$name', ({ dirs, pattern, allow, bad }) => {
+    expect(pattern.global || pattern.sticky, 'stateful regex flags').toBe(false);
+    expect(bad.length, 'no bad samples').toBeGreaterThan(0);
+    for (const sample of bad) expect(pattern.test(sample), `pattern misses bad sample: ${sample}`).toBe(true);
+    expect(matchingFiles(dirs, pattern)).toEqual([...allow].sort());
   });
 
   it('only src/membership/** value-imports the membership ledger tables (alias or relative path)', () => {
@@ -108,16 +214,9 @@ describe('architecture guards', () => {
     expect(importers.length).toBeGreaterThan(0);
   });
 
-  it('serializePublicRow is only defined in entities.ts and called in src/scope/rowView.ts', () => {
-    expect(matchingFiles(['src', 'routes', 'crons', 'durable-objects'], /\bserializePublicRow\(/)).toEqual([
-      'src/scope/rowView.ts',
-      'src/sync/entities.ts',
-    ]);
-  });
-
-  it("the owner-or-editor write role check only appears in src/sync/access.ts", () => {
-    expect(matchingFiles(['src', 'routes', 'crons', 'middleware', 'durable-objects'], WRITE_ROLE_PAIR)).toEqual([
-      'src/sync/access.ts',
-    ]);
+  it('spec/mcp.md section 8 lists exactly the registered MCP tools', () => {
+    const specNames = specToolNames();
+    expect(specNames.length).toBeGreaterThan(0);
+    expect(specNames).toEqual(TOOL_DEFS.map((t) => t.name).sort());
   });
 });

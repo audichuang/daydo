@@ -94,7 +94,7 @@ All sharing endpoints require `Authorization: Bearer <accessToken>`.
 
 ## Run Checks
 
-Runs `lint` (`oxlint --deny-warnings`), `typecheck` (`void prepare && tsc --noEmit`), unit tests (`vitest run`), and all local `vite` + `workerd` e2e checks (`e2e`, `e2e:sync`, `e2e:ics`, `e2e:mcp`, `e2e:fault`):
+Runs `lint` (`void prepare && oxlint --type-aware --deny-warnings --report-unused-disable-directives`), `typecheck` (`void prepare && tsc --noEmit`), unit tests (`vitest run`), and all local `vite` + `workerd` e2e checks (`e2e`, `e2e:sync`, `e2e:ics`, `e2e:mcp`, `e2e:fault`):
 
 ```bash
 npm run check
@@ -122,7 +122,7 @@ Measured wall time per stage (Mac mini, 2026-11-16, each stage run alone with `/
 
 | Stage | Seconds |
 | --- | --- |
-| `lint` | 0.1 |
+| `lint` (type-aware, includes `void prepare`) | 0.6 |
 | `typecheck` | 0.5 |
 | `test` (vitest) | 2.2 |
 | `e2e` | 1.7 |
@@ -130,7 +130,7 @@ Measured wall time per stage (Mac mini, 2026-11-16, each stage run alone with `/
 | `e2e:ics` | 2.1 |
 | `e2e:mcp` | 2.9 |
 | `e2e:fault` | 1.5 |
-| `check` (all of the above) | 13.0 |
+| `check` (all of the above) | about 13.5 |
 
 `check:fast` is the first three rows, about 3 seconds. Under heavy machine load (load average above 100) the same stages took about 2.5 times as long (`check` 37.8 seconds).
 

@@ -6,7 +6,8 @@ import * as schema from '../db/schema';
 import { acceptInvite, createInvite } from '../src/sharing';
 import { MemoryIcsStore } from '../src/ics/store';
 import { runIcsCron } from '../src/ics/cron';
-import { handleToolCall, HINTS, TOOL_DEFS, type ToolContext } from '../src/mcp/registry';
+import { handleToolCall, HINTS, TOOL_DEFS } from '../src/mcp/registry';
+import type { ToolContext } from '../src/mcp/toolkit';
 import { NO_DATA_MESSAGE } from '../src/serverops/writer';
 import { createScopeWorld } from './helpers/scopeWorld';
 

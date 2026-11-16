@@ -8,7 +8,7 @@ DayDo 是待辦加日曆的 iPhone App，給自己和家人用，互動對標 Ti
 2. **同步與多人**（進行中）：Cloudflare Worker + D1 + Durable Objects，註冊登入、多裝置同步、共享清單、成員指派。
 3. **MCP**：掛在 Worker 上，讓 AI 讀寫任務，工具沿用 ticktick-mcp 的名稱與欄位。
 
-設計稿在 `design/`（`design/source/*.html` 是原始設計元件，`design/shots/` 是截圖），畫面編號 1a–6b 對應設計板標題；設計稿用的是舊名 Doneday。
+設計稿在 `design/`（`design/source/*.html` 是原始設計元件，`design/shots/` 是截圖），畫面板號 1a–6b 印在 `design/shots/*.png` 的圖標題上（HTML 檔名與板號無關）；設計稿用的是舊名 Doneday。
 
 ## 結構
 
@@ -43,7 +43,7 @@ ios/scripts/uitest.sh [iphone|ipad] [xcodebuild 參數…]   # UI 流程測試�
 
 `xcodegen generate` 之後 `ios/DayDo.xcodeproj/project.pbxproj` 只有 `TEMP_` UUID 變動時是雜訊，可以還原；改了 `project.yml` 的 target 或增刪檔案，重產的 pbxproj 要一起 commit（曾把新增的 `DayDoTests` target 一起還原掉，那些測試從來沒跑過）。
 
-啟動參數（Debug 用）：`-DayDoSkipLogin` 跳過登入、只用本機資料（UI 測試都要帶）；`-DayDoReset` 清空資料與偏好、`-DayDoDemo` 載入設計稿範例資料、`-DayDoScreen <名稱>` 直接開到某畫面（可用的名稱看 `ios/DayDo/App/DayDoApp.swift` 處理 `-DayDoScreen` 的 switch）。
+啟動參數（Debug 用）：UI 測試帶 `-DayDoSkipLogin`（跳過登入、只用本機資料）或 `-DayDoDebugStub`（假同步伺服器、token 不進 Keychain），不連正式伺服器（只測登入畫面與啟動畫面的除外）；`-DayDoReset` 清空資料與偏好、`-DayDoDemo` 載入設計稿範例資料、`-DayDoScreen <名稱>` 直接開到某畫面（可用的名稱看 `ios/DayDo/App/DayDoApp.swift` 處理 `-DayDoScreen` 的 switch）。
 
 ## 模擬器
 
@@ -64,9 +64,13 @@ ios/scripts/uitest.sh [iphone|ipad] [xcodebuild 參數…]   # UI 流程測試�
 
 同步協議（含進度與待決事項）寫在 `spec/sync.md`，改協議或改兩端的行為先改那份文件。
 
+多張票或要跨 session 接續的工作，計畫檔放 `docs/plans/<名稱>.md`：所有 agent 與之後的 session 共用這份，每張票做完記下 commit 範圍與偏離；工作結束就刪掉，該留的決策寫進 commit message 或 spec。
+
 - 只在使用者要求發版或部署時才 `void deploy`。
 - 改了 App 的 Record 或 outbox 編碼，要用 `DAYDO_WRITE_FIXTURE=1 swift test` 重新產生 `spec/fixtures/sync-ops.json`，再跑 server 的測試。
 
 ## Code Review Rules
 
 - 每個問題照常回報，但標明正常使用 DayDo 會不會碰到；只有異常 client 或極端時序才會發生的，建議記進 `spec/sync.md`「已知限制」，不要求加機制。
+- diff 新增的判斷如果別處已經有一份（同一條規則的第二份），標出來並指出該擴充哪個既有 module。
+- 修正一類問題時要附一道護欄：server 加在 `.oxlintrc.json` 或 `tests/architecture.test.ts`，App 加在 `DayDoCore/Tests/DayDoCoreTests/ArchitectureTests.swift`，拿掉修正時它要失敗；做不到就寫明原因。

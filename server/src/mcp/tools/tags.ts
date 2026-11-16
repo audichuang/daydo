@@ -5,7 +5,7 @@ import type { Snapshot, SnapshotRow } from '../../serverops/snapshot';
 import { writeOrThrow } from '../../serverops/writer';
 import { userScope } from '../../sync/scopeName';
 import { bySortKey, compareKeys } from '../../serverops/values';
-import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../registry';
+import { requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
 import { openSession, parseColor } from './projects';
 
 function ownTags(snapshot: Snapshot, userId: string): SnapshotRow[] {

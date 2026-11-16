@@ -1,5 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import"],
   "rules": {
     "max-lines": ["error", { "max": 700, "skipBlankLines": true, "skipComments": true }],
     "no-restricted-imports": [
@@ -22,7 +23,21 @@
           }
         ]
       }
-    ]
+    ],
+    "typescript/no-floating-promises": ["error", { "checkThenables": true }],
+    "typescript/no-misused-promises": "error",
+    "typescript/return-await": ["error", "in-try-catch"],
+    "typescript/switch-exhaustiveness-check": "error",
+    "typescript/unbound-method": "error",
+    "typescript/await-thenable": "error",
+    "typescript/only-throw-error": "error",
+    "typescript/require-array-sort-compare": "error",
+    "typescript/no-explicit-any": "error",
+    "typescript/no-base-to-string": "off",
+    "typescript/no-misused-spread": "off",
+    "eqeqeq": ["error", "always", { "null": "ignore" }],
+    "no-console": "error",
+    "import/no-cycle": "error"
   },
   "overrides": [
     {
@@ -36,6 +51,20 @@
       "rules": {
         "max-lines": "off",
         "no-restricted-imports": "off"
+      }
+    },
+    {
+      "files": ["tests/**"],
+      "rules": {
+        "typescript/require-array-sort-compare": "off",
+        "typescript/no-explicit-any": "off",
+        "no-console": "off"
+      }
+    },
+    {
+      "files": ["scripts/**"],
+      "rules": {
+        "no-console": "off"
       }
     },
     {
@@ -326,6 +355,34 @@
       }
     },
     {
+      "files": ["routes/**"],
+      "rules": {
+        "max-lines": ["error", { "max": 100, "skipBlankLines": true, "skipComments": true }],
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@schema",
+                "message": "routes/** must not import the schema; query through src/ modules."
+              },
+              {
+                "name": "void/db",
+                "allowImportNames": ["createDb"],
+                "message": "routes/** may only import createDb from void/db; query through src/ modules."
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "(^|/)db/schema$",
+                "message": "routes/** must not import the schema; query through src/ modules."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": ["src/**"],
       "excludeFiles": [
         "src/membership/**",
@@ -364,6 +421,22 @@
             ]
           }
         ]
+      }
+    },
+    {
+      "files": [".claude/**"],
+      "rules": {
+        "typescript/no-floating-promises": "off",
+        "typescript/no-misused-promises": "off",
+        "typescript/return-await": "off",
+        "typescript/switch-exhaustiveness-check": "off",
+        "typescript/unbound-method": "off",
+        "typescript/await-thenable": "off",
+        "typescript/only-throw-error": "off",
+        "typescript/require-array-sort-compare": "off",
+        "typescript/no-explicit-any": "off",
+        "eqeqeq": "off",
+        "no-console": "off"
       }
     }
   ]

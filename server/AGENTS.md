@@ -6,18 +6,18 @@
 
 - `routes/`：HTTP 端點，檔名即路徑；`*.dev.ts` 只在開發建置掛上。邏輯放 `src/`（`auth`、`sync`、`scope`、`membership`、`sharing`、`mcp`、`oauth`、`serverops`、`domain`、`ics`），route 只做轉接。
 - `durable-objects/scope.ts` 只是 RPC 轉接器（開 `transactionSync`、持 HLC 狀態與故障開關）；Scope 帳本的規則在 `src/scope/`（schema、store、push 授權、成員投影、purge、pull、row 檢視），全部是同步函式。Worker↔DO 的 RPC 介面改動必須前後相容：部署期間新舊版本會混跑（`tests/scope-rpc-compat.test.ts` 會拿 main 的舊 DO 實跑）。
-- `src/membership/`：D1 的 `projectMembership`、`listScopes`、`purgedProject` 只由它讀寫，給可組進 `db.batch()` 的 statement，不自己 await，永久刪除清單的原子性靠同一個 batch。
-- `src/sync/envelope.ts` 是 `validateSyncOp` 唯一的呼叫點；清單寫入權限（owner／editor、已永久刪除）只在 `src/sync/access.ts` 判斷；`u:<userId>` 只由 `src/sync/scopeName.ts` 組。
+- 名詞（Scope ledger、D1 帳本、OpEnvelope、intent、purged 與 gone）見 `GLOSSARY.md`；`src/membership/` 給可組進 `db.batch()` 的 statement，永久刪除清單的原子性靠同一個 batch。
 - `middleware/01.access.ts`：正式環境的 Cloudflare Access 驗證。
 - `db/schema.ts` → `db/migrations/`：D1 schema；改完用 `npx void db generate` 產新 migration，已有的不改。
 
 ## 規則
 
+- push 只能為「重送也不會變」的結果回 `rejected`（資料不合法、權限不足、清單已永久刪除）：App 把 `rejected` 當已確認、永不重送。版本不一致、逾時這類暫時性錯誤回 429／5xx，讓整批重送。
 - 每位使用者的 `Scope` DO（`u:<userId>`）用自己的 SQLite 存列資料，寫入包在 `transactionSync` 內同步完成；`SYNC_FAULT=split-txn` 是僅開發建置有效的故障開關，並發測試開啟時必須失敗。改 push 路徑或 Scope DO 後要確認 `npm run e2e:fault` 通過（它證明 `split-txn` 故障會被並發測試抓到）。
 - 正式環境前面是 Cloudflare Access（應用程式「DayDo API (iOS app only)」，只放行 service token）。部署、secrets 與部署後的 smoke 照 `README.md` 的 Deploy；service token 與 `JWT_SECRET` 在 1Password `Agent` vault（「DayDo Cloudflare Access service token」「DayDo server JWT_SECRET」）。
 - 改了 D1 schema 的部署會先套 migration 並留還原點。
 - void 固定 1.8.0：npm 設定只裝發布滿 3 天的版本，新版會被拒，不要改 npm 設定繞過。
-- Lint 用 oxlint（`npm run lint`，警告也算失敗，已含在 `npm run check`），不另加 ESLint 或 Prettier。`.oxlintrc.json` 規定模組間的 import 方向與檔案行數上限，lint 表達不了的（重複的 updatedAt 計算、`u:` 字面值、驗證單點、`src/scope` 不得 async 等）在 `tests/architecture.test.ts`；這兩道擋下時改程式的結構，不要放寬規則。
+- Lint 用 oxlint（`npm run lint`，警告也算失敗，已含在 `npm run check`），不另加 ESLint 或 Prettier。`.oxlintrc.json` 規定模組間的 import 方向、禁止循環 import、檔案行數上限，並開了型別感知規則（例如忘了 await DO 或 D1 呼叫）；lint 表達不了的（重複的 updatedAt 計算、`u:` 字面值、驗證單點、`src/scope` 不得 async 等）在 `tests/architecture.test.ts`；這兩道擋下時改程式的結構，不要放寬規則。
 - 日常改動用 `npm run check:fast`（lint、typecheck、vitest），每張票結尾與合併前跑完整的 `npm run check`（含 e2e 與 `e2e:fault`）。
 
 ## MCP 與 ICS（細節在 `../spec/mcp.md`）

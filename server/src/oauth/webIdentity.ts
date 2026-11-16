@@ -1,12 +1,5 @@
 import { sha256Hex } from '../auth/crypto';
-import {
-  AuthVerificationError,
-  verifyGoogleToken,
-  type KeySource,
-  type ProviderName,
-  type VerifiedIdentity,
-} from '../auth/providers';
-import { bindIdentity, openCallbackPending, providerErrorPage, type AuthorizeDeps } from './authorize';
+import type { KeySource, ProviderName } from '../auth/providers';
 
 // Web sign-in with Google / Apple for /authorize (spec/mcp.md 4.4 steps 2-3).
 
@@ -132,41 +125,6 @@ export async function exchangeGoogleCode(
   if (typeof body !== 'object' || body === null) return null;
   const idToken = (body as Record<string, unknown>).id_token;
   return typeof idToken === 'string' && idToken.length > 0 ? idToken : null;
-}
-
-/** GET /authorize/google/callback. Anything that fails after the cookie check keeps the pending. */
-export async function handleGoogleCallback(
-  request: Request,
-  deps: AuthorizeDeps,
-  fetchImpl: typeof fetch = fetch,
-): Promise<Response> {
-  const url = new URL(request.url);
-  const check = await openCallbackPending(request, deps, {
-    provider: 'google',
-    state: url.searchParams.get('state') ?? '',
-    error: url.searchParams.get('error') ?? '',
-  });
-  if (!check.ok) return check.response;
-
-  const code = url.searchParams.get('code') ?? '';
-  if (!code) return providerErrorPage();
-  const google = deps.web.google;
-  let verified: VerifiedIdentity;
-  try {
-    const idToken = await exchangeGoogleCode(google, { code, origin: new URL(request.url).origin }, fetchImpl);
-    if (!idToken) return providerErrorPage();
-    verified = await verifyGoogleToken({
-      idToken,
-      audience: google.clientId,
-      nonce: check.pending.nonce,
-      jwksUrl: google.jwksUrl,
-      keySource: google.keySource,
-    });
-  } catch (error) {
-    if (error instanceof AuthVerificationError) return providerErrorPage();
-    throw error;
-  }
-  return bindIdentity(request, deps, check.pending, verified);
 }
 
 /** The provider's authorize URL, or null when the provider is not available. */

@@ -57,7 +57,7 @@
 - **檢查一律在 server、以資料列目前的狀態為準**：Worker 把推送者的成員資格交給 DO；DO 以**資料列目前所在的清單**判斷（子列看所屬任務目前的清單），不信 op 自報的 `projectId`。改了 `projectId` 的 op（移動）要同時有原清單和目的清單的寫入權，檢查不過整筆 `rejected`。同一筆資料同時被改時，照 server 收到的順序、逐欄位 HLC 決定，結果以 server 為準。
 - **子列的 `taskId` 不能改**：checklistItem、附件、留言建立後不能改掛到別的任務，改 `taskId` 的 op 回 `rejected`（附目前的列）。
 - **新建與未知的列**：DO 找不到這一列時，只有 `fields` 涵蓋該 entity 所有必填欄位的 upsert 才算新建；只改部分欄位卻找不到列，回 `rejected`，原因 `unknown-row`，不會憑空建出一筆。
-- **離開紀錄（gone）**：DO 另存 `departure(entity, entityId, projectId, serverSeq)`：資料列離開某份清單（移動、清單被永久刪除）時寫一筆。pull 時，只對**現在已經看不到這一列**的使用者（是原清單成員、但不是資料列目前所在清單的成員）回 `{entity, entityId, gone: true, serverSeq}`；仍看得到的人會在同一範圍拿到移動後的列（serverSeq 較新），本機未送出的修改照常保留。App 收到 gone 就在本機硬刪除這一列與它的子列、丟掉它尚未送出的 op（不記 `purgedId`，id 之後還可能回來）。
+- **離開紀錄（gone）**：DO 另存 `departure(entity, entityId, projectId, serverSeq)`：任務（連同子列）移到別的清單時寫一筆；清單被永久刪除不寫，改由 tombstone 處理（見下方「永久刪除清單」）。pull 時，只對**現在已經看不到這一列**的使用者（是原清單成員、但不是資料列目前所在清單的成員）回 `{entity, entityId, gone: true, serverSeq}`；仍看得到的人會在同一範圍拿到移動後的列（serverSeq 較新），本機未送出的修改照常保留。App 收到 gone 就在本機硬刪除這一列與它的子列、丟掉它尚未送出的 op（不記 `purgedId`，id 之後還可能回來）。
 - **被拒絕時**：推送者仍讀得到這一列 → `rejected` 附目前的 `row` 與 `clocks`，App 照它覆蓋（例如被降成 viewer 後離線改的標題會被還原）；讀不到了 → `rejected` 附 `gone: true`，App 照上一條處理。
 - **永久刪除清單**：owner 永久刪除清單時，Worker 用一個 `batch()` 把清單標成已永久刪除並讀出當下的 `listScopes`（之後任何讓資料進入它的寫入都會在登記那步被拒；登記與標記都在 batch 裡，兩者不會交錯出漏網的範圍），再依讀出的範圍通知每個存有它資料的範圍。各範圍 DO 在交易裡記下「這份清單已永久刪除」、把屬於它的任務與子列永久刪除（留 tombstone），之後對這份清單的寫入一律拒絕。通知是冪等的，未完成的記在 D1 由下一次請求或排程重試，全部範圍都確認後才算完成。
 - **成員與邀請不走一般同步**：projectMember 與 projectInvite 只能由 owner 透過專用 API 改（見 Endpoint），先寫 D1、再由伺服器投影到清單建立者範圍的 projectMember 列（給 App 顯示）。投影是冪等的；寫完 D1 但投影失敗時，下一次 pull 該清單前 Worker 會比對 D1 與 DO 補齊。App 送來的 projectMember／projectInvite op 一律 `rejected`（附目前的列）。App 改用邀請連結；舊版本機建立的「等待同步」邀請不上傳，登入時標成只在本機。
