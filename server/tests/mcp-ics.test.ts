@@ -10,8 +10,8 @@ import { handleToolCall, HINTS, TOOL_DEFS } from '../src/mcp/registry';
 import type { ToolContext } from '../src/mcp/toolkit';
 import { NO_DATA_MESSAGE } from '../src/serverops/writer';
 import { createScopeWorld } from './helpers/scopeWorld';
+import { deviceOp, NOW_ISH, projectRow } from './helpers/serverHarness';
 
-const NOW_ISH = 1_700_000_000_000;
 const FEED_URL = 'https://calendar.example/feed.ics';
 const SECRET_URL = 'https://calendar.example/private-token-123/feed.ics';
 
@@ -59,19 +59,8 @@ function createHarness() {
 
 type Harness = ReturnType<typeof createHarness>;
 
-function projectRow(id: string, extra: Record<string, unknown> = {}) {
-  return {
-    id, name: id, viewMode: 'list', kind: 'TASK', isInbox: false, ownerId: 'm-a',
-    sortKey: 'a0', showInSmart: 'all', notifyMode: 'all', createdAt: NOW_ISH, updatedAt: NOW_ISH,
-    ...extra,
-  };
-}
-
-function deviceOp(h: Harness, entity: string, row: Record<string, unknown>) {
-  const hlc = h.deviceHlc();
-  return { opId: `dev-${entity}-${String(row.id)}-${hlc}`, hlc, entity, entityId: String(row.id), op: 'upsert', fields: Object.keys(row), row };
-}
-
+// Not the shared seedUser: this seeds an extra list `p-<userId>` (the ICS tools' target project) and
+// skips the inbox for an account without a member id; the tests assert on both.
 async function seedUser(h: Harness, userId: string, memberId: string | null) {
   await h.db.insert(schema.user).values({
     id: userId, name: userId, initial: userId[0], color: '#007AFF', avatarUrl: null, createdAt: NOW_ISH,
