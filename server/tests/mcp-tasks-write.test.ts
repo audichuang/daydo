@@ -443,6 +443,19 @@ describe('M11b update_task', () => {
     expect(cleared.json.items).toEqual([]);
   });
 
+  it('maps tags to the task and its tag rows, reviving a trashed one', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    await h.devicePush('u-a', [
+      deviceOp(h, 'tag', { id: 'old', name: 'old', label: 'Old', sortKey: 'i', createdAt: NOW_ISH, updatedAt: NOW_ISH, deletedAt: NOW_ISH }),
+    ]);
+    const r = await call(h, 'u-a', 'update_task', { project_id: 'p1', task_id: 't1', tags: ['Old', 'fresh'] });
+    expect(r.isError, r.text).toBe(false);
+    expect(r.json.tags).toEqual(['old', 'fresh']);
+    const list = await call(h, 'u-a', 'list_tags');
+    expect(list.json.map((t: any) => t.name)).toEqual(['old', 'fresh']);
+  });
+
   it('errors on a task in another project, an unknown task, or nothing to change', async () => {
     const h = createHarness();
     await seedBasic(h);
