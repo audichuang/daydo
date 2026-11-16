@@ -118,6 +118,22 @@ Individual e2e suites:
 - `npm run e2e:mcp` (`scripts/e2e-mcp.mjs`): MCP OAuth, tools, and hostname gate e2e
 - `npm run e2e:fault` (`scripts/e2e-fault.mjs`): negative check running `e2e-sync --only concurrency` with `SYNC_FAULT=split-txn` and asserting it fails with the expected concurrency assertion
 
+Measured wall time per stage (Mac mini, 2026-11-16, each stage run alone with `/usr/bin/time -p npm run <stage>`):
+
+| Stage | Seconds |
+| --- | --- |
+| `lint` | 0.1 |
+| `typecheck` | 0.5 |
+| `test` (vitest) | 2.2 |
+| `e2e` | 1.7 |
+| `e2e:sync` | 2.1 |
+| `e2e:ics` | 2.1 |
+| `e2e:mcp` | 2.9 |
+| `e2e:fault` | 1.5 |
+| `check` (all of the above) | 13.0 |
+
+`check:fast` is the first three rows, about 3 seconds. Under heavy machine load (load average above 100) the same stages took about 2.5 times as long (`check` 37.8 seconds).
+
 ## Deploy
 
 In a fresh checkout, link this directory to the Cloudflare account first (`.void/` is gitignored, so every new worktree needs this; `void.lock.json` already pins the account, Worker name and D1 database):
