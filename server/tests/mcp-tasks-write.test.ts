@@ -322,6 +322,23 @@ describe('M11b viewer', () => {
     expect(h.calls).toEqual([]);
   });
 
+  it('treats an archived list as unknown before checking the role', async () => {
+    const h = createHarness();
+    await seedShared(h, 'viewer');
+    const own = await call(h, 'u-a', 'create_task', { project_id: 'inbox-u-a', title: 'mine' });
+    const archived = await h.devicePush('u-a', [{ ...deviceOp(h, 'project', { id: 'p1', archivedAt: NOW_ISH }), fields: ['archivedAt'] }]);
+    expect(archived.results[0]?.status).toBe('applied');
+    h.calls.length = 0;
+    for (const userId of ['u-a', 'u-b']) {
+      const r = await call(h, userId, 'create_task', { project_id: 'p1', title: 'x' });
+      expect(r.isError, userId).toBe(true);
+      expect(r.text, userId).toContain("Unknown project_id 'p1'");
+    }
+    const move = await call(h, 'u-a', 'move_task', { task_id: own.json.id, from_project_id: 'inbox-u-a', to_project_id: 'p1' });
+    expect(move.text).toContain("Unknown project_id 'p1'");
+    expect(h.calls).toEqual([]);
+  });
+
   it('refuses moving into a read-only list', async () => {
     const h = createHarness();
     await seedShared(h, 'viewer');

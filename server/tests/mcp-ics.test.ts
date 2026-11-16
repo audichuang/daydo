@@ -187,6 +187,22 @@ describe('M16 add_ics_source', () => {
     expect(res.isError).toBe(true);
     expect(res.text).toMatch(/read-only/);
   });
+
+  it('treats an archived list as unknown, for the owner and for a viewer', async () => {
+    const h = createHarness();
+    await seedUser(h, 'u-a', 'm-a');
+    await seedUser(h, 'u-c', 'm-c');
+    const invite = await createInvite(h.db, { userId: 'u-a', projectId: 'p-u-a', role: 'viewer', nowMs: Date.now() });
+    await acceptInvite(h.db, { code: invite.code, userId: 'u-c', getScopeStub: h.getScopeStub, nowMs: Date.now() });
+    const archived = await h.devicePush('u-a', [{ ...deviceOp(h, 'project', { id: 'p-u-a', archivedAt: NOW_ISH }), fields: ['archivedAt'] }]);
+    expect(archived.results[0]?.status).toBe('applied');
+    for (const userId of ['u-a', 'u-c']) {
+      const res = await call(h, userId, 'add_ics_source', addArgs());
+      expect(res.isError, userId).toBe(true);
+      expect(res.text, userId).toMatch(/Unknown project_id/);
+    }
+    expect(await h.store.listSources('u-a')).toEqual([]);
+  });
 });
 
 describe('M16 list, remove, status', () => {

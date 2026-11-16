@@ -651,4 +651,26 @@ describe('M15a shared list', () => {
     expect((await h.store.getSource('u-b', source.id))?.lastStatus).toBe('error');
     expect(pulledTasks(await h.pull('u-a')).map((t) => t.title)).toEqual(['Meeting']);
   });
+
+  it('keeps syncing into an archived list the subscriber can still write', async () => {
+    const h = createHarness();
+    const source = await seedShared(h);
+    await deviceEdit(h, 'u-a', 'project', 'p1', { archivedAt: NOW_ISH });
+    expect(await sync(h, 'u-b', source.id)).toMatchObject({ created: 1, errors: 0 });
+    expect(pulledTasks(await h.pull('u-a')).filter((t) => t.projectId === 'p1')).toHaveLength(1);
+  });
+
+  it('refuses an archived list for a subscriber downgraded to viewer, without writing', async () => {
+    const h = createHarness();
+    const source = await seedShared(h);
+    await deviceEdit(h, 'u-a', 'project', 'p1', { archivedAt: NOW_ISH });
+    await updateProjectMemberRole(h.db, {
+      projectId: 'p1', targetUserId: 'u-b', requesterUserId: 'u-a', role: 'viewer', getScopeStub: h.getScopeStub, nowMs: Date.now(),
+    });
+    const stats = await sync(h, 'u-b', source.id);
+    expect(stats).toMatchObject({ created: 0, errors: 1 });
+    expect(stats.lastError).toMatch(/writ/i);
+    expect(h.icsPushes()).toBe(0);
+    expect(await h.store.listMappings('u-b', source.id)).toEqual([]);
+  });
 });
