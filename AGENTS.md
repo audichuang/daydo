@@ -66,7 +66,7 @@ ios/scripts/uitest.sh [iphone|ipad] [xcodebuild 參數…]   # UI 流程測試�
 
 同步協議（含進度與待決事項）寫在 `spec/sync.md`，改協議或改兩端的行為先改那份文件。
 
-多張票或要跨 session 接續的工作，計畫檔放 `docs/plans/<名稱>.md`：所有 agent 與之後的 session 共用這份，每張票做完記下 commit 範圍與偏離；工作結束就刪掉，該留的決策寫進 commit message 或 spec。
+多張票或要跨 session 接續的工作，計畫檔放 `docs/plans/<名稱>.md`：所有 agent 與之後的 session 共用這份，每張票做完記下 commit 範圍與偏離；工作結束就刪掉，該留的決策寫進 commit message 或 spec；GLOSSARY、AGENTS.md、spec 與程式註解不引用計畫檔。
 
 - 只在使用者要求發版或部署時才 `void deploy`。
 - 改了 App 的 Record 或 outbox 編碼，要用 `DAYDO_WRITE_FIXTURE=1 swift test` 重新產生 `spec/fixtures/sync-ops.json`，再跑 server 的測試。

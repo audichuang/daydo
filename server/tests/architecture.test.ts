@@ -71,7 +71,11 @@ interface Guard {
   pattern: RegExp;
   /** Exactly the files allowed to match. Ratchet: entries may only be removed, never added. */
   allow: string[];
-  /** Snippets that violate the rule, one per alternative of the pattern; proves none is hollow. */
+  /**
+   * Snippets that violate the rule, one per alternative of the pattern; proves none is hollow.
+   * When narrowing a pattern (adding an exclusion), keep a sample of every form the old pattern caught:
+   * a lookbehind exclusion once let calls through that the previous version blocked.
+   */
   bad: string[];
 }
 

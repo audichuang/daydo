@@ -19,7 +19,7 @@
 - void 固定 1.8.0：npm 設定只裝發布滿 3 天的版本，新版會被拒，不要改 npm 設定繞過。
 - Lint 用 oxlint（`npm run lint`，警告也算失敗，已含在 `npm run check`），不另加 ESLint 或 Prettier。`.oxlintrc.json` 規定模組間的 import 方向、禁止循環 import、檔案行數上限、`routes/**` 不得 import `void/db` 與 `durable-objects/`，並開了型別感知規則（例如忘了 await DO 或 D1 呼叫）；lint 表達不了的（`createDb(`／`Scope.get(` 只准在 `src/deps.ts`，其餘入口都跟 `productionAppDeps` 拿；重複的 updatedAt 計算、`u:` 字面值、驗證單點、`src/scope` 不得 async 等）在 `tests/architecture.test.ts`；這兩道擋下時改程式的結構，不要放寬規則。
 - 新的 server 測試用 `tests/helpers/serverHarness.ts`，時間用 `getNow` 注入，不用 fake timers（`tests/architecture.test.ts` 擋）。
-- 日常改動用 `npm run check:fast`（lint、typecheck、vitest），每張票結尾與合併前跑完整的 `npm run check`（含 e2e 與 `e2e:fault`）。
+- 日常改動用 `npm run check:fast`（lint、typecheck、vitest），每張票結尾與合併前跑完整的 `npm run check`（含 e2e 與 `e2e:fault`）。e2e 各自挑空 port，多個 worktree 可同時跑；固定用 :8787 的只有 verify skill 的 devserver。
 
 ## MCP 與 ICS（細節在 `../spec/mcp.md`）
 
