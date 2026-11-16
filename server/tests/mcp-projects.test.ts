@@ -1,10 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import {
+  describe,
+  expect,
+  it,
+} from 'vitest';
 import { acceptInvite, createInvite } from '../src/sharing';
 import { executeSyncPush } from '../src/sync/push';
 import {
   HINTS,
   TOOL_DEFS,
 } from '../src/mcp/registry';
+import type { GetNow } from '../src/clock';
 import { advancingNow } from './helpers/advancingClock';
 import type { ScopePushInput } from './helpers/scopeWorld';
 import {
@@ -17,10 +22,11 @@ import {
   taskRow,
 } from './helpers/serverHarness';
 
-function createHarness() {
+function createHarness(options: { getNow?: GetNow } = {}) {
   // One-shot: makes the matching push throw before the scope applies it (a DO failure).
   const hooks: { failPush?: (input: ScopePushInput) => boolean } = {};
   const world = createServerHarness({
+    ...options,
     onPush: (input, proceed) => {
       if (hooks.failPush?.(input)) {
         hooks.failPush = undefined;
@@ -189,15 +195,10 @@ describe('M10 delete_project', () => {
   });
 
   it('stamps the trashed tasks and the list with one now', async () => {
-    const h = createHarness();
+    const h = createHarness({ getNow: advancingNow(Date.now() + 120_000) });
     await seedBasic(h);
-    advancingNow(Date.now() + 120_000);
-    try {
-      const r = await call(h, 'u-a', 'delete_project', { project_id: 'p1' });
-      expect(r.isError, r.text).toBe(false);
-    } finally {
-      vi.restoreAllMocks();
-    }
+    const r = await call(h, 'u-a', 'delete_project', { project_id: 'p1' });
+    expect(r.isError, r.text).toBe(false);
     const snap = await h.snapshot('u-a');
     const task = snap.findRow('task', 't1')!.row;
     const project = snap.findRow('project', 'p1')!.row;

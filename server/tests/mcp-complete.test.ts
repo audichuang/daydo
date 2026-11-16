@@ -175,12 +175,9 @@ describe('M12 complete_task, repeating tasks', () => {
 });
 
 describe('complete_task carries one now into every stamp', () => {
-  afterEach(() => vi.restoreAllMocks());
-
   it('stamps a one-off completion with the same now for completedAt and updatedAt', async () => {
-    const h = createServerHarness();
+    const h = createServerHarness({ getNow: advancingNow(FIX_NOW) });
     await seedBasic(h);
-    advancingNow(FIX_NOW);
     const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 't1' });
     expect(r.isError, r.text).toBe(false);
     const row = pulled(await h.pull('u-a'), 'task', 't1')!;
@@ -189,9 +186,8 @@ describe('complete_task carries one now into every stamp', () => {
   });
 
   it('stamps the completed copy of a repeating task with one now', async () => {
-    const h = createServerHarness();
+    const h = createServerHarness({ getNow: advancingNow(FIX_NOW) });
     await seedRepeating(h);
-    advancingNow(FIX_NOW);
     const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
     expect(r.isError, r.text).toBe(false);
     const copy = pulled(await h.pull('u-a'), 'task', await repCopyId())!;

@@ -1,9 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import {
+  describe,
+  expect,
+  it,
+} from 'vitest';
 import { acceptInvite, createInvite } from '../src/sharing';
 import {
   HINTS,
   TOOL_DEFS,
 } from '../src/mcp/registry';
+import type { GetNow } from '../src/clock';
 import { advancingNow } from './helpers/advancingClock';
 import {
   call,
@@ -16,10 +21,11 @@ import {
   pulled,
 } from './helpers/serverHarness';
 
-function createHarness() {
+function createHarness(options: { getNow?: GetNow } = {}) {
   // One-shot: runs before the next MCP push reaches the scope (simulates a phone edit in between).
   const hooks: { beforeMcpPush?: () => Promise<unknown> } = {};
   const world = createServerHarness({
+    ...options,
     onPush: async (input, proceed) => {
       if (input.deviceId === 'mcp' && hooks.beforeMcpPush) {
         const hook = hooks.beforeMcpPush;
@@ -407,15 +413,10 @@ describe('M11b delete_task', () => {
   });
 
   it('stamps deletedAt and updatedAt with the same now', async () => {
-    const h = createHarness();
+    const h = createHarness({ getNow: advancingNow(Date.now() + 120_000) });
     await seedBasic(h);
-    advancingNow(Date.now() + 120_000);
-    try {
-      const r = await call(h, 'u-a', 'delete_task', { project_id: 'p1', task_id: 't1' });
-      expect(r.isError, r.text).toBe(false);
-    } finally {
-      vi.restoreAllMocks();
-    }
+    const r = await call(h, 'u-a', 'delete_task', { project_id: 'p1', task_id: 't1' });
+    expect(r.isError, r.text).toBe(false);
     const row = pulled(await h.pull('u-a'), 'task', 't1')!;
     expect(row.deletedAt).toBeTypeOf('number');
     expect(row.updatedAt).toBe(row.deletedAt);
