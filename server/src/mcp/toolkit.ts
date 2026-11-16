@@ -25,7 +25,7 @@ export interface ToolServices {
   defaultTimeZone?: string;
   /** ICS tool overrides. Production leaves it unset: D1 store, real fetch, shared clock. */
   ics?: { store?: IcsStore; fetchOptions?: FetchIcsOptions; clock?: ServerHlcClock };
-  /** Business time source. Production leaves it unset: `systemNow`. */
+  /** Business time source. Production leaves it unset: the system clock. */
   getNow?: GetNow;
 }
 
