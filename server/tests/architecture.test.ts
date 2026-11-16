@@ -159,15 +159,16 @@ const GUARDS: Guard[] = [
   {
     name: 'routes/** do not query the database directly',
     dirs: ['routes'],
-    // Any receiver (db, primaryDb, database, ...) calling a query method, or raw env.DB use other than
-    // passing it straight on (`createDb(c.env.DB, ...)`, `deps(c.env.DB)`).
-    pattern: /\.(select|insert|update|delete|batch|run|prepare)\(|\.DB\b(?!\s*[,)])/,
+    // Any receiver (db, primaryDb, database, ...) calling a query method, or any env.DB use:
+    // routes pass c.env to productionAppDeps (src/deps.ts) and never touch the binding.
+    pattern: /\.(select|insert|update|delete|batch|run|prepare)\(|\.DB\b/,
     allow: [],
     bad: [
       'const rows = await db.select().from(user);',
       "const database = createDb(c.env.DB, { session: 'first-primary' }); database.run(sql);",
       "await c.env.DB.prepare('DELETE FROM user').run();",
       'const raw = c.env.DB;',
+      'handle(deps(c.env.DB));',
     ],
   },
   {
@@ -208,6 +209,28 @@ const GUARDS: Guard[] = [
     pattern: /(?<!\?\?\s*)\bsystemNow\(\)/,
     allow: [],
     bad: ['const now = systemNow();', 'expiresAt: systemNow() + TTL_MS,'],
+  },
+  {
+    name: 'createDb( is called only in src/deps.ts',
+    dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
+    pattern: /\bcreateDb\(/,
+    allow: ['src/deps.ts'],
+    bad: ["const db = createDb(c.env.DB, { session: 'first-primary' });"],
+  },
+  {
+    name: 'Scope.get( is called only in src/deps.ts',
+    dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
+    pattern: /\bScope\.get\(/,
+    allow: ['src/deps.ts'],
+    bad: ['getScopeStub: (scope) => Scope.get(scope),'],
+  },
+  {
+    // Frozen: config reads stay at the routes/middleware edge; src/ grows no new hidden env dependency.
+    name: 'void/env is imported in src only by the two auth edge files',
+    dirs: ['src', 'crons', 'durable-objects'],
+    pattern: /from ['"]void\/env['"]/,
+    allow: ['src/auth/access.ts', 'src/auth/middleware.ts'],
+    bad: ["import { env } from 'void/env';"],
   },
 ];
 

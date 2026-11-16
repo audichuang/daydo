@@ -368,14 +368,17 @@
               },
               {
                 "name": "void/db",
-                "allowImportNames": ["createDb"],
-                "message": "routes/** may only import createDb from void/db; query through src/ modules."
+                "message": "routes/** must not import void/db; take db from productionAppDeps (src/deps.ts)."
               }
             ],
             "patterns": [
               {
                 "regex": "(^|/)db/schema$",
                 "message": "routes/** must not import the schema; query through src/ modules."
+              },
+              {
+                "regex": "(^|/)durable-objects(/|$)",
+                "message": "routes/** must not import durable-objects/; take getScopeStub from productionAppDeps (src/deps.ts)."
               }
             ]
           }
