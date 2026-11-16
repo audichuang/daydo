@@ -7,6 +7,7 @@ import type {
 } from '../../../durable-objects/scope';
 import type { EntityName, MembershipRole } from '../entities';
 import type { AppDb, ScopeStub } from '../push';
+import { scopeOwnerId } from '../scopeName';
 import {
   chunkArray,
   PAIR_CHUNK_SIZE,
@@ -364,7 +365,7 @@ async function dispatchScopeBatches(
     const groupEntries = Array.from(scopeGroups.entries());
     const segmentResponses = await Promise.all(
       groupEntries.map(async ([scope, group]) => {
-        const scopeUserId = scope.startsWith('u:') ? scope.slice(2) : scope;
+        const scopeUserId = scopeOwnerId(scope);
         const stub = getScopeStub(scope);
         const response = await stub.push({
           scope,

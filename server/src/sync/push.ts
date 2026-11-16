@@ -13,6 +13,7 @@ import type {
 } from '../../durable-objects/scope';
 import { advanceServerHlc, type ServerHlcClock } from './hlc';
 import { applyPushPlan } from './push/apply';
+import { userScope } from './scopeName';
 import { chunkArray, loadPushContext } from './push/context';
 import { parsePushBatch } from './push/parse';
 import { planPushBatch } from './push/plan';
@@ -46,7 +47,7 @@ export async function executeSyncPush(
 }> {
   const { userId, deviceId, ops, getScopeStub, clock } = params;
   const nowMs = Date.now();
-  const pusherScope = `u:${userId}`;
+  const pusherScope = userScope(userId);
   const nextServerTime = (timeMs: number, observed: string[] = []): string =>
     clock ? clock.tick(timeMs, observed) : advanceServerHlc(timeMs, observed).formatted;
 

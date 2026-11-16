@@ -3,6 +3,7 @@ import { and, eq, inArray, isNull, type BatchItem } from 'void/db';
 import type { ExpectedProjectMember, ScopePullResponse } from '../../durable-objects/scope';
 import { resolveMemberId, type MembershipRole } from './entities';
 import { chunkArray, type AppDb, type ScopeStub } from './push';
+import { scopeOwnerId, userScope } from './scopeName';
 
 export interface PullMembershipItem {
   projectId: string;
@@ -39,7 +40,7 @@ export async function executeSyncPull(
   },
 ): Promise<PullResponse> {
   const { userId, cursors, backfill, limit, getScopeStub } = params;
-  const userScope = `u:${userId}`;
+  const ownScope = userScope(userId);
 
   const [userRows, membershipRows] = (await db.batch([
     db.select({ meMemberId: user.meMemberId }).from(user).where(eq(user.id, userId)),
@@ -168,7 +169,7 @@ export async function executeSyncPull(
 
   const memberships: PullMembershipItem[] = activeProjectIds.map((projectId) => ({
     projectId,
-    scope: projectHomeMap.get(projectId) ?? userScope,
+    scope: projectHomeMap.get(projectId) ?? ownScope,
     role: membershipMap[projectId],
   }));
 
@@ -237,7 +238,7 @@ export async function executeSyncPull(
       if (home) targetScopes.add(home);
     }
   } else {
-    targetScopes.add(userScope);
+    targetScopes.add(ownScope);
     for (const row of listScopeRows) {
       if (purgedIds.has(row.projectId)) continue;
       targetScopes.add(row.scope);
@@ -297,7 +298,7 @@ export async function executeSyncPull(
 
   const scopes = await Promise.all(
     orderedScopes.map((scope) => {
-      const scopeUserId = scope.startsWith('u:') ? scope.slice(2) : scope;
+      const scopeUserId = scopeOwnerId(scope);
       const since = Object.hasOwn(cursors, scope) ? cursors[scope] : 0;
       return getScopeStub(scope).pull({
         scope,
