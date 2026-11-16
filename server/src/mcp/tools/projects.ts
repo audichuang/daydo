@@ -3,6 +3,7 @@
 import { uniqueProjectKey } from '../../domain/sortKey';
 import { uuidv7 } from '../../domain/uuid';
 import { loadSnapshot, type Snapshot, type SnapshotRow } from '../../serverops/snapshot';
+import { taskListDenial } from '../../serverops/taskWrites';
 import { writeOrThrow, type WriteIntent, type WriterDeps } from '../../serverops/writer';
 import { userScope } from '../../sync/scopeName';
 import { bySortKey, compareKeys, formatProject, openTasksOf, summarizeTask } from '../format';
@@ -20,6 +21,17 @@ export async function openSession(ctx: ToolContext): Promise<Session> {
   const deps: WriterDeps = { db: services.db, userId: ctx.userId, deviceId: 'mcp', getScopeStub: services.getScopeStub };
   const snapshot = await loadSnapshot(services.db, ctx.userId, services.getScopeStub);
   return { snapshot, deps };
+}
+
+/** For task writes: refuses a list that is not live (unknown, trashed, or archived: list_projects hides it) or that the caller may only read. */
+export function requireWritableList(snapshot: Snapshot, projectId: string): void {
+  const denial = taskListDenial(snapshot, projectId);
+  if (denial === 'missing' || denial === 'archived') {
+    throw new Error(`Unknown project_id '${projectId}'; call list_projects first`);
+  }
+  if (denial === 'read-only') {
+    throw new Error(`Project '${projectId}' is read-only for you (role: ${snapshot.memberships.get(projectId) ?? 'none'})`);
+  }
 }
 
 const COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
