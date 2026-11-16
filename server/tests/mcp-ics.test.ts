@@ -1,43 +1,14 @@
 // M16: ICS MCP tools (spec/mcp.md 8, 9) and the production cron (9.5), against a real ScopeObject
 // and the in-memory ICS store.
-import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '../db/schema';
 import { acceptInvite, createInvite } from '../src/sharing';
-import { createServerHlcClock } from '../src/sync/hlc';
-import { executeSyncPush, type ScopeStub } from '../src/sync/push';
-import { executeSyncPull } from '../src/sync/pull';
 import { MemoryIcsStore } from '../src/ics/store';
+import { runIcsCron } from '../src/ics/cron';
 import { handleToolCall, HINTS, TOOL_DEFS, type ToolContext } from '../src/mcp/registry';
 import { NO_DATA_MESSAGE } from '../src/serverops/writer';
-import { createTestD1, createTestDoState } from './sqliteD1';
-
-vi.mock('cloudflare:workers', () => ({
-  DurableObject: class {
-    ctx: unknown;
-    env: unknown;
-    constructor(ctx: unknown, env: unknown) {
-      this.ctx = ctx;
-      this.env = env;
-    }
-  },
-}));
-
-vi.mock('void/durable', () => ({
-  defineDurableObject: (def: unknown) => def,
-}));
-
-vi.mock('void/db', async () => {
-  const orm = await import('drizzle-orm');
-  return {
-    ...orm,
-    createDb: (d1: D1Database) => drizzle(d1, { schema }),
-  };
-});
-
-const { default: Scope, ScopeObject } = await import('../durable-objects/scope');
-const { runIcsCron } = await import('../src/ics/cron');
+import { createScopeWorld } from './helpers/scopeWorld';
 
 const NOW_ISH = 1_700_000_000_000;
 const FEED_URL = 'https://calendar.example/feed.ics';
@@ -50,22 +21,7 @@ const event = (uid: string, day = SOON) =>
 const calendar = (...events: string[]) => ['BEGIN:VCALENDAR', 'VERSION:2.0', ...events, 'END:VCALENDAR'].join('\r\n');
 
 function createHarness() {
-  const { db } = createTestD1();
-  const scopes = new Map<string, InstanceType<typeof ScopeObject>>();
-  const clock = createServerHlcClock();
-  const getScopeStub = (scope: string): ScopeStub => {
-    let instance = scopes.get(scope);
-    if (!instance) {
-      const doState = createTestDoState();
-      const ScopeClass = Scope.class as unknown as new (
-        ctx: DurableObjectState,
-        env: { SYNC_FAULT: 'none' },
-      ) => InstanceType<typeof ScopeObject>;
-      instance = new ScopeClass(doState.ctx, { SYNC_FAULT: 'none' });
-      scopes.set(scope, instance);
-    }
-    return instance as unknown as ScopeStub;
-  };
+  const { db, clock, getScopeStub, push, pull } = createScopeWorld();
   const store = new MemoryIcsStore();
   const feeds = new Map<string, string>();
   const fetched: string[] = [];
@@ -79,16 +35,25 @@ function createHarness() {
   feeds.set(FEED_URL, calendar(event('a')));
   let seq = 0;
   const deviceHlc = () => `${Date.now() - 60_000}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
-  const devicePush = (userId: string, ops: unknown[]) =>
-    executeSyncPush(db, { userId, deviceId: 'dev-a', ops, getScopeStub, clock });
-  const pull = (userId: string) => executeSyncPull(db, { userId, cursors: {}, limit: 1000, getScopeStub });
+  const devicePush = (userId: string, ops: unknown[]) => push(userId, 'dev-a', ops);
   const engineDeps = { store, db, getScopeStub, clock, fetchOptions: { fetch: fakeFetch } };
   const ctx = (userId: string): ToolContext => ({
     userId,
     clientId: 'client-1',
     services: { db, getScopeStub, ics: { store, clock, fetchOptions: { fetch: fakeFetch } } },
   });
-  return { db, store, feeds, fetched, engineDeps, ctx, deviceHlc, devicePush, pull, getScopeStub };
+  return {
+    db,
+    store,
+    feeds,
+    fetched,
+    engineDeps,
+    ctx,
+    deviceHlc,
+    devicePush,
+    pull: (userId: string) => pull(userId, { limit: 1000 }),
+    getScopeStub,
+  };
 }
 
 type Harness = ReturnType<typeof createHarness>;

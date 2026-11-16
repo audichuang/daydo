@@ -1,4 +1,3 @@
-import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -6,104 +5,49 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '../db/schema';
 import { acceptInvite, createInvite } from '../src/sharing';
-import { createServerHlcClock } from '../src/sync/hlc';
-import { executeSyncPush, type ScopeStub } from '../src/sync/push';
 import { loadSnapshot } from '../src/serverops/snapshot';
-import { executeSyncPull } from '../src/sync/pull';
 import { handleToolCall, HINTS, TOOL_DEFS } from '../src/mcp/registry';
 import { addDays } from '../src/domain/schedule';
 import { uuidv5 } from '../src/domain/uuid';
-import { createTestD1, createTestDoState } from './sqliteD1';
-
-vi.mock('cloudflare:workers', () => ({
-  DurableObject: class {
-    ctx: unknown;
-    env: unknown;
-    constructor(ctx: unknown, env: unknown) {
-      this.ctx = ctx;
-      this.env = env;
-    }
-  },
-}));
-
-vi.mock('void/durable', () => ({
-  defineDurableObject: (def: unknown) => def,
-}));
-
-vi.mock('void/db', async () => {
-  const orm = await import('drizzle-orm');
-  return {
-    ...orm,
-    createDb: (d1: D1Database) => drizzle(d1, { schema }),
-  };
-});
-
-const { default: Scope, ScopeObject } = await import('../durable-objects/scope');
-
-interface PushCall {
-  scope: string;
-  deviceId: string;
-  ops: Array<Record<string, unknown>>;
-}
+import { createScopeWorld, type ScopePushInput } from './helpers/scopeWorld';
 
 function createHarness() {
-  const { db } = createTestD1();
-  const scopes = new Map<string, InstanceType<typeof ScopeObject>>();
-  const calls: PushCall[] = [];
   // One-shot: runs before the next MCP push reaches the scope (simulates a phone edit in between).
   const hooks: {
     beforeMcpPush?: () => Promise<unknown>;
     // One-shot: makes the matching push throw before the scope applies it (a DO failure).
-    failPush?: (input: Parameters<ScopeStub['push']>[0]) => boolean;
+    failPush?: (input: ScopePushInput) => boolean;
   } = {};
-  const clock = createServerHlcClock();
-  const getScopeStub = (scope: string): ScopeStub => {
-    let instance = scopes.get(scope);
-    if (!instance) {
-      const doState = createTestDoState();
-      const ScopeClass = Scope.class as unknown as new (
-        ctx: DurableObjectState,
-        env: { SYNC_FAULT: 'none' },
-      ) => InstanceType<typeof ScopeObject>;
-      instance = new ScopeClass(doState.ctx, { SYNC_FAULT: 'none' });
-      scopes.set(scope, instance);
-    }
-    const stub = instance as unknown as ScopeStub;
-    return new Proxy(stub, {
-      get(target, prop, receiver) {
-        if (prop === 'push') {
-          return async (input: Parameters<ScopeStub['push']>[0]) => {
-            if (input.deviceId === 'mcp' && hooks.beforeMcpPush) {
-              const hook = hooks.beforeMcpPush;
-              hooks.beforeMcpPush = undefined;
-              await hook();
-            }
-            if (hooks.failPush?.(input)) {
-              hooks.failPush = undefined;
-              throw new Error(`injected failure in ${input.scope}`);
-            }
-            calls.push({
-              scope: input.scope,
-              deviceId: input.deviceId,
-              ops: input.ops as Array<Record<string, unknown>>,
-            });
-            return target.push(input);
-          };
-        }
-        const v = Reflect.get(target, prop, receiver) as unknown;
-        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
-      },
-    });
-  };
+  const { db, calls, clock, getScopeStub, push, pull } = createScopeWorld({
+    onPush: async (input, proceed) => {
+      if (input.deviceId === 'mcp' && hooks.beforeMcpPush) {
+        const hook = hooks.beforeMcpPush;
+        hooks.beforeMcpPush = undefined;
+        await hook();
+      }
+      if (hooks.failPush?.(input)) {
+        hooks.failPush = undefined;
+        throw new Error(`injected failure in ${input.scope}`);
+      }
+      return proceed(input);
+    },
+  });
   let seq = 0;
   // Device HLCs sit in the past unless a test asks for a lead.
   const deviceHlc = (ms = Date.now() - 60_000) => `${ms}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
-  const devicePush = (userId: string, ops: unknown[]) =>
-    executeSyncPush(db, { userId, deviceId: 'dev-a', ops, getScopeStub, clock });
+  const devicePush = (userId: string, ops: unknown[]) => push(userId, 'dev-a', ops);
   const deps = (userId: string) => ({ db, userId, deviceId: 'mcp' as const, getScopeStub, clock });
   const snapshot = (userId: string) => loadSnapshot(db, userId, getScopeStub);
-  const pull = (userId: string) => executeSyncPull(db, { userId, cursors: {}, limit: 1000, getScopeStub });
-  return { db, calls, hooks, deviceHlc, devicePush, deps, snapshot, pull };
+  return {
+    db,
+    calls,
+    hooks,
+    deviceHlc,
+    devicePush,
+    deps,
+    snapshot,
+    pull: (userId: string) => pull(userId, { limit: 1000 }),
+  };
 }
 
 type Harness = ReturnType<typeof createHarness>;

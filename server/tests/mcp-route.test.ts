@@ -5,10 +5,9 @@ import { eq } from 'drizzle-orm';
 import type { CloudContext } from 'void';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '../db/schema';
-import { createServerHlcClock } from '../src/sync/hlc';
-import { executeSyncPush, type ScopeStub } from '../src/sync/push';
 import { signMcpAccessToken } from '../src/oauth/tokens';
-import { createTestD1, createTestDoState } from './sqliteD1';
+import { createScopeWorld, type ScopeWorld } from './helpers/scopeWorld';
+import { createTestD1 } from './sqliteD1';
 
 const SECRET = 'mcp-route-test-jwt-secret-at-least-32-bytes';
 const ORIGIN = 'https://daydo-mcp.audichuang.app';
@@ -18,45 +17,19 @@ const testEnv: { JWT_SECRET: string; DEFAULT_TIMEZONE?: string; ICS_ALLOW_INSECU
   JWT_SECRET: SECRET,
 };
 
-vi.mock('cloudflare:workers', () => ({
-  DurableObject: class {
-    ctx: unknown;
-    env: unknown;
-    constructor(ctx: unknown, env: unknown) {
-      this.ctx = ctx;
-      this.env = env;
-    }
-  },
-}));
-
 vi.mock('void', () => ({ defineHandler: (handler: unknown) => handler }));
-vi.mock('void/durable', () => ({ defineDurableObject: (def: unknown) => def }));
 vi.mock('void/env', () => ({ env: testEnv }));
-vi.mock('void/db', async () => {
-  const orm = await import('drizzle-orm');
-  return { ...orm, createDb: (d1: D1Database) => drizzle(d1, { schema }) };
-});
 
 // Scope.get resolves to in-memory ScopeObjects shared with the test's device pushes.
-const scopes = new Map<string, unknown>();
+let world: ScopeWorld | null = null;
 const scopeGets: string[] = [];
-let scopeClass: (new (ctx: DurableObjectState, env: { SYNC_FAULT: 'none' }) => unknown) | null = null;
-function stubFor(scope: string): ScopeStub {
-  let instance = scopes.get(scope);
-  if (!instance) {
-    instance = new scopeClass!(createTestDoState().ctx, { SYNC_FAULT: 'none' });
-    scopes.set(scope, instance);
-  }
-  return instance as ScopeStub;
-}
 vi.mock('../durable-objects/scope', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../durable-objects/scope')>();
-  scopeClass = actual.default.class as unknown as typeof scopeClass;
   const mocked = {
     ...actual.default,
     get: (scope: string) => {
       scopeGets.push(scope);
-      return stubFor(scope);
+      return world!.getScopeStub(scope);
     },
   };
   return { ...actual, default: mocked, Scope: mocked };
@@ -79,7 +52,7 @@ function context(d1: D1Database, body: unknown, token: string): CloudContext {
 }
 
 async function seedUserWithInbox() {
-  const { db, d1 } = createTestD1();
+  const { db, d1, push } = world!;
   await db.insert(schema.user).values({
     id: 'u-a', name: 'A', initial: 'A', color: '#007AFF', avatarUrl: null, createdAt: NOW_ISH,
   });
@@ -89,13 +62,9 @@ async function seedUserWithInbox() {
     id: 'inbox-a', name: 'Inbox', viewMode: 'list', kind: 'TASK', isInbox: true, ownerId: 'm-a',
     sortKey: 'a0', showInSmart: 'all', notifyMode: 'all', createdAt: NOW_ISH, updatedAt: NOW_ISH,
   };
-  const res = await executeSyncPush(db, {
-    userId: 'u-a',
-    deviceId: 'dev-a',
-    ops: [{ opId: 'seed-inbox', hlc, entity: 'project', entityId: inbox.id, op: 'upsert', fields: Object.keys(inbox), row: inbox }],
-    getScopeStub: stubFor,
-    clock: createServerHlcClock(),
-  });
+  const res = await push('u-a', 'dev-a', [
+    { opId: 'seed-inbox', hlc, entity: 'project', entityId: inbox.id, op: 'upsert', fields: Object.keys(inbox), row: inbox },
+  ]);
   expect(res.results[0]?.status).toBe('applied');
   const token = await signMcpAccessToken(SECRET, { origin: ORIGIN, userId: 'u-a', scope: 'mcp', clientId: 'mcp-test' });
   return { d1, token };
@@ -109,7 +78,7 @@ async function callTool(d1: D1Database, token: string, name: string, args: Recor
 }
 
 beforeEach(() => {
-  scopes.clear();
+  world = createScopeWorld();
   scopeGets.length = 0;
   delete testEnv.DEFAULT_TIMEZONE;
   delete testEnv.ICS_ALLOW_INSECURE_HOSTS;
