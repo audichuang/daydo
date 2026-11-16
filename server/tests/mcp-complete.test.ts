@@ -7,31 +7,11 @@ import * as schema from '../db/schema';
 import { acceptInvite, createInvite } from '../src/sharing';
 import { loadSnapshot } from '../src/serverops/snapshot';
 import { handleToolCall, HINTS, TOOL_DEFS } from '../src/mcp/registry';
-import { addDays } from '../src/domain/schedule';
 import { uuidv5 } from '../src/domain/uuid';
-import { createScopeWorld, type ScopePushInput } from './helpers/scopeWorld';
+import { createScopeWorld } from './helpers/scopeWorld';
 
 function createHarness() {
-  // One-shot: runs before the next MCP push reaches the scope (simulates a phone edit in between).
-  const hooks: {
-    beforeMcpPush?: () => Promise<unknown>;
-    // One-shot: makes the matching push throw before the scope applies it (a DO failure).
-    failPush?: (input: ScopePushInput) => boolean;
-  } = {};
-  const { db, calls, clock, getScopeStub, push, pull } = createScopeWorld({
-    onPush: async (input, proceed) => {
-      if (input.deviceId === 'mcp' && hooks.beforeMcpPush) {
-        const hook = hooks.beforeMcpPush;
-        hooks.beforeMcpPush = undefined;
-        await hook();
-      }
-      if (hooks.failPush?.(input)) {
-        hooks.failPush = undefined;
-        throw new Error(`injected failure in ${input.scope}`);
-      }
-      return proceed(input);
-    },
-  });
+  const { db, calls, clock, getScopeStub, push, pull } = createScopeWorld();
   let seq = 0;
   // Device HLCs sit in the past unless a test asks for a lead.
   const deviceHlc = (ms = Date.now() - 60_000) => `${ms}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
@@ -41,7 +21,6 @@ function createHarness() {
   return {
     db,
     calls,
-    hooks,
     deviceHlc,
     devicePush,
     deps,
@@ -169,8 +148,6 @@ function fixtureOp(entityId: string, nth = 0): Record<string, any> {
   return op;
 }
 
-const isV7 = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id);
-
 /** p1 with a weekly 09:00 task `rep` from 2026-11-15 (Asia/Taipei). */
 async function seedRepeating(h: Harness, extra: Record<string, unknown> = {}) {
   await seedUser(h, 'u-a', 'm-a');
@@ -250,7 +227,8 @@ describe('M12 complete_task, one-off tasks', () => {
 });
 
 describe('M12 complete_task, repeating tasks', () => {
-  it('matches the App fixture: v5 copy, checklist copy, then the original moved to the next week', async () => {
+  // App alignment (push order, fixture ops, ids, catch-up) is in task-writes.test.ts.
+  it('returns the completed copy with its checklist copy for the App fixture', async () => {
     const h = createHarness();
     const project = fixtureOp('01a1dd5b-fc88-7f98-9743-8bbff3400c35').row;
     const task = fixtureOp(FIX_TASK_ID).row;
@@ -268,148 +246,6 @@ describe('M12 complete_task, repeating tasks', () => {
     expect(r.isError, r.text).toBe(false);
     expect(r.json).toMatchObject({ id: FIX_COPY_ID, status: 2, completed_at: FIX_NOW, repeat: null, title: '每週讀書會' });
     expect(r.json.items.map((i: any) => i.id)).toEqual([FIX_ITEM_COPY_ID]);
-
-    // Copy, then checklist, then original, each in its own push.
-    const calls = mcpCalls(h);
-    expect(calls.map((c) => c.ops.map((o) => o.entityId))).toEqual([[FIX_COPY_ID], [FIX_ITEM_COPY_ID], [FIX_TASK_ID]]);
-    const [copyOp, itemOp] = [calls[0]!.ops[0]!, calls[1]!.ops[0]!];
-    const fixCopy = fixtureOp(FIX_COPY_ID);
-    const fixItem = fixtureOp(FIX_ITEM_COPY_ID);
-    expect([...(copyOp.fields as string[])].sort()).toEqual([...fixCopy.fields].sort());
-    expect(copyOp.row).toEqual(fixCopy.row);
-    expect([...(itemOp.fields as string[])].sort()).toEqual([...fixItem.fields].sort());
-    expect(itemOp.row).toEqual(fixItem.row);
-
-    const fixMoved = fixtureOp(FIX_TASK_ID, 1).row;
-    const res = await h.pull('u-a');
-    expect(pulled(res, 'task', FIX_TASK_ID)).toMatchObject({
-      startDay: fixMoved.startDay, endDay: fixMoved.endDay, startMinute: 1140, endMinute: 1230,
-      status: 0, repeatRule: 'RRULE:FREQ=WEEKLY', updatedAt: fixMoved.updatedAt,
-    });
-    expect(pulled(res, 'task', FIX_COPY_ID)).toMatchObject({ status: 2, completedAt: FIX_NOW, startDay: '2026-11-15' });
-    expect(pulled(res, 'checklistItem', FIX_ITEM_COPY_ID)).toMatchObject({ taskId: FIX_COPY_ID, title: '準備章節摘要' });
-  });
-
-  it('copies live checklist items with their status and reopens the done ones on the original', async () => {
-    const h = createHarness();
-    await seedRepeating(h);
-    await h.devicePush('u-a', [
-      deviceOp(h, 'checklistItem', { id: 'c1', taskId: 'rep', title: 'done one', status: 1, sortKey: 'a0', createdAt: NOW_ISH, updatedAt: NOW_ISH }),
-      deviceOp(h, 'checklistItem', { id: 'c2', taskId: 'rep', title: 'open one', status: 0, sortKey: 'b', createdAt: NOW_ISH, updatedAt: NOW_ISH }),
-      deviceOp(h, 'checklistItem', { id: 'c3', taskId: 'rep', title: 'trashed', status: 0, sortKey: 'c', createdAt: NOW_ISH, updatedAt: NOW_ISH, deletedAt: NOW_ISH }),
-    ]);
-    h.calls.length = 0;
-    const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
-    expect(r.isError, r.text).toBe(false);
-    const copyId = await repCopyId();
-    const [c1Copy, c2Copy] = [await uuidv5(`${copyId}|c1`), await uuidv5(`${copyId}|c2`)];
-    expect(r.json.items.map((i: any) => [i.id, i.title, i.status])).toEqual([
-      [c1Copy, 'done one', 1],
-      [c2Copy, 'open one', 0],
-    ]);
-    const checklistPush = mcpCalls(h)[1]!.ops.map((o) => [o.entityId, (o.row as Record<string, unknown>).status]);
-    // Per item, as the App: copy, then reopen the original.
-    // Copies first; the done originals are reopened only once every copy is stored.
-    expect(checklistPush).toEqual([[c1Copy, 1], [c2Copy, 0]]);
-    expect(mcpCalls(h)[2]!.ops.map((o) => [o.entityId, (o.row as Record<string, unknown>).status])).toEqual([['c1', 0]]);
-    const res = await h.pull('u-a');
-    expect(pulled(res, 'checklistItem', 'c1')).toMatchObject({ status: 0, taskId: 'rep' });
-    expect(pulled(res, 'checklistItem', c1Copy)).toMatchObject({ status: 1, taskId: copyId, sortKey: 'a0' });
-  });
-
-  it('uses a v7 copy id when the snapshot already holds a tombstone for the v5 id', async () => {
-    const h = createHarness();
-    await seedRepeating(h);
-    const v5 = await repCopyId();
-    await h.devicePush('u-a', [deviceOp(h, 'task', taskRow(v5, 'p1', { status: 2, completedAt: NOW_ISH }))]);
-    await h.devicePush('u-a', [
-      { opId: 'dev-del-copy', hlc: h.deviceHlc(), entity: 'task', entityId: v5, op: 'delete', fields: [], row: {} },
-    ]);
-    expect((await h.snapshot('u-a')).findRow('task', v5)?.row.purgedAt).toBeTypeOf('number');
-    h.calls.length = 0;
-
-    const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
-    expect(r.isError, r.text).toBe(false);
-    expect(isV7(r.json.id)).toBe(true);
-    expect(mcpOps(h).some((o) => o.entityId === v5)).toBe(false);
-    expect(mcpCalls(h).map((c) => c.ops.map((o) => o.entityId))).toEqual([[r.json.id], ['rep']]);
-    expect(pulled(await h.pull('u-a'), 'task', r.json.id)).toMatchObject({ status: 2, title: 'Weekly sync' });
-  });
-
-  it('resends the copy with a v7 id when the push answers with a tombstone missing from the snapshot', async () => {
-    const h = createHarness();
-    await seedRepeating(h);
-    await h.devicePush('u-a', [
-      deviceOp(h, 'checklistItem', { id: 'c1', taskId: 'rep', title: 'item', status: 0, sortKey: 'i', createdAt: NOW_ISH, updatedAt: NOW_ISH }),
-    ]);
-    const v5 = await repCopyId();
-    h.hooks.beforeMcpPush = () =>
-      h.devicePush('u-a', [
-        deviceOp(h, 'task', taskRow(v5, 'p1', { status: 2, completedAt: NOW_ISH })),
-        { opId: 'dev-del-copy', hlc: h.deviceHlc(), entity: 'task', entityId: v5, op: 'delete', fields: [], row: {} },
-      ]);
-    h.calls.length = 0;
-
-    const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
-    expect(r.isError, r.text).toBe(false);
-    const v7 = r.json.id as string;
-    expect(isV7(v7)).toBe(true);
-    const itemCopy = await uuidv5(`${v7}|c1`);
-    expect(mcpCalls(h).map((c) => c.ops.map((o) => o.entityId))).toEqual([[v5], [v7], [itemCopy], ['rep']]);
-    expect(mcpOps(h).filter((o) => o.entity === 'checklistItem').every((o) => (o.row as Record<string, unknown>).taskId === v7)).toBe(true);
-    const res = await h.pull('u-a');
-    expect(pulled(res, 'task', 'rep')).toMatchObject({ startDay: '2026-11-22' });
-    expect(pulled(res, 'task', v7)).toMatchObject({ status: 2, startDay: '2026-11-15' });
-    expect(pulled(res, 'checklistItem', itemCopy)).toMatchObject({ taskId: v7 });
-  });
-
-  it('only completes an existing open copy, and leaves an existing completed copy alone', async () => {
-    const h = createHarness();
-    await seedRepeating(h);
-    const v5 = await repCopyId();
-    await h.devicePush('u-a', [deviceOp(h, 'task', taskRow(v5, 'p1', { title: 'old copy' }))]);
-    h.calls.length = 0;
-    const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
-    expect(r.isError, r.text).toBe(false);
-    expect(r.json).toMatchObject({ id: v5, status: 2, title: 'old copy' });
-    const copyOp = mcpCalls(h)[0]!.ops[0]!;
-    expect(copyOp.entityId).toBe(v5);
-    expect([...(copyOp.fields as string[])].sort()).toEqual(['completedAt', 'status', 'updatedAt']);
-
-    // Move the original back onto the same occurrence: the completed copy is reused, not rewritten.
-    await h.devicePush('u-a', [
-      deviceOp(h, 'task', { id: 'rep', startDay: '2026-11-15', startMinute: 540, endDay: '2026-11-15', endMinute: 600, timeZone: 'Asia/Taipei' }, h.deviceHlc(FIX_NOW + 10)),
-    ]);
-    h.calls.length = 0;
-    const again = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
-    expect(again.isError, again.text).toBe(false);
-    expect(again.json.id).toBe(v5);
-    expect(mcpCalls(h).map((c) => c.ops.map((o) => o.entityId))).toEqual([['rep']]);
-  });
-
-  it('rebuilds a trashed copy from the original, keeping its createdAt', async () => {
-    const h = createHarness();
-    await seedRepeating(h);
-    const v5 = await repCopyId();
-    await h.devicePush('u-a', [
-      deviceOp(h, 'task', taskRow(v5, 'p1', { title: 'stale', createdAt: 123, deletedAt: NOW_ISH, importNote: 'old note' })),
-    ]);
-    h.calls.length = 0;
-    const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
-    expect(r.isError, r.text).toBe(false);
-    expect(r.json).toMatchObject({ id: v5, status: 2, title: 'Weekly sync', import_note: null, created_at: 123 });
-    const row = pulled(await h.pull('u-a'), 'task', v5);
-    expect(row).toMatchObject({ title: 'Weekly sync', startDay: '2026-11-15', createdAt: 123 });
-    expect([row?.deletedAt ?? null, row?.repeatRule ?? null, row?.importNote ?? null]).toEqual([null, null, null]);
-  });
-
-  it('catches up to today in the task zone', async () => {
-    const h = createHarness();
-    await seedRepeating(h, { startDay: '2026-11-01', endDay: '2026-11-01', repeatRule: 'RRULE:FREQ=DAILY' });
-    const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
-    expect(r.isError, r.text).toBe(false);
-    expect(r.json.id).toBe(await repCopyId('2026-11-01'));
-    expect(pulled(await h.pull('u-a'), 'task', 'rep')).toMatchObject({ startDay: '2026-11-15', endDay: '2026-11-15' });
   });
 
   it('takes today from the task zone, or DEFAULT_TIMEZONE for floating tasks', async () => {
@@ -421,52 +257,6 @@ describe('M12 complete_task, repeating tasks', () => {
       expect(r.isError, r.text).toBe(false);
       expect(pulled(await h.pull('u-a'), 'task', 'rep')?.startDay, String(timeZone)).toBe(expected);
     }
-  });
-
-  it('stops catching up after 1000 steps, as the App does', async () => {
-    const h = createHarness();
-    await seedRepeating(h, { startDay: '2020-01-01', endDay: '2020-01-01', repeatRule: 'RRULE:FREQ=DAILY' });
-    const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
-    expect(r.isError, r.text).toBe(false);
-    const moved = addDays('2020-01-01', 1001);
-    expect(pulled(await h.pull('u-a'), 'task', 'rep')).toMatchObject({ startDay: moved, endDay: moved });
-  });
-
-  it('uses an empty minute part for all-day occurrences', async () => {
-    const h = createHarness();
-    await seedRepeating(h, { startMinute: null, endMinute: null, timeZone: null, reminders: [] });
-    const r = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
-    expect(r.isError, r.text).toBe(false);
-    expect(r.json.id).toBe(await repCopyId('2026-11-15', ''));
-  });
-
-  it('keeps the done checklist items on the original when storing their copies fails, so a retry copies them done', async () => {
-    const h = createHarness();
-    await seedRepeating(h);
-    await h.devicePush('u-a', [
-      deviceOp(h, 'checklistItem', { id: 'c1', taskId: 'rep', title: 'done one', status: 1, sortKey: 'a0', createdAt: NOW_ISH, updatedAt: NOW_ISH }),
-    ]);
-    await seedUser(h, 'u-b', 'm-b');
-    const invite = await createInvite(h.db, { userId: 'u-a', projectId: 'p1', role: 'editor', nowMs: Date.now() });
-    await acceptInvite(h.db, {
-      code: invite.code, userId: 'u-b', getScopeStub: (s) => h.deps('u-b').getScopeStub(s), nowMs: Date.now(),
-    });
-    // The copies live in u-b's scope, the original item in u-a's: fail the copy side once.
-    h.hooks.failPush = (input) =>
-      input.deviceId === 'mcp' && input.scope === 'u:u-b' && input.ops.some((o) => (o as { entity: string }).entity === 'checklistItem');
-
-    const first = await call(h, 'u-b', 'complete_task', { project_id: 'p1', task_id: 'rep' });
-    expect(first.isError).toBe(true);
-    let res = await h.pull('u-a');
-    expect(pulled(res, 'checklistItem', 'c1')).toMatchObject({ status: 1 });
-    expect(pulled(res, 'task', 'rep')).toMatchObject({ startDay: '2026-11-15' });
-
-    const retry = await call(h, 'u-b', 'complete_task', { project_id: 'p1', task_id: 'rep' });
-    expect(retry.isError, retry.text).toBe(false);
-    expect(retry.json.items.map((i: any) => [i.title, i.status])).toEqual([['done one', 1]]);
-    res = await h.pull('u-a');
-    expect(pulled(res, 'checklistItem', 'c1')).toMatchObject({ status: 0 });
-    expect(pulled(res, 'task', 'rep')).toMatchObject({ startDay: '2026-11-22' });
   });
 
   it('refuses a rule whose next occurrence cannot be computed before writing anything', async () => {

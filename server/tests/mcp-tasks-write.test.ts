@@ -172,6 +172,7 @@ describe('M11b registry', () => {
 });
 
 describe('M11b create_task', () => {
+  // Sort keys, tag rows and checklist rows follow the App; see task-writes.test.ts.
   it('creates a full task that another device pulls, with checklist and tag rows', async () => {
     const h = createHarness();
     await seedBasic(h);
@@ -219,18 +220,6 @@ describe('M11b create_task', () => {
     expect(pulled(res, 'tag', 'home')).toMatchObject({ label: 'Home' });
     const tags = await call(h, 'u-a', 'list_tags');
     expect(tags.json.map((t: any) => t.name)).toEqual(['work', 'home']);
-  });
-
-  it('keys the new task before every task in the list, including trashed and completed ones', async () => {
-    const h = createHarness();
-    await seedBasic(h);
-    await h.devicePush('u-a', [
-      deviceOp(h, 'task', taskRow('t-trash', 'p1', { sortKey: '2', deletedAt: NOW_ISH })),
-      deviceOp(h, 'task', taskRow('t-done', 'p1', { sortKey: '4', status: 2, completedAt: NOW_ISH })),
-    ]);
-    const r = await call(h, 'u-a', 'create_task', { project_id: 'p1', title: 'first' });
-    const snap = await h.snapshot('u-a');
-    expect(String(snap.findRow('task', r.json.id)!.row.sortKey)).toBe('1');
   });
 
   it('handles all-day, floating and offset-inferred schedules', async () => {
@@ -452,19 +441,6 @@ describe('M11b update_task', () => {
     expect(pulled(res, 'checklistItem', 'c-old')?.deletedAt).toBeTypeOf('number');
     const cleared = await call(h, 'u-a', 'update_task', { project_id: 'p1', task_id: 't1', subtasks: [] });
     expect(cleared.json.items).toEqual([]);
-  });
-
-  it('replaces tags, creating and reviving tag rows', async () => {
-    const h = createHarness();
-    await seedBasic(h);
-    await h.devicePush('u-a', [
-      deviceOp(h, 'tag', { id: 'old', name: 'old', label: 'Old', sortKey: 'i', createdAt: NOW_ISH, updatedAt: NOW_ISH, deletedAt: NOW_ISH }),
-    ]);
-    const r = await call(h, 'u-a', 'update_task', { project_id: 'p1', task_id: 't1', tags: ['Old', 'fresh'] });
-    expect(r.isError, r.text).toBe(false);
-    expect(r.json.tags).toEqual(['old', 'fresh']);
-    const list = await call(h, 'u-a', 'list_tags');
-    expect(list.json.map((t: any) => t.name)).toEqual(['old', 'fresh']);
   });
 
   it('errors on a task in another project, an unknown task, or nothing to change', async () => {
