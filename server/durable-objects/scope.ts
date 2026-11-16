@@ -6,8 +6,6 @@ import {
   entityIdFromDbRow,
   isEntityName,
   type EntityName,
-  type MembershipRole,
-  type StoredEntityState,
 } from '../src/sync/entities';
 import { advanceServerHlc, clampHlc, type Hlc } from '../src/sync/hlc';
 import { rowView, type ScopeViewer } from '../src/scope/rowView';
@@ -24,6 +22,7 @@ import type {
   ScopePushResponse,
 } from '../src/scope/api';
 import { LIST_SCOPED_ENTITIES, SqliteScopeStore, type ScopeStore } from '../src/scope/store';
+import { applyProjectMemberChanges, projectMemberChanges } from '../src/scope/members';
 import { processPushBatch } from '../src/scope/push';
 import { ensureScopeSchema } from '../src/scope/schema';
 import { SplitTxnSnapshotStore } from './dev/splitTxnSnapshotStore';
@@ -123,85 +122,8 @@ export class ScopeObject extends DurableObject<CloudBindings> {
     nowMs: number,
     changes: ScopeProjectMemberInput[],
   ): void {
-    const initialSeq = store.getCounter();
-    let currentSeq = initialSeq;
     const serverHlc = advanceServerHlc(nowMs, [], this.lastServerHlc);
-
-    for (const change of changes) {
-      const entityId = `${change.projectId}:${change.memberId}`;
-      const existing = store.getRow('projectMember', entityId);
-      if (existing && existing.purgedAt !== null) {
-        continue;
-      }
-
-      if (change.deleted) {
-        if (!existing || existing.row.deletedAt !== null) {
-          continue;
-        }
-        currentSeq += 1;
-        store.upsertRow('projectMember', entityId, {
-          ...existing,
-          row: {
-            ...existing.row,
-            updatedAt: nowMs,
-            deletedAt: nowMs,
-          },
-          clocks: {
-            ...existing.clocks,
-            updatedAt: serverHlc.formatted,
-            deletedAt: serverHlc.formatted,
-          },
-          serverSeq: currentSeq,
-        });
-      } else {
-        if (existing && existing.row.deletedAt === null && existing.row.role === change.role) {
-          continue;
-        }
-        currentSeq += 1;
-        if (existing) {
-          store.upsertRow('projectMember', entityId, {
-            ...existing,
-            row: {
-              ...existing.row,
-              role: change.role,
-              updatedAt: nowMs,
-              deletedAt: null,
-            },
-            clocks: {
-              ...existing.clocks,
-              role: serverHlc.formatted,
-              updatedAt: serverHlc.formatted,
-              deletedAt: serverHlc.formatted,
-            },
-            serverSeq: currentSeq,
-          });
-        } else {
-          store.upsertRow('projectMember', entityId, {
-            row: {
-              projectId: change.projectId,
-              memberId: change.memberId,
-              role: change.role,
-              createdAt: nowMs,
-              updatedAt: nowMs,
-              deletedAt: null,
-            },
-            clocks: {
-              projectId: serverHlc.formatted,
-              memberId: serverHlc.formatted,
-              role: serverHlc.formatted,
-              createdAt: serverHlc.formatted,
-              updatedAt: serverHlc.formatted,
-              deletedAt: serverHlc.formatted,
-            },
-            purgedAt: null,
-            serverSeq: currentSeq,
-          });
-        }
-      }
-    }
-
-    if (currentSeq !== initialSeq) {
-      store.setCounter(currentSeq);
+    if (applyProjectMemberChanges(store, nowMs, changes, serverHlc.formatted)) {
       this.lastServerHlc = serverHlc.hlc;
     }
   }
@@ -293,63 +215,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
   private reconcileProjectMembers(
     expectedByProject: Record<string, ExpectedProjectMember[]>,
   ): void {
-    const projectIds = Object.keys(expectedByProject);
-    if (projectIds.length === 0) return;
-    const sql = this.ctx.storage.sql;
-    const purgedRows = sql
-      .exec(
-        'SELECT projectId FROM purgedProject WHERE projectId IN (SELECT value FROM json_each(?))',
-        JSON.stringify(projectIds),
-      )
-      .toArray();
-    const purgedSet = new Set(purgedRows.map((r) => String(r.projectId)));
-
-    const existingRows = sql
-      .exec(
-        'SELECT * FROM projectMember WHERE projectId IN (SELECT value FROM json_each(?))',
-        JSON.stringify(projectIds),
-      )
-      .toArray();
-    const existingByProject = new Map<string, Map<string, StoredEntityState>>();
-    for (const r of existingRows) {
-      const state = dbRecordToState('projectMember', r as Record<string, unknown>);
-      const pid = String(state.row.projectId);
-      const mid = String(state.row.memberId);
-      let map = existingByProject.get(pid);
-      if (!map) {
-        map = new Map();
-        existingByProject.set(pid, map);
-      }
-      map.set(mid, state);
-    }
-
-    const changes: ScopeProjectMemberInput[] = [];
-    for (const pid of projectIds) {
-      if (purgedSet.has(pid)) continue;
-      const expectedList = expectedByProject[pid] ?? [];
-      const expectedMap = new Map(expectedList.map((m) => [m.memberId, m.role]));
-      const doMap = existingByProject.get(pid) ?? new Map<string, StoredEntityState>();
-
-      for (const [mid, role] of expectedMap) {
-        const existing = doMap.get(mid);
-        if (existing && existing.purgedAt !== null) continue;
-        if (!existing || existing.row.deletedAt !== null || existing.row.role !== role) {
-          changes.push({ projectId: pid, memberId: mid, role, deleted: false });
-        }
-      }
-      for (const [mid, existing] of doMap) {
-        if (existing.purgedAt === null && existing.row.deletedAt === null && !expectedMap.has(mid)) {
-          const existingRole: MembershipRole =
-            existing.row.role === 'owner' ||
-            existing.row.role === 'editor' ||
-            existing.row.role === 'viewer'
-              ? existing.row.role
-              : 'viewer';
-          changes.push({ projectId: pid, memberId: mid, role: existingRole, deleted: true });
-        }
-      }
-    }
-
+    const changes = projectMemberChanges(this.ctx.storage.sql, expectedByProject);
     if (changes.length === 0) return;
     const nowMs = Date.now();
     this.ctx.storage.transactionSync(() => {
