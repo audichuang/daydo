@@ -1,7 +1,6 @@
 import { defineHandler } from 'void';
-import { createDb } from 'void/db';
-import { Scope } from '../../../../durable-objects/scope';
 import { requireUser } from '../../../../src/auth/middleware';
+import { productionAppDeps } from '../../../../src/deps';
 import { readJsonObject } from '../../../../src/http';
 import {
   removeProjectMember,
@@ -20,14 +19,14 @@ export const PUT = defineHandler(async (c) => {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const db = createDb(c.env.DB, { session: 'first-primary' });
+  const deps = productionAppDeps(c.env);
   try {
-    const result = await updateProjectMemberRole(db, {
+    const result = await updateProjectMemberRole(deps.db, {
       projectId,
       targetUserId,
       requesterUserId: userId,
       role: body.role,
-      getScopeStub: (scope) => Scope.get(scope),
+      getScopeStub: deps.getScopeStub,
     });
     return c.json(result, 200);
   } catch (err) {
@@ -45,13 +44,13 @@ export const DELETE = defineHandler(async (c) => {
   const projectId = c.req.param('id') ?? '';
   const targetUserId = c.req.param('userId') ?? '';
 
-  const db = createDb(c.env.DB, { session: 'first-primary' });
+  const deps = productionAppDeps(c.env);
   try {
-    const result = await removeProjectMember(db, {
+    const result = await removeProjectMember(deps.db, {
       projectId,
       targetUserId,
       requesterUserId: userId,
-      getScopeStub: (scope) => Scope.get(scope),
+      getScopeStub: deps.getScopeStub,
     });
     return c.json(result, 200);
   } catch (err) {

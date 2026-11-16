@@ -1,7 +1,6 @@
 import { defineHandler } from 'void';
-import { createDb } from 'void/db';
-import { Scope } from '../../../durable-objects/scope';
 import { requireUser } from '../../../src/auth/middleware';
+import { productionAppDeps } from '../../../src/deps';
 import { getInviteInfo, revokeInvite, SharingError } from '../../../src/sharing';
 
 export const GET = defineHandler(async (c) => {
@@ -9,11 +8,11 @@ export const GET = defineHandler(async (c) => {
   if (userId instanceof Response) return userId;
 
   const code = c.req.param('code') ?? '';
-  const db = createDb(c.env.DB, { session: 'first-primary' });
+  const deps = productionAppDeps(c.env);
   try {
-    const result = await getInviteInfo(db, {
+    const result = await getInviteInfo(deps.db, {
       code,
-      getScopeStub: (scope) => Scope.get(scope),
+      getScopeStub: deps.getScopeStub,
     });
     return c.json(result, 200);
   } catch (err) {
@@ -29,9 +28,9 @@ export const DELETE = defineHandler(async (c) => {
   if (userId instanceof Response) return userId;
 
   const code = c.req.param('code') ?? '';
-  const db = createDb(c.env.DB, { session: 'first-primary' });
+  const deps = productionAppDeps(c.env);
   try {
-    const result = await revokeInvite(db, {
+    const result = await revokeInvite(deps.db, {
       code,
       userId,
     });

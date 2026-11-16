@@ -1,6 +1,6 @@
 import { defineHandler } from 'void';
-import { createDb } from 'void/db';
 import { requireUser } from '../../src/auth/middleware';
+import { productionAppDeps } from '../../src/deps';
 import { nonEmptyString, readJsonObject } from '../../src/http';
 import { createInvite, SharingError } from '../../src/sharing';
 
@@ -18,9 +18,9 @@ export const POST = defineHandler(async (c) => {
     return c.json({ error: 'projectId is required' }, 400);
   }
 
-  const db = createDb(c.env.DB, { session: 'first-primary' });
+  const deps = productionAppDeps(c.env);
   try {
-    const result = await createInvite(db, {
+    const result = await createInvite(deps.db, {
       userId,
       projectId,
       role: body.role,

@@ -1,7 +1,6 @@
 import { defineHandler } from 'void';
-import { createDb } from 'void/db';
-import { Scope } from '../../../durable-objects/scope';
 import { requireUser } from '../../../src/auth/middleware';
+import { productionAppDeps } from '../../../src/deps';
 import { acceptInvite, SharingError } from '../../../src/sharing';
 
 export const POST = defineHandler(async (c) => {
@@ -9,12 +8,12 @@ export const POST = defineHandler(async (c) => {
   if (userId instanceof Response) return userId;
 
   const code = c.req.param('code') ?? '';
-  const db = createDb(c.env.DB, { session: 'first-primary' });
+  const deps = productionAppDeps(c.env);
   try {
-    const result = await acceptInvite(db, {
+    const result = await acceptInvite(deps.db, {
       code,
       userId,
-      getScopeStub: (scope) => Scope.get(scope),
+      getScopeStub: deps.getScopeStub,
     });
     return c.json(result, 200);
   } catch (err) {
