@@ -1,6 +1,17 @@
-import { entityHome, invite, projectMembership, purgedProject, user } from '@schema';
-import { and, eq, isNull, ne, sql, type BatchItem } from 'void/db';
+import { entityHome, invite, user } from '@schema';
+import { and, eq, isNull, type BatchItem } from 'void/db';
 import { sha256Hex } from '../auth/crypto';
+import {
+  activeOwnerOf,
+  inviteDetails,
+  inviteWithMembership,
+  joinProjections,
+  joinViaInvite,
+  loadProjectAccess,
+  projectToHome,
+  removeActiveMember,
+  setActiveMemberRole,
+} from '../membership';
 import { resolveMemberId, type MembershipRole } from '../sync/entities';
 import type { AppDb, ScopeStub } from '../sync/push';
 
@@ -55,34 +66,15 @@ export async function createInvite(
     email = trimmed.length > 0 ? trimmed : null;
   }
 
-  const [membershipRows, purgedRows, homeRows] = (await db.batch([
-    db
-      .select({ role: projectMembership.role, removedAt: projectMembership.removedAt })
-      .from(projectMembership)
-      .where(
-        and(
-          eq(projectMembership.projectId, params.projectId),
-          eq(projectMembership.userId, params.userId),
-        ),
-      ),
-    db
-      .select({ projectId: purgedProject.projectId })
-      .from(purgedProject)
-      .where(eq(purgedProject.projectId, params.projectId)),
-    db
-      .select({ scope: entityHome.scope })
-      .from(entityHome)
-      .where(and(eq(entityHome.entity, 'project'), eq(entityHome.entityId, params.projectId))),
-  ] as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]])) as [
-    Array<{ role: string; removedAt: number | null }>,
-    Array<{ projectId: string }>,
-    Array<{ scope: string }>,
-  ];
+  const access = await loadProjectAccess(db, {
+    projectId: params.projectId,
+    requesterUserId: params.userId,
+  });
 
-  if (purgedRows.length > 0 || homeRows.length === 0) {
+  if (access.purged || access.homeScope === null) {
     throw new SharingError(404, 'Project not found');
   }
-  const membership = membershipRows[0];
+  const membership = access.requester;
   if (!membership || membership.removedAt !== null || membership.role !== 'owner') {
     throw new SharingError(403, 'Only the project owner can create invites');
   }
@@ -129,24 +121,7 @@ export async function getInviteInfo(
   const now = params.nowMs ?? Date.now();
   const codeHash = await sha256Hex(params.code);
 
-  const inviteRows = await db
-    .select({
-      projectId: invite.projectId,
-      role: invite.role,
-      expiresAt: invite.expiresAt,
-      revokedAt: invite.revokedAt,
-      inviterName: user.name,
-      homeScope: entityHome.scope,
-      purgedId: purgedProject.projectId,
-    })
-    .from(invite)
-    .leftJoin(user, eq(invite.createdBy, user.id))
-    .leftJoin(
-      entityHome,
-      and(eq(entityHome.entity, 'project'), eq(entityHome.entityId, invite.projectId)),
-    )
-    .leftJoin(purgedProject, eq(purgedProject.projectId, invite.projectId))
-    .where(eq(invite.codeHash, codeHash));
+  const inviteRows = await inviteDetails(db, codeHash);
 
   const row = inviteRows[0];
   if (
@@ -193,34 +168,7 @@ export async function acceptInvite(
   const now = params.nowMs ?? Date.now();
   const codeHash = await sha256Hex(params.code);
 
-  const inserted = (await db.all(sql`
-    INSERT INTO projectMembership (projectId, userId, role, createdAt, removedAt)
-    SELECT i.projectId, ${params.userId}, i.role, ${now}, NULL
-    FROM invite i
-    WHERE i.codeHash = ${codeHash}
-      AND i.revokedAt IS NULL
-      AND i.expiresAt > ${now}
-      AND NOT EXISTS (SELECT 1 FROM purgedProject p WHERE p.projectId = i.projectId)
-      AND EXISTS (
-        SELECT 1 FROM entityHome eh
-        WHERE eh.entity = 'project' AND eh.entityId = i.projectId
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM projectMembership pm
-        WHERE pm.projectId = i.projectId
-          AND pm.userId = ${params.userId}
-          AND pm.removedAt IS NOT NULL
-          AND pm.removedAt >= i.createdAt
-      )
-    ON CONFLICT (projectId, userId) DO UPDATE SET
-      role = CASE
-        WHEN projectMembership.role = 'owner' THEN 'owner'
-        WHEN projectMembership.removedAt IS NULL THEN projectMembership.role
-        ELSE excluded.role
-      END,
-      removedAt = NULL
-    RETURNING projectId, role
-  `)) as Array<{ projectId: string; role: string }>;
+  const inserted = await joinViaInvite(db, { codeHash, userId: params.userId, nowMs: now });
 
   if (inserted.length === 0) {
     throw new SharingError(404, 'Invite not found');
@@ -237,17 +185,7 @@ export async function acceptInvite(
       .from(entityHome)
       .where(and(eq(entityHome.entity, 'project'), eq(entityHome.entityId, projectId))),
     db.select({ meMemberId: user.meMemberId }).from(user).where(eq(user.id, params.userId)),
-    db
-      .select({ userId: projectMembership.userId, meMemberId: user.meMemberId })
-      .from(projectMembership)
-      .leftJoin(user, eq(projectMembership.userId, user.id))
-      .where(
-        and(
-          eq(projectMembership.projectId, projectId),
-          eq(projectMembership.role, 'owner'),
-          isNull(projectMembership.removedAt),
-        ),
-      ),
+    activeOwnerOf(db, projectId),
   ] as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]])) as [
     Array<{ scope: string }>,
     Array<{ meMemberId: string | null }>,
@@ -259,33 +197,16 @@ export async function acceptInvite(
     throw new SharingError(404, 'Project not found');
   }
 
-  const projections: Array<{ memberId: string; role: MembershipRole }> = [];
-  const ownerRow = ownerRows[0];
-  if (ownerRow) {
-    projections.push({
-      memberId: resolveMemberId(ownerRow.userId, ownerRow.meMemberId ?? null),
-      role: 'owner',
-    });
-  }
-  if (!ownerRow || ownerRow.userId !== params.userId) {
-    projections.push({
-      memberId: resolveMemberId(params.userId, userRows[0]?.meMemberId ?? null),
-      role,
-    });
-  }
-  for (const proj of projections) {
-    try {
-      await params.getScopeStub(homeScope).projectMember({
-        projectId,
-        memberId: proj.memberId,
-        role: proj.role,
-        deleted: false,
-        nowMs: now,
-      });
-    } catch {
-      // D1 membership is committed; missed projections are healed on the next pull.
-    }
-  }
+  await projectToHome(
+    params.getScopeStub,
+    { homeScope, projectId, nowMs: now },
+    joinProjections({
+      joinerUserId: params.userId,
+      joinerMeMemberId: userRows[0]?.meMemberId ?? null,
+      joinerRole: role,
+      owner: ownerRows[0],
+    }),
+  );
 
   return {
     projectId,
@@ -308,22 +229,7 @@ export async function revokeInvite(
   const now = params.nowMs ?? Date.now();
   const codeHash = await sha256Hex(params.code);
 
-  const rows = await db
-    .select({
-      projectId: invite.projectId,
-      revokedAt: invite.revokedAt,
-      memberRole: projectMembership.role,
-      memberRemovedAt: projectMembership.removedAt,
-    })
-    .from(invite)
-    .leftJoin(
-      projectMembership,
-      and(
-        eq(projectMembership.projectId, invite.projectId),
-        eq(projectMembership.userId, params.userId),
-      ),
-    )
-    .where(eq(invite.codeHash, codeHash));
+  const rows = await inviteWithMembership(db, codeHash, params.userId);
 
   const row = rows[0];
   if (!row) {
@@ -359,53 +265,21 @@ export async function updateProjectMemberRole(
     throw new SharingError(400, 'role must be editor or viewer');
   }
 
-  const [reqRows, targetRows, purgedRows, homeRows, targetUserRows] = (await db.batch([
-    db
-      .select({ role: projectMembership.role, removedAt: projectMembership.removedAt })
-      .from(projectMembership)
-      .where(
-        and(
-          eq(projectMembership.projectId, params.projectId),
-          eq(projectMembership.userId, params.requesterUserId),
-        ),
-      ),
-    db
-      .select({ role: projectMembership.role, removedAt: projectMembership.removedAt })
-      .from(projectMembership)
-      .where(
-        and(
-          eq(projectMembership.projectId, params.projectId),
-          eq(projectMembership.userId, params.targetUserId),
-        ),
-      ),
-    db
-      .select({ projectId: purgedProject.projectId })
-      .from(purgedProject)
-      .where(eq(purgedProject.projectId, params.projectId)),
-    db
-      .select({ scope: entityHome.scope })
-      .from(entityHome)
-      .where(and(eq(entityHome.entity, 'project'), eq(entityHome.entityId, params.projectId))),
-    db
-      .select({ meMemberId: user.meMemberId })
-      .from(user)
-      .where(eq(user.id, params.targetUserId)),
-  ] as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]])) as [
-    Array<{ role: string; removedAt: number | null }>,
-    Array<{ role: string; removedAt: number | null }>,
-    Array<{ projectId: string }>,
-    Array<{ scope: string }>,
-    Array<{ meMemberId: string | null }>,
-  ];
+  const access = await loadProjectAccess(db, {
+    projectId: params.projectId,
+    requesterUserId: params.requesterUserId,
+    targetUserId: params.targetUserId,
+  });
 
-  if (purgedRows.length > 0 || homeRows.length === 0) {
+  if (access.purged || access.homeScope === null) {
     throw new SharingError(404, 'Project not found');
   }
-  const reqMembership = reqRows[0];
+  const homeScope = access.homeScope;
+  const reqMembership = access.requester;
   if (!reqMembership || reqMembership.removedAt !== null || reqMembership.role !== 'owner') {
     throw new SharingError(403, 'Only the project owner can update member roles');
   }
-  const targetMembership = targetRows[0];
+  const targetMembership = access.target;
   if (!targetMembership || targetMembership.removedAt !== null) {
     throw new SharingError(404, 'Member not found');
   }
@@ -413,31 +287,19 @@ export async function updateProjectMemberRole(
     throw new SharingError(400, 'Cannot change the project owner role');
   }
 
-  await db
-    .update(projectMembership)
-    .set({ role })
-    .where(
-      and(
-        eq(projectMembership.projectId, params.projectId),
-        eq(projectMembership.userId, params.targetUserId),
-        isNull(projectMembership.removedAt),
-        ne(projectMembership.role, 'owner'),
-      ),
-    );
+  await setActiveMemberRole(db, {
+    projectId: params.projectId,
+    userId: params.targetUserId,
+    role,
+  });
 
   const now = params.nowMs ?? Date.now();
-  const memberId = resolveMemberId(params.targetUserId, targetUserRows[0]?.meMemberId ?? null);
-  try {
-    await params.getScopeStub(homeRows[0].scope).projectMember({
-      projectId: params.projectId,
-      memberId,
-      role,
-      deleted: false,
-      nowMs: now,
-    });
-  } catch {
-    // D1 membership is committed; missed projections are healed on the next pull.
-  }
+  const memberId = resolveMemberId(params.targetUserId, access.targetMeMemberId);
+  await projectToHome(
+    params.getScopeStub,
+    { homeScope, projectId: params.projectId, nowMs: now },
+    [{ memberId, role, deleted: false }],
+  );
 
   return {
     projectId: params.projectId,
@@ -456,51 +318,19 @@ export async function removeProjectMember(
     nowMs?: number;
   },
 ): Promise<{ projectId: string; userId: string; removed: true }> {
-  const [reqRows, targetRows, purgedRows, homeRows, targetUserRows] = (await db.batch([
-    db
-      .select({ role: projectMembership.role, removedAt: projectMembership.removedAt })
-      .from(projectMembership)
-      .where(
-        and(
-          eq(projectMembership.projectId, params.projectId),
-          eq(projectMembership.userId, params.requesterUserId),
-        ),
-      ),
-    db
-      .select({ role: projectMembership.role, removedAt: projectMembership.removedAt })
-      .from(projectMembership)
-      .where(
-        and(
-          eq(projectMembership.projectId, params.projectId),
-          eq(projectMembership.userId, params.targetUserId),
-        ),
-      ),
-    db
-      .select({ projectId: purgedProject.projectId })
-      .from(purgedProject)
-      .where(eq(purgedProject.projectId, params.projectId)),
-    db
-      .select({ scope: entityHome.scope })
-      .from(entityHome)
-      .where(and(eq(entityHome.entity, 'project'), eq(entityHome.entityId, params.projectId))),
-    db
-      .select({ meMemberId: user.meMemberId })
-      .from(user)
-      .where(eq(user.id, params.targetUserId)),
-  ] as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]])) as [
-    Array<{ role: string; removedAt: number | null }>,
-    Array<{ role: string; removedAt: number | null }>,
-    Array<{ projectId: string }>,
-    Array<{ scope: string }>,
-    Array<{ meMemberId: string | null }>,
-  ];
+  const access = await loadProjectAccess(db, {
+    projectId: params.projectId,
+    requesterUserId: params.requesterUserId,
+    targetUserId: params.targetUserId,
+  });
 
-  if (purgedRows.length > 0 || homeRows.length === 0) {
+  if (access.purged || access.homeScope === null) {
     throw new SharingError(404, 'Project not found');
   }
+  const homeScope = access.homeScope;
 
   const isSelf = params.targetUserId === params.requesterUserId;
-  const reqMembership = reqRows[0];
+  const reqMembership = access.requester;
   const isOwner = Boolean(
     reqMembership && reqMembership.removedAt === null && reqMembership.role === 'owner',
   );
@@ -512,7 +342,7 @@ export async function removeProjectMember(
     throw new SharingError(400, 'Project owner cannot leave the project');
   }
 
-  const targetMembership = targetRows[0];
+  const targetMembership = access.target;
   if (!targetMembership) {
     throw new SharingError(404, 'Member not found');
   }
@@ -522,32 +352,20 @@ export async function removeProjectMember(
 
   const now = params.nowMs ?? Date.now();
   if (targetMembership.removedAt === null) {
-    await db
-      .update(projectMembership)
-      .set({ removedAt: now })
-      .where(
-        and(
-          eq(projectMembership.projectId, params.projectId),
-          eq(projectMembership.userId, params.targetUserId),
-          isNull(projectMembership.removedAt),
-          ne(projectMembership.role, 'owner'),
-        ),
-      );
-  }
-
-  const memberId = resolveMemberId(params.targetUserId, targetUserRows[0]?.meMemberId ?? null);
-  const existingRole: InviteRole = targetMembership.role === 'editor' ? 'editor' : 'viewer';
-  try {
-    await params.getScopeStub(homeRows[0].scope).projectMember({
+    await removeActiveMember(db, {
       projectId: params.projectId,
-      memberId,
-      role: existingRole,
-      deleted: true,
+      userId: params.targetUserId,
       nowMs: now,
     });
-  } catch {
-    // D1 membership is committed; missed projections are healed on the next pull.
   }
+
+  const memberId = resolveMemberId(params.targetUserId, access.targetMeMemberId);
+  const existingRole: InviteRole = targetMembership.role === 'editor' ? 'editor' : 'viewer';
+  await projectToHome(
+    params.getScopeStub,
+    { homeScope, projectId: params.projectId, nowMs: now },
+    [{ memberId, role: existingRole, deleted: true }],
+  );
 
   return {
     projectId: params.projectId,
