@@ -32,7 +32,7 @@ export interface CreateScopeWorldOptions {
 /** In-memory D1 + per-scope ScopeObject test world shared by sync, MCP, and ICS tests. */
 export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
   const syncFault = options.syncFault ?? 'none';
-  const { d1, db, sqlite } = createTestD1();
+  const { d1, db, sqlite, trace } = createTestD1();
   const scopes = new Map<string, InstanceType<typeof ScopeObject>>();
   const scopeSqlites = new Map<string, ReturnType<typeof createTestDoState>['sqlite']>();
   const calls: PushCall[] = [];
@@ -86,6 +86,7 @@ export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
     d1,
     db,
     sqlite,
+    trace,
     clock,
     scopes,
     scopeSqlites,
