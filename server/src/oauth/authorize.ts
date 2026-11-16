@@ -113,15 +113,15 @@ function extractParams(sp: URLSearchParams): AuthParams {
 
 /** REF validateParams, minus the redirect_uri shape check (exact registration match replaces it). */
 function validateParams(p: AuthParams): string | null {
-  if (p.responseType !== 'code') return `Unsupported response_type: ${p.responseType}`;
-  if (!p.clientId) return 'Missing client_id';
-  if (!p.redirectUri) return 'Missing redirect_uri';
-  if (!p.codeChallenge) return 'Missing code_challenge (PKCE is required)';
-  if (p.codeChallengeMethod !== 'S256') return 'Only code_challenge_method=S256 is supported';
+  if (p.responseType !== 'code') return `不支援的 response_type：${p.responseType}`;
+  if (!p.clientId) return '缺少 client_id';
+  if (!p.redirectUri) return '缺少 redirect_uri';
+  if (!p.codeChallenge) return '缺少 code_challenge（必須使用 PKCE）';
+  if (p.codeChallengeMethod !== 'S256') return '只支援 code_challenge_method=S256';
   const scopes = p.scope.split(' ').filter(Boolean);
   const unsupported = scopes.filter((scope) => !SCOPES.includes(scope));
-  if (unsupported.length > 0) return `Unsupported scope: ${unsupported.join(', ')}`;
-  if (!scopes.includes('mcp')) return 'scope must include mcp';
+  if (unsupported.length > 0) return `不支援的 scope：${unsupported.join(', ')}`;
+  if (!scopes.includes('mcp')) return 'scope 必須包含 mcp';
   return null;
 }
 
@@ -153,12 +153,12 @@ async function beginAuthorization(request: Request, deps: AuthorizeDeps, now: nu
     .from(oauthClient)
     .where(eq(oauthClient.clientId, params.clientId))
     .get();
-  if (!client) return errorPage('Unknown client_id');
+  if (!client) return errorPage('未註冊的 client_id');
   if (!registeredRedirects(client.redirectUris).includes(params.redirectUri)) {
-    return errorPage('redirect_uri does not match a registered redirect URI');
+    return errorPage('redirect_uri 與註冊的導向網址不符');
   }
   if (params.resource && !resourceMatches(params.resource, origin)) {
-    return errorPage('invalid_target: resource must be this server');
+    return errorPage('invalid_target：resource 必須是這台伺服器');
   }
 
   const pendingId = randomB64url(32);
@@ -252,7 +252,7 @@ export async function handleAuthorizePost(
   const pendingId = stringField(form, 'pending');
   const consentToken = stringField(form, 'ct');
   const decision = stringField(form, 'decision');
-  if (decision !== 'approve' && decision !== 'deny') return errorPage('Invalid decision');
+  if (decision !== 'approve' && decision !== 'deny') return errorPage('無效的選擇');
 
   const pending = await loadConsentPending(request, deps, pendingId, consentToken, now);
   if (!pending) return errorPage(MESSAGES.expired);

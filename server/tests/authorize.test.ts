@@ -430,6 +430,20 @@ describe('POST /authorize/apple/callback', () => {
     expect(pendingRow(s.sqlite, flow.pendingId).userId).toBeNull();
   });
 
+  it('two concurrent callbacks bind the pending exactly once', async () => {
+    const s = setup();
+    const flow = await toAppleCallback(s);
+    const idToken = await signAppleToken({ sub: KNOWN_APPLE_SUB, nonceHash: flow.nonceHash });
+    const results = await Promise.all([
+      appleCallback(s, { state: flow.pendingId, id_token: idToken }, flow.cookie),
+      appleCallback(s, { state: flow.pendingId, id_token: idToken }, flow.cookie),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual([303, 400]);
+    const winner = results.find((r) => r.status === 303);
+    const ct = new URL(winner?.headers.get('Location') ?? '', ORIGIN).searchParams.get('ct') ?? '';
+    expect(pendingRow(s.sqlite, flow.pendingId).consentTokenHash).toBe(await sha256Hex(ct));
+  });
+
   it('cannot bind the same pending twice', async () => {
     const s = setup();
     const flow = await toConsent(s);
