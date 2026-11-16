@@ -60,16 +60,14 @@ export function tagTools(): ToolDef[] {
         const now = Date.now();
         // A trashed tag is revived; its key (the name) cannot be reused for a new row.
         const set: Record<string, unknown> = existing
-          ? { label: tag.label, deletedAt: null, updatedAt: Math.max(now, Number(existing.row.updatedAt ?? 0) + 1), ...(color !== undefined && { color }) }
+          ? { label: tag.label, deletedAt: null, ...(color !== undefined && { color }) }
           : {
               name: tag.name,
               label: tag.label,
               sortKey: after(own.length === 0 ? null : own.map((t) => String(t.row.sortKey ?? '')).reduce((a, b) => (compareKeys(a, b) >= 0 ? a : b))),
-              createdAt: now,
-              updatedAt: now,
               ...(color !== undefined && { color }),
             };
-        const [out] = await writeOrThrow(deps, snapshot, [{ entity: 'tag', entityId: tag.name, set }]);
+        const [out] = await writeOrThrow(deps, snapshot, [{ entity: 'tag', entityId: tag.name, set }], { nowMs: now });
         return formatTag(snapshot, out!.row!);
       },
     },

@@ -117,11 +117,9 @@ export function projectTools(): ToolDef[] {
           sortKey: uniqueProjectKey(max),
           showInSmart: 'all',
           notifyMode: 'all',
-          createdAt: now,
-          updatedAt: now,
           ...(color !== undefined && { color }),
         };
-        const [out] = await writeOrThrow(deps, snapshot, [{ entity: 'project', entityId: id, set }]);
+        const [out] = await writeOrThrow(deps, snapshot, [{ entity: 'project', entityId: id, set }], { nowMs: now });
         return { ...formatProject(snapshot, { entity: 'project', scope: userScope(ctx.userId), row: out!.row!, clocks: out!.clocks, serverSeq: 0 }), role: 'owner', can_write: true };
       },
     },
@@ -144,12 +142,11 @@ export function projectTools(): ToolDef[] {
         if (name === '') throw new ToolValidationError('name', "Argument 'name' must not be empty");
         if (name === undefined && color === undefined) throw new Error('Nothing to update: give name or color');
         const { snapshot, deps } = await openSession(ctx);
-        const project = liveProject(snapshot, id);
+        liveProject(snapshot, id);
         if (!snapshot.canWrite(id)) {
           throw new Error(`Project '${id}' is read-only for you (role: ${snapshot.memberships.get(id) ?? 'none'})`);
         }
         const set: Record<string, unknown> = {
-          updatedAt: Math.max(Date.now(), Number(project.row.updatedAt ?? 0) + 1),
           ...(name !== undefined && { name }),
           ...(color !== undefined && { color }),
         };
@@ -175,10 +172,6 @@ export function projectTools(): ToolDef[] {
           throw new Error(`Only the owner can delete project '${id}' (your role: ${snapshot.memberships.get(id) ?? 'none'})`);
         }
         const now = Date.now();
-        const stamp = (row: Record<string, unknown>) => ({
-          deletedAt: now,
-          updatedAt: Math.max(now, Number(row.updatedAt ?? 0) + 1),
-        });
         const tasks = snapshot
           .rows('task')
           .filter((t) => t.row.projectId === id && t.row.deletedAt == null && t.row.purgedAt == null);
@@ -189,10 +182,11 @@ export function projectTools(): ToolDef[] {
           await writeOrThrow(
             deps,
             snapshot,
-            tasks.map((t): WriteIntent => ({ entity: 'task', entityId: String(t.row.id), set: stamp(t.row) })),
+            tasks.map((t): WriteIntent => ({ entity: 'task', entityId: String(t.row.id), set: { deletedAt: now } })),
+            { nowMs: now },
           );
         }
-        await writeOrThrow(deps, snapshot, [{ entity: 'project', entityId: id, set: stamp(project.row) }]);
+        await writeOrThrow(deps, snapshot, [{ entity: 'project', entityId: id, set: { deletedAt: now } }], { nowMs: now });
         return { deleted: true, project_id: id, name: String(project.row.name ?? ''), trashed_tasks: tasks.length };
       },
     },
