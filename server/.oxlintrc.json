@@ -355,6 +355,34 @@
       }
     },
     {
+      "files": ["routes/**"],
+      "rules": {
+        "max-lines": ["error", { "max": 100, "skipBlankLines": true, "skipComments": true }],
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@schema",
+                "message": "routes/** must not import the schema; query through src/ modules."
+              },
+              {
+                "name": "void/db",
+                "allowImportNames": ["createDb"],
+                "message": "routes/** may only import createDb from void/db; query through src/ modules."
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "(^|/)db/schema$",
+                "message": "routes/** must not import the schema; query through src/ modules."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": ["src/**"],
       "excludeFiles": [
         "src/membership/**",
