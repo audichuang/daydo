@@ -17,6 +17,7 @@ import { after, before } from '../../domain/sortKey';
 import { normalizeTagLabels, normalizeTags, type NormalizedTag } from '../../domain/tags';
 import { uuidv5, uuidv7 } from '../../domain/uuid';
 import type { Snapshot, SnapshotRow } from '../../serverops/snapshot';
+import { isNil, rowSchedule, sameSchedule, scheduleColumns } from '../../serverops/values';
 import {
   assertHasData,
   pushIntents,
@@ -204,9 +205,7 @@ export function taskReadTools(): ToolDef[] {
 
 const DEFAULT_TIME_ZONE = 'Asia/Taipei';
 const PRIORITY: Record<string, number> = { none: 0, low: 1, medium: 3, high: 5 };
-const SCHEDULE_KEYS = ['startDay', 'startMinute', 'endDay', 'endMinute', 'timeZone'] as const;
 
-const isNil = (v: unknown) => v === undefined || v === null;
 const bump = (row: Record<string, unknown>, now: number) => Math.max(now, Number(row.updatedAt ?? 0) + 1);
 
 function optString(args: Record<string, unknown>, field: string): string | undefined {
@@ -264,28 +263,6 @@ function requireWritable(snapshot: Snapshot, projectId: string): void {
 
 function scheduleContext(ctx: ToolContext, originalTimeZone: string | null = null): ScheduleContext {
   return { originalTimeZone, defaultTimeZone: ctx.services?.defaultTimeZone ?? DEFAULT_TIME_ZONE };
-}
-
-function currentSchedule(row: Record<string, unknown>): Schedule | null {
-  if (typeof row.startDay !== 'string') return null;
-  const opt = <T>(v: unknown) => (isNil(v) ? null : (v as T));
-  return {
-    startDay: row.startDay,
-    startMinute: opt<number>(row.startMinute),
-    endDay: opt<string>(row.endDay),
-    endMinute: opt<number>(row.endMinute),
-    timeZone: opt<string>(row.timeZone),
-  };
-}
-
-function sameSchedule(a: Schedule | null, b: Schedule | null): boolean {
-  if (a === null || b === null) return a === b;
-  return SCHEDULE_KEYS.every((k) => a[k] === b[k]);
-}
-
-/** All five schedule columns (null when cleared); the writer sends them as one group. */
-function scheduleSet(s: Schedule | null): Record<string, unknown> {
-  return Object.fromEntries(SCHEDULE_KEYS.map((k) => [k, s ? s[k] : null]));
 }
 
 /** Tag rows for a task's tags (LocalDayDoAPI.normalizeTags): create missing ones, revive trashed ones. */
@@ -470,7 +447,7 @@ async function completeOccurrence(
   if (reopens.length > 0) outcomes.push(...(await writeOrThrow(deps, snapshot, reopens)));
 
   await writeOrThrow(deps, snapshot, [
-    { entity: 'task', entityId: taskId, set: { ...scheduleSet(movedSchedule(schedule, next)), updatedAt: bump(original, now) } },
+    { entity: 'task', entityId: taskId, set: { ...scheduleColumns(movedSchedule(schedule, next)), updatedAt: bump(original, now) } },
   ]);
 
   const view = withCreated(snapshot, outcomes);
@@ -573,7 +550,7 @@ export function taskWriteTools(): ToolDef[] {
           createdAt: now,
           updatedAt: now,
           ...(repeatRule !== null && { repeatRule }),
-          ...(schedule !== null && scheduleSet(schedule)),
+          ...(schedule !== null && scheduleColumns(schedule)),
         };
         const outcomes = await writeOrThrow(deps, snapshot, [
           { entity: 'task', entityId: id, set },
@@ -628,7 +605,7 @@ export function taskWriteTools(): ToolDef[] {
         assertHasData(snapshot);
         const task = taskIn(snapshot, taskId, projectId);
         requireWritable(snapshot, projectId);
-        const cur = currentSchedule(task.row);
+        const cur = rowSchedule(task.row);
         const sctx = scheduleContext(ctx, cur?.timeZone ?? null);
 
         // undefined = schedule untouched (its columns stay out of the op so the zone is not rewritten).
@@ -660,7 +637,7 @@ export function taskWriteTools(): ToolDef[] {
           ...(title !== undefined && { title }),
           ...(content !== undefined && { content }),
           ...(priority !== undefined && { priority }),
-          ...(next !== undefined && !sameSchedule(next, cur) && scheduleSet(next)),
+          ...(next !== undefined && !sameSchedule(next, cur) && scheduleColumns(next)),
           ...(reminders !== undefined && { reminders }),
           ...(repeatRule !== undefined && { repeatRule }),
           // A cleared date takes its reminders and repeat with it.
@@ -708,7 +685,7 @@ export function taskWriteTools(): ToolDef[] {
         requireWritable(snapshot, projectId);
         if (num(task, 'status') === 2) return formatTask(snapshot, task);
         const rule = typeof task.row.repeatRule === 'string' ? parseRecurrence(task.row.repeatRule) : null;
-        const schedule = currentSchedule(task.row);
+        const schedule = rowSchedule(task.row);
         if (rule !== null && schedule !== null) return completeOccurrence(deps, snapshot, task, rule, schedule, ctx);
         const now = Date.now();
         await writeOrThrow(deps, snapshot, [
