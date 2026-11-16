@@ -194,11 +194,33 @@ extension FileBackedDatabaseTests {
         let springForward = day("2026-03-08")
         let noonLA = springForward.date(minute: 12 * 60, in: la)
         let dates = WidgetNextData.timelineDates(tasks: [], from: noonLA, timeZone: la)
-        #expect(dates.count == 2)
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = la
-        let comps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: dates[1])
+        // now, 13:00 ... 23:00 (11 hourly entries), next midnight
+        #expect(dates.count == 13)
+        #expect(dates.first == noonLA)
+        let hours = dates.dropFirst().dropLast().map { cal.dateComponents([.hour, .minute], from: $0) }
+        #expect(hours.map(\.hour) == Array(13...23))
+        #expect(hours.allSatisfy { $0.minute == 0 })
+        let comps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: dates.last!)
         #expect(comps.year == 2026 && comps.month == 3 && comps.day == 9 && comps.hour == 0 && comps.minute == 0)
+
+        // Spring-forward day: from midnight, hourly entries skip the missing 02:00.
+        let midnightLA = springForward.date(minute: 0, in: la)
+        let early = WidgetNextData.timelineDates(tasks: [], from: midnightLA, timeZone: la)
+        let earlyHours = early.dropFirst().dropLast().map { cal.component(.hour, from: $0) }
+        #expect(earlyHours == [1] + Array(3...23))
+    }
+
+    @Test func nextTimelineRefreshesWindowHourlyDuringLongOngoingItem() {
+        let today = day("2026-11-16")
+        let meeting = makeTask("long", title: "長會議", schedule: .timed(today, start: 10 * 60, end: 14 * 60, timeZone: "Asia/Taipei"))
+        let t1030 = today.date(minute: 10 * 60 + 30, in: taipei)
+        let dates = WidgetNextData.timelineDates(tasks: [meeting], from: t1030, timeZone: taipei)
+        let t1100 = today.date(minute: 11 * 60, in: taipei)
+        #expect(dates.contains(t1100))
+        let s = WidgetNextData.build(tasks: [meeting], projectsById: [:], now: t1100, timeZone: taipei)
+        #expect(s.windowStartHour == 11 && s.windowEndHour == 16)
     }
 
     @Test func nextTimelineWindowCoversAllFourAnchorRules() {

@@ -301,6 +301,19 @@ public struct WidgetNextData: Equatable, Sendable {
         let today = LocalDay(date: now, in: timeZone)
         let nextMidnight = today.adding(days: 1).date(minute: 0, in: timeZone)
         var dates: Set<Date> = [now, nextMidnight]
+        // The large timeline window follows the current hour while an item is
+        // ongoing, so refresh at every local top of the hour until midnight.
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = timeZone
+        var hour = now
+        while let next = cal.nextDate(
+            after: hour,
+            matching: DateComponents(minute: 0, second: 0),
+            matchingPolicy: .nextTime
+        ), next < nextMidnight {
+            dates.insert(next)
+            hour = next
+        }
         for task in tasks where !task.isCompleted {
             guard let sched = task.schedule, let sm = sched.startMinute else { continue }
             let start = sched.startDay.date(minute: sm, in: timeZone)
