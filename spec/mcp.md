@@ -202,11 +202,11 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 - body 接受 `application/x-www-form-urlencoded` 與 JSON。
 - 錯誤格式為 `{error, error_description}`，帶 `Cache-Control: no-store`、`Pragma: no-cache`。
 - 非 POST 回 405；`unsupported_grant_type` 回 400。
-- **`client_id` 必填**（OAuth 2.1 對 public client 的要求），必須等於 code 或 refresh 列的 `clientId`。
+- **`client_id` 可省略**，照 REF（`src/oauth/token.ts` 兩種 grant 都是「有帶才比對」）：有帶就必須等於 code 或 refresh 列的 `clientId`，不符回 400 `invalid_grant`；沒帶就接受。REF 的這個行為已用 Claude、ChatGPT、Codex 實測過；OAuth 2.1 要求 public client 帶 `client_id`，這裡刻意放寬，避免某家 client 沒帶就換不到 token。
 
 **authorization_code**
-1. 要求 `code`、`code_verifier`、`client_id`。檢查 `sha256b64url(verifier) === codeChallenge`。
-2. `redirect_uri` 若有帶，必須與 code 記錄相同。
+1. 要求 `code`、`code_verifier`（缺漏回 `invalid_request`）。檢查 `sha256b64url(verifier) === codeChallenge`。
+2. `redirect_uri`、`client_id` 若有帶，必須與 code 記錄相同。PKCE、`redirect_uri`、`client_id` 不符時不消耗 code。
 3. 用條件式 UPDATE 原子消耗 code。
 4. 確認 `user` 仍存在。
 5. 發 access token 與 refresh token，family 為 code 的 `familyId`。**不論 scope 有沒有 `offline_access` 都發 refresh**：ChatGPT 與 Codex 不會要求它，沒有 refresh 的話一小時後就斷線。
@@ -223,7 +223,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
   - 舊 token 在輪替後 10 分鐘內再次出現，而且後繼列仍未撤銷、未過期時，重新計算出**同一個**後繼並回傳，同時重發 access token。
   - 兩個並發請求中，條件式 UPDATE 輸掉的一方會重讀一次，改走這條路徑，所以兩邊拿到相同的 refresh token，不會互相撤銷。
 - **其餘重用**（超過寬限期，或後繼已被使用）：撤銷整個 family，回 400 `invalid_grant`。
-- 另外要驗證 `client_id` 相符、`user` 仍存在。
+- 另外要驗證 `client_id`（有帶時）相符、`user` 仍存在；這兩項不符時直接回 `invalid_grant`，不輪替也不撤銷。
 - 期限：access token 1 小時；refresh 30 天，每次輪替重算，等於滑動期限。
 - 回應形狀：`{access_token, refresh_token, token_type:"Bearer", expires_in:3600, scope}`。
 
