@@ -1,9 +1,10 @@
 import Foundation
 import GRDB
+import SQLite3
 import Testing
 @testable import DayDoCore
 
-@Suite struct StorageTests {
+@Suite(.serialized) struct StorageTests {
     private func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("daydo-storage-tests-\(UUID().uuidString)", isDirectory: true)
@@ -149,5 +150,89 @@ import Testing
         #expect(throws: StorageError.databaseSuperseded(dbURL)) {
             _ = try DayDoStorage.openReadOnly(in: dir)
         }
+    }
+
+    @Test func readOnlyOpenWaitsForExclusiveLockWithBusyTimeout() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let clock = Clock.fixed(noon, timeZone: taipei)
+        do {
+            let store = try DayDoStorage.openForApp(in: dir, clock: clock)
+            try await store.bootstrap()
+            _ = try await store.api.createTask(CreateTaskInput(title: "Locked task"))
+        }
+
+        let dbPath = DayDoStorage.databaseURL(in: dir).path
+        var rawDB: OpaquePointer?
+        #expect(sqlite3_open_v2(dbPath, &rawDB, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK)
+        defer {
+            if let rawDB { sqlite3_close(rawDB) }
+        }
+        #expect(sqlite3_exec(rawDB, "PRAGMA locking_mode = EXCLUSIVE;", nil, nil, nil) == SQLITE_OK)
+        #expect(sqlite3_exec(
+            rawDB,
+            "BEGIN IMMEDIATE; INSERT OR REPLACE INTO meta (key, value) VALUES ('__lock_test__', '1'); COMMIT;",
+            nil, nil, nil
+        ) == SQLITE_OK)
+
+        let (startedStream, startedCont) = AsyncStream<Void>.makeStream()
+        let openTask = Task.detached {
+            startedCont.yield()
+            startedCont.finish()
+            return try DayDoStorage.openReadOnly(in: dir, clock: clock)
+        }
+
+        for await _ in startedStream {}
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(sqlite3_close(rawDB) == SQLITE_OK)
+        rawDB = nil
+
+        let readOnlyAPI = try await openTask.value
+        let tasks = try await readOnlyAPI.listTasks(TaskQuery())
+        #expect(tasks.map(\.title) == ["Locked task"])
+    }
+
+    @Test func appDatabaseSuspendsWritesAndResumes() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let clock = Clock.fixed(noon, timeZone: taipei)
+        let dbURL = DayDoStorage.databaseURL(in: dir)
+        let appDB = try AppDatabase.open(at: dbURL)
+        #expect(appDB.writer.configuration.observesSuspensionNotifications)
+        if case .timeout(let seconds) = appDB.writer.configuration.busyMode {
+            #expect(seconds == 5)
+        } else {
+            Issue.record("Expected .timeout(5) busyMode on AppDatabase.open")
+        }
+
+        let readOnlyDB = try AppDatabase.openReadOnly(at: dbURL)
+        #expect(!readOnlyDB.writer.configuration.observesSuspensionNotifications)
+        if case .timeout(let seconds) = readOnlyDB.writer.configuration.busyMode {
+            #expect(seconds == 5)
+        } else {
+            Issue.record("Expected .timeout(5) busyMode on AppDatabase.openReadOnly")
+        }
+
+        let store = try DayDoStorage.openForApp(in: dir, clock: clock)
+        try await store.bootstrap()
+
+        DayDoStorage.suspendDatabaseAccess()
+        defer { DayDoStorage.resumeDatabaseAccess() }
+
+        do {
+            _ = try await store.api.createTask(CreateTaskInput(title: "Blocked while suspended"))
+            Issue.record("Expected write while suspended to throw DatabaseError")
+        } catch let error as DatabaseError {
+            #expect(error.resultCode == .SQLITE_ABORT || error.resultCode == .SQLITE_INTERRUPT)
+        }
+
+        DayDoStorage.resumeDatabaseAccess()
+
+        let created = try await store.api.createTask(CreateTaskInput(title: "Allowed after resume"))
+        let tasks = try await store.api.listTasks(TaskQuery())
+        #expect(tasks.map(\.id) == [created.id])
+        #expect(tasks.first?.title == "Allowed after resume")
     }
 }

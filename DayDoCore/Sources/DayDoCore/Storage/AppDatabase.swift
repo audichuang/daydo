@@ -27,6 +27,7 @@ final class AppDatabase: Sendable {
                 var config = Configuration()
                 config.foreignKeysEnabled = true
                 config.busyMode = .timeout(5)
+                config.observesSuspensionNotifications = true
                 config.prepareDatabase { db in
                     // Keep -wal and -shm files around on close so read-only
                     // extension processes can always attach to the WAL database.
@@ -65,6 +66,7 @@ final class AppDatabase: Sendable {
                 var config = Configuration()
                 config.readonly = true
                 config.foreignKeysEnabled = true
+                config.busyMode = .timeout(5)
                 let pool = try DatabasePool(path: coordinatedURL.path, configuration: config)
                 try pool.read { db in
                     if try Self.migrator.hasBeenSuperseded(db) {
@@ -85,6 +87,14 @@ final class AppDatabase: Sendable {
         var config = Configuration()
         config.foreignKeysEnabled = true
         return try AppDatabase(try DatabaseQueue(configuration: config))
+    }
+
+    static func suspend() {
+        NotificationCenter.default.post(name: Database.suspendNotification, object: nil)
+    }
+
+    static func resume() {
+        NotificationCenter.default.post(name: Database.resumeNotification, object: nil)
     }
 
     static var migrator: DatabaseMigrator {

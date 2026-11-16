@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import DayDo
 import DayDoCore
@@ -272,5 +273,118 @@ final class AppModelTests: XCTestCase {
         model.flushPendingPresentations()
         XCTAssertNil(model.pendingDetailTaskId)
         XCTAssertEqual(model.detailTaskId, "task-4")
+    }
+
+    func testScenePhaseChangeBackgroundTaskAndExpirationLifecycle() async throws {
+        let (model, _) = try await makeModel()
+        var events: [String] = []
+        var nextID = 1
+        var handlers: [Int: DatabaseSuspensionCoordinator.ExpirationHandler] = [:]
+
+        let coordinator = DatabaseSuspensionCoordinator(
+            beginBackgroundTask: { _, handler in
+                let raw = nextID
+                nextID += 1
+                handlers[raw] = handler
+                events.append("begin:\(raw)")
+                return UIBackgroundTaskIdentifier(rawValue: raw)
+            },
+            endBackgroundTask: { id in
+                events.append("end:\(id.rawValue)")
+            },
+            suspend: { events.append("suspend") },
+            resume: { events.append("resume") }
+        )
+
+        // Active -> inactive does nothing.
+        DayDoApp.handleScenePhaseChange(from: .active, to: .inactive, model: model, coordinator: coordinator)
+        XCTAssertEqual(events, [])
+
+        // Entering background opens one background task without suspending immediately.
+        DayDoApp.handleScenePhaseChange(from: .inactive, to: .background, model: model, coordinator: coordinator)
+        XCTAssertEqual(events, ["begin:1"])
+
+        // Repeated background entry does not open a second background task.
+        DayDoApp.handleScenePhaseChange(from: .inactive, to: .background, model: model, coordinator: coordinator)
+        XCTAssertEqual(events, ["begin:1"])
+
+        // Leaving background before expiration ends the task without suspend/resume.
+        DayDoApp.handleScenePhaseChange(from: .background, to: .inactive, model: model, coordinator: coordinator)
+        XCTAssertEqual(events, ["begin:1", "end:1"])
+
+        // Stale expiration callback after returning to foreground is a no-op.
+        handlers[1]?()
+        XCTAssertEqual(events, ["begin:1", "end:1"])
+
+        // Entering background again opens a new task; expiration suspends then ends the task.
+        DayDoApp.handleScenePhaseChange(from: .active, to: .background, model: model, coordinator: coordinator)
+        XCTAssertEqual(events, ["begin:1", "end:1", "begin:2"])
+        handlers[2]?()
+        XCTAssertEqual(events, ["begin:1", "end:1", "begin:2", "suspend", "end:2"])
+
+        // Leaving background after expiration resumes synchronously.
+        DayDoApp.handleScenePhaseChange(from: .background, to: .active, model: model, coordinator: coordinator)
+        XCTAssertEqual(events, ["begin:1", "end:1", "begin:2", "suspend", "end:2", "resume"])
+    }
+
+    func testScenePhaseChangeSuspendsOnExpirationAndResumesRealDatabaseBeforeForegroundReload() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("daydo-app-suspension-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DayDoStorage.resumeDatabaseAccess()
+            try? FileManager.default.removeItem(at: dir)
+        }
+
+        let store = try DayDoStorage.openForApp(in: dir)
+        let model = AppModel(
+            store: store,
+            tokenStore: InMemorySyncTokenStore(),
+            syncEnabled: false
+        )
+        await model.launch()
+        XCTAssertTrue(model.ready)
+        XCTAssertTrue(model.isSignedIn)
+
+        var expirationHandler: DatabaseSuspensionCoordinator.ExpirationHandler?
+        var endedIDs: [Int] = []
+        let coordinator = DatabaseSuspensionCoordinator(
+            beginBackgroundTask: { _, handler in
+                expirationHandler = handler
+                return UIBackgroundTaskIdentifier(rawValue: 42)
+            },
+            endBackgroundTask: { id in
+                endedIDs.append(id.rawValue)
+            }
+        )
+
+        // Entering background keeps writes working until expiration so pending saves can finish.
+        DayDoApp.handleScenePhaseChange(from: .inactive, to: .background, model: model, coordinator: coordinator)
+        let savedInBackground = try await store.api.createTask(CreateTaskInput(title: "Saved before expiration"))
+        XCTAssertEqual(endedIDs, [])
+
+        // System expiration suspends DB access and ends the background task.
+        let handler = try XCTUnwrap(expirationHandler)
+        handler()
+        XCTAssertEqual(endedIDs, [42])
+
+        do {
+            _ = try await store.api.createTask(CreateTaskInput(title: "Should fail while suspended"))
+            XCTFail("Expected write while suspended to throw")
+        } catch {
+            // expected
+        }
+
+        // Direct .background -> .active must resume synchronously before foreground reloadData() runs.
+        let beforeRevision = model.revision
+        DayDoApp.handleScenePhaseChange(from: .background, to: .active, model: model, coordinator: coordinator)
+        for _ in 0..<40 where model.revision == beforeRevision {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertGreaterThan(model.revision, beforeRevision)
+        XCTAssertNil(model.errorMessage)
+
+        let created = try await store.api.createTask(CreateTaskInput(title: "Allowed after foreground"))
+        let tasks = try await store.api.listTasks(TaskQuery())
+        XCTAssertEqual(Set(tasks.map(\.id)), [savedInBackground.id, created.id])
     }
 }

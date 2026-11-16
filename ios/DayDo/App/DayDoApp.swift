@@ -4,9 +4,96 @@ import UIKit
 import UserNotifications
 import DayDoCore
 
+@MainActor
+final class DatabaseSuspensionCoordinator {
+    typealias ExpirationHandler = @MainActor @Sendable () -> Void
+    typealias BeginBackgroundTask = (_ name: String?, _ expirationHandler: @escaping ExpirationHandler) -> UIBackgroundTaskIdentifier
+    typealias EndBackgroundTask = (_ identifier: UIBackgroundTaskIdentifier) -> Void
+
+    private let beginBackgroundTask: BeginBackgroundTask
+    private let endBackgroundTask: EndBackgroundTask
+    private let suspend: () -> Void
+    private let resume: () -> Void
+
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var isSuspended = false
+
+    init(
+        beginBackgroundTask: @escaping BeginBackgroundTask = { name, handler in
+            UIApplication.shared.beginBackgroundTask(withName: name) {
+                MainActor.assumeIsolated {
+                    handler()
+                }
+            }
+        },
+        endBackgroundTask: @escaping EndBackgroundTask = { id in
+            UIApplication.shared.endBackgroundTask(id)
+        },
+        suspend: @escaping () -> Void = DayDoStorage.suspendDatabaseAccess,
+        resume: @escaping () -> Void = DayDoStorage.resumeDatabaseAccess
+    ) {
+        self.beginBackgroundTask = beginBackgroundTask
+        self.endBackgroundTask = endBackgroundTask
+        self.suspend = suspend
+        self.resume = resume
+    }
+
+    func enterBackground() {
+        guard backgroundTaskID == .invalid, !isSuspended else { return }
+        var finishedDuringBegin = false
+        var returnedID: UIBackgroundTaskIdentifier = .invalid
+        let taskID = beginBackgroundTask("DayDo.DatabaseSuspension") { [weak self] in
+            guard let self else { return }
+            if self.backgroundTaskID != .invalid {
+                self.finishExpiration(taskID: self.backgroundTaskID)
+            } else if returnedID == .invalid {
+                finishedDuringBegin = true
+                self.suspendIfNeeded()
+            }
+        }
+        returnedID = taskID
+        if finishedDuringBegin {
+            if taskID != .invalid {
+                endBackgroundTask(taskID)
+            }
+            return
+        }
+        if taskID == .invalid {
+            suspendIfNeeded()
+            return
+        }
+        backgroundTaskID = taskID
+    }
+
+    func leaveBackground() {
+        if backgroundTaskID != .invalid {
+            let taskID = backgroundTaskID
+            backgroundTaskID = .invalid
+            endBackgroundTask(taskID)
+        }
+        if isSuspended {
+            isSuspended = false
+            resume()
+        }
+    }
+
+    private func finishExpiration(taskID: UIBackgroundTaskIdentifier) {
+        backgroundTaskID = .invalid
+        suspendIfNeeded()
+        endBackgroundTask(taskID)
+    }
+
+    private func suspendIfNeeded() {
+        guard !isSuspended else { return }
+        isSuspended = true
+        suspend()
+    }
+}
+
 @main
 struct DayDoApp: App {
     @State private var model: AppModel
+    @State private var suspensionCoordinator = DatabaseSuspensionCoordinator()
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -27,6 +114,26 @@ struct DayDoApp: App {
         if let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String,
            !clientID.isEmpty {
             GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
+        }
+    }
+
+    @MainActor
+    static func handleScenePhaseChange(
+        from oldPhase: ScenePhase,
+        to phase: ScenePhase,
+        model: AppModel,
+        coordinator: DatabaseSuspensionCoordinator
+    ) {
+        if phase == .background {
+            coordinator.enterBackground()
+            return
+        }
+        if oldPhase == .background {
+            coordinator.leaveBackground()
+        }
+        if phase == .active && model.ready && model.isSignedIn {
+            Task { await model.reloadData() }
+            model.triggerSyncNow()
         }
     }
 
@@ -63,12 +170,14 @@ struct DayDoApp: App {
                         model.handleIncomingInvite(code: code)
                     }
                 }
-                // Day boundaries & sync: re-read and sync when returning to foreground.
-                .onChange(of: scenePhase) { _, phase in
-                    if phase == .active && model.ready && model.isSignedIn {
-                        Task { await model.reloadData() }
-                        model.triggerSyncNow()
-                    }
+                // Database suspension & foreground refresh/sync.
+                .onChange(of: scenePhase) { oldPhase, phase in
+                    Self.handleScenePhaseChange(
+                        from: oldPhase,
+                        to: phase,
+                        model: model,
+                        coordinator: suspensionCoordinator
+                    )
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
                     if model.ready && model.isSignedIn { Task { await model.reloadData() } }

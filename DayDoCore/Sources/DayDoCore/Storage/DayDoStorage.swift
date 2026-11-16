@@ -135,4 +135,16 @@ public enum DayDoStorage {
             attachmentsDirectory: attachmentsURL(in: directory)
         )
     }
+
+    /// Suspends write-capable database connections to prevent 0xdead10cc when
+    /// the app enters the background.
+    public static func suspendDatabaseAccess() {
+        AppDatabase.suspend()
+    }
+
+    /// Resumes suspended database connections when the app leaves the
+    /// background.
+    public static func resumeDatabaseAccess() {
+        AppDatabase.resume()
+    }
 }
