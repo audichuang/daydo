@@ -18,6 +18,7 @@ import {
   rotateRefreshToken,
   type DatabaseClient,
 } from '../src/auth/session';
+import { signMcpAccessToken } from '../src/oauth/tokens';
 import { createTestD1 } from './sqliteD1';
 
 async function makeKeyFixture(alg: 'RS256' | 'ES256', kid: string) {
@@ -54,6 +55,48 @@ describe('auth crypto', () => {
     await expect(
       verifyAccessToken(token, 'secret-b-32-bytes-minimum-123456'),
     ).rejects.toThrow();
+  });
+
+  it('rejects App-secret tokens that carry aud or typ=at+jwt (MCP isolation, spec/mcp.md 4.6)', async () => {
+    const secret = 'unit-test-jwt-secret-32-bytes-minimum';
+    const key = new TextEncoder().encode(secret);
+    const withAud = await new SignJWT({})
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject('user-123')
+      .setAudience('https://daydo-mcp.audichuang.app')
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(key);
+    await expect(verifyAccessToken(withAud, secret)).rejects.toThrow();
+
+    for (const typ of ['at+jwt', 'AT+JWT', 'application/at+jwt']) {
+      const atJwt = await new SignJWT({})
+        .setProtectedHeader({ alg: 'HS256', typ })
+        .setSubject('user-123')
+        .setIssuedAt()
+        .setExpirationTime('1h')
+        .sign(key);
+      await expect(verifyAccessToken(atJwt, secret), typ).rejects.toThrow();
+    }
+
+    const plainTyp = await new SignJWT({})
+      .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+      .setSubject('user-123')
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(key);
+    await expect(verifyAccessToken(plainTyp, secret)).resolves.toEqual({ userId: 'user-123' });
+  });
+
+  it('rejects MCP access tokens (isolation, spec/mcp.md 4.6)', async () => {
+    const secret = 'unit-test-jwt-secret-32-bytes-minimum';
+    const mcpToken = await signMcpAccessToken(secret, {
+      origin: 'https://daydo-mcp.audichuang.app',
+      userId: 'user-123',
+      scope: 'mcp',
+      clientId: 'mcp-abc',
+    });
+    await expect(verifyAccessToken(mcpToken, secret)).rejects.toThrow();
   });
 
   it('generates 32-byte base64url refresh tokens and sha256 hex hashes', async () => {
