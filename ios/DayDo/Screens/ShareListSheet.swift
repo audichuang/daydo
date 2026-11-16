@@ -292,16 +292,8 @@ struct ShareListSheet: View {
         let role = inviteRole
         Task {
             defer { creatingInvite = false }
-            if !model.syncEnabled {
-                createdInvite = CreatedInvite(
-                    code: "preview",
-                    url: "daydo://invite/preview",
-                    expiresAt: EpochMillis(Date().addingTimeInterval(7 * 86400).timeIntervalSince1970 * 1000)
-                )
-                return
-            }
             do {
-                createdInvite = try await model.syncEngine.createInvite(projectId: projectId, role: role)
+                createdInvite = try await model.sharing.createInvite(projectId: projectId, role: role)
             } catch {
                 if await model.handleErrorIfSignedOut(error) {
                     dismiss()
@@ -317,13 +309,8 @@ struct ShareListSheet: View {
         revokingInvite = true
         Task {
             defer { revokingInvite = false }
-            if !model.syncEnabled {
-                createdInvite = nil
-                copiedLink = false
-                return
-            }
             do {
-                try await model.syncEngine.revokeInvite(code: code)
+                try await model.sharing.revokeInvite(code: code)
                 createdInvite = nil
                 copiedLink = false
             } catch {
@@ -342,10 +329,8 @@ struct ShareListSheet: View {
         Task {
             defer { leaving = false }
             do {
-                if model.syncEnabled {
-                    try await model.syncEngine.leaveProject(projectId: projectId)
-                    await model.runSyncNow()
-                }
+                try await model.sharing.leaveList(projectId: projectId)
+                await model.runSyncNow()
                 await model.reloadData()
                 if model.scope == .project(projectId) {
                     model.scope = .smart(.today)
@@ -457,15 +442,8 @@ private struct MemberDetailSheet: View {
         Task {
             defer { busy = false }
             do {
-                if model.syncEnabled {
-                    guard let userId = member.userId, !userId.isEmpty else {
-                        throw DayDoError.invalid("無法取得此成員的帳號識別碼")
-                    }
-                    try await model.syncEngine.changeMemberRole(projectId: projectId, userId: userId, role: newRole)
-                    await model.runSyncNow()
-                } else {
-                    try await model.api.updateMemberRole(projectId: projectId, memberId: member.memberId, role: newRole)
-                }
+                try await model.sharing.changeMemberRole(projectId: projectId, member: member, role: newRole)
+                await model.runSyncNow()
                 onChanged()
             } catch {
                 role = previousRole
@@ -485,15 +463,8 @@ private struct MemberDetailSheet: View {
         Task {
             defer { busy = false }
             do {
-                if model.syncEnabled {
-                    guard let userId = member.userId, !userId.isEmpty else {
-                        throw DayDoError.invalid("無法取得此成員的帳號識別碼")
-                    }
-                    try await model.syncEngine.removeMember(projectId: projectId, userId: userId)
-                    await model.runSyncNow()
-                } else {
-                    try await model.api.removeMember(projectId: projectId, memberId: member.memberId)
-                }
+                try await model.sharing.removeMember(projectId: projectId, member: member)
+                await model.runSyncNow()
                 onChanged()
                 dismiss()
             } catch {

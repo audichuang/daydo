@@ -115,7 +115,7 @@ public enum SyncError: Error, LocalizedError, Sendable, Equatable {
     }
 }
 
-/// Errors surfaced by `SyncEngine` sharing API calls.
+/// Errors surfaced by remote `ListSharing` API calls.
 public enum SharingError: Error, LocalizedError, Sendable, Equatable {
     case badRequest(String)
     case forbidden(String)

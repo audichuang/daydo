@@ -45,6 +45,7 @@ final class AppModel {
     private let store: DeviceStore
     let api: any DayDoAPI
     let syncEngine: SyncEngine
+    let sharing: any ListSharing
     let tokenStore: any SyncTokenStore
     let syncEnabled: Bool
 
@@ -196,7 +197,7 @@ final class AppModel {
             flushManualInviteIfNeeded()
             return
         }
-        if syncEnabled, isSignedIn, pendingInviteCode != nil {
+        if isSignedIn, pendingInviteCode != nil {
             Task { [weak self] in
                 await self?.processPendingInviteIfNeeded()
             }
@@ -249,10 +250,14 @@ final class AppModel {
             baseURL: SyncConfig.baseURL,
             extraHeaders: SyncConfig.accessHeaders()
         )
-        self.syncEngine = store.makeSyncEngine(
+        let engine = store.makeSyncEngine(
             transport: resolvedTransport,
             tokenStore: tokenStore
         )
+        self.syncEngine = engine
+        self.sharing = syncEnabled
+            ? RemoteListSharing(syncEngine: engine)
+            : store.makeLocalSharing()
         let d = UserDefaults.standard
         accentHex = d.string(forKey: "accent") ?? "#FF8A1E"
         compact = d.bool(forKey: "compact")
@@ -690,7 +695,7 @@ final class AppModel {
 
     func handleIncomingInvite(code: String) {
         pendingInviteCode = code
-        guard ready, isSignedIn, syncEnabled else { return }
+        guard ready, isSignedIn else { return }
         Task { [weak self] in
             await self?.processPendingInviteIfNeeded()
         }
@@ -699,32 +704,16 @@ final class AppModel {
     func flushManualInviteIfNeeded() {
         guard let code = pendingManualInviteCode else { return }
         pendingManualInviteCode = nil
-        if syncEnabled {
-            handleIncomingInvite(code: code)
-        } else {
-#if DEBUG
-            invitePrompt = PendingInvitePrompt(
-                code: code,
-                info: InviteInfo(
-                    projectName: "家庭採買",
-                    inviterName: "小安",
-                    role: "editor",
-                    expiresAt: EpochMillis(Date().addingTimeInterval(7 * 86400).timeIntervalSince1970 * 1000)
-                ),
-                isLoading: false,
-                error: nil
-            )
-#endif
-        }
+        handleIncomingInvite(code: code)
     }
 
     func processPendingInviteIfNeeded() async {
-        guard syncEnabled, isSignedIn, !hasActiveRootSheet, let code = pendingInviteCode else { return }
+        guard isSignedIn, !hasActiveRootSheet, let code = pendingInviteCode else { return }
         pendingInviteCode = nil
         let prompt = PendingInvitePrompt(code: code, info: nil, isLoading: true, error: nil)
         invitePrompt = prompt
         do {
-            let info = try await syncEngine.inviteInfo(code: code)
+            let info = try await sharing.inviteInfo(code: code)
             guard invitePrompt?.requestId == prompt.requestId else { return }
             invitePrompt?.info = info
             invitePrompt?.isLoading = false
@@ -750,7 +739,7 @@ final class AppModel {
 
     func acceptPendingInvite(code: String) async throws {
         do {
-            let accepted = try await syncEngine.acceptInvite(code: code)
+            let accepted = try await sharing.acceptInvite(code: code)
             await reloadData()
             scope = .project(accepted.projectId)
             tab = .tasks

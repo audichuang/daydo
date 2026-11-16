@@ -56,6 +56,10 @@ public struct DeviceStore: Sendable {
         )
     }
 
+    public func makeLocalSharing() -> any ListSharing {
+        LocalListSharing(api: localAPI, clock: localAPI.clock)
+    }
+
     /// Creates an isolated in-memory store for tests.
     public static func inMemory(
         clock: Clock = .system,

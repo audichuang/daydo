@@ -36,11 +36,13 @@ private let sharedTokenB = ProcessInfo.processInfo.environment["DAYDO_SYNC_SHARE
         let apiA = LocalDayDoAPI(database: dbA, clock: clockA.clock, attachmentsDirectory: dirA)
         let tokensA = InMemorySyncTokenStore()
         let syncA = SyncEngine(database: dbA, transport: transport, tokenStore: tokensA, clock: clockA.clock)
+        let sharingA = RemoteListSharing(syncEngine: syncA)
 
         let dbB = try AppDatabase.inMemory()
         let apiB = LocalDayDoAPI(database: dbB, clock: clockB.clock, attachmentsDirectory: dirB)
         let tokensB = InMemorySyncTokenStore()
         let syncB = SyncEngine(database: dbB, transport: transport, tokenStore: tokensB, clock: clockB.clock)
+        let sharingB = RemoteListSharing(syncEngine: syncB)
 
         // 1. A signs in, creates a list with tasks & a checklist, syncs, and creates an editor invite.
         _ = try await syncA.signIn(with: .google(idToken: tokenA))
@@ -58,16 +60,16 @@ private let sharedTokenB = ProcessInfo.processInfo.environment["DAYDO_SYNC_SHARE
         ))
         _ = try await syncA.syncNow()
 
-        let invite = try await syncA.createInvite(projectId: sharedList.id, role: "editor")
+        let invite = try await sharingA.createInvite(projectId: sharedList.id, role: "editor")
         #expect(SyncEngine.parseInviteCode(from: invite.url) == invite.code)
 
         // 2. B signs in on own phone, inspects & accepts the invite -> backfill pulls shared list, tasks, checklist, and A.
         _ = try await syncB.signIn(with: .google(idToken: tokenB))
-        let info = try await syncB.inviteInfo(code: invite.code)
+        let info = try await sharingB.inviteInfo(code: invite.code)
         #expect(info.projectName == "家庭採買")
         #expect(info.role == "editor")
 
-        let accepted = try await syncB.acceptInvite(code: invite.code)
+        let accepted = try await sharingB.acceptInvite(code: invite.code)
         #expect(accepted.projectId == sharedList.id)
         #expect(accepted.role == "editor")
 
@@ -112,9 +114,8 @@ private let sharedTokenB = ProcessInfo.processInfo.environment["DAYDO_SYNC_SHARE
         #expect(snapB1 == srvB1)
 
         // 4. A changes B to viewer and updates the egg task; B edits offline then syncs -> rejected & reverted to A's value.
-        let bOnA = try #require(try await apiA.listMembers().first { !$0.isMe })
-        let userBId = try #require(bOnA.userId)
-        try await syncA.changeMemberRole(projectId: sharedList.id, userId: userBId, role: "viewer")
+        let bOnA = try #require(try await apiA.listProjectMembers(projectId: sharedList.id).first { !$0.isMe })
+        try await sharingA.changeMemberRole(projectId: sharedList.id, member: bOnA, role: "viewer")
         clockA.set(try await maxFloor(dbA, dbB, clockA, clockB) + 100)
         var editEggA = UpdateTaskInput(taskId: eggTask.id)
         editEggA.title = "買土雞蛋"
@@ -139,7 +140,7 @@ private let sharedTokenB = ProcessInfo.processInfo.environment["DAYDO_SYNC_SHARE
         #expect(bListAsViewer.myRole == "viewer")
 
         // 5. A removes B -> B's local copy of the list is gone.
-        try await syncA.removeMember(projectId: sharedList.id, userId: userBId)
+        try await sharingA.removeMember(projectId: sharedList.id, member: bOnA)
         _ = try await syncB.syncNow()
 
         #expect(try await apiB.listProjects(includeArchived: false).contains { $0.id == sharedList.id } == false)
@@ -159,8 +160,8 @@ private let sharedTokenB = ProcessInfo.processInfo.environment["DAYDO_SYNC_SHARE
         #expect(bStateAfterRemoved.purgedCount == 0)
 
         // 6. A re-invites, B accepts, then A permanently deletes the list -> gone on B.
-        let reinvite = try await syncA.createInvite(projectId: sharedList.id, role: "editor")
-        _ = try await syncB.acceptInvite(code: reinvite.code)
+        let reinvite = try await sharingA.createInvite(projectId: sharedList.id, role: "editor")
+        _ = try await sharingB.acceptInvite(code: reinvite.code)
         #expect(try await apiB.listProjects(includeArchived: false).contains { $0.id == sharedList.id })
 
         clockA.set(try await maxFloor(dbA, dbB, clockA, clockB) + 100)
