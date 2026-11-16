@@ -3,12 +3,11 @@ import type { CloudBindings } from 'void';
 import { defineDurableObject } from 'void/durable';
 import {
   dbRecordToState,
-  entityIdFromDbRow,
   isEntityName,
   type EntityName,
 } from '../src/sync/entities';
 import { advanceServerHlc, clampHlc, type Hlc } from '../src/sync/hlc';
-import { rowView, type ScopeViewer } from '../src/scope/rowView';
+import { rowView } from '../src/scope/rowView';
 import type {
   ExpectedProjectMember,
   PullScopeRow,
@@ -23,13 +22,12 @@ import type {
 } from '../src/scope/api';
 import { LIST_SCOPED_ENTITIES, SqliteScopeStore, type ScopeStore } from '../src/scope/store';
 import { applyProjectMemberChanges, projectMemberChanges } from '../src/scope/members';
+import { purgeProject } from '../src/scope/purge';
 import { processPushBatch } from '../src/scope/push';
 import { ensureScopeSchema } from '../src/scope/schema';
 import { SplitTxnSnapshotStore } from './dev/splitTxnSnapshotStore';
 
 const CREATOR_ONLY_ENTITIES: readonly EntityName[] = ['member', 'folder', 'tag'];
-/** purgeProject answers the list owner deleting it, so the purged project row keeps folderId. */
-const PURGE_VIEWER: ScopeViewer = { isScopeOwner: true, meMemberId: null };
 
 export function shouldSplitTransaction(
   syncFault: string | undefined,
@@ -142,73 +140,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
       const nowMs = Date.now();
       const nextServerHlc = advanceServerHlc(nowMs, [], this.lastServerHlc);
       this.lastServerHlc = nextServerHlc.hlc;
-
-      if (input.opId && input.pusherUserId) {
-        const seen = store.getOpApplied(input.opId);
-        if (seen && seen.userId === input.pusherUserId && seen.status === 'applied') {
-          const projState = store.getRow('project', input.projectId);
-          return {
-            projectId: input.projectId,
-            purgedRow: projState
-              ? rowView('project', projState.row, projState.purgedAt, PURGE_VIEWER)
-              : null,
-            clocks: projState ? { ...projState.clocks } : {},
-            serverTime: nextServerHlc.formatted,
-          };
-        }
-      }
-
-      this.ctx.storage.sql.exec(
-        'INSERT INTO purgedProject (projectId, purgedAt) VALUES (?, ?) ON CONFLICT (projectId) DO NOTHING',
-        input.projectId,
-        input.purgedAt,
-      );
-
-      const initialSeq = store.getCounter();
-      let currentSeq = initialSeq;
-
-      for (const { entity, listCol } of LIST_SCOPED_ENTITIES) {
-        const rows = this.ctx.storage.sql
-          .exec(
-            `SELECT * FROM "${entity}" WHERE "${listCol}" = ? AND purgedAt IS NULL`,
-            input.projectId,
-          )
-          .toArray();
-        for (const r of rows) {
-          const state = dbRecordToState(entity, r as Record<string, unknown>);
-          const eid = entityIdFromDbRow(entity, r as Record<string, unknown>);
-          currentSeq += 1;
-          store.upsertRow(entity, eid, {
-            ...state,
-            purgedAt: input.purgedAt,
-            serverSeq: currentSeq,
-          });
-        }
-      }
-
-      if (currentSeq !== initialSeq) {
-        store.setCounter(currentSeq);
-      }
-
-      const projState = store.getRow('project', input.projectId);
-      if (input.opId && input.pusherUserId) {
-        store.insertOpApplied({
-          opId: input.opId,
-          userId: input.pusherUserId,
-          status: 'applied',
-          reason: null,
-          serverSeq: projState?.serverSeq ?? currentSeq,
-        });
-      }
-
-      return {
-        projectId: input.projectId,
-        purgedRow: projState
-          ? rowView('project', projState.row, projState.purgedAt, PURGE_VIEWER)
-          : null,
-        clocks: projState ? { ...projState.clocks } : {},
-        serverTime: nextServerHlc.formatted,
-      };
+      return purgeProject(this.ctx.storage.sql, store, input, nextServerHlc.formatted);
     });
   }
 
