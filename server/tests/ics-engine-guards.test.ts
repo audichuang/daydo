@@ -737,6 +737,36 @@ describe('M15b redefinition guard', () => {
     expect(await h.store.listMappings('u-a', source.id)).toHaveLength(3);
   });
 
+  it('keeps the slots an older revision of a series lacks, and resumes when the newer revision returns', async () => {
+    const h = createHarness(calendar(event(['SEQUENCE:2', 'RRULE:FREQ=WEEKLY;COUNT=3'])));
+    const source = await seedSource(h);
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 3, errors: 0 });
+    const before = await h.store.listMappings('u-a', source.id);
+    const third = before.find((m) => m.occurrenceId === 'UTC:2026-10-16T01:00:00Z')!;
+    await deviceEdit(h, 'u-a', 'task', third.taskId, { status: 2, completedAt: NOW_ISH });
+
+    // A stale cache or mirror serves the earlier, shorter version of the series.
+    h.setFeed(calendar(event(['SEQUENCE:1', 'RRULE:FREQ=WEEKLY;COUNT=2'])));
+    const preview = await sync(h, 'u-a', source.id, { dryRun: true });
+    expect(preview).toMatchObject({ deleted: 0, created: 0, updated: 0 });
+    const pushes = h.icsPushes();
+    const stale = await sync(h, 'u-a', source.id, { includeChanges: true });
+    expect(stale).toMatchObject({ deleted: 0, created: 0, updated: 0 });
+    expect(stale.changes?.some((c) => c.action === 'delete')).toBe(false);
+    expect(h.icsPushes()).toBe(pushes);
+    const kept = await taskOf(h, third.taskId);
+    expect(kept && isLive(kept)).toBe(true);
+    expect(kept).toMatchObject({ status: 2, completedAt: NOW_ISH });
+    expect((await h.store.listMappings('u-a', source.id)).map((m) => m.taskId).sort()).toEqual(before.map((m) => m.taskId).sort());
+
+    h.setFeed(calendar(event(['SEQUENCE:2', 'RRULE:FREQ=WEEKLY;COUNT=3'])));
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 0, deleted: 0, errors: 0 });
+    const after = await h.store.listMappings('u-a', source.id);
+    expect(after.map((m) => m.taskId).sort()).toEqual(before.map((m) => m.taskId).sort());
+    expect(await liveTasks(h)).toHaveLength(3);
+    expect(await taskOf(h, third.taskId)).toMatchObject({ status: 2, completedAt: NOW_ISH });
+  });
+
   it('trashes the slots a shorter series drops even when none of it is inside the window', async () => {
     const later = NOW + 30 * 86_400_000;
     const h = createHarness(calendar(event(['RRULE:FREQ=WEEKLY;COUNT=3'])));

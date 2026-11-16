@@ -489,7 +489,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
    - 重新定義防護，**以 UID 為單位**：依各 UID 的 master（不看時間窗內展開出哪些 slot）判斷，下列情況該 UID 記一次錯誤、在它的 mapping 留 `lastError`，不寫入也不刪除它的任務，同一來源的其他事件照常同步。
      - 單一事件變成重複系列：master 現在有 RRULE／RDATE，而 mapping 裡有 `occurrenceId=''` 的那筆；或只剩一個 RECURRENCE-ID 例外取代了已匯入的單一事件。
      - 規則被改：去掉 UNTIL／COUNT 後的 `seriesSignature`（DTSTART 與 RRULE）和 mapping 存的不同，例如改了 FREQ、BYDAY、DTSTART。
-   - `removed` 計算：關鍵字排除的事件不算刪除。重複系列只改了結尾（UNTIL／COUNT 提前、行事曆的「這次及以後」拆成新 UID、拿掉 RDATE）時，展開範圍內（slot 的原始時間早於時間窗結尾減一天）已匯入、但來源已沒有的 slot 算來源刪除，走第 9 點的軟刪除；可能落在時間窗之後的 slot 保留。
+   - `removed` 計算：關鍵字排除的事件不算刪除。重複系列只改了結尾（UNTIL／COUNT 提前、行事曆的「這次及以後」拆成新 UID、拿掉 RDATE）時，展開範圍內（slot 的原始時間早於時間窗結尾減一天）已匯入、但來源已沒有的 slot 算來源刪除，走第 9 點的軟刪除；可能落在時間窗之後的 slot 保留。來源給的是某 UID 比已匯入更舊的版本（任一 slot 依 SEQUENCE、同 SEQUENCE 再比 DTSTAMP 判定較舊）時，該 UID 這輪一個 slot 都不刪，記為 skip，之後新版回來照常同步。
    - 大量刪除防護：≥5 筆且超過已匯入數的一半時整輪拒絕，什麼都不寫。cron 永不傳 `allowMassDelete`。系列縮短刪掉的 slot 也算在內。
 6. **新事件**（沒有 mapping）：
    - 先 `reserveMappings`，給每個 key 一個 UUIDv7 taskId，狀態 `pending`。

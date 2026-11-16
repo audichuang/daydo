@@ -425,9 +425,24 @@ export async function syncSource(
     // not source deletions. parseIcs visits every slot of a series that starts before expandTo, so a
     // mapped slot missing from there was dropped (an earlier UNTIL or COUNT, a removed RDATE). Slots
     // that may lie later stay; the day of slack covers floating slots read as UTC.
+    // An older revision of a UID than the one already imported (a stale cache or mirror) says
+    // nothing about which slots exist now, so none of that UID is removed this run.
+    const staleUids = new Set(
+      all.filter((e) => {
+        const m = existing.get(identity(e.uid, e.occurrenceId));
+        return !!m && m.state !== 'purged' && older(e, m);
+      }).map((e) => e.uid),
+    );
     const eventKeys = new Set(all.map((e) => identity(e.uid, e.occurrenceId)));
+    for (const [k, m] of existing) {
+      if (staleUids.has(m.icsUid) && !refused.has(m.icsUid) && !eventKeys.has(k) && !sourceIdentities.has(k)) {
+        stats.skipped++;
+        recordMapping(m, 'skip', undefined, 'Older source revision; slot kept');
+      }
+    }
     const keepSlot = (m: IcsMapping) =>
       refused.has(m.icsUid) ||
+      staleUids.has(m.icsUid) ||
       (!!m.occurrenceId && series.has(m.icsUid) && !(slotInstant(m.occurrenceId) < expandTo - DAY_MS));
     const removedMappings = [...existing]
       .filter(([k, m]) => !(eventKeys.has(k) || sourceIdentities.has(k) || keepSlot(m)))
