@@ -193,6 +193,7 @@ Extra checks: `npm run e2e:ics` (ICS sync and cron) and `npm run e2e:mcp` (OAuth
 - Connect Claude, ChatGPT and Codex to `https://daydo-mcp.audichuang.app/` and sign in with a real Apple account in both Safari and Chrome. Confirm: the web Apple `sub` equals the App's `sub` (same account); the Apple `form_post` callback receives the `SameSite=None` cookie; all three clients send `client_id` on `/token`. Repeat once with a Google account.
 - `npm run smoke:prod` against `daydo-api`: Access must still reject requests without a token.
 - `POST https://daydo-mcp.audichuang.app/sync/pull` must return 404.
+- If the change touches the cron or ICS wiring: production cron cannot run locally, so run `npx wrangler tail daydo-api --format json` until an `ics.cron.run` event arrives (every 5 minutes) with outcome `ok` and no exceptions.
 
 ### Adding the connector
 

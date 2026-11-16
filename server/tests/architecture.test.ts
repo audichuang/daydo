@@ -71,7 +71,11 @@ interface Guard {
   pattern: RegExp;
   /** Exactly the files allowed to match. Ratchet: entries may only be removed, never added. */
   allow: string[];
-  /** Snippets that violate the rule, one per alternative of the pattern; proves none is hollow. */
+  /**
+   * Snippets that violate the rule, one per alternative of the pattern; proves none is hollow.
+   * When narrowing a pattern (adding an exclusion), keep a sample of every form the old pattern caught:
+   * a lookbehind exclusion once let calls through that the previous version blocked.
+   */
   bad: string[];
 }
 
@@ -188,7 +192,7 @@ const GUARDS: Guard[] = [
   {
     name: 'Date.now only in src/clock.ts and the listed wall-clock readers',
     dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
-    pattern: /\bDate\.now\b/,
+    pattern: /\bDate\.now\b|\bnew Date\(\s*\)/,
     // Ratchet: starts as the 23 files that matched when the guard widened, then only shrinks.
     allow: [
       'durable-objects/scope.ts',
@@ -201,7 +205,7 @@ const GUARDS: Guard[] = [
       'src/serverops/writer.ts',
       'src/sync/push.ts',
     ],
-    bad: ['const nowMs = Date.now();', 'this.now = options.now ?? Date.now;'],
+    bad: ['const nowMs = Date.now();', 'this.now = options.now ?? Date.now;', 'const d = new Date();'],
   },
   {
     name: 'systemNow() is only the default of an injectable time',
@@ -233,18 +237,28 @@ const GUARDS: Guard[] = [
     bad: ["import { env } from 'void/env';"],
   },
   {
-    // Row builders live in tests/helpers/serverHarness.ts (exported there, so `export function` is not
-    // matched). The only local copy is mcp-ics's seedUser, which seeds a different shape the tests assert on.
+    // Row builders are defined once, in tests/helpers/serverHarness.ts (the only definition site, so it is
+    // allowed). The only local copy is mcp-ics's seedUser, which seeds a different shape the tests assert on.
+    // Function, const/let/var and export forms are all caught, so a wrapper arrow cannot hide a copy.
     name: 'test row builders are defined only in tests/helpers',
     dirs: ['tests'],
-    pattern: /^(async )?function (projectRow|taskRow|deviceOp|seedUser|seedBasic)\(/m,
-    allow: ['tests/mcp-ics.test.ts'],
+    pattern: new RegExp(
+      [
+        String.raw`^(export )?(async )?function (projectRow|taskRow|deviceOp|seedUser|seedBasic)\b`,
+        String.raw`^(export )?(const|let|var) (projectRow|taskRow|deviceOp|seedUser|seedBasic)\b`,
+      ].join('|'),
+      'm',
+    ),
+    allow: ['tests/helpers/serverHarness.ts', 'tests/mcp-ics.test.ts'],
     bad: [
       'function projectRow(id: string) {',
       'function taskRow(id: string, projectId: string) {',
       'function deviceOp(h: Harness, entity: string) {',
       'async function seedUser(h: Harness, userId: string) {',
       'async function seedBasic(h: Harness) {',
+      'export function taskRow() {}',
+      'const projectRow = () => 1;',
+      'let deviceOp = makeOp;',
     ],
   },
   {

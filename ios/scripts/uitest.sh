@@ -3,18 +3,23 @@
 #
 #   ios/scripts/uitest.sh [iphone|ipad|"DD <full simulator name>"] [extra xcodebuild args...]
 #   ios/scripts/uitest.sh ipad -only-testing:DayDoUITests/DayDoFlowTests/testCalendar
+#   ios/scripts/uitest.sh down [iphone|ipad|"DD <name>"]   # shut down once the batch is done
 #
 # Codex, agy and other sessions share the DD simulators; two xcodebuild runs at
 # once fail at launch with "Failed to send signal 19", so this waits for others.
+# `down` waits on the same lock: a bare `simctl shutdown` from another session once
+# cut a run 14 s after boot.
 set -euo pipefail
 
+mode=test
+if [[ "${1:-}" == down ]]; then mode=down; shift; fi
 target="${1:-iphone}"
 [[ $# -gt 0 ]] && shift
 case "$target" in
   iphone) name="DD iPhone 18 Pro" ;;
   ipad) name="DD iPad Pro 11" ;;
   "DD "*) name="$target" ;;
-  *) echo "usage: $0 [iphone|ipad|\"DD <name>\"] [xcodebuild args...]" >&2; exit 2 ;;
+  *) echo "usage: $0 [down] [iphone|ipad|\"DD <name>\"] [xcodebuild args...]" >&2; exit 2 ;;
 esac
 
 udid=$(xcrun simctl list devices available -j | python3 -c '
@@ -56,9 +61,21 @@ while busy; do
   waited=$((waited + 15))
 done
 
+trap 'rm -rf "$lock"' EXIT
+if [[ "$mode" == down ]]; then
+  echo "關機：${name} (${udid})" >&2
+  xcrun simctl shutdown "$udid" 2>/dev/null || true
+  exit 0
+fi
+
 cd "$(dirname "$0")/.."
 echo "UI 測試：${name} (${udid})" >&2
-trap 'rm -rf "$lock"' EXIT
+# Boot here instead of letting xcodebuild do it: xcodebuild shuts down a simulator it booted
+# as soon as the run ends, often 30 s after boot while PosterBoard is still writing its
+# wallpaper store. One such cut on 2026-11-17 corrupted that store and PosterBoard then
+# crashed on every boot. A device that was already booted is left running.
+xcrun simctl boot "$udid" 2>/dev/null || true
+xcrun simctl bootstatus "$udid" -b >/dev/null
 xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
   -destination "platform=iOS Simulator,id=$udid" \
   -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO "$@"

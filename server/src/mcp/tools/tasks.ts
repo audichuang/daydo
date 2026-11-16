@@ -91,7 +91,7 @@ export function taskReadTools(): ToolDef[] {
     {
       name: 'list_recent_tasks',
       description:
-        'List recent tasks in a project (newest update first), INCLUDING completed ones by default. ALWAYS call this before creating a new task to avoid duplicating a task that already exists (check for same title / same intent). Each task carries status: 0 active or 2 completed; prefer updating an existing (even completed) task over creating a new one. Returns task summaries (content cut to 100 characters, items as a count; see get_task).',
+        'List recent tasks in a project (newest update first), including completed ones by default, so it also finds a finished task with the same title or intent. Each task carries status: 0 active or 2 completed. Returns task summaries (content cut to 100 characters, items as a count; see get_task).',
       inputSchema: {
         type: 'object',
         required: ['project_id'],
@@ -286,12 +286,12 @@ export function taskWriteTools(): ToolDef[] {
     {
       name: 'create_task',
       description:
-        'Create a task. MUST follow these rules:\n' +
+        'Create a task. Rules:\n' +
         '1. Before calling, use list_recent_tasks to check the project for a same-title or same-intent task. If one exists (even completed), use update_task instead.\n' +
-        '2. Timed items (meetings, classes, workouts, a to-do you want pinged at a set time): set BOTH `start` and `due` in ISO 8601 with an offset, e.g. 2026-04-20T13:00:00+08:00. Do not only set `due` for a timed task.\n' +
+        '2. Timed items (meetings, classes, workouts, a to-do you want pinged at a set time): set both `start` and `due` in ISO 8601 with an offset, e.g. 2026-04-20T13:00:00+08:00; a timed task needs both.\n' +
         '3. All-day items: set `start` to the date (2026-04-20) and, for several days, `due` to the last day. Never combine a time with `all_day`.\n' +
-        "4. One piece of work you want reminding about on SEVERAL days but finish once (chasing a colleague, a follow-up before a deadline): ONE task with `start` on the LAST day and relative reminders for the earlier ones, e.g. start Thu 09:00 with reminder 'TRIGGER:-P2D,TRIGGER:-P1D,TRIGGER:PT0S'. Ticking it off then stops the rest. Do NOT use `repeat` and do NOT create one task per day; both keep firing after the work is done. Split into separate tasks only when the clock times themselves differ.\n" +
-        "5. NEVER put times inside the title (bad: 'Badminton 13:00-14:00'). Use start/due instead.\n" +
+        "4. One piece of work you want reminding about on several days but finish once (chasing a colleague, a follow-up before a deadline): one task with `start` on the last day and relative reminders for the earlier ones, e.g. start Thu 09:00 with reminder 'TRIGGER:-P2D,TRIGGER:-P1D,TRIGGER:PT0S'. Ticking it off then stops the rest; `repeat` or one task per day would keep firing after the work is done. Split into separate tasks only when the clock times themselves differ.\n" +
+        "5. Keep times out of the title (not 'Badminton 13:00-14:00'); put them in start/due.\n" +
         '6. Priorities: none | low | medium | high.\n' +
         '7. Match existing task formatting conventions within the same project (title style, content structure, reminder, tags).\n' +
         '`reminder` and `repeat` need a date in the same call; the call is rejected without one. The project must be writable (can_write in list_projects).',

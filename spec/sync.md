@@ -74,6 +74,7 @@
 - 同一個子項目 id 同時指向兩個不同任務、兩個請求又同時送出時，路由可能被清掉（需異常 client）。
 - 共享清單的 editor 能把清單的 `isInbox` 改成 true（App 不會這樣送）。
 - 兩台舊版手機在同一瞬間第一次登入，可能各自上傳一個收件匣。
+- 收件匣只有異常 client 才能送進垃圾桶（App 與 MCP 都不允許刪收件匣，push 驗證也不另外擋）。這時登入回 `hasData:false`，MCP 也視為無資料帳號、拒絕寫入。
 - Worker 重啟後回傳的 `serverTime` 可能比之前回過的小；只影響時鐘不準的裝置。
 - 附件只同步資料列，檔案本身還不上傳：別台裝置打不開，登出再登入後本機的附件路徑也會遺失（檔案還在手機上）。之後做附件上傳時一起處理。
 - refresh token 的 10 分鐘寬限：換發後 10 分鐘內、手機還沒用新 token 之前，持有舊 refresh token 的人能搶先換到新 session（要先偷到 Keychain 裡的 token）；真手機下次 refresh 時整條鏈會被撤銷。這是為了避免訊號差時回應遺失就被登出所接受的取捨。
@@ -165,7 +166,7 @@
 - 帳號用 `(provider, sub)` 識別，不用 email 自動合併帳號：Apple 可能給隱藏的轉寄 email。要讓兩種登入方式共用同一個帳號，登入後在設定裡手動連結。
 - Worker 自己發 token：access token 為 JWT，1 小時；refresh token 90 天，每次使用就換一組新的，D1 只存雜湊值。
 - **refresh 寬限期**：正常換發後 10 分鐘內且後繼 token 尚未被使用時，以舊 refresh token 重試視為遺失回應重試，撤銷該未使用的後繼 token 並換發新的一組；其餘重複使用撤銷整條 session 鏈並回 401。
-- 登入與 refresh 回應另帶 `hasData`（伺服器上已經有這個使用者的收件匣，等同 `inboxProjectId` 不是 null）、`meMemberId`（綁定的「我」，還沒有就是 null）、`inboxProjectId`（自己範圍裡的收件匣，還沒有就是 null）、`avatarUrl`（D1 `user.avatarUrl`，可為 null）。App 依「已定的決策」的第一次登入規則處理。
+- 登入與 refresh 回應另帶 `hasData`（伺服器上已經有這個使用者的收件匣，等同 `inboxProjectId` 不是 null）、`meMemberId`（綁定的「我」，還沒有就是 null）、`inboxProjectId`（收件匣的定義：自己範圍裡 `isInbox` 為真、沒有 `deletedAt` 也沒有 `purgedAt` 的清單；有多個時取 `serverSeq` 最小的；沒有就是 null。MCP／ICS 的 snapshot 沿用同一個定義）、`avatarUrl`（D1 `user.avatarUrl`，可為 null）。App 依「已定的決策」的第一次登入規則處理。
 - **網頁登入（MCP 授權頁）**：Google 用網頁 client（`GOOGLE_WEB_CLIENT_ID`／`GOOGLE_WEB_CLIENT_SECRET`），Apple 用 Services ID `com.audichuang.daydo.web`，另有信箱驗證碼（只綁定既有帳號，不註冊）；帳號仍以 `(provider, sub)` 識別，與 App 登入是同一個帳號。細節見 `spec/mcp.md`。
 - **Cloudflare Access**：正式環境每個請求都要通過 Access（App 帶 service token），Worker 再驗 `Cf-Access-Jwt-Assertion`（簽章、`aud` 等於 Access 應用程式的 AUD）。本機開發與 e2e 用環境變數關掉這一層，只在開發建置有效。
 - App Store 規定：可以建立帳號的 App 必須能在 App 裡刪除帳號。刪除時要一併撤銷 Apple 的授權（需要 authorization code 和 client secret）。

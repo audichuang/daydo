@@ -6,7 +6,7 @@ DayDo 是待辦加日曆的 iPhone App，給自己和家人用，互動對標 Ti
 
 1. **單機 App**（已完成，在 TestFlight）：資料只存在手機的 SQLite；今天、清單、任務詳情、日期面板、時間區塊、日曆（清單／年／月／週／3日／日）、搜尋、垃圾桶。
 2. **同步與多人**（進行中）：Cloudflare Worker + D1 + Durable Objects，註冊登入、多裝置同步、共享清單、成員指派。
-3. **MCP**：掛在 Worker 上，讓 AI 讀寫任務，工具沿用 ticktick-mcp 的名稱與欄位。
+3. **MCP**（已上線）：掛在 Worker 上，讓 AI 讀寫任務，工具沿用 ticktick-mcp 的名稱與欄位。
 
 設計稿在 `design/`（`design/source/*.html` 是原始設計元件，`design/shots/` 是截圖），畫面板號 1a–6b 印在 `design/shots/*.png` 的圖標題上（HTML 檔名與板號無關）；設計稿用的是舊名 Doneday。
 
@@ -23,7 +23,7 @@ design/      設計稿
 ## 規則
 
 - UI 不直接碰資料庫：所有讀寫走 `DayDoAPI`，App 只拿得到 `DeviceStore.api`（`any DayDoAPI`）；資料庫型別在 DayDoCore 內部，開檔一律經 `DayDoStorage`。清單角色權限由 API 寫入路徑檢查，UI 只負責隱藏按鈕。新增功能時先加 API 方法與 `spec/openapi.yaml`，再接 UI。
-- API 名稱與欄位對齊 ticktick-mcp（私有 repo `audichuang/ticktick-mcp` 的 `src/tools.ts`，本機沒有 clone，用 `gh api repos/audichuang/ticktick-mcp/contents/src/tools.ts --jq .content | base64 -d` 讀）：priority 0/1/3/5、status 0/2、`TRIGGER:` 提醒、RRULE、ISO 8601 `start`/`due` + `timezone` + `all_day`。之後的 MCP 直接沿用那套工具名。
+- API 名稱與欄位對齊 ticktick-mcp（私有 repo `audichuang/ticktick-mcp` 的 `src/tools.ts`，本機沒有 clone，用 `gh api repos/audichuang/ticktick-mcp/contents/src/tools.ts --jq .content | base64 -d` 讀）：priority 0/1/3/5、status 0/2、`TRIGGER:` 提醒、RRULE、ISO 8601 `start`/`due` + `timezone` + `all_day`。MCP（`server/src/mcp/`）也沿用那套工具名。
 - Schema 為同步預留：id 由 client 產生（UUIDv7），時間戳是 epoch ms，刪除用 `deletedAt` 軟刪除，每次寫入在同一 transaction 寫一筆 `change`（outbox，含變更欄位名）。改 schema 用新的 migration，已有的不改。
 - 排序鍵用 `SortKey`（fractional index），不要重新編號。
 - 互動照 TickTick，配色與字級照設計稿；兩者衝突時互動跟 TickTick。使用者會貼 TickTick 與 DayDo 的截圖附一句話回饋，先比對 TickTick 截圖的結構與互動再改。
@@ -50,7 +50,9 @@ ios/scripts/uitest.sh [iphone|ipad] [xcodebuild 參數…]   # UI 流程測試�
 常駐機：`DD iPhone 18 Pro`（iOS 27.2）；iPad 版面用 `DD iPad Pro 11`。
 
 - UI 測試一律走 `ios/scripts/uitest.sh`：依名稱找機器、等別的 `xcodebuild` 跑完再開始（Codex、agy 和其他 session 共用這兩台，同時跑會在啟動時失敗：`Failed to send signal 19`）、關掉平行測試。
-- 測試與互動驗收結束後，確認沒有其他 session 使用，再以 `xcrun simctl shutdown <UDID>` 關閉本次用過的 DD 常駐機（UDID 用 `xcrun simctl list devices` 查）；`uitest.sh` 不會自動關機。
+- `uitest.sh` 會先自己開機並等開機完成，xcodebuild 就不會在測完時把模擬器關掉。不要繞過腳本直接跑 `xcodebuild test`：模擬器若是 xcodebuild 開的，它測完就會關機，常常只開了 30 秒，PosterBoard 還在寫桌布資料。2026-11-17 就這樣把資料寫壞（膨脹到 5.7G），之後每次開機 PosterBoard 都當。
+- 整批工作（多輪測試加互動驗收）都做完，才用 `ios/scripts/uitest.sh down [iphone|ipad]` 關掉本次用過的 DD 常駐機，不要每跑一輪就關一次。不要直接 `xcrun simctl shutdown`：`down` 會先等別人的測試跑完再關，直接關曾在別的 session 開機 14 秒時把機器關掉。只關自己用過的那台。
+- Mac 跳出 PosterBoard 當機視窗時，查 `~/Library/Logs/DiagnosticReports` 裡含 `SimDevice.<UDID>` 的 `.ips`。堆疊有 `PRPosterDescriptor _initWithPath:` 就先關機，把 `data/Library/Application Support/` 下的 `PRBPosterExtensionDataStore`、`com.apple.PosterKit` 改名備份後重開機，系統會重建。確認沒有新的 `.ips` 再刪備份；常駐機不 `erase`。
 - 平行 UI 測試才開臨時機，命名 `DD tmp <任務名>`，用 `ios/scripts/uitest.sh "DD tmp <任務名>"` 跑。
 - DD worktree／暫存 review 專案收尾時，DerivedData 清理依 `~/.agents/AGENTS.md`「做事邊界」的 iOS 模擬器規則執行。
 - Xcode 27.2 沒有 Simulator.app，模擬器視窗改由 `Xcode.app/Contents/Applications/DeviceHub.app` 開啟（它也列出其他專案的機器，別按到別人的 Start）。
@@ -64,7 +66,7 @@ ios/scripts/uitest.sh [iphone|ipad] [xcodebuild 參數…]   # UI 流程測試�
 
 同步協議（含進度與待決事項）寫在 `spec/sync.md`，改協議或改兩端的行為先改那份文件。
 
-多張票或要跨 session 接續的工作，計畫檔放 `docs/plans/<名稱>.md`：所有 agent 與之後的 session 共用這份，每張票做完記下 commit 範圍與偏離；工作結束就刪掉，該留的決策寫進 commit message 或 spec。
+多張票或要跨 session 接續的工作，計畫檔放 `docs/plans/<名稱>.md`：所有 agent 與之後的 session 共用這份，每張票做完記下 commit 範圍與偏離；工作結束就刪掉，該留的決策寫進 commit message 或 spec；GLOSSARY、AGENTS.md、spec 與程式註解不引用計畫檔。
 
 - 只在使用者要求發版或部署時才 `void deploy`。
 - 改了 App 的 Record 或 outbox 編碼，要用 `DAYDO_WRITE_FIXTURE=1 swift test` 重新產生 `spec/fixtures/sync-ops.json`，再跑 server 的測試。
