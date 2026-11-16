@@ -130,23 +130,29 @@ export const oauthClient = sqliteTable(
   (t) => [index('oauthClient_ipHash_createdAt_idx').on(t.ipHash, t.createdAt)],
 );
 
-export const oauthPending = sqliteTable('oauthPending', {
-  id: text('id').primaryKey(),
-  clientId: text('clientId').notNull(),
-  redirectUri: text('redirectUri').notNull(),
-  codeChallenge: text('codeChallenge').notNull(),
-  scope: text('scope').notNull(),
-  clientState: text('clientState'),
-  resource: text('resource'),
-  bindHash: text('bindHash').notNull(),
-  provider: text('provider').notNull(),
-  nonce: text('nonce').notNull(),
-  userId: text('userId'),
-  consentTokenHash: text('consentTokenHash'),
-  createdAt: integer('createdAt').notNull(),
-  expiresAt: integer('expiresAt').notNull(),
-  consumedAt: integer('consumedAt'),
-});
+export const oauthPending = sqliteTable(
+  'oauthPending',
+  {
+    id: text('id').primaryKey(),
+    clientId: text('clientId').notNull(),
+    redirectUri: text('redirectUri').notNull(),
+    codeChallenge: text('codeChallenge').notNull(),
+    scope: text('scope').notNull(),
+    clientState: text('clientState'),
+    resource: text('resource'),
+    bindHash: text('bindHash').notNull(),
+    provider: text('provider').notNull(),
+    nonce: text('nonce').notNull(),
+    userId: text('userId'),
+    consentTokenHash: text('consentTokenHash'),
+    createdAt: integer('createdAt').notNull(),
+    expiresAt: integer('expiresAt').notNull(),
+    consumedAt: integer('consumedAt'),
+    // GET /authorize rate limit key (spec/mcp.md 4.4); null on rows created before the limit.
+    ipHash: text('ipHash'),
+  },
+  (t) => [index('oauthPending_ipHash_createdAt_idx').on(t.ipHash, t.createdAt)],
+);
 
 export const oauthCode = sqliteTable('oauthCode', {
   codeHash: text('codeHash').primaryKey(),

@@ -5,7 +5,7 @@ import { sha256Hex, signAccessToken } from '../src/auth/crypto';
 import type { DatabaseClient } from '../src/auth/session';
 import { withCors } from '../src/oauth/cors';
 import { authorizationServerMetadata, protectedResourceMetadata } from '../src/oauth/metadata';
-import { DCR_LIMIT_PER_HOUR, registerClient } from '../src/oauth/register';
+import { DCR_LIMIT_PER_HOUR, ipRateKey, registerClient } from '../src/oauth/register';
 import {
   mcpAccessKey,
   mcpRefreshKey,
@@ -296,5 +296,40 @@ describe('DCR /register (spec/mcp.md 4.3)', () => {
     expect(later.status).toBe(201);
 
     expect(sqlite.prepare('SELECT COUNT(*) AS n FROM oauthClient').get()).toEqual({ n: 12 });
+  });
+
+  it('keys IPv6 addresses by /64 so one host cannot rotate through its prefix', async () => {
+    const { database } = setup();
+    const body = { redirect_uris: ['https://a.example/cb'] };
+    for (let i = 0; i < 10; i++) {
+      const r = await registerClient(database, { body, ip: `2001:db8:1:2::${(i + 1).toString(16)}`, now: NOW + i });
+      expect(r.status).toBe(201);
+    }
+    const samePrefix = await registerClient(database, { body, ip: '2001:db8:1:2:ffff:ffff:ffff:ffff', now: NOW + 10 });
+    expect(samePrefix.status).toBe(429);
+    const otherPrefix = await registerClient(database, { body, ip: '2001:db8:1:3::1', now: NOW + 11 });
+    expect(otherPrefix.status).toBe(201);
+  });
+});
+
+describe('ipRateKey', () => {
+  it('keeps IPv4 as is and uses local without an address', () => {
+    expect(ipRateKey('203.0.113.7')).toBe('203.0.113.7');
+    expect(ipRateKey(null)).toBe('local');
+    expect(ipRateKey('')).toBe('local');
+  });
+
+  it('reduces IPv6 to its /64 prefix, expanding :: and ignoring case and leading zeros', () => {
+    expect(ipRateKey('2001:0DB8:0001:0002:0000:0000:0000:0001')).toBe('2001:db8:1:2::/64');
+    expect(ipRateKey('2001:db8:1:2::abcd')).toBe('2001:db8:1:2::/64');
+    expect(ipRateKey('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(ipRateKey('::1')).toBe('0:0:0:0::/64');
+    expect(ipRateKey('2001:db8:1:2:3:4:1.2.3.4')).toBe('2001:db8:1:2::/64');
+    expect(ipRateKey('2001:db8:1:2::')).toBe('2001:db8:1:2::/64');
+  });
+
+  it('falls back to the lowercased raw value for an unparsable IPv6-looking string', () => {
+    expect(ipRateKey('2001:db8::1::2')).toBe('2001:db8::1::2');
+    expect(ipRateKey('ZZZZ::1')).toBe('zzzz::1');
   });
 });

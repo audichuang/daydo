@@ -5,6 +5,7 @@ import { sha256Hex } from '../src/auth/crypto';
 import type { KeySource } from '../src/auth/providers';
 import type { DatabaseClient } from '../src/auth/session';
 import {
+  AUTHORIZE_LIMIT_PER_HOUR,
   BIND_COOKIE,
   PENDING_TTL_MS,
   handleAppleCallback,
@@ -586,5 +587,60 @@ describe('consent page and POST /authorize', () => {
     );
     expect(res.status).toBe(400);
     expect(count(s.sqlite, 'oauthCode')).toBe(0);
+  });
+});
+
+describe('GET /authorize rate limit (spec/mcp.md 4.4)', () => {
+  async function begin(s: Setup, ip: string | null, now: number) {
+    const headers: Record<string, string> = ip ? { 'CF-Connecting-IP': ip } : {};
+    return handleAuthorizeGet(new Request(`${ORIGIN}/authorize?${await authorizeParams()}`, { headers }), s.deps(now));
+  }
+
+  it('allows 30 pending rows per IP per hour, then shows a 429 page without inserting', async () => {
+    const s = setup();
+    expect(AUTHORIZE_LIMIT_PER_HOUR).toBe(30);
+    for (let i = 0; i < 30; i++) expect((await begin(s, '198.51.100.9', NOW + i)).status).toBe(200);
+    expect(count(s.sqlite, 'oauthPending')).toBe(30);
+
+    const limited = await begin(s, '198.51.100.9', NOW + 30);
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('Set-Cookie')).toBeNull();
+    expect(count(s.sqlite, 'oauthPending')).toBe(30);
+
+    expect((await begin(s, '198.51.100.10', NOW + 31)).status).toBe(200);
+    expect((await begin(s, '198.51.100.9', NOW + 3_600_000 - 1)).status).toBe(429);
+    expect((await begin(s, '198.51.100.9', NOW + 3_600_000)).status).toBe(200);
+    expect(count(s.sqlite, 'oauthPending')).toBe(32);
+  });
+
+  it('stores the authorize-scoped hash, keys IPv6 by /64 and uses local without the header', async () => {
+    const s = setup();
+    for (let i = 0; i < 30; i++) expect((await begin(s, `2001:db8:5:6::${(i + 1).toString(16)}`, NOW + i)).status).toBe(200);
+    expect((await begin(s, '2001:db8:5:6:aaaa::1', NOW + 30)).status).toBe(429);
+    expect((await begin(s, '2001:db8:5:7::1', NOW + 31)).status).toBe(200);
+    expect((await begin(s, null, NOW + 32)).status).toBe(200);
+
+    const hashes = (s.sqlite.prepare('SELECT DISTINCT ipHash FROM oauthPending ORDER BY createdAt').all() as Row[]).map(
+      (r) => r.ipHash,
+    );
+    expect(hashes).toEqual([
+      await sha256Hex('authorize|2001:db8:5:6::/64'),
+      await sha256Hex('authorize|2001:db8:5:7::/64'),
+      await sha256Hex('authorize|local'),
+    ]);
+  });
+
+  it('does not count rejected requests against the limit', async () => {
+    const s = setup();
+    for (let i = 0; i < 40; i++) {
+      const res = await handleAuthorizeGet(
+        new Request(`${ORIGIN}/authorize?${await authorizeParams({ client_id: 'mcp-unknown' })}`, {
+          headers: { 'CF-Connecting-IP': '198.51.100.11' },
+        }),
+        s.deps(NOW + i),
+      );
+      expect(res.status).toBe(400);
+    }
+    expect((await begin(s, '198.51.100.11', NOW + 40)).status).toBe(200);
   });
 });

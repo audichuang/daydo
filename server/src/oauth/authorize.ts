@@ -1,11 +1,12 @@
 import { identity, oauthClient, oauthPending, user } from '@schema';
-import { and, eq, gt, isNotNull, isNull } from 'void/db';
+import { and, count, eq, gt, isNotNull, isNull } from 'void/db';
 import { sha256Hex } from '../auth/crypto';
 import { AuthVerificationError, verifyAppleToken, type ProviderName, type VerifiedIdentity } from '../auth/providers';
 import type { DatabaseClient } from '../auth/session';
 import { createAuthorizationCode } from './codes';
 import { SCOPES, requestOrigin } from './metadata';
 import { consentPage, errorPage, loginPage } from './pages';
+import { ipRateKey } from './register';
 import { randomB64url } from './tokens';
 import {
   PROVIDER_LABELS,
@@ -22,6 +23,9 @@ import {
 
 export const BIND_COOKIE = 'daydo_oauth_bind';
 export const PENDING_TTL_MS = 10 * 60 * 1000;
+/** Pending rows one address may create per hour (spec/mcp.md 4.4). */
+export const AUTHORIZE_LIMIT_PER_HOUR = 30;
+const LIMIT_WINDOW_MS = 60 * 60 * 1000;
 
 export type PendingRow = typeof oauthPending.$inferSelect;
 
@@ -38,6 +42,7 @@ const MESSAGES = {
   cancelled: '登入已取消，請重新開始：可以再按一次登入按鈕。',
   providerError: '無法驗證登入結果，請再試一次。',
   unknownIdentity: '這個 Google／Apple 帳號還沒有 DayDo 帳號，請先在 DayDo App 用同一個帳號登入一次。',
+  tooManyRequests: '這個網路位址開始的授權次數太多，請稍後再試。',
 } as const;
 
 function stringField(form: Record<string, unknown>, key: string): string {
@@ -161,6 +166,13 @@ async function beginAuthorization(request: Request, deps: AuthorizeDeps, now: nu
     return errorPage('invalid_target：resource 必須是這台伺服器');
   }
 
+  const ipHash = await sha256Hex(`authorize|${ipRateKey(request.headers.get('CF-Connecting-IP'))}`);
+  const [{ n }] = await deps.database
+    .select({ n: count() })
+    .from(oauthPending)
+    .where(and(eq(oauthPending.ipHash, ipHash), gt(oauthPending.createdAt, now - LIMIT_WINDOW_MS)));
+  if (n >= AUTHORIZE_LIMIT_PER_HOUR) return errorPage(MESSAGES.tooManyRequests, 429);
+
   const pendingId = randomB64url(32);
   const bindToken = randomB64url(32);
   await deps.database.insert(oauthPending).values({
@@ -179,6 +191,7 @@ async function beginAuthorization(request: Request, deps: AuthorizeDeps, now: nu
     createdAt: now,
     expiresAt: now + PENDING_TTL_MS,
     consumedAt: null,
+    ipHash,
   });
 
   return loginPage({

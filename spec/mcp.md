@@ -100,7 +100,7 @@ server/
 | 表 | 欄位重點 |
 |---|---|
 | `oauthClient` | `clientId`（`mcp-` 加隨機 base64url）、`clientName`、`redirectUris`（JSON）、`ipHash`（DCR 限速用）、`createdAt` |
-| `oauthPending` | `id`（32 bytes 隨機值，兼作給 Google／Apple 的 `state`）、`clientId`、`redirectUri`、`codeChallenge`、`scope`、`clientState`、`resource`、`bindHash`、`provider`、`nonce`（raw）、`userId`（callback 驗過後才填）、`consentTokenHash`、`createdAt`、`expiresAt`（10 分鐘）、`consumedAt` |
+| `oauthPending` | `id`（32 bytes 隨機值，兼作給 Google／Apple 的 `state`）、`clientId`、`redirectUri`、`codeChallenge`、`scope`、`clientState`、`resource`、`bindHash`、`provider`、`nonce`（raw）、`userId`（callback 驗過後才填）、`consentTokenHash`、`createdAt`、`expiresAt`（10 分鐘）、`consumedAt`、`ipHash`（`/authorize` 限速用，可為 null） |
 | `oauthCode` | `codeHash`（主鍵）、`clientId`、`redirectUri`、`codeChallenge`、`scope`、`resource`、`userId`、`familyId`、`expiresAt`（120 秒）、`usedAt` |
 | `oauthRefresh` | `refreshHash`（主鍵）、`familyId`、`userId`、`clientId`、`scope`、`resource`、`createdAt`、`expiresAt`（30 天，每次輪替重算）、`revokedAt`、`replacedBy`（後繼列的 `refreshHash`） |
 
@@ -124,7 +124,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
   - `client_secret_expires_at:0`
   - `scope:"mcp"`
 - **限速依來源 IP 計算**：
-  - `ipHash` 取 `SHA-256("dcr|" + CF-Connecting-IP)`，開發建置沒有這個標頭時用 `local`。
+  - `ipHash` 取 `SHA-256("dcr|" + key)`。`key` 由 `CF-Connecting-IP` 算出：IPv4 原樣，IPv6 取前 64 位元（`2001:db8:1:2::/64`，一台主機通常握有整個 /64），開發建置沒有這個標頭時用 `local`。
   - 同一個 `ipHash` 每小時最多 10 筆，超過回 429。
   - 不設全域上限，否則任何人送 30 個請求就能讓全家連不上新的 connector。
 
@@ -136,6 +136,10 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 - **兩個 callback、同意頁 GET、同意 POST 都比對這個 cookie。**
 - callback 比對失敗時，把 pending 標成 `consumedAt`（終結）並顯示錯誤頁。
 - 這樣「發起授權的瀏覽器」就必須等於「完成登入的瀏覽器」，可以擋住授權注入：攻擊者開了授權流程，再把 provider 網址丟給受害者登入。
+
+**限速**
+- 建立 pending 前，依來源 IP 計數：`ipHash` 取 `SHA-256("authorize|" + key)`，`key` 的算法與 DCR 相同（IPv6 取 /64）。
+- 同一個 `ipHash` 每小時最多建 30 筆 pending，超過回 429 錯誤頁，不寫入、不發 cookie。參數或 client 驗證失敗的請求不寫入，所以不計數。
 
 **流程**
 
@@ -250,6 +254,16 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 - OAuth 事件記 `oauth.register`、`oauth.authorize`、`oauth.token`。
   - `oauth.authorize` 的結果分類為 `unknown_identity`、`denied`、`provider_error`、`bind_mismatch`、`ok`、`invalid_request`。
 - 不記 code、token、verifier、id_token、ICS URL。
+
+### 4.8 過期列清理（`src/oauth/cleanup.ts`）
+
+- 由 ICS 的 5 分鐘 cron 在每個 UTC 整點後的第一輪執行（`scheduledTime` 落在整點後 5 分鐘內），每張表每次最多刪 500 列，用 `DELETE … WHERE pk IN (SELECT … LIMIT 500)`。
+- 刪除條件：
+  - `oauthPending`：`expiresAt` 早於 1 天前。
+  - `oauthCode`：`expiresAt` 早於 1 天前。
+  - `oauthRefresh`：`expiresAt` 早於 30 天前。每一列都在發出後 30 天內到期，所以已撤銷的列也涵蓋在內；只看到期時間是為了讓撤銷過的列多留 30 天，期間重送舊 token 仍會撤銷整個 family。
+  - `oauthClient` 不刪：pending、code、refresh 刪掉之後分不出「從沒用過」和「很久以前用過」，刪掉仍在用的 client 會讓它無法重新連線。
+- 成功記一行 `oauth.cleanup`（三張表各刪幾列）。失敗記 `oauth.cleanup.failed` 警告且不 throw，ICS 同步照常執行。
 
 ## 5. MCP 傳輸（照搬 REF `src/mcp.ts`）
 
@@ -509,7 +523,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 
 ### 9.5 Cron
 
-- `crons/ics-sync.ts`：`export const cron = "*/5 * * * *"`，handler 直接 `await runIcsCron(env)`，**不用 `ctx.waitUntil`**。
+- `crons/ics-sync.ts`：`export const cron = "*/5 * * * *"`，handler 先 `await runOAuthCleanup(db, controller.scheduledTime)`（每小時一次，不會 throw，見 4.8），再直接 `await runIcsCron(env)`，**不用 `ctx.waitUntil`**。
   - Void 1.8.0 的 `handleScheduled` 會 await handler，並把失敗彙整成 `AggregateError`。用 `waitUntil` 就會吃掉失敗。
 - `runIcsCron`：
   - 用 handler 參數的 `env` 建 db（`createDb(env.DB, {session:'first-primary'})`），用 `Scope.get` 取 DO。
@@ -540,7 +554,8 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 - **單元測試**（vitest，`tests/`）：
   - 領域移植的向量。
   - OAuth：
-    - PKCE 向量、DCR 依 IP 限速、redirect 精確比對、`resource` 驗證。
+    - PKCE 向量、DCR 與 `/authorize` 依 IP 限速（IPv6 依 /64）、redirect 精確比對、`resource` 驗證。
+    - 過期列清理只刪超過保留期的列、每次有上限、只在整點那一輪執行、失敗不 throw。
     - code 只能用一次。
     - `client_id` 必填並比對。
     - refresh 輪替、寬限期回同一個後繼、並發兩個請求拿到同一個後繼、後繼已用後重用會撤銷 family。
@@ -573,8 +588,9 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 ## 12. 加進 `spec/sync.md`「已知限制」
 
 - refresh 寬限期內，後繼已被使用之後，另一個 client 又拿舊 token 來換，會讓整個 family 被撤銷，需要重新授權（需要異常的 client）。
-- 沒用到的 DCR client、過期的 pending、code、refresh 列都不清理；`opApplied` 會隨 ICS 長期增長（家庭用量下可以接受）。
-- DCR 依 IP 限速，攻擊者換很多 IP 仍可灌入 client 列（只會讓表變大，不影響已連線的使用者）。`/token` 與 `/authorize` 沒有限速：code 與 state 都是 256-bit 隨機值。
+- 沒用到的 DCR client 不清理（分不出沒用過與很久前用過）；過期的 pending、code、refresh 列由每小時的清理刪除（4.8）。`opApplied` 會隨 ICS 長期增長（家庭用量下可以接受）。
+- DCR 與 `/authorize` 依 IP 限速（IPv6 依 /64），攻擊者換很多 IP 或很多 /64 仍可灌入 client 與 pending 列（只會讓表變大，不影響已連線的使用者；pending 一天後會被清掉）。`/token` 沒有限速：code 是 256-bit 隨機值。
+- refresh 列在到期 30 天後刪除，之後再送那個舊 token 只會得到 `Unknown refresh token`，不會撤銷 family。
 - MCP 與 ICS 寫入要等 App 下次 pull 才看得到（沒有推播）。
 - 重複任務的副本與原任務若落在不同範圍（共享清單），兩邊的更新不是原子的，與 App 相同。
 - 在同一份來源中重新定義重複系列（改 FREQ、BYDAY、DTSTART，或單一事件改成重複）時，ICS 不寫入該 UID，每輪記一次錯誤，需要人工處理；同一來源的其他事件照常同步。只改結尾時刪掉的 slot 會移到垃圾桶。

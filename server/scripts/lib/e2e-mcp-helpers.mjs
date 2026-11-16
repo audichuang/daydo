@@ -354,7 +354,8 @@ export async function beginAuthorize(mcpBase, { clientId, redirectUri, state = `
   url.searchParams.set('code_challenge', pkce.challenge);
   url.searchParams.set('code_challenge_method', 'S256');
   url.searchParams.set('resource', mcpBase);
-  const res = await getManual(url.toString());
+  // A fresh address per attempt: the local D1 persists across runs and GET /authorize is limited per IP.
+  const res = await getManual(url.toString(), { 'CF-Connecting-IP': `198.51.100.${1 + Math.floor(Math.random() * 254)}-${randomUUID()}` });
   assert.equal(res.status, 200, `GET /authorize failed: ${res.status} ${res.text}`);
   const bind = readBindCookie(res.headers);
   assert(bind, 'GET /authorize did not set the bind cookie');

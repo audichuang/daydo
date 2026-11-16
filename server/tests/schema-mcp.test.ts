@@ -37,9 +37,11 @@ describe('OAuth and ICS tables (spec/mcp.md 4.2, 9.2)', () => {
       expect.arrayContaining([
         'id', 'clientId', 'redirectUri', 'codeChallenge', 'scope', 'clientState', 'resource',
         'bindHash', 'provider', 'nonce', 'userId', 'consentTokenHash', 'createdAt', 'expiresAt', 'consumedAt',
+        'ipHash',
       ]),
     );
     expect(pk(sqlite, 'oauthPending')).toEqual(['id']);
+    expect(indexed(sqlite, 'oauthPending')).toContainEqual(['ipHash', 'createdAt']);
   });
 
   it('oauthCode is keyed by codeHash', () => {
