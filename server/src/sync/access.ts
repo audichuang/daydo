@@ -13,7 +13,7 @@ export interface ListAccess {
 
 export type ListWriteDenial = 'Project is purged' | 'Forbidden';
 
-function roleOf(memberships: RoleLookup, projectId: string): MembershipRole | undefined {
+export function roleOf(memberships: RoleLookup, projectId: string): MembershipRole | undefined {
   return memberships instanceof Map
     ? memberships.get(projectId)
     : (memberships as Readonly<Record<string, MembershipRole>>)[projectId];
