@@ -17,6 +17,7 @@ import {
   type StoredEntityState,
 } from '../src/sync/entities';
 import { advanceServerHlc, clampHlc, type Hlc } from '../src/sync/hlc';
+import { listWriteDenial, type ListAccess } from '../src/sync/access';
 import { mergeOp } from '../src/sync/merge';
 import { rowView, type ScopeViewer } from '../src/scope/rowView';
 import { SplitTxnSnapshotStore } from './dev/splitTxnSnapshotStore';
@@ -555,6 +556,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
     let boundMeMemberId: string | null = null;
     const isScopeOwner = input.pusherUserId === input.scopeUserId;
     const purgedSet = new Set<string>([...input.purgedProjects, ...store.getPurgedProjects()]);
+    const access: ListAccess = { memberships: input.memberships, purgedSet };
 
     const results: PushOpResult[] = [];
     const batchHlcs: Hlc[] = [];
@@ -771,16 +773,13 @@ export class ScopeObject extends DurableObject<CloudBindings> {
             continue;
           }
         }
-        if (purgedSet.has(op.entityId) && op.op !== 'delete') {
-          rejectOp(op.opId, 'Project is purged', op.entity, op.entityId);
-          continue;
-        }
         if (op.op === 'upsert') {
-          const role = input.memberships[op.entityId];
-          if (role !== 'owner' && role !== 'editor') {
-            rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
+          const denial = listWriteDenial(op.entityId, access);
+          if (denial) {
+            rejectOp(op.opId, denial, op.entity, op.entityId);
             continue;
           }
+          const role = input.memberships[op.entityId];
           const touchesDeletedAt =
             op.fields.includes('deletedAt') &&
             (existing
@@ -805,14 +804,9 @@ export class ScopeObject extends DurableObject<CloudBindings> {
       } else if (op.entity === 'task') {
         if (!existing) {
           if (op.op === 'upsert') {
-            const targetProjectId = String(op.row.projectId);
-            if (purgedSet.has(targetProjectId)) {
-              rejectOp(op.opId, 'Project is purged', op.entity, op.entityId);
-              continue;
-            }
-            const role = input.memberships[targetProjectId];
-            if (role !== 'owner' && role !== 'editor') {
-              rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
+            const denial = listWriteDenial(String(op.row.projectId), access);
+            if (denial) {
+              rejectOp(op.opId, denial, op.entity, op.entityId);
               continue;
             }
           } else if (!isScopeOwner) {
@@ -821,18 +815,12 @@ export class ScopeObject extends DurableObject<CloudBindings> {
           }
         } else {
           const currentProjectId = String(existing.row.projectId);
-          if (purgedSet.has(currentProjectId)) {
-            rejectOp(op.opId, 'Project is purged', op.entity, op.entityId);
-            continue;
-          }
           const allowEmptyTombstoneReplay =
             existing.purgedAt !== null && currentProjectId === '' && isScopeOwner;
-          if (!allowEmptyTombstoneReplay) {
-            const currentRole = input.memberships[currentProjectId];
-            if (currentRole !== 'owner' && currentRole !== 'editor') {
-              rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
-              continue;
-            }
+          const denial = listWriteDenial(currentProjectId, access);
+          if (denial === 'Project is purged' || (denial && !allowEmptyTombstoneReplay)) {
+            rejectOp(op.opId, denial, op.entity, op.entityId);
+            continue;
           }
           if (existing.purgedAt === null && op.op === 'upsert' && op.fields.includes('projectId')) {
             const nextProjectId =
@@ -840,13 +828,9 @@ export class ScopeObject extends DurableObject<CloudBindings> {
                 ? op.row.projectId
                 : '';
             if (nextProjectId !== currentProjectId) {
-              if (purgedSet.has(nextProjectId)) {
-                rejectOp(op.opId, 'Project is purged', op.entity, op.entityId);
-                continue;
-              }
-              const targetRole = input.memberships[nextProjectId];
-              if (targetRole !== 'owner' && targetRole !== 'editor') {
-                rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
+              const denial = listWriteDenial(nextProjectId, access);
+              if (denial) {
+                rejectOp(op.opId, denial, op.entity, op.entityId);
                 continue;
               }
             }
@@ -867,18 +851,12 @@ export class ScopeObject extends DurableObject<CloudBindings> {
             ? String(parentTask.row.projectId)
             : (existing.projectId ?? '');
           childProjectId = currentProjectId;
-          if (purgedSet.has(currentProjectId)) {
-            rejectOp(op.opId, 'Project is purged', op.entity, op.entityId);
-            continue;
-          }
           const allowEmptyTombstoneReplay =
             existing.purgedAt !== null && currentProjectId === '' && isScopeOwner;
-          if (!allowEmptyTombstoneReplay) {
-            const role = input.memberships[currentProjectId];
-            if (role !== 'owner' && role !== 'editor') {
-              rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
-              continue;
-            }
+          const denial = listWriteDenial(currentProjectId, access);
+          if (denial === 'Project is purged' || (denial && !allowEmptyTombstoneReplay)) {
+            rejectOp(op.opId, denial, op.entity, op.entityId);
+            continue;
           }
         } else {
           const parentTaskId =
@@ -892,18 +870,12 @@ export class ScopeObject extends DurableObject<CloudBindings> {
           }
           const currentProjectId = String(parentTask.row.projectId);
           childProjectId = currentProjectId;
-          if (purgedSet.has(currentProjectId)) {
-            rejectOp(op.opId, 'Project is purged', op.entity, op.entityId);
-            continue;
-          }
           const allowEmptyTaskTombstone =
             parentTask.purgedAt !== null && currentProjectId === '' && isScopeOwner;
-          if (!allowEmptyTaskTombstone) {
-            const role = input.memberships[currentProjectId];
-            if (role !== 'owner' && role !== 'editor') {
-              rejectOp(op.opId, 'Forbidden', op.entity, op.entityId);
-              continue;
-            }
+          const denial = listWriteDenial(currentProjectId, access);
+          if (denial === 'Project is purged' || (denial && !allowEmptyTaskTombstone)) {
+            rejectOp(op.opId, denial, op.entity, op.entityId);
+            continue;
           }
         }
       }
