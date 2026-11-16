@@ -767,6 +767,38 @@ describe('M15b redefinition guard', () => {
     expect(await taskOf(h, third.taskId)).toMatchObject({ status: 2, completedAt: NOW_ISH });
   });
 
+  it('treats an equal SEQUENCE with an older DTSTAMP as stale, records the kept slot, and keeps syncing other UIDs', async () => {
+    const other = (summary: string) => event([], 'other').replace('SUMMARY:Meeting', `SUMMARY:${summary}`);
+    const series = (stamp: string, count: number) => event([`DTSTAMP:${stamp}`, `RRULE:FREQ=WEEKLY;COUNT=${count}`]);
+    const h = createHarness(calendar(series('20260902T000000Z', 3), other('Other'), event([], 'gone')));
+    const source = await seedSource(h);
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 5, errors: 0 });
+    const before = await h.store.listMappings('u-a', source.id);
+    const third = before.find((m) => m.occurrenceId === 'UTC:2026-10-16T01:00:00Z')!;
+    const gone = before.find((m) => m.icsUid === 'gone')!;
+
+    h.setFeed(calendar(series('20260901T000000Z', 2), other('Other renamed')));
+    const stats = await sync(h, 'u-a', source.id, { includeChanges: true });
+    expect(stats).toMatchObject({ updated: 1, deleted: 1, created: 0 });
+    expect(stats.changes?.filter((c) => c.action === 'delete').map((c) => c.taskId)).toEqual([gone.taskId]);
+    expect(stats.changes?.find((c) => c.taskId === third.taskId)).toMatchObject({ action: 'skip', reason: expect.stringMatching(/older source revision/i) });
+    const live = await liveTasks(h);
+    expect(live.some((t) => t.id === third.taskId)).toBe(true);
+    expect(live.some((t) => t.title === 'Other renamed')).toBe(true);
+    expect(live.some((t) => t.id === gone.taskId)).toBe(false);
+  });
+
+  it('keeps the slots of a stale revision whose remaining slots are keyword-excluded', async () => {
+    const h = createHarness(calendar(event(['SEQUENCE:2', 'RRULE:FREQ=WEEKLY;COUNT=3'])));
+    await seedSource(h);
+    const source = await h.store.addSource('u-a', { name: 'Filtered', url: FEED_URL, projectId: 'p1', filter: { excludeKeywords: ['Draft'] } });
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ created: 3, errors: 0 });
+    const third = (await h.store.listMappings('u-a', source.id)).find((m) => m.occurrenceId === 'UTC:2026-10-16T01:00:00Z')!;
+    h.setFeed(calendar(event(['SEQUENCE:1', 'RRULE:FREQ=WEEKLY;COUNT=2']).replace('SUMMARY:Meeting', 'SUMMARY:Draft meeting')));
+    expect(await sync(h, 'u-a', source.id)).toMatchObject({ deleted: 0 });
+    expect((await liveTasks(h)).some((t) => t.id === third.taskId)).toBe(true);
+  });
+
   it('trashes the slots a shorter series drops even when none of it is inside the window', async () => {
     const later = NOW + 30 * 86_400_000;
     const h = createHarness(calendar(event(['RRULE:FREQ=WEEKLY;COUNT=3'])));

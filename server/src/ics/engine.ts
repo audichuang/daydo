@@ -426,9 +426,10 @@ export async function syncSource(
     // mapped slot missing from there was dropped (an earlier UNTIL or COUNT, a removed RDATE). Slots
     // that may lie later stay; the day of slack covers floating slots read as UTC.
     // An older revision of a UID than the one already imported (a stale cache or mirror) says
-    // nothing about which slots exist now, so none of that UID is removed this run.
+    // nothing about which slots exist now, so none of that UID is removed this run. Read before the
+    // keyword filter: an excluded slot still reveals the revision.
     const staleUids = new Set(
-      all.filter((e) => {
+      [...accepted, ...slotCancels].filter((e) => {
         const m = existing.get(identity(e.uid, e.occurrenceId));
         return !!m && m.state !== 'purged' && older(e, m);
       }).map((e) => e.uid),
