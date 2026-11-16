@@ -167,6 +167,18 @@ public final class LocalDayDoAPI: DayDoAPI {
         }
     }
 
+    func canWriteTasks(projectId: String, in db: Database, cache: inout [String: Bool]) throws -> Bool {
+        if let cached = cache[projectId] { return cached }
+        let canWrite: Bool
+        if let p = try ProjectRecord.fetchOne(db, key: projectId), p.deletedAt == nil {
+            canWrite = try canPerform(.writeTasks, in: db, project: p)
+        } else {
+            canWrite = false
+        }
+        cache[projectId] = canWrite
+        return canWrite
+    }
+
     func requirePermission(_ permission: ProjectPermission, in db: Database, project p: ProjectRecord) throws {
         guard try canPerform(permission, in: db, project: p) else {
             switch permission {
@@ -1208,22 +1220,9 @@ extension LocalDayDoAPI {
         let today = today
         return try await writer.write { db in
             var n = 0
-            var projectCache: [String: ProjectRecord] = [:]
             var permissionCache: [String: Bool] = [:]
             for var t in try TaskRecord.filter(Column("deletedAt") == nil && Column("status") == 0 && idSet.contains(Column("id"))).fetchAll(db) {
-                let canWrite: Bool
-                if let cached = permissionCache[t.projectId] {
-                    canWrite = cached
-                } else {
-                    if let p = try projectCache[t.projectId] ?? ProjectRecord.fetchOne(db, key: t.projectId), p.deletedAt == nil {
-                        projectCache[t.projectId] = p
-                        canWrite = try self.canPerform(.writeTasks, in: db, project: p)
-                    } else {
-                        canWrite = false
-                    }
-                    permissionCache[t.projectId] = canWrite
-                }
-                guard canWrite else { continue }
+                guard try self.canWriteTasks(projectId: t.projectId, in: db, cache: &permissionCache) else { continue }
                 guard let s = t.schedule?.localized(to: self.clock.timeZone()), s.lastDay < today else { continue }
                 // Keep the shape; land the last day on today.
                 t.schedule = s.moved(to: today.adding(days: -s.startDay.days(until: s.lastDay)))
@@ -1324,7 +1323,9 @@ extension LocalDayDoAPI {
         let key = name.lowercased()
         try await writer.write { db in
             guard var rec = try TagRecord.fetchOne(db, key: key), rec.deletedAt == nil else { throw DayDoError.notFound("tag", name) }
+            var permissionCache: [String: Bool] = [:]
             for var t in try TaskRecord.fetchAll(db) where t.tags.contains(key) {
+                guard try self.canWriteTasks(projectId: t.projectId, in: db, cache: &permissionCache) else { continue }
                 t.tags.removeAll { $0 == key }
                 t.updatedAt = now
                 try self.saveTask(db, t)

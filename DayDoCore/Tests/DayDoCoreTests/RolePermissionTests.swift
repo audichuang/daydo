@@ -396,6 +396,37 @@ private func makeRoleFixture() async throws -> RoleFixture {
         #expect(viewerAfter.schedule?.startDay == LocalDay("2026-11-10"))
     }
 
+    @Test func deleteTagSkipsViewerTasksWithoutWritingOutbox() async throws {
+        let f = try await makeRoleFixture()
+        let nowMs = EpochMillis(noon.timeIntervalSince1970 * 1000)
+
+        _ = try await f.api.createTag(label: "work", color: nil)
+        _ = try await f.api.updateTask(makeTaskUpdate(f.editorTaskId) { $0.tags = ["work"] })
+        try await f.db.writer.write { db in
+            var viewerTask = try #require(try TaskRecord.fetchOne(db, key: f.viewerTaskId))
+            viewerTask.tags = ["work"]
+            viewerTask.updatedAt = nowMs
+            try viewerTask.update(db)
+        }
+
+        let pendingBefore = try await f.api.pendingChanges(limit: 1000)
+        let viewerOpsBefore = pendingBefore.filter { $0.entity == "task" && $0.entityId == f.viewerTaskId }.count
+
+        try await f.api.deleteTag(name: "work")
+
+        let tagsAfter = try await f.api.listTags()
+        #expect(!tagsAfter.contains { $0.name == "work" })
+
+        let editorAfter = try await f.api.getTask(id: f.editorTaskId)
+        let viewerAfter = try await f.api.getTask(id: f.viewerTaskId)
+        #expect(editorAfter.tags.isEmpty)
+        #expect(viewerAfter.tags == ["work"])
+
+        let pendingAfter = try await f.api.pendingChanges(limit: 1000)
+        let viewerOpsAfter = pendingAfter.filter { $0.entity == "task" && $0.entityId == f.viewerTaskId }.count
+        #expect(viewerOpsAfter == viewerOpsBefore)
+    }
+
     @Test func syncApplierCanApplyRemoteUpdateToTaskInViewerList() async throws {
         let f = try await makeRoleFixture()
         let nowMs = EpochMillis(noon.timeIntervalSince1970 * 1000) + 5_000
