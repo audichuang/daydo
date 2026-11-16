@@ -1,9 +1,7 @@
 import { createDb } from 'void/db';
-import { Scope } from '../../durable-objects/scope';
 import { logEvent } from '../mcp/log';
-import type { ScopeStub } from '../sync/push';
+import { productionToolServices } from '../mcp/services';
 import { syncDueSources, ICS_SOURCES_PER_RUN, type IcsEngineDeps } from './engine';
-import { parseInsecureHosts } from './fetch';
 import { D1IcsStore } from './store';
 
 export interface IcsCronEnv {
@@ -13,14 +11,13 @@ export interface IcsCronEnv {
 }
 
 function productionDeps(env: IcsCronEnv): IcsEngineDeps {
-  const db = createDb(env.DB, { session: 'first-primary' });
-  const insecureHosts = parseInsecureHosts(env.ICS_ALLOW_INSECURE_HOSTS);
+  const services = productionToolServices(createDb(env.DB, { session: 'first-primary' }), env);
   return {
-    store: new D1IcsStore(db),
-    db,
-    getScopeStub: (scope) => Scope.get(scope) as unknown as ScopeStub,
-    ...(env.DEFAULT_TIMEZONE && { defaultTimeZone: env.DEFAULT_TIMEZONE }),
-    ...(insecureHosts.length > 0 && { fetchOptions: { insecureHosts } }),
+    store: new D1IcsStore(services.db),
+    db: services.db,
+    getScopeStub: services.getScopeStub,
+    ...(services.defaultTimeZone && { defaultTimeZone: services.defaultTimeZone }),
+    ...(services.ics?.fetchOptions && { fetchOptions: services.ics.fetchOptions }),
   };
 }
 

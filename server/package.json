@@ -12,8 +12,9 @@
     "e2e": "node scripts/e2e.mjs",
     "e2e:sync": "node scripts/e2e-sync.mjs",
     "e2e:ics": "node scripts/e2e-ics.mjs",
+    "e2e:mcp": "node scripts/e2e-mcp.mjs",
     "smoke:prod": "node scripts/smoke-prod.mjs",
-    "check": "npm run lint && npm run typecheck && npm test && npm run e2e && npm run e2e:sync && npm run e2e:ics"
+    "check": "npm run lint && npm run typecheck && npm test && npm run e2e && npm run e2e:sync && npm run e2e:ics && npm run e2e:mcp"
   },
   "keywords": [],
   "author": "",
