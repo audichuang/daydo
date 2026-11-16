@@ -1,0 +1,277 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "rules": {
+    "max-lines": ["error", { "max": 700, "skipBlankLines": true, "skipComments": true }],
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "@schema",
+            "importNames": ["projectMembership", "listScopes", "purgedProject"],
+            "allowTypeImports": true,
+            "message": "Only src/membership/** may import membership schema tables."
+          }
+        ]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["durable-objects/scope.ts"],
+      "rules": {
+        "max-lines": ["error", { "max": 250, "skipBlankLines": true, "skipComments": true }]
+      }
+    },
+    {
+      "files": ["tests/**", "scripts/**"],
+      "rules": {
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": ["src/membership/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "(^|/)durable-objects(/|$)",
+                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+              },
+              {
+                "regex": "^(\\.\\./)+(auth|oauth|sharing|serverops|mcp|ics|mail|routes|crons|middleware)(/|$)",
+                "message": "src/sync, src/scope, and src/membership must not import upper layers."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/sync/**", "src/scope/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@schema",
+                "importNames": ["projectMembership", "listScopes", "purgedProject"],
+                "allowTypeImports": true,
+                "message": "Only src/membership/** may import membership schema tables."
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "(^|/)durable-objects(/|$)",
+                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+              },
+              {
+                "regex": "^(\\.\\./)+(auth|oauth|sharing|serverops|mcp|ics|mail|routes|crons|middleware)(/|$)",
+                "message": "src/sync, src/scope, and src/membership must not import upper layers."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/domain/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@schema",
+                "importNames": ["projectMembership", "listScopes", "purgedProject"],
+                "allowTypeImports": true,
+                "message": "Only src/membership/** may import membership schema tables."
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "(^|/)durable-objects(/|$)",
+                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+              },
+              {
+                "group": ["**", "!./**"],
+                "message": "src/domain/** may only import modules within src/domain."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/auth/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@schema",
+                "importNames": ["projectMembership", "listScopes", "purgedProject"],
+                "allowTypeImports": true,
+                "message": "Only src/membership/** may import membership schema tables."
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "(^|/)durable-objects(/|$)",
+                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+              },
+              {
+                "regex": "^(\\.\\./)+(oauth|mcp|ics|serverops)(/|$)",
+                "message": "src/auth/** must not import oauth, mcp, ics, or serverops."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/serverops/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@schema",
+                "importNames": ["projectMembership", "listScopes", "purgedProject"],
+                "allowTypeImports": true,
+                "message": "Only src/membership/** may import membership schema tables."
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "(^|/)durable-objects(/|$)",
+                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+              },
+              {
+                "regex": "^(\\.\\./)+(mcp|ics|oauth|sharing|auth)(/|$)",
+                "message": "src/serverops/** must not import mcp, ics, oauth, sharing, or auth."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/mcp/tools/**"],
+      "rules": {
+        "max-lines": ["error", { "max": 500, "skipBlankLines": true, "skipComments": true }],
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@schema",
+                "importNames": ["projectMembership", "listScopes", "purgedProject"],
+                "allowTypeImports": true,
+                "message": "Only src/membership/** may import membership schema tables."
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "(^|/)durable-objects(/|$)",
+                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+              },
+              {
+                "regex": "^(\\.\\./)+sync/(push|pull|merge|entities)(/|$)",
+                "allowTypeImports": true,
+                "message": "mcp/tools/** and ics/** must not value-import sync/(push|pull|merge|entities)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/ics/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@schema",
+                "importNames": ["projectMembership", "listScopes", "purgedProject"],
+                "allowTypeImports": true,
+                "message": "Only src/membership/** may import membership schema tables."
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "(^|/)durable-objects(/|$)",
+                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+              },
+              {
+                "regex": "^(\\.\\./)+sync/(push|pull|merge|entities)(/|$)",
+                "allowTypeImports": true,
+                "message": "mcp/tools/** and ics/** must not value-import sync/(push|pull|merge|entities)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/mcp/services.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@schema",
+                "importNames": ["projectMembership", "listScopes", "purgedProject"],
+                "allowTypeImports": true,
+                "message": "Only src/membership/** may import membership schema tables."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/**"],
+      "excludeFiles": [
+        "src/membership/**",
+        "src/sync/**",
+        "src/scope/**",
+        "src/domain/**",
+        "src/auth/**",
+        "src/serverops/**",
+        "src/mcp/tools/**",
+        "src/ics/**",
+        "src/mcp/services.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@schema",
+                "importNames": ["projectMembership", "listScopes", "purgedProject"],
+                "allowTypeImports": true,
+                "message": "Only src/membership/** may import membership schema tables."
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "(^|/)durable-objects(/|$)",
+                "message": "src/** must not import durable-objects/ (except src/mcp/services.ts)."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
