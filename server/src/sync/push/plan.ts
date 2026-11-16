@@ -6,6 +6,7 @@ import {
   type EntityName,
   type MembershipRole,
 } from '../entities';
+import { listWriteDenial } from '../access';
 import { entityHomeKey, type ParsedPushOp } from './parse';
 
 export interface NewEntityHomeEntry {
@@ -249,31 +250,19 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
       results[i] = rejectedResult(op.opId, 'Project is purged');
       continue;
     }
-    if (
-      op.entity === 'task' &&
-      op.op === 'upsert' &&
-      Object.hasOwn(op.row, 'projectId') &&
-      typeof op.row.projectId === 'string' &&
-      purgedSet.has(op.row.projectId)
-    ) {
-      inBatchRejectedTasks.set(op.entityId, 'Project is purged');
-      results[i] = rejectedResult(op.opId, 'Project is purged');
-      continue;
-    }
     if (op.entity === 'task' && op.op === 'upsert') {
       const targetPid =
         Object.hasOwn(op.row, 'projectId') && typeof op.row.projectId === 'string'
           ? op.row.projectId
           : '';
-      const targetRole = targetPid ? memberships[targetPid] : undefined;
+      // A list created or claimed earlier in this batch has no D1 role yet; that only waives Forbidden.
+      const denial = targetPid ? listWriteDenial(targetPid, context) : 'Forbidden';
       if (
-        !inBatchNewProjects.has(targetPid) &&
-        !projectOwnerBackfills.has(targetPid) &&
-        targetRole !== 'owner' &&
-        targetRole !== 'editor'
+        denial === 'Project is purged' ||
+        (denial && !inBatchNewProjects.has(targetPid) && !projectOwnerBackfills.has(targetPid))
       ) {
-        inBatchRejectedTasks.set(op.entityId, 'Forbidden');
-        results[i] = rejectedResult(op.opId, 'Forbidden');
+        inBatchRejectedTasks.set(op.entityId, denial);
+        results[i] = rejectedResult(op.opId, denial);
         continue;
       }
     }
