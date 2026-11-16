@@ -1,5 +1,5 @@
 import type { EntityName, MembershipRole } from '../sync/entities';
-import type { OpEnvelope } from '../sync/envelope';
+import type { SyncOpValidation } from '../sync/envelope';
 
 export interface PushOpResult {
   opId: string;
@@ -18,8 +18,17 @@ export interface ScopePushInput {
   memberships: Record<string, MembershipRole>;
   purgedProjects: string[];
   meMemberId: string | null;
-  /** Ops in push order, each validated once by the caller (invalid ones too: they reject here). */
-  ops: OpEnvelope[];
+  /**
+   * Raw ops in push order, exactly as the client sent them (invalid ones too: they reject here).
+   * This RPC must stay forward and backward compatible: during a deploy old and new Workers and
+   * DOs run side by side, and an older DO reads and validates `ops` itself.
+   */
+  ops: unknown[];
+  /**
+   * The Worker's validation of each op, parallel to `ops`. Optional so an older Worker (which does
+   * not send it) still works: the DO validates `ops` itself when it is absent or misaligned.
+   */
+  validated?: SyncOpValidation[];
 }
 
 export interface ScopePushResponse {

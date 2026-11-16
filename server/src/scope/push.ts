@@ -7,6 +7,7 @@ import {
 import type { clampHlc, Hlc } from '../sync/hlc';
 import type { ListAccess } from '../sync/access';
 import { mergeOp } from '../sync/merge';
+import { envelopeOf, toEnvelope, type OpEnvelope } from '../sync/envelope';
 import { authorizeOp } from './authorize';
 import { rowView } from './rowView';
 import type { PushOpResult, ScopePushInput, ScopePushResponse } from './api';
@@ -19,6 +20,18 @@ export interface ScopePushClock {
 }
 
 const PROJECT_NON_CREATOR_IGNORED_FIELDS = new Set<string>(['folderId']);
+
+/**
+ * The batch's envelopes: the Worker's validations when it sent one per op, otherwise (an older
+ * Worker) the DO validates the raw ops itself. Decided for the whole input, never per op.
+ */
+export function pushEnvelopes(input: ScopePushInput): OpEnvelope[] {
+  const { ops, validated } = input;
+  if (Array.isArray(validated) && validated.length === ops.length) {
+    return ops.map((raw, i) => envelopeOf(raw, validated[i]));
+  }
+  return ops.map(toEnvelope);
+}
 
 export function processPushBatch(
   store: ScopeStore,
@@ -113,7 +126,7 @@ export function processPushBatch(
     });
   };
 
-  for (const envelope of input.ops) {
+  for (const envelope of pushEnvelopes(input)) {
     const { rec, rawOpId } = envelope;
     const rawEntityId = envelope.entityId;
     const rawEntity = rawEntityId !== null ? envelope.entity : null;

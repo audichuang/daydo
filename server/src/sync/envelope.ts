@@ -6,8 +6,8 @@ export const MAX_OPS_PER_PUSH = 200;
 export type SyncOpValidation = ReturnType<typeof validateSyncOp>;
 
 /**
- * One push op as received, validated exactly once and carried as plain data from the D1 planner
- * to the Scope DO (it crosses the RPC boundary, so no class instances or functions).
+ * One push op as received, validated exactly once. The Worker sends the Scope DO the raw ops plus
+ * a parallel list of validations (see ScopePushInput), and the DO rebuilds the envelopes.
  */
 export interface OpEnvelope {
   /** The op object as sent, or null when it was not a JSON object (replay reads `rec.row.isMe`). */
@@ -23,6 +23,14 @@ export interface OpEnvelope {
 
 /** Wraps a raw op; the only place validateSyncOp runs for push traffic. */
 export function toEnvelope(raw: unknown): OpEnvelope {
+  return envelopeOf(raw, validateSyncOp(raw));
+}
+
+/**
+ * Wraps a raw op with a validation the caller already computed for that same op (the Worker's,
+ * carried to the Scope DO next to the raw ops); never validates.
+ */
+export function envelopeOf(raw: unknown, validated: SyncOpValidation): OpEnvelope {
   const rec =
     raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
   const rawOpId = rec && typeof rec.opId === 'string' ? rec.opId : '';
@@ -31,5 +39,5 @@ export function toEnvelope(raw: unknown): OpEnvelope {
     entity && rec && typeof rec.entityId === 'string' && parseEntityId(entity, rec.entityId)
       ? rec.entityId
       : null;
-  return { rec, rawOpId, entity, entityId, validated: validateSyncOp(raw) };
+  return { rec, rawOpId, entity, entityId, validated };
 }

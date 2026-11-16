@@ -24,6 +24,11 @@ export type ScopePushResult = Awaited<ReturnType<ScopeStub['push']>>;
 
 export interface CreateScopeWorldOptions {
   syncFault?: 'none' | 'split-txn';
+  /** Scope DO class to instantiate per scope (defaults to the current ScopeObject). */
+  scopeClass?: new (
+    ctx: DurableObjectState,
+    env: { SYNC_FAULT: 'none' | 'split-txn' },
+  ) => unknown;
   onPush?: (
     input: ScopePushInput,
     proceed: (input: ScopePushInput) => Promise<ScopePushResult>,
@@ -34,6 +39,7 @@ export interface CreateScopeWorldOptions {
 export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
   const syncFault = options.syncFault ?? 'none';
   const { d1, db, sqlite, trace } = createTestD1();
+  const DoClass = options.scopeClass ?? ScopeClass;
   const scopes = new Map<string, InstanceType<typeof ScopeObject>>();
   const scopeSqlites = new Map<string, ReturnType<typeof createTestDoState>['sqlite']>();
   const calls: PushCall[] = [];
@@ -43,7 +49,9 @@ export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
     let instance = scopes.get(scope);
     if (!instance) {
       const doState = createTestDoState();
-      instance = new ScopeClass(doState.ctx, { SYNC_FAULT: syncFault });
+      instance = new DoClass(doState.ctx, { SYNC_FAULT: syncFault }) as InstanceType<
+        typeof ScopeObject
+      >;
       scopes.set(scope, instance);
       scopeSqlites.set(scope, doState.sqlite);
     }
@@ -52,8 +60,8 @@ export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
       calls.push({
         scope: nextInput.scope,
         deviceId: nextInput.deviceId,
-        // Record the ops as sent; only object ops are ever routed to a scope, so rec is set.
-        ops: nextInput.ops.map((e) => e.rec as Record<string, unknown>),
+        // Only object ops are ever routed to a scope.
+        ops: nextInput.ops as Array<Record<string, unknown>>,
       });
       return stub.push(nextInput);
     };

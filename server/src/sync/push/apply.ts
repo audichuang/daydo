@@ -342,7 +342,8 @@ async function dispatchScopeBatches(
           memberships: membershipsSnapshot,
           purgedProjects: purgedList,
           meMemberId: scope === pusherScope ? currentMeMemberId : null,
-          ops: group.map((g) => g.op),
+          ops: group.map((g) => g.op.rec),
+          validated: group.map((g) => g.op.validated),
         });
         return { scope, group, response };
       }),

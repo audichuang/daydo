@@ -128,6 +128,8 @@ npx void connect --platform cloudflare
 
 Production secrets are already set on the Worker. To change one, use `void secret put <NAME>` (reads stdin) or `void secret sync <file outside the repo> --yes`. Required: `JWT_SECRET`, `GOOGLE_AUDIENCE`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`.
 
+Worker ↔ Durable Object RPC changes (for example `ScopePushInput` in `src/scope/api.ts`) must be forward and backward compatible: a deploy rolls out Workers and DOs independently, so old and new versions call each other for a while. Add optional fields instead of reshaping existing ones; `tests/scope-rpc-compat.test.ts` pins the push RPC against the 701de08 Scope DO.
+
 Do not run `vite build` or other builds in this directory while `void deploy` is running: a non-deploy build rewrites `dist/` and the deploy refuses the output.
 
 Deploy to Cloudflare Workers (behind Cloudflare Access at `https://daydo-api.audichuang.app`):
