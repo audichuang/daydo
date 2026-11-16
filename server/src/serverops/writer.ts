@@ -24,6 +24,7 @@ import {
 import { executeSyncPush, type AppDb, type ScopeStub } from '../sync/push';
 import { serverClock } from '../sync/serverClock';
 import type { Snapshot } from './snapshot';
+import { isNil, sameValue } from './values';
 
 export const MAX_OPS_PER_PUSH = 200;
 export const NO_DATA_MESSAGE = '請先在 DayDo App 登入並同步一次';
@@ -131,10 +132,6 @@ interface PlannedOp {
 
 function keyField(entity: WritableEntity): string {
   return entity === 'tag' ? 'name' : 'id';
-}
-
-function isNil(v: unknown): boolean {
-  return v === null || v === undefined;
 }
 
 function maxClockMs(clocks: Record<string, string>): number {
@@ -332,13 +329,6 @@ function planOps(
     .map((p, order) => ({ p, order }))
     .sort((a, b) => rank(a.p.op.entity) - rank(b.p.op.entity) || a.order - b.order)
     .map(({ p }) => p);
-}
-
-function sameValue(a: unknown, b: unknown): boolean {
-  const x = isNil(a) ? null : a;
-  const y = isNil(b) ? null : b;
-  if (Array.isArray(x) || Array.isArray(y)) return JSON.stringify(x) === JSON.stringify(y);
-  return x === y;
 }
 
 function classify(
