@@ -1588,6 +1588,7 @@ describe('Scope DO T5a regression fixes', () => {
         pull: (input) => real.pull(input),
         getInboxProjectId: (input) => real.getInboxProjectId(input),
         getProjectInfo: (input) => real.getProjectInfo(input),
+        getAttachmentInfo: (input) => real.getAttachmentInfo(input),
         projectMember: (input) => real.projectMember(input),
         purgeProject: (input) => real.purgeProject(input),
         push: async (input) => {

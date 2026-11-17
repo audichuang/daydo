@@ -72,6 +72,11 @@ All sync endpoints require `Authorization: Bearer <accessToken>`.
   - Pulls the requester's own scope plus every scope in `listScopes` for active memberships (or `backfill` scopes for those projects), omitting `project.folderId` for non-creators and returning `{ entity, entityId, gone: true, serverSeq }` departures when a row leaves a list and is no longer readable.
   - Reconciles any missed `projectMember` projections and retries any pending `purgedProject` scope purges before reading rows.
   - Response: `{ scopes: [{ scope, rows: [{ entity, row, clocks, serverSeq } | { entity, entityId, gone: true, serverSeq }], cursor, hasMore }], memberships: [{ projectId, scope, role }], members: [{ id, userId, name, initial, color, avatarUrl, isMe, createdAt, updatedAt }] }`
+- `PUT /attachments/<id>/content` and `GET /attachments/<id>/content` (API host only; 404 on MCP host)
+  - Stores and serves raw attachment file bytes in Cloudflare R2 (`STORAGE` binding, key `att/<taskId>/<attachmentId>`, max 20 MB).
+  - `PUT` requires write permission on the parent task's current list and exact body size match (`204`; `404` `attachment-not-found`; `410` `attachment-deleted`; `403` `Forbidden`; `413` > 20 MB; `400` `size-mismatch`).
+  - `GET` requires list membership (`200` with `Content-Type` from the attachment row and `Content-Length`; `404` if missing/soft-deleted/not yet uploaded; `403` if not a member).
+  - Permanently deleting a task (`op: 'delete'`) cleans up `att/<taskId>/` objects from R2 (best-effort); soft deletion (`deletedAt`) keeps the object.
 
 ## Sharing & Invite Endpoints
 
@@ -144,6 +149,8 @@ npx void connect --platform cloudflare
 
 Production secrets are already set on the Worker. To change one, use `void secret put <NAME>` (reads stdin) or `void secret sync <file outside the repo> --yes`. Required: `JWT_SECRET`, `GOOGLE_AUDIENCE`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`.
 
+R2 object storage (`STORAGE` binding via `void/storage`) is inferred from `src/deps.ts` and `void.config.ts`. During `npx void deploy --platform cloudflare`, Void automatically creates or adopts the R2 bucket `daydo-api-storage` and records it in `void.lock.json` (to create it manually beforehand, run `CLOUDFLARE_ACCOUNT_ID=<account_id from void.lock.json> cf r2 buckets create --name daydo-api-storage` from a temp directory). Locally, `vite` / `void dev` runs an in-process R2 simulator.
+
 Worker ↔ Durable Object RPC changes (for example `ScopePushInput` in `src/scope/api.ts`) must be forward and backward compatible: a deploy rolls out Workers and DOs independently, so old and new versions call each other for a while. Add optional fields instead of reshaping existing ones; `tests/scope-rpc-compat.test.ts` pins the push RPC against the 701de08 Scope DO.
 
 Do not run `vite build` or other builds in this directory while `void deploy` is running: a non-deploy build rewrites `dist/` and the deploy refuses the output.
@@ -161,6 +168,10 @@ Verify the deployed Worker with the smoke test:
 ```bash
 CF_ACCESS_CLIENT_ID=... CF_ACCESS_CLIENT_SECRET=... npm run smoke:prod
 ```
+
+After deploying attachment R2 support, also verify on `api.daydoapp.com`:
+- Push an `attachment` row, `PUT /attachments/<id>/content` with Access + Bearer token returns `204`, and `GET /attachments/<id>/content` returns `200` with the uploaded bytes and `Content-Type`.
+- `GET https://mcp.daydoapp.com/attachments/<id>/content` returns `404`.
 
 ## MCP Server (`mcp.daydoapp.com`)
 

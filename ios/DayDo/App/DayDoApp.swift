@@ -362,6 +362,7 @@ actor DebugStubTransport: SyncTransport {
     private var didPullSeed = false
     private var sawChecklistPush = false
     private var didPushRemoteContent = false
+    private var didFailAttachmentOnce = false
     private var pushedMeId: String?
     private var pushedMeColor: String?
 
@@ -426,6 +427,75 @@ actor DebugStubTransport: SyncTransport {
 
         if method == "POST" && path == "/sync/pull" {
             let args = ProcessInfo.processInfo.arguments
+            if args.contains("-DayDoDebugRemoteAttachment"), !didPullSeed {
+                didPullSeed = true
+                let today = Clock.system.today.description
+                let projectId = "debug-att-proj-1"
+                let taskId = "debug-att-task-1"
+                let attId = "debug-remote-att-1"
+                return try jsonResponse(200, [
+                    "scopes": [[
+                        "scope": "u:debug-user",
+                        "rows": [
+                            [
+                                "entity": "project",
+                                "row": [
+                                    "id": projectId,
+                                    "name": "附件測試清單",
+                                    "color": "#4AA8E8",
+                                    "viewMode": "list",
+                                    "kind": "TASK",
+                                    "isInbox": false,
+                                    "ownerId": "debug-owner-1",
+                                    "sortKey": "z1",
+                                    "showInSmart": "all",
+                                    "notifyMode": "all",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["name": serverHLC],
+                                "serverSeq": 1,
+                            ],
+                            [
+                                "entity": "task",
+                                "row": [
+                                    "id": taskId,
+                                    "projectId": projectId,
+                                    "title": "遠端附件任務",
+                                    "content": "",
+                                    "priority": 0,
+                                    "status": 0,
+                                    "startDay": today,
+                                    "reminders": [],
+                                    "tags": [],
+                                    "sortKey": "a0",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["title": serverHLC, "schedule": serverHLC],
+                                "serverSeq": 2,
+                            ],
+                            [
+                                "entity": "attachment",
+                                "row": [
+                                    "id": attId,
+                                    "taskId": taskId,
+                                    "fileName": "notes.txt",
+                                    "size": 12,
+                                    "mimeType": "text/plain",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["fileName": serverHLC],
+                                "serverSeq": 3,
+                            ],
+                        ],
+                        "cursor": 3,
+                        "hasMore": false,
+                    ]],
+                    "members": [],
+                ])
+            }
             let seedRemoteContent = args.contains("-DayDoDebugRemoteContentUpdate")
             if seedRemoteContent && !didPullSeed {
                 didPullSeed = true
@@ -810,6 +880,15 @@ actor DebugStubTransport: SyncTransport {
                 "scopes": [],
                 "members": [],
             ])
+        }
+
+        if method == "GET" && path == "/attachments/debug-remote-att-1/content" {
+            if ProcessInfo.processInfo.arguments.contains("-DayDoDebugRemoteAttachmentFailOnce") && !didFailAttachmentOnce {
+                didFailAttachmentOnce = true
+                return try jsonResponse(500, ["error": "Temporary failure"])
+            }
+            try await Task.sleep(for: .milliseconds(250))
+            return SyncHTTPResponse(status: 200, body: Data("hello remote".utf8))
         }
 
         if method == "GET" && path == "/invites/slow-ok" {

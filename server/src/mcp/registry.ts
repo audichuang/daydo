@@ -1,5 +1,6 @@
 // MCP tool registry: definitions, behaviour hints, argument validation (spec/mcp.md 5, 8).
 
+import { attachmentTools } from './tools/attachments';
 import { icsTools } from './tools/ics';
 import { projectTools } from './tools/projects';
 import { tagTools } from './tools/tags';
@@ -29,6 +30,7 @@ export const HINTS: Record<string, Hint> = {
   delete_task: 'destructive',
   move_task: 'idempotent-write',
   move_all: 'idempotent-write',
+  upload_attachment: 'write',
   add_ics_source: 'write',
   list_ics_sources: 'read',
   remove_ics_source: 'destructive',
@@ -39,7 +41,14 @@ export const HINTS: Record<string, Hint> = {
 /** Only tools that fetch caller-supplied external URLs. */
 export const OPEN_WORLD = new Set<string>(['add_ics_source', 'sync_ics_now']);
 
-export const TOOLS: readonly ToolDef[] = [...projectTools(), ...tagTools(), ...taskReadTools(), ...taskWriteTools(), ...icsTools()];
+export const TOOLS: readonly ToolDef[] = [
+  ...projectTools(),
+  ...tagTools(),
+  ...taskReadTools(),
+  ...taskWriteTools(),
+  ...attachmentTools(),
+  ...icsTools(),
+];
 
 export interface ToolDescriptor {
   name: string;

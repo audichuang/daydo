@@ -137,8 +137,6 @@ public struct RemoteListSharing: ListSharing, Sendable {
     }
 
     private static func percentEncodePathComponent(_ value: String) -> String {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+        SyncEngine.percentEncodePathComponent(value)
     }
 }

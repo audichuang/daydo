@@ -659,6 +659,7 @@ describe('T5c sharing — invites, membership, permissions, backfill, and purge'
         pull: (i) => real.pull(i),
         getInboxProjectId: (i) => real.getInboxProjectId(i),
         getProjectInfo: (i) => real.getProjectInfo(i),
+        getAttachmentInfo: (i) => real.getAttachmentInfo(i),
         projectMember: (i) => real.projectMember(i),
         async purgeProject(i) {
           if (failB) {

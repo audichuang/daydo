@@ -1529,4 +1529,38 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(titleField.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertEqual(titleField.value as? String, "訂機票")
     }
+
+    @MainActor
+    func testRemoteAttachmentDownloadsAndOpensPreview() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        app.terminate()
+        app.launchArguments = [
+            "-DayDoReset",
+            "-DayDoDebugStub",
+            "-DayDoDebugRemoteAttachment",
+            "-DayDoDebugRemoteAttachmentFailOnce",
+        ]
+        app.launch()
+        dismissNotificationPrompt()
+
+        let taskRow = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS '遠端附件任務' AND NOT (label BEGINSWITH '完成：')")
+        ).firstMatch
+        XCTAssertTrue(taskRow.waitForExistence(timeout: 5), app.debugDescription)
+        taskRow.tap()
+
+        let attRow = app.buttons.matching(NSPredicate(format: "label CONTAINS 'notes.txt'")).firstMatch
+        XCTAssertTrue(attRow.waitForExistence(timeout: 3), app.debugDescription)
+
+        // First tap hits 500 -> shows inline retry prompt.
+        attRow.tap()
+        let retryLabel = app.staticTexts["下載失敗，點一下重試"]
+        XCTAssertTrue(retryLabel.waitForExistence(timeout: 5), app.debugDescription)
+
+        // Second tap downloads and opens QuickLook preview.
+        attRow.tap()
+        // QuickLook titles the bar with the file name without its extension.
+        let qlNav = app.navigationBars.matching(NSPredicate(format: "identifier BEGINSWITH 'notes'")).firstMatch
+        XCTAssertTrue(qlNav.waitForExistence(timeout: 5), app.debugDescription)
+    }
 }

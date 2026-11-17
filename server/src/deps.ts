@@ -2,6 +2,7 @@
 // and resolves Scope DO stubs. Keep this file at the bottom of the import graph: no void/env,
 // no src/mcp, src/ics or src/oauth.
 import { createDb } from 'void/db';
+import { createStorage } from 'void/storage';
 import { Scope } from '../durable-objects/scope';
 import { systemNow, type GetNow } from './clock';
 import { selectMailer, type Mailer } from './mail/mailer';
@@ -15,11 +16,13 @@ export interface AppDeps {
   getScopeStub: (scope: string) => ScopeStub;
   getNow: GetNow;
   mailer: Mailer;
+  storage: R2Bucket | null;
 }
 
 export interface AppBindings {
   DB: Parameters<typeof createDb>[0];
   EMAIL?: SendEmail;
+  STORAGE?: Parameters<typeof createStorage>[0];
 }
 
 /**
@@ -32,5 +35,6 @@ export function productionAppDeps(bindings: AppBindings): AppDeps {
     getScopeStub: (scope) => Scope.get(scope),
     getNow: systemNow,
     mailer: selectMailer({ binding: bindings.EMAIL }),
+    storage: bindings.STORAGE ? createStorage(bindings.STORAGE) : null,
   };
 }

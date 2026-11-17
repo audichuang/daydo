@@ -16,7 +16,7 @@ export const NOW_ISH = 1_700_000_000_000;
 
 export function createServerHarness(options: CreateScopeWorldOptions = {}) {
   const world = createScopeWorld(options);
-  const { db, calls, clock, getScopeStub, push, pull } = world;
+  const { db, calls, clock, storage, getScopeStub, push, pull } = world;
   let seq = 0;
   // Device HLCs sit in the past unless a test asks for a lead.
   const deviceHlc = (ms = Date.now() - 60_000) => `${ms}:${String(seq++ % 10000).padStart(4, '0')}:dev-a`;
@@ -27,12 +27,13 @@ export function createServerHarness(options: CreateScopeWorldOptions = {}) {
   const toolContext = (userId: string): ToolContext => ({
     userId,
     clientId: 'test',
-    services: { db, getScopeStub, getNow: world.deps.getNow },
+    services: { db, getScopeStub, storage, getNow: world.deps.getNow },
   });
   return {
     db,
     calls,
     clock,
+    storage,
     getScopeStub,
     world,
     deviceHlc,

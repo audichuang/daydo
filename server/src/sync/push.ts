@@ -18,6 +18,7 @@ interface SyncPushParams {
   deviceId: string;
   getScopeStub: (scope: string) => ScopeStub;
   clock?: ServerHlcClock;
+  storage?: R2Bucket | null;
 }
 
 interface SyncPushResult {
@@ -43,7 +44,7 @@ export async function executeParsedSyncPush(
   db: AppDb,
   params: SyncPushParams & { envelopes: readonly OpEnvelope[] },
 ): Promise<SyncPushResult> {
-  const { userId, deviceId, envelopes, getScopeStub, clock } = params;
+  const { userId, deviceId, envelopes, getScopeStub, clock, storage } = params;
   const nowMs = Date.now();
   const pusherScope = userScope(userId);
   const nextServerTime = (timeMs: number, observed: string[] = []): string =>
@@ -73,6 +74,7 @@ export async function executeParsedSyncPush(
     context,
     plan,
     getScopeStub,
+    storage,
   });
 
   return {

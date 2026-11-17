@@ -1,5 +1,11 @@
 import { dbRecordToState, isEntityName, type EntityName } from '../sync/entities';
-import type { PullScopeRow, ScopeProjectInfo, ScopePullInput, ScopePullResponse } from './api';
+import type {
+  PullScopeRow,
+  ScopeAttachmentInfo,
+  ScopeProjectInfo,
+  ScopePullInput,
+  ScopePullResponse,
+} from './api';
 import { rowView } from './rowView';
 import { LIST_SCOPED_ENTITIES } from './store';
 
@@ -32,6 +38,39 @@ export function getProjectInfo(sql: SqlStorage, input: { projectId: string }): S
   return {
     name: String(rows[0].name),
     purgedAt: typeof rows[0].purgedAt === 'number' ? rows[0].purgedAt : null,
+  };
+}
+
+export function getAttachmentInfo(
+  sql: SqlStorage,
+  input: { attachmentId: string },
+): ScopeAttachmentInfo | null {
+  const rows = sql
+    .exec(
+      `SELECT a.id, a.taskId, a.size, a.mimeType, a.projectId AS attachmentProjectId,
+              a.deletedAt, a.purgedAt,
+              t.projectId AS taskProjectId, t.purgedAt AS taskPurgedAt
+       FROM attachment a
+       LEFT JOIN task t ON t.id = a.taskId
+       WHERE a.id = ?`,
+      input.attachmentId,
+    )
+    .toArray();
+  if (rows.length === 0) return null;
+  const r = rows[0];
+  const taskProjectId =
+    typeof r.taskProjectId === 'string' && r.taskProjectId.length > 0 ? r.taskProjectId : null;
+  const attachmentProjectId =
+    typeof r.attachmentProjectId === 'string' ? r.attachmentProjectId : '';
+  return {
+    id: String(r.id),
+    taskId: String(r.taskId),
+    projectId: taskProjectId ?? attachmentProjectId,
+    size: Number(r.size),
+    mimeType: typeof r.mimeType === 'string' ? r.mimeType : '',
+    deletedAt: typeof r.deletedAt === 'number' ? r.deletedAt : null,
+    purgedAt: typeof r.purgedAt === 'number' ? r.purgedAt : null,
+    taskPurgedAt: typeof r.taskPurgedAt === 'number' ? r.taskPurgedAt : null,
   };
 }
 

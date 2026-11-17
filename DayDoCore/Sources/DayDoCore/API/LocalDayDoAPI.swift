@@ -3,15 +3,26 @@ import GRDB
 
 /// On-device implementation of `DayDoAPI` backed by SQLite. Every write
 /// appends to the `change` outbox in the same transaction.
-final class LocalDayDoAPI: DayDoAPI {
+final class LocalDayDoAPI: DayDoAPI, @unchecked Sendable {
     let database: AppDatabase
     let clock: Clock
     let attachmentsDirectory: URL
+
+    private let syncEngineLock = NSLock()
+    private weak var _syncEngine: SyncEngine?
 
     init(database: AppDatabase, clock: Clock = .system, attachmentsDirectory: URL) {
         self.database = database
         self.clock = clock
         self.attachmentsDirectory = attachmentsDirectory
+    }
+
+    func setSyncEngine(_ engine: SyncEngine?) {
+        syncEngineLock.withLock { _syncEngine = engine }
+    }
+
+    private var syncEngine: SyncEngine? {
+        syncEngineLock.withLock { _syncEngine }
     }
 
     var writer: any DatabaseWriter { database.writer }
@@ -508,6 +519,34 @@ extension LocalDayDoAPI {
     }
 
     public func duplicateProject(id: String) async throws -> Project {
+        let missingAttachments = try await writer.read { db -> [Attachment] in
+            let src = try self.projectRecord(db, id)
+            if src.isInbox { throw DayDoError.invalid("The inbox cannot be duplicated") }
+            let taskIds = try String.fetchAll(
+                db,
+                sql: "SELECT id FROM task WHERE projectId = ? AND deletedAt IS NULL AND status = 0",
+                arguments: [id]
+            )
+            guard !taskIds.isEmpty else { return [] }
+            let atts = try AttachmentRecord
+                .filter(taskIds.contains(Column("taskId")) && Column("deletedAt") == nil)
+                .order(Column("createdAt"))
+                .fetchAll(db)
+            return atts.compactMap { att -> Attachment? in
+                if let rel = att.localPath, !rel.isEmpty,
+                   FileManager.default.fileExists(atPath: self.attachmentsDirectory.appendingPathComponent(rel).path) {
+                    return nil
+                }
+                return Attachment(
+                    id: att.id, fileName: att.fileName, size: att.size, mimeType: att.mimeType,
+                    localPath: att.localPath, originalPath: att.originalPath, createdAt: att.createdAt
+                )
+            }
+        }
+        for att in missingAttachments {
+            _ = try? await attachmentFile(att)
+        }
+
         let now = now()
         return try await writer.write { db in
             let src = try self.projectRecord(db, id)
@@ -564,29 +603,24 @@ extension LocalDayDoAPI {
                     .order(Column("createdAt"))
                     .fetchAll(db)
                 for att in atts {
+                    guard let oldRel = att.localPath, !oldRel.isEmpty else { continue }
+                    let srcURL = self.attachmentsDirectory.appendingPathComponent(oldRel)
+                    guard FileManager.default.fileExists(atPath: srcURL.path) else { continue }
                     let newAttId = ID.make()
-                    var newRel: String?
-                    if let oldRel = att.localPath {
-                        let srcURL = self.attachmentsDirectory.appendingPathComponent(oldRel)
-                        if FileManager.default.fileExists(atPath: srcURL.path) {
-                            let safeName = att.fileName.replacingOccurrences(of: "/", with: "_")
-                            let rel = "\(newAttId)/\(safeName)"
-                            let dstURL = self.attachmentsDirectory.appendingPathComponent(rel)
-                            try FileManager.default.createDirectory(at: dstURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                            // Remove the copy if the transaction rolls back, including a failed COMMIT.
-                            let dir = dstURL.deletingLastPathComponent()
-                            db.afterNextTransaction(onCommit: { _ in }, onRollback: { _ in try? FileManager.default.removeItem(at: dir) })
-                            try FileManager.default.copyItem(at: srcURL, to: dstURL)
-                            newRel = rel
-                        }
-                    }
+                    let rel = self.attachmentRelativePath(id: newAttId, fileName: att.fileName)
+                    let dstURL = self.attachmentsDirectory.appendingPathComponent(rel)
+                    try FileManager.default.createDirectory(at: dstURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    // Remove the copy if the transaction rolls back, including a failed COMMIT.
+                    let dir = dstURL.deletingLastPathComponent()
+                    db.afterNextTransaction(onCommit: { _ in }, onRollback: { _ in try? FileManager.default.removeItem(at: dir) })
+                    try FileManager.default.copyItem(at: srcURL, to: dstURL)
                     let ac = AttachmentRecord(
                         id: newAttId,
                         taskId: tc.id,
                         fileName: att.fileName,
                         size: att.size,
                         mimeType: att.mimeType,
-                        localPath: newRel,
+                        localPath: rel,
                         originalPath: att.originalPath,
                         createdAt: now,
                         updatedAt: now
@@ -1388,10 +1422,19 @@ extension LocalDayDoAPI {
         }
     }
 
+    private func attachmentRelativePath(id: String, fileName: String) -> String {
+        let rawName = fileName.replacingOccurrences(of: "/", with: "_")
+        let safeName = (rawName.isEmpty || rawName == "." || rawName == "..") ? "file" : rawName
+        return "\(id)/\(safeName)"
+    }
+
     public func uploadAttachment(taskId: String, fileName: String, data: Data, mimeType: String, originalPath: String?) async throws -> Attachment {
+        guard data.count <= Attachment.maxBytes else {
+            throw DayDoError.invalid("檔案超過 20 MB")
+        }
         let id = ID.make()
-        let safeName = fileName.replacingOccurrences(of: "/", with: "_")
-        let rel = "\(id)/\(safeName)"
+        let rel = attachmentRelativePath(id: id, fileName: fileName)
+        let safeName = String(rel.dropFirst(id.count + 1))
         let url = attachmentsDirectory.appendingPathComponent(rel)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)
@@ -1431,6 +1474,50 @@ extension LocalDayDoAPI {
         attachment.localPath.map { attachmentsDirectory.appendingPathComponent($0) }
     }
 
+    public func attachmentFile(_ attachment: Attachment) async throws -> URL {
+        let rec = try await writer.read { db -> AttachmentRecord in
+            guard let found = try AttachmentRecord.fetchOne(db, key: attachment.id), found.deletedAt == nil else {
+                throw DayDoError.notFound("attachment", attachment.id)
+            }
+            return found
+        }
+
+        if let rel = rec.localPath ?? attachment.localPath, !rel.isEmpty {
+            let localURL = attachmentsDirectory.appendingPathComponent(rel)
+            if FileManager.default.fileExists(atPath: localURL.path) {
+                return localURL
+            }
+        }
+
+        guard let syncEngine, try await syncEngine.isSignedIn else {
+            throw DayDoError.invalid("尚未登入伺服器，無法下載附件")
+        }
+
+        let data = try await syncEngine.downloadAttachmentContent(id: rec.id)
+        let rel = attachmentRelativePath(id: rec.id, fileName: rec.fileName)
+        let url = attachmentsDirectory.appendingPathComponent(rel)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+
+        let uploadedAt = now()
+        let updated = try await writer.write { db -> Bool in
+            try db.execute(
+                sql: """
+                    UPDATE attachment
+                    SET localPath = ?, fileUploadedAt = COALESCE(fileUploadedAt, ?)
+                    WHERE id = ? AND deletedAt IS NULL
+                    """,
+                arguments: [rel, uploadedAt, rec.id]
+            )
+            return db.changesCount > 0
+        }
+        if !updated {
+            try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+            throw DayDoError.notFound("attachment", rec.id)
+        }
+        return url
+    }
+
     public func upcomingReminders(limit: Int = 60) async throws -> [ScheduledReminder] {
         let now = clock.now()
         return try await writer.read { db in
@@ -1461,9 +1548,14 @@ extension LocalDayDoAPI {
     func unsyncedChangeCount() async throws -> Int {
         try await writer.read { db in
             // Invite records are tracked locally and do not go through the sync outbox count.
-            try ChangeRecord
+            let pendingChanges = try ChangeRecord
                 .filter(Column("ackedAt") == nil && Column("entity") != "projectInvite")
                 .fetchCount(db)
+            let localOnlyAttachments = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM attachment
+                WHERE \(AttachmentRecord.localOnlyFileWhereClause)
+                """) ?? 0
+            return pendingChanges + localOnlyAttachments
         }
     }
 

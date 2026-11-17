@@ -5,6 +5,7 @@ import { MAX_INTERVAL, parseWritableRecurrence } from '../domain/recurrence';
 import { isValidDay, isValidTimeZone } from '../domain/schedule';
 import { isGeneratedKeyValid } from '../domain/sortKey';
 import { uuidv7 } from '../domain/uuid';
+import { MAX_ATTACHMENT_BYTES } from '../attachments/r2';
 import {
   SCHEDULE_FIELDS,
   SCHEDULE_FIELD_SET,
@@ -29,7 +30,7 @@ import { isNil, sameValue } from './values';
 
 export const NO_DATA_MESSAGE = '請先在 DayDo App 登入並同步一次';
 
-export type WritableEntity = 'project' | 'task' | 'checklistItem' | 'tag';
+export type WritableEntity = 'project' | 'task' | 'checklistItem' | 'tag' | 'attachment';
 
 export interface WriteIntent {
   entity: WritableEntity;
@@ -123,7 +124,7 @@ export function assertHasData(snapshot: Snapshot): void {
   }
 }
 
-const WRITABLE = new Set<string>(['project', 'task', 'checklistItem', 'tag']);
+const WRITABLE = new Set<string>(['project', 'task', 'checklistItem', 'tag', 'attachment']);
 const PRIORITIES = new Set([0, 1, 3, 5]);
 
 interface PlannedOp {
@@ -220,6 +221,20 @@ function validateValues(
         break;
       case 'isInbox':
         if (entity === 'project' && v !== false) fail(field, 'must be false');
+        break;
+      case 'size':
+        if (
+          entity === 'attachment' &&
+          (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > MAX_ATTACHMENT_BYTES)
+        ) {
+          fail(field, `must be an integer in 0-${MAX_ATTACHMENT_BYTES}`);
+        }
+        break;
+      case 'fileName':
+      case 'mimeType':
+        if (entity === 'attachment' && (typeof v !== 'string' || v.trim() === '')) {
+          fail(field, 'must be a non-empty string');
+        }
         break;
       default:
         break;

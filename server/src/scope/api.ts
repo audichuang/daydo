@@ -71,6 +71,17 @@ export interface ScopeProjectInfo {
   purgedAt: number | null;
 }
 
+export interface ScopeAttachmentInfo {
+  id: string;
+  taskId: string;
+  projectId: string;
+  size: number;
+  mimeType: string;
+  deletedAt: number | null;
+  purgedAt: number | null;
+  taskPurgedAt: number | null;
+}
+
 export interface ScopePullInput {
   scope: string;
   scopeUserId: string;
@@ -109,6 +120,7 @@ export interface ScopeStub {
   pull(input: ScopePullInput): Promise<ScopePullResponse>;
   getInboxProjectId(input: { readableProjectIds: string[] }): Promise<string | null>;
   getProjectInfo(input: { projectId: string }): Promise<ScopeProjectInfo | null>;
+  getAttachmentInfo(input: { attachmentId: string }): Promise<ScopeAttachmentInfo | null>;
   projectMember(input: ScopeProjectMemberInput): Promise<void>;
   purgeProject(input: ScopePurgeProjectInput): Promise<ScopePurgeProjectResponse>;
 }

@@ -2102,6 +2102,184 @@ async function runMoveWithChildScenario({ baseUrl, jwks }) {
   }
 }
 
+async function runAttachmentScenario({ baseUrl, jwks }) {
+  const userA = await createUserToken(baseUrl, jwks, `apple-att-a-${randomUUID()}`);
+  const userB = await createUserToken(baseUrl, jwks, `apple-att-b-${randomUUID()}`);
+  const userC = await createUserToken(baseUrl, jwks, `apple-att-c-${randomUUID()}`);
+
+  const baseMs = Date.now();
+  const projectId = randomUUID();
+  const taskId = randomUUID();
+  const task2Id = randomUUID();
+  const attId = randomUUID();
+  const att2Id = randomUUID();
+  const payload = Buffer.from('DayDo R2 attachment e2e payload');
+  const payload2 = Buffer.from('Purge me from R2');
+
+  const setup = await postJson(
+    baseUrl,
+    '/sync/push',
+    {
+      deviceId: userA.deviceId,
+      ops: [
+        makeProjectOp({ hlc: makeHlc(baseMs, 0, userA.deviceId), projectId, ownerId: userA.userId, now: baseMs }),
+        fullTaskCreateOp({ hlc: makeHlc(baseMs, 1, userA.deviceId), taskId, projectId, title: 'With Attachment', now: baseMs }),
+        fullTaskCreateOp({ hlc: makeHlc(baseMs, 2, userA.deviceId), taskId: task2Id, projectId, title: 'To Purge', now: baseMs }),
+        {
+          opId: randomUUID(),
+          hlc: makeHlc(baseMs, 3, userA.deviceId),
+          entity: 'attachment',
+          entityId: attId,
+          op: 'upsert',
+          fields: ['id', 'taskId', 'fileName', 'size', 'mimeType', 'createdAt', 'updatedAt'],
+          row: {
+            id: attId,
+            taskId,
+            fileName: 'note.txt',
+            size: payload.byteLength,
+            mimeType: 'text/plain',
+            createdAt: baseMs,
+            updatedAt: baseMs,
+          },
+        },
+        {
+          opId: randomUUID(),
+          hlc: makeHlc(baseMs, 4, userA.deviceId),
+          entity: 'attachment',
+          entityId: att2Id,
+          op: 'upsert',
+          fields: ['id', 'taskId', 'fileName', 'size', 'mimeType', 'createdAt', 'updatedAt'],
+          row: {
+            id: att2Id,
+            taskId: task2Id,
+            fileName: 'purge.txt',
+            size: payload2.byteLength,
+            mimeType: 'text/plain',
+            createdAt: baseMs,
+            updatedAt: baseMs,
+          },
+        },
+      ],
+    },
+    userA.token,
+  );
+  assert.equal(setup.status, 200);
+  assert(setup.data.results.every((r) => r.status === 'applied'));
+
+  const invB = await postJson(baseUrl, '/invites', { projectId, role: 'editor' }, userA.token);
+  const invC = await postJson(baseUrl, '/invites', { projectId, role: 'viewer' }, userA.token);
+  assert.equal((await postJson(baseUrl, `/invites/${invB.data.code}/accept`, {}, userB.token)).status, 200);
+  assert.equal((await postJson(baseUrl, `/invites/${invC.data.code}/accept`, {}, userC.token)).status, 200);
+
+  // Viewer cannot upload (403).
+  const viewerPut = await fetch(`${baseUrl}/attachments/${attId}/content`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${userC.token}`, 'Content-Type': 'text/plain' },
+    body: payload,
+  });
+  assert.equal(viewerPut.status, 403);
+
+  // Size mismatch -> 400 size-mismatch.
+  const badSizePut = await fetch(`${baseUrl}/attachments/${attId}/content`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${userA.token}`, 'Content-Type': 'text/plain' },
+    body: Buffer.from('wrong-size'),
+  });
+  assert.equal(badSizePut.status, 400);
+  assert.deepEqual(await badSizePut.json(), { error: 'size-mismatch' });
+
+  // Unknown attachment id -> 404 attachment-not-found.
+  const unknownPut = await fetch(`${baseUrl}/attachments/${randomUUID()}/content`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${userA.token}`, 'Content-Type': 'text/plain' },
+    body: payload,
+  });
+  assert.equal(unknownPut.status, 404);
+  assert.deepEqual(await unknownPut.json(), { error: 'attachment-not-found' });
+
+  // Owner uploads -> 204, then another member (editor B) downloads -> 200.
+  const putOk = await fetch(`${baseUrl}/attachments/${attId}/content`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${userA.token}`, 'Content-Type': 'text/plain' },
+    body: payload,
+  });
+  assert.equal(putOk.status, 204);
+
+  const memberGet = await fetch(`${baseUrl}/attachments/${attId}/content`, {
+    headers: { Authorization: `Bearer ${userB.token}` },
+  });
+  assert.equal(memberGet.status, 200);
+  assert.equal(memberGet.headers.get('content-type'), 'text/plain');
+  assert.equal(memberGet.headers.get('content-length'), String(payload.byteLength));
+  assert.deepEqual(Buffer.from(await memberGet.arrayBuffer()), payload);
+
+  // Soft delete -> GET 404, PUT 410 attachment-deleted.
+  const softDel = await postJson(
+    baseUrl,
+    '/sync/push',
+    {
+      deviceId: userA.deviceId,
+      ops: [
+        {
+          opId: randomUUID(),
+          hlc: makeHlc(baseMs + 50, 0, userA.deviceId),
+          entity: 'attachment',
+          entityId: attId,
+          op: 'upsert',
+          fields: ['deletedAt', 'updatedAt'],
+          row: { id: attId, deletedAt: baseMs + 50, updatedAt: baseMs + 50 },
+        },
+      ],
+    },
+    userA.token,
+  );
+  assert.equal(softDel.data.results[0].status, 'applied');
+  const getAfterSoft = await fetch(`${baseUrl}/attachments/${attId}/content`, {
+    headers: { Authorization: `Bearer ${userB.token}` },
+  });
+  assert.equal(getAfterSoft.status, 404);
+  const putAfterSoft = await fetch(`${baseUrl}/attachments/${attId}/content`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${userA.token}`, 'Content-Type': 'text/plain' },
+    body: payload,
+  });
+  assert.equal(putAfterSoft.status, 410);
+  assert.deepEqual(await putAfterSoft.json(), { error: 'attachment-deleted' });
+
+  // Upload second attachment, then purge its task -> R2 object deleted (GET 404, PUT 410).
+  const put2 = await fetch(`${baseUrl}/attachments/${att2Id}/content`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${userA.token}`, 'Content-Type': 'text/plain' },
+    body: payload2,
+  });
+  assert.equal(put2.status, 204);
+  const purgeRes = await postJson(
+    baseUrl,
+    '/sync/push',
+    {
+      deviceId: userA.deviceId,
+      ops: [
+        {
+          opId: randomUUID(),
+          hlc: makeHlc(baseMs + 100, 0, userA.deviceId),
+          entity: 'task',
+          entityId: task2Id,
+          op: 'delete',
+          fields: [],
+          row: {},
+        },
+      ],
+    },
+    userA.token,
+  );
+  assert.equal(purgeRes.status, 200);
+  assert.equal(purgeRes.data.results[0].status, 'applied');
+  const getAfterPurge = await fetch(`${baseUrl}/attachments/${att2Id}/content`, {
+    headers: { Authorization: `Bearer ${userA.token}` },
+  });
+  assert.equal(getAfterPurge.status, 404);
+}
+
 const SCENARIOS = {
   fixture: runFixtureScenario,
   lww: runLwwScenario,
@@ -2116,6 +2294,7 @@ const SCENARIOS = {
   two_device: runTwoDeviceScenario,
   sharing: runSharingScenario,
   move_with_child: runMoveWithChildScenario,
+  attachment: runAttachmentScenario,
 };
 
 async function main() {

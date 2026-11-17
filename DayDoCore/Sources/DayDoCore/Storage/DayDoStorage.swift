@@ -46,14 +46,20 @@ public struct DeviceStore: Sendable {
 
     public func makeSyncEngine(
         transport: any SyncTransport,
-        tokenStore: any SyncTokenStore
+        tokenStore: any SyncTokenStore,
+        attachToAPI: Bool = true
     ) -> SyncEngine {
-        SyncEngine(
+        let engine = SyncEngine(
             database: localAPI.database,
             transport: transport,
             tokenStore: tokenStore,
-            clock: localAPI.clock
+            clock: localAPI.clock,
+            attachmentsDirectory: localAPI.attachmentsDirectory
         )
+        if attachToAPI {
+            localAPI.setSyncEngine(engine)
+        }
+        return engine
     }
 
     public func makeLocalSharing() -> any ListSharing {

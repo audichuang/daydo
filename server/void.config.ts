@@ -5,6 +5,11 @@ export default defineConfig({
   "worker": {
     "compatibility_date": "2026-02-24"
   },
+  "inference": {
+    "bindings": {
+      "storage": true
+    }
+  },
   "cloudflare": {
     "name": "daydo-api",
     "workers_dev": false,

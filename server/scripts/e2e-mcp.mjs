@@ -55,6 +55,8 @@ async function hostGate({ apiBase, mcpBase }) {
   assert.equal((await fetch(`${mcpBase}/health`)).status, 404);
   assert.equal((await postJson(`${mcpBase}/sync/pull`, { cursors: {} })).status, 404);
   assert.equal((await postJson(`${mcpBase}/auth/apple`, {})).status, 404);
+  assert.equal((await fetch(`${mcpBase}/attachments/att-1/content`)).status, 404);
+  assert.equal((await fetch(`${mcpBase}/attachments/att-1/content`, { method: 'PUT', body: 'x' })).status, 404);
   assert.equal((await fetch(`${apiBase}/health`)).status, 200);
 }
 
@@ -136,7 +138,21 @@ async function main() {
     assert.equal(createdTask.title, title);
     assert.equal(typeof createdTask.id, 'string');
 
-    // Second device: App token on the API host pulls the task.
+    const attPayload = Buffer.from('MCP e2e attachment bytes');
+    const uploaded = await callTool(mcpBase, accessToken, 'upload_attachment', {
+      project_id: inboxId,
+      task_id: createdTask.id,
+      content_base64: attPayload.toString('base64'),
+      filename: 'docs/mcp-note.txt',
+      content_type: 'text/plain',
+    });
+    assert.notEqual(uploaded.isError, true, toolText(uploaded));
+    const uploadedAtt = JSON.parse(toolText(uploaded));
+    assert.equal(uploadedAtt.file_name, 'docs_mcp-note.txt');
+    assert.equal(uploadedAtt.size, attPayload.byteLength);
+    assert.equal(uploadedAtt.mime_type, 'text/plain');
+
+    // Second device: App token on the API host pulls the task + attachment and downloads content.
     const device2 = await appLogin(apiBase, providers, sub);
     assert.equal(device2.isNewAccount, false);
     assert.equal(device2.user.id, device1.user.id);
@@ -145,7 +161,16 @@ async function main() {
     assert(pulled, `second device did not pull task ${createdTask.id}`);
     assert.equal(pulled.row.title, title);
     assert.equal(pulled.row.projectId, inboxId);
-    console.log('e2e-mcp: initialize + tools/list + create_task + second-device pull passed');
+    const pulledAtt = rows.find((r) => r.entity === 'attachment' && r.row?.id === uploadedAtt.id);
+    assert(pulledAtt, `second device did not pull attachment ${uploadedAtt.id}`);
+
+    const dlRes = await fetch(`${apiBase}/attachments/${uploadedAtt.id}/content`, {
+      headers: { Authorization: `Bearer ${device2.accessToken}` },
+    });
+    assert.equal(dlRes.status, 200);
+    assert.equal(dlRes.headers.get('content-type'), 'text/plain');
+    assert.deepEqual(Buffer.from(await dlRes.arrayBuffer()), attPayload);
+    console.log('e2e-mcp: initialize + tools/list + create_task + upload_attachment + second-device pull/download passed');
 
     // Token isolation both ways.
     const appOnMcp = await mcpRpc(mcpBase, device2.accessToken, 'tools/list');

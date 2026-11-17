@@ -75,8 +75,16 @@ struct TaskDetailContent: View {
     @State private var showRaw = false
     @State private var addingTag = false
     @State private var tagText = ""
+    private enum AttachmentDownloadError {
+        case notUploaded
+        case failed
+    }
+
     @State private var importing = false
     @State private var preview: URL?
+    @State private var downloadingAttachmentIds: Set<String> = []
+    @State private var attachmentErrors: [String: AttachmentDownloadError] = [:]
+    @State private var attachmentError: String?
     @State private var savedFlash = false
     @State private var isSavingText = false
     @State private var isDeleting = false
@@ -156,6 +164,11 @@ struct TaskDetailContent: View {
             Button("新增") { addTag(tagText) }
         } message: {
             Text("輸入新標籤，或從下方既有標籤選擇")
+        }
+        .alert("無法加入附件", isPresented: Binding(get: { attachmentError != nil }, set: { if !$0 { attachmentError = nil } })) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(attachmentError ?? "")
         }
     }
 
@@ -436,7 +449,9 @@ struct TaskDetailContent: View {
                 }
             }
             ForEach(task.attachments) { a in
-                Button { preview = model.api.attachmentURL(a) } label: {
+                let isDownloading = downloadingAttachmentIds.contains(a.id)
+                let downloadError = attachmentErrors[a.id]
+                Button { openAttachment(a) } label: {
                     HStack(spacing: 12) {
                         let ext = (a.fileName as NSString).pathExtension.uppercased()
                         Text(ext.isEmpty ? "FILE" : String(ext.prefix(4)))
@@ -447,18 +462,30 @@ struct TaskDetailContent: View {
                             .background(RoundedRectangle(cornerRadius: 6).fill(fileColor(ext)))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(a.fileName).txt(14, .semibold).foregroundStyle(Palette.text).lineLimit(1)
-                            if let p = a.originalPath {
+                            if let downloadError {
+                                let msg = downloadError == .notUploaded ? "檔案還沒上傳" : "下載失敗，點一下重試"
+                                Text(msg).txt(12).foregroundStyle(Palette.danger).lineLimit(1)
+                            } else if isDownloading {
+                                Text("下載中…").txt(12).foregroundStyle(Palette.textTertiary).lineLimit(1)
+                            } else if let p = a.originalPath {
                                 Text(p).txt(12).foregroundStyle(Palette.textTertiary).lineLimit(1).truncationMode(.head)
                             }
                         }
                         Spacer()
-                        Text(a.size.byteText).txt(12).foregroundStyle(Palette.textTertiary)
+                        if isDownloading {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(Palette.textTertiary)
+                        } else {
+                            Text(a.size.byteText).txt(12).foregroundStyle(Palette.textTertiary)
+                        }
                     }
                     .padding(.horizontal, 12).padding(.vertical, 10)
                     .card(12, color: Palette.raised)
                 }
                 .buttonStyle(.press(scale: 0.985, opacity: 0.92))
                 .hoverEffect(.highlight)
+                .disabled(isDownloading)
                 .contextMenu {
                     if !readOnly {
                         Button("移除附件", systemImage: "trash", role: .destructive) {
@@ -590,6 +617,35 @@ struct TaskDetailContent: View {
         }
     }
 
+    func openAttachment(_ attachment: Attachment) {
+        guard !downloadingAttachmentIds.contains(attachment.id) else { return }
+        if let url = model.api.attachmentURL(attachment),
+           FileManager.default.fileExists(atPath: url.path) {
+            attachmentErrors.removeValue(forKey: attachment.id)
+            preview = url
+            return
+        }
+        attachmentErrors.removeValue(forKey: attachment.id)
+        downloadingAttachmentIds.insert(attachment.id)
+        Task {
+            defer { downloadingAttachmentIds.remove(attachment.id) }
+            do {
+                let url = try await model.api.attachmentFile(attachment)
+                guard !Task.isCancelled else { return }
+                await load()
+                preview = url
+            } catch is CancellationError {
+                return
+            } catch DayDoError.attachmentNotUploaded {
+                guard !Task.isCancelled else { return }
+                attachmentErrors[attachment.id] = .notUploaded
+            } catch {
+                guard !Task.isCancelled else { return }
+                attachmentErrors[attachment.id] = .failed
+            }
+        }
+    }
+
     func addFiles(_ urls: [URL]) {
         guard let task else { return }
         let id = task.id
@@ -597,11 +653,22 @@ struct TaskDetailContent: View {
             for url in urls {
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                if let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
+                   let fileSize = values.fileSize,
+                   fileSize > Attachment.maxBytes {
+                    attachmentError = "檔案超過 20 MB"
+                    continue
+                }
                 guard let data = try? Data(contentsOf: url) else { continue }
                 let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
                 let name = url.lastPathComponent
                 let path = url.path
-                await model.perform { try await $0.uploadAttachment(taskId: id, fileName: name, data: data, mimeType: mime, originalPath: path) }
+                do {
+                    _ = try await model.api.uploadAttachment(taskId: id, fileName: name, data: data, mimeType: mime, originalPath: path)
+                    await model.didWrite()
+                } catch {
+                    attachmentError = error.localizedDescription
+                }
             }
         }
     }

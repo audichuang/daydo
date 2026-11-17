@@ -29,6 +29,7 @@ const NON_MCP_PATHS = [
   '/authorizeX',
   '/registerx',
   '/token/x',
+  '/attachments/att-1/content',
   '/.well-known/other',
   '/.well-known/oauth-protected-resource/extra',
 ];

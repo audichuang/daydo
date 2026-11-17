@@ -202,6 +202,8 @@ public struct ChecklistItem: Codable, Hashable, Sendable, Identifiable {
 }
 
 public struct Attachment: Codable, Hashable, Sendable, Identifiable {
+    public static let maxBytes = 20 * 1024 * 1024
+
     public var id: String
     public var fileName: String
     public var size: Int64
@@ -451,12 +453,14 @@ public enum DayDoError: Error, LocalizedError, Equatable {
     case notFound(String, String)
     case invalid(String)
     case forbidden(String)
+    case attachmentNotUploaded
 
     public var errorDescription: String? {
         switch self {
         case let .notFound(entity, id): return "\(entity) not found: \(id)"
         case let .invalid(msg): return msg
         case let .forbidden(msg): return msg
+        case .attachmentNotUploaded: return "檔案還沒上傳"
         }
     }
 }

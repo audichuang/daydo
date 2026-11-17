@@ -147,6 +147,37 @@ struct TagRecord: Codable, Hashable, Sendable, FetchableRecord, PersistableRecor
 
 struct AttachmentRecord: Codable, Hashable, Sendable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "attachment"
+
+    /// SQL WHERE predicate for local attachment files that exist only on this device
+    /// (never confirmed uploaded), including permanently failed or rejected rows so
+    /// sign-out / account-switch warnings do not undercount unbacked local files.
+    static let localOnlyFileWhereClause = """
+        deletedAt IS NULL
+        AND localPath IS NOT NULL
+        AND localPath != ''
+        AND fileUploadedAt IS NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM "change"
+            WHERE entity = 'attachment'
+              AND entityId = attachment.id
+              AND ackedAt IS NULL
+        )
+        """
+
+    /// SQL WHERE predicate for local attachment files waiting to be uploaded.
+    static let pendingUploadWhereClause = """
+        \(localOnlyFileWhereClause)
+        AND fileUploadFailed = 0
+        AND NOT EXISTS (
+            SELECT 1 FROM "change"
+            WHERE entity = 'attachment'
+              AND entityId = attachment.id
+              AND op = 'upsert'
+              AND result = 'rejected'
+              AND EXISTS (SELECT 1 FROM json_each(fields) WHERE value = 'id')
+        )
+        """
+
     var id: String
     var taskId: String
     var fileName: String
@@ -159,6 +190,72 @@ struct AttachmentRecord: Codable, Hashable, Sendable, FetchableRecord, Persistab
     var createdAt: EpochMillis
     var updatedAt: EpochMillis
     var deletedAt: EpochMillis?
+    /// Local-only: epoch ms when file content was confirmed stored on the server.
+    var fileUploadedAt: EpochMillis? = nil
+    /// Local-only: true when file upload hit a permanent error (400/403/410/413).
+    var fileUploadFailed: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case id, taskId, fileName, size, mimeType, localPath, originalPath, createdAt, updatedAt, deletedAt
+    }
+
+    init(
+        id: String,
+        taskId: String,
+        fileName: String,
+        size: Int64,
+        mimeType: String,
+        localPath: String? = nil,
+        originalPath: String? = nil,
+        createdAt: EpochMillis,
+        updatedAt: EpochMillis,
+        deletedAt: EpochMillis? = nil,
+        fileUploadedAt: EpochMillis? = nil,
+        fileUploadFailed: Bool = false
+    ) {
+        self.id = id
+        self.taskId = taskId
+        self.fileName = fileName
+        self.size = size
+        self.mimeType = mimeType
+        self.localPath = localPath
+        self.originalPath = originalPath
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+        self.fileUploadedAt = fileUploadedAt
+        self.fileUploadFailed = fileUploadFailed
+    }
+
+    init(row: Row) throws {
+        id = row["id"]
+        taskId = row["taskId"]
+        fileName = row["fileName"]
+        size = row["size"]
+        mimeType = row["mimeType"]
+        localPath = row["localPath"]
+        originalPath = row["originalPath"]
+        createdAt = row["createdAt"]
+        updatedAt = row["updatedAt"]
+        deletedAt = row["deletedAt"]
+        fileUploadedAt = row["fileUploadedAt"]
+        fileUploadFailed = row["fileUploadFailed"] ?? false
+    }
+
+    func encode(to container: inout PersistenceContainer) throws {
+        container["id"] = id
+        container["taskId"] = taskId
+        container["fileName"] = fileName
+        container["size"] = size
+        container["mimeType"] = mimeType
+        container["localPath"] = localPath
+        container["originalPath"] = originalPath
+        container["createdAt"] = createdAt
+        container["updatedAt"] = updatedAt
+        container["deletedAt"] = deletedAt
+        container["fileUploadedAt"] = fileUploadedAt
+        container["fileUploadFailed"] = fileUploadFailed
+    }
 }
 
 struct CommentRecord: Codable, Hashable, Sendable, FetchableRecord, PersistableRecord {

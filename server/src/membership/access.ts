@@ -1,6 +1,8 @@
 import { entityHome, invite, projectMembership, purgedProject, user } from '@schema';
 import { and, eq, isNull, ne, sql, type BatchItem } from 'void/db';
+import type { MembershipRole } from '../sync/entities';
 import type { AppDb } from '../sync/push';
+import { asMembershipRole } from './statements';
 
 export interface MembershipState {
   role: string;
@@ -16,6 +18,18 @@ export interface ProjectAccess {
   homeScope: string | null;
   /** The target user's bound member id; null when absent or no target was asked for. */
   targetMeMemberId: string | null;
+}
+
+/**
+ * Resolves the requester's effective membership role from `ProjectAccess` (null when never a
+ * member, or when removed from a non-purged list). Purged lists remove all memberships in D1, so
+ * a purge-removed member still resolves to their prior role for 404/410 vs 403 distinction.
+ */
+export function requesterRoleOf(access: ProjectAccess): MembershipRole | null {
+  const req = access.requester;
+  if (!req) return null;
+  if (req.removedAt !== null && !access.purged) return null;
+  return asMembershipRole(req.role);
 }
 
 function membershipOf(db: AppDb, projectId: string, userId: string) {

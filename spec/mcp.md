@@ -23,7 +23,6 @@
 
 不在範圍內：
 - WebSocket 推播（App 仍在下次 pull 才看到 MCP 寫入）
-- 附件上傳
 - habit
 - 資料夾與成員管理工具
 - 網頁版 DayDo
@@ -46,7 +45,7 @@ server/
   routes/.well-known/oauth-protected-resource.ts
   crons/ics-sync.ts
   src/oauth/     tokens、metadata、cors、register、codes、refresh、token、authorize、webIdentity、googleCallback、pages、cleanup
-  src/mcp/       protocol（JSON-RPC）、auth（Bearer）、registry（validateArgs、HINTS）、toolkit（工具共用的參數驗證與型別，tools 不 import registry）、log、format、tools/{projects,tags,tasks,ics}.ts
+  src/mcp/       protocol（JSON-RPC）、auth（Bearer）、registry（validateArgs、HINTS）、toolkit（工具共用的參數驗證與型別，tools 不 import registry）、log、format、tools/{projects,tags,tasks,attachments,ics}.ts
   src/serverops/ snapshot（讀）、writer（寫）、values（schedule 欄位與比較）、taskWrites（與 App 對齊的任務寫入）
   src/domain/    uuid、sortKey、tags、reminders、schedule、recurrence（Swift 邏輯的 TS 移植）
   src/ics/       types、parser、filters、store、fetch、engine、cron
@@ -406,6 +405,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 | `move_task` | idempotent-write | `task_id*`、`from_project_id*`、`to_project_id*`；兩邊都要有寫入權 |
 | `move_all` | idempotent-write | 搬移來源清單所有未完成任務 |
 | `get_completed_tasks` | read | `project_id` 可省略；依 `completedAt` 由新到舊 |
+| `upload_attachment` | write | `project_id*`、`task_id*`、`content_base64*`、`filename*`、`content_type`（預設 `application/octet-stream`）；解碼後上限 20 MB。任務必須在該清單且清單可寫；先寫 R2（`att/<taskId>/<attachmentId>`）再寫 `attachment` 資料列，回傳 `{id, file_name, size, mime_type, created_at}` |
 | `list_tags` | read | 使用者自己的標籤 |
 | `create_tag` | write | `name*`、`color`；沒有 `parent`（DayDo 沒有巢狀標籤） |
 | `add_ics_source` | write、openWorld | 見第 9 節；多一個可選欄位 `timezone` |
@@ -431,7 +431,6 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 - habit 四個（`list_habits`、`create_habit`、`delete_habit`、`checkin_habit`）
 - `make_subtask`（DayDo 只有 checklist，沒有父子任務）
 - `get_user_settings`、`get_user_profile`
-- `upload_attachment`（附件檔案還不上傳）
 
 `create_task` 與 `update_task` 不宣告 `kind`：DayDo 沒有對應欄位，送了會被 `validateArgs` 以未知欄位拒絕。openapi 上的其他操作（`uncomplete_task`、`restore_task`、checklist 單項、資料夾）之後再加。
 

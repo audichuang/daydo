@@ -351,7 +351,8 @@ final class AppModel {
         )
         let engine = store.makeSyncEngine(
             transport: resolvedTransport,
-            tokenStore: tokenStore
+            tokenStore: syncEnabled ? tokenStore : InMemorySyncTokenStore(),
+            attachToAPI: syncEnabled
         )
         self.syncEngine = engine
         self.sharing = syncEnabled

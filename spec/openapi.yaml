@@ -7,8 +7,8 @@ info:
     Operations here that are not yet ported to MCP: uncomplete_task, restore_task,
     purge_task, add/update/delete_checklist_item, folder operations, move_project,
     duplicate_project, transfer_project_owner, member and invite operations,
-    list_sections, smart_counts, postpone_overdue, tag update/delete, attachments
-    (upload_attachment, delete_attachment), list_members and update_me.
+    list_sections, smart_counts, postpone_overdue, tag update/delete, delete_attachment,
+    list_members and update_me.
     MCP-only tools (ICS, move_all, list_recent_tasks) are not in this file.
 
     HTTP contract of `DayDoAPI` (DayDoCore/Sources/DayDoCore/API/DayDoAPI.swift).
@@ -435,6 +435,38 @@ paths:
       responses:
         "204": { description: Deleted }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /attachments/{attachment_id}/content:
+    parameters: [{ name: attachment_id, in: path, required: true, schema: { type: string } }]
+    put:
+      operationId: upload_attachment_content
+      description: Uploads raw attachment bytes (max 20 MB; body length must equal the attachment row's size). API host only.
+      requestBody:
+        required: true
+        content:
+          "*/*":
+            schema: { type: string, format: binary }
+      responses:
+        "204": { description: Stored }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410":
+          description: Attachment soft-deleted or task permanently deleted
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "413":
+          description: Payload exceeds 20 MB limit
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    get:
+      operationId: download_attachment_content
+      description: Downloads raw attachment bytes with Content-Type (from the attachment row) and Content-Length. API host only.
+      responses:
+        "200":
+          description: OK
+          content:
+            "*/*":
+              schema: { type: string, format: binary }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /tags:
     get:
       operationId: list_tags

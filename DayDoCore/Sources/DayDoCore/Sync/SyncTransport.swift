@@ -19,6 +19,35 @@ public protocol SyncTransport: Sendable {
         headers: [String: String],
         body: Data?
     ) async throws -> SyncHTTPResponse
+
+    func upload(
+        path: String,
+        headers: [String: String],
+        fileURL: URL
+    ) async throws -> SyncHTTPResponse
+
+    func download(
+        path: String,
+        headers: [String: String]
+    ) async throws -> SyncHTTPResponse
+}
+
+public extension SyncTransport {
+    func upload(
+        path: String,
+        headers: [String: String],
+        fileURL: URL
+    ) async throws -> SyncHTTPResponse {
+        let data = try Data(contentsOf: fileURL)
+        return try await send(method: "PUT", path: path, headers: headers, body: data)
+    }
+
+    func download(
+        path: String,
+        headers: [String: String]
+    ) async throws -> SyncHTTPResponse {
+        try await send(method: "GET", path: path, headers: headers, body: nil)
+    }
 }
 
 /// URLSession-backed `SyncTransport` supporting extra static headers (e.g. Cloudflare Access).
@@ -43,6 +72,43 @@ public struct HTTPSyncTransport: SyncTransport, Sendable {
         headers: [String: String],
         body: Data?
     ) async throws -> SyncHTTPResponse {
+        var request = makeRequest(method: method, path: path, headers: headers)
+        if body != nil && request.value(forHTTPHeaderField: "Content-Type") == nil {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        request.httpBody = body
+
+        let (data, response) = try await session.data(for: request)
+        return try httpResponse(data: data, response: response)
+    }
+
+    public func upload(
+        path: String,
+        headers: [String: String],
+        fileURL: URL
+    ) async throws -> SyncHTTPResponse {
+        var request = makeRequest(method: "PUT", path: path, headers: headers)
+        if request.value(forHTTPHeaderField: "Content-Type") == nil {
+            request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        }
+        let (data, response) = try await session.upload(for: request, fromFile: fileURL)
+        return try httpResponse(data: data, response: response)
+    }
+
+    public func download(
+        path: String,
+        headers: [String: String]
+    ) async throws -> SyncHTTPResponse {
+        let request = makeRequest(method: "GET", path: path, headers: headers)
+        let (data, response) = try await session.data(for: request)
+        return try httpResponse(data: data, response: response)
+    }
+
+    private func makeRequest(
+        method: String,
+        path: String,
+        headers: [String: String]
+    ) -> URLRequest {
         let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
         let url = trimmed.isEmpty ? baseURL : baseURL.appendingPathComponent(trimmed)
         var request = URLRequest(url: url)
@@ -53,12 +119,10 @@ public struct HTTPSyncTransport: SyncTransport, Sendable {
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
-        if body != nil && request.value(forHTTPHeaderField: "Content-Type") == nil {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        }
-        request.httpBody = body
+        return request
+    }
 
-        let (data, response) = try await session.data(for: request)
+    private func httpResponse(data: Data, response: URLResponse) throws -> SyncHTTPResponse {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
         }

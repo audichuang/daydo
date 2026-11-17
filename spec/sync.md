@@ -78,7 +78,16 @@
 - 兩台舊版手機在同一瞬間第一次登入，可能各自上傳一個收件匣。
 - 收件匣只有異常 client 才能送進垃圾桶（App 與 MCP 都不允許刪收件匣，push 驗證也不另外擋）。這時登入回 `hasData:false`，MCP 也視為無資料帳號、拒絕寫入。
 - Worker 重啟後回傳的 `serverTime` 可能比之前回過的小；只影響時鐘不準的裝置。
-- 附件只同步資料列，檔案本身還不上傳：別台裝置打不開，登出再登入後本機的附件路徑也會遺失（檔案還在手機上）。之後做附件上傳時一起處理。
+- 附件檔案經 `PUT /attachments/{id}/content` 與 `GET /attachments/{id}/content` 存放在 R2（單檔上限 20 MB）；附件軟刪除（`deletedAt`）不刪 R2 檔案，任務永久刪除（purge）時才清除該任務前綴的 R2 物件（失敗只記 log，不影響 push 回應）。
+- `task` 的 `op=delete` R2 清理以 push 結果 `applied` 為準；異常 client 重用 `opId` 重送時可能誤刪（正常 App 不會）。
+- `PUT /attachments/{id}/content` 先檢查權限再讀檔，讀檔期間被撤權或任務被搬走／永久刪除時，該次上傳仍會寫入 R2；任務或附件永久刪除後殘留的物件下載不到。
+- 整份清單永久刪除（`purgeProject`）不清 R2 檔案；目前 App 沒有這個入口。
+- 部署時 Worker 與 Scope DO 一起更新，切換瞬間附件端點可能因 RPC 尚未對齊回 5xx，App 視為暫時錯誤下次重試。
+- MCP `upload_attachment` 檢查任務所屬清單與寫入之間若任務被搬到另一份呼叫者也能寫的清單，附件會跟著任務到新清單。
+- MCP `upload_attachment` 上傳結果不明時重送會建立第二筆附件（`get_task` 不列附件）。
+- 附件上傳收到 403 後標記永久失敗，之後恢復編輯權也不會自動補傳。
+- 附件上傳在同步迴圈內執行（每輪最多 3 檔、剩下的排下一輪），整個 `syncNow()` 要等待傳檔案傳完才結束：帶著未登入時期的本機附件第一次登入時，登入畫面會等補傳完成；附件下載的網路錯誤也與任務同步共用退避計數。之後改成獨立的背景上傳佇列。
+- 複製清單時要先下載缺檔的附件，期間沒有進度提示，複製按鈕仍可按，重按會多建一份副本。
 - refresh token 的 10 分鐘寬限：換發後 10 分鐘內、手機還沒用新 token 之前，持有舊 refresh token 的人能搶先換到新 session（要先偷到 Keychain 裡的 token）；真手機下次 refresh 時整條鏈會被撤銷。這是為了避免訊號差時回應遺失就被登出所接受的取捨。
 - 永久刪除清單在 App 還沒有入口；之後加入時，擁有者的其他裝置要另外收到清除通知（目前 pull 不再回傳那份清單，其他裝置會留著）。
 - refresh 寬限期內，後繼已被使用之後，另一個 client 又拿舊 token 來換，會讓整個 family 被撤銷，需要重新授權（需要異常的 client）。（MCP）
@@ -101,7 +110,7 @@
 - **`op`**：`upsert` 或 `delete`（硬刪除，`fields` 為空、`row` 為 `{}`）。
 - 找路不需要 op 另外帶清單 id：新建時任務、清單住推送者的範圍，子列住其任務的範圍（查任務的 `entityHome`）；其他時候一律查 `entityHome`。
 - **合併的欄位群組**：task 的 `startDay`、`startMinute`、`endDay`、`endMinute`、`timeZone` 是同一個時間設定，合併時視為一組，共用 `clocks["schedule"]`：只要 `fields` 含其中任何一個，就整組一起比 HLC、一起寫入（缺的欄位依上一條視為 null）。否則一台改日期、另一台改時區，合併後會變成兩邊都沒設定過的時間。
-- **不同步的欄位**：`member.isMe`（每台裝置、每個使用者各自不同；Worker 不存，回傳時依請求的使用者算出來：使用者第一個帶 `isMe: true` 推上來的 member 綁定為他自己）、`attachment.localPath` 與 `attachment.originalPath`（裝置上的檔案路徑；附件檔案上傳之後再設計）。App 套用伺服器資料列時，這些欄位**一律保留本機的值**，不套用「欄位不出現＝null」的規則；`isMe` 在第一次登入的 id 對應完成前也不能拿伺服器的值蓋掉。
+- **不同步的欄位**：`member.isMe`（每台裝置、每個使用者各自不同；Worker 不存，回傳時依請求的使用者算出來：使用者第一個帶 `isMe: true` 推上來的 member 綁定為他自己）、`attachment.localPath`、`attachment.originalPath`、`attachment.fileUploadedAt` 與 `attachment.fileUploadFailed`（裝置上的檔案路徑與上傳狀態；後兩者不寫進 outbox）。App 套用伺服器資料列時，這些欄位**一律保留本機的值**，不套用「欄位不出現＝null」的規則；`isMe` 在第一次登入的 id 對應完成前也不能拿伺服器的值蓋掉。
 - **tombstone**：伺服器回傳的資料列可能帶 `purgedAt`（硬刪除的時間）。App 收到帶 `purgedAt` 的列，要在本機硬刪除這一列（子列由外鍵連帶刪除），不寫 outbox，也不能把它當一般資料列存回去。對已硬刪除的 id 再送 upsert，伺服器回 `applied`，但不會套用，回傳的仍是 tombstone。
 - **push 回應與 pull 的資料列格式**：每筆是並列的 `row` 與 `clocks`（不是把 `clocks` 放進 `row` 裡）。`row` 只含上面的同步欄位，加上 `purgedAt`（只有 tombstone 才有）和 member 的 `isMe`。pull 回應頂層的 `members` 列則另帶 `userId`（供成員管理 API 使用）與可為 null 的 `avatarUrl`（頭像 HTTPS URL；scope 內的 `member` 列不帶這兩欄）。
 - **HLC 字串**：`<13 位數 epoch ms，前面補 0>:<4 位數計數，前面補 0>:<deviceId 小寫>`。計數到 9999 時，ms 加 1、計數歸 0。
@@ -129,6 +138,13 @@
 - 套用遠端資料不寫 `change`（不然會被當成本機修改再送回去）。
 - 收到帶 `purgedAt` 的列：本機硬刪除，並記進 `purgedId`；收到 `gone: true`：本機硬刪除，不記 `purgedId`。
 - push 回應的 `serverTime` 用來推進本機 HLC（`HLC.receive`）。
+
+附件檔案同步：
+
+- 同步順序為 `push` → `pull` → 附件檔案上傳（`PUT /attachments/{id}/content`），不在 push 與 pull 之間上傳，避免大檔或升版補傳延遲拉取其他成員的更新；每個同步循環最多上傳 3 個檔案，上傳完若還有待傳且未遇暫時失敗則透過 `rerun` 排下一輪繼續（兩輪之間的新編輯會先被 push），遇暫時錯誤（404／429／5xx／網路錯誤）則本輪停止上傳、不請求 `rerun`，留待下次同步重試，不讓整個同步失敗。
+- 上傳候選條件：未刪除（`deletedAt IS NULL`）、有 `localPath`、尚未上傳（`fileUploadedAt IS NULL`）、未永久失敗（`fileUploadFailed = 0`）、該附件已無待送 outbox、且新建 op 未被 `rejected`（附件新建 op 收到 `rejected` 時一併標記永久失敗，不再重傳）。
+- 下載：`GET /attachments/{id}/content` 回 404 時顯示「檔案還沒上傳」（仍可點一下重試），其餘錯誤顯示「下載失敗，點一下重試」；複製清單時，來源附件若僅在遠端會於資料庫交易外先嘗試下載，下載失敗則略過該附件、其餘照常複製。
+- 登出／切換帳號警告的未同步計數（`unsyncedChangeCount`）除待送 outbox 外，亦計入所有只存在本機的附件檔案（未刪除、有 `localPath`、尚未上傳、資料列已無待送 outbox），包含永久失敗與新建被拒的附件。
 
 ## HLC（混合邏輯時鐘）
 

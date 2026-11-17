@@ -6,6 +6,7 @@ import { createServerHlcClock } from '../../src/sync/hlc';
 import { executeSyncPull } from '../../src/sync/pull';
 import { executeSyncPush } from '../../src/sync/push';
 import type { ScopeStub } from '../../src/scope/api';
+import { createMemoryR2, type MemoryR2Bucket } from './memoryR2';
 import { createTestD1, createTestDoState } from '../sqliteD1';
 
 export { ScopeObject, shouldSplitTransaction };
@@ -38,12 +39,15 @@ export interface CreateScopeWorldOptions {
   ) => Promise<ScopePushResult>;
   /** Clock handed out as `deps.getNow` (defaults to systemNow). */
   getNow?: GetNow;
+  /** R2 bucket override (defaults to a fresh in-memory bucket). */
+  storage?: MemoryR2Bucket;
 }
 
 /** In-memory D1 + per-scope ScopeObject test world shared by sync, MCP, and ICS tests. */
 export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
   const syncFault = options.syncFault ?? 'none';
   const { d1, db, sqlite, trace } = createTestD1();
+  const storage = options.storage ?? createMemoryR2();
   const DoClass = options.scopeClass ?? ScopeClass;
   const scopes = new Map<string, InstanceType<typeof ScopeObject>>();
   const scopeSqlites = new Map<string, ReturnType<typeof createTestDoState>['sqlite']>();
@@ -83,7 +87,7 @@ export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
   };
 
   const push = (userId: string, deviceId: string, ops: unknown[]) =>
-    executeSyncPush(db, { userId, deviceId, ops, getScopeStub, clock });
+    executeSyncPush(db, { userId, deviceId, ops, getScopeStub, clock, storage });
 
   const pull = (
     userId: string,
@@ -109,6 +113,7 @@ export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
         return Promise.resolve({ ok: true as const });
       },
     },
+    storage,
   } satisfies AppDeps;
 
   return {
@@ -117,6 +122,7 @@ export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
     sqlite,
     trace,
     clock,
+    storage,
     scopes,
     scopeSqlites,
     calls,

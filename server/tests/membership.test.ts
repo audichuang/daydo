@@ -137,6 +137,7 @@ function failingPurgeOn(h: ScopeWorld, failing: string, isFailing: () => boolean
       pull: (i) => real.pull(i),
       getInboxProjectId: (i) => real.getInboxProjectId(i),
       getProjectInfo: (i) => real.getProjectInfo(i),
+      getAttachmentInfo: (i) => real.getAttachmentInfo(i),
       projectMember: (i) => real.projectMember(i),
       async purgeProject(i) {
         if (isFailing()) throw new Error('Transient DO timeout');
@@ -240,6 +241,7 @@ describe('membership D1 batch layout', () => {
         pull: (i) => real.pull(i),
         getInboxProjectId: (i) => real.getInboxProjectId(i),
         getProjectInfo: (i) => real.getProjectInfo(i),
+        getAttachmentInfo: (i) => real.getAttachmentInfo(i),
         projectMember: (i) => real.projectMember(i),
         async purgeProject(i) {
           if (failing) throw new Error('Transient DO timeout');

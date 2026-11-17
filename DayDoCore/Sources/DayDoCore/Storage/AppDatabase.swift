@@ -291,6 +291,12 @@ final class AppDatabase: Sendable {
                 t.add(column: "avatarUrl", .text)
             }
         }
+        m.registerMigration("v8") { db in
+            try db.alter(table: "attachment") { t in
+                t.add(column: "fileUploadedAt", .integer)
+                t.add(column: "fileUploadFailed", .boolean).notNull().defaults(to: false)
+            }
+        }
         return m
     }
 }

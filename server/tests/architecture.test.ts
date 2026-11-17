@@ -165,13 +165,14 @@ const GUARDS: Guard[] = [
     dirs: ['routes'],
     // Any receiver (db, primaryDb, database, ...) calling a query method, or any env.DB use:
     // routes pass c.env to productionAppDeps (src/deps.ts) and never touch the binding.
-    pattern: /\.(select|insert|update|delete|batch|run|prepare)\(|\.DB\b/,
+    pattern: /\.(select|insert|update|delete|batch|run|prepare)\(|\.DB\b|\.STORAGE\b/,
     allow: [],
     bad: [
       'const rows = await db.select().from(user);',
       "const database = createDb(c.env.DB, { session: 'first-primary' }); database.run(sql);",
       "await c.env.DB.prepare('DELETE FROM user').run();",
       'const raw = c.env.DB;',
+      'const bucket = c.env.STORAGE;',
       'handle(deps(c.env.DB));',
     ],
   },
@@ -220,6 +221,16 @@ const GUARDS: Guard[] = [
     pattern: /\bcreateDb\(/,
     allow: ['src/deps.ts'],
     bad: ["const db = createDb(c.env.DB, { session: 'first-primary' });"],
+  },
+  {
+    name: 'createStorage( and void/storage are used only in src/deps.ts',
+    dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
+    pattern: /\bcreateStorage\(|from ['"]void\/storage['"]/,
+    allow: ['src/deps.ts'],
+    bad: [
+      'const bucket = createStorage(c.env.STORAGE);',
+      "import { storage } from 'void/storage';",
+    ],
   },
   {
     name: 'Scope.get( is called only in src/deps.ts',

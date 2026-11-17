@@ -35,6 +35,7 @@ export const POST = defineHandler(async (c) => {
     ops: body.ops,
     getScopeStub: deps.getScopeStub,
     clock: serverClock,
+    storage: deps.storage,
   });
 
   return c.json(result, 200);

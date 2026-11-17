@@ -9,12 +9,16 @@ export interface ToolServicesEnv {
 }
 
 /** `deps.db` is the caller's AppDeps session, reused as is. */
-export function toolServices(deps: Pick<AppDeps, 'db' | 'getScopeStub' | 'getNow'>, env: ToolServicesEnv): ToolServices {
+export function toolServices(
+  deps: Pick<AppDeps, 'db' | 'getScopeStub' | 'getNow'> & Partial<Pick<AppDeps, 'storage'>>,
+  env: ToolServicesEnv,
+): ToolServices {
   const insecureHosts = parseInsecureHosts(env.ICS_ALLOW_INSECURE_HOSTS);
   return {
     db: deps.db,
     getScopeStub: deps.getScopeStub,
     getNow: deps.getNow,
+    ...(deps.storage !== undefined && { storage: deps.storage }),
     ...(env.DEFAULT_TIMEZONE && { defaultTimeZone: env.DEFAULT_TIMEZONE }),
     ...(insecureHosts.length > 0 && { ics: { fetchOptions: { insecureHosts } } }),
   };

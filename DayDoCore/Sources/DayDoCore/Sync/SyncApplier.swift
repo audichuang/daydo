@@ -526,7 +526,11 @@ enum SyncApplier {
             let rec = try decoder.decode(TagRecord.self, from: data)
             try rec.save(db)
         case "attachment":
-            let rec = try decoder.decode(AttachmentRecord.self, from: data)
+            var rec = try decoder.decode(AttachmentRecord.self, from: data)
+            if let existing = try AttachmentRecord.fetchOne(db, key: rec.id) {
+                rec.fileUploadedAt = existing.fileUploadedAt
+                rec.fileUploadFailed = existing.fileUploadFailed
+            }
             try rec.save(db)
         case "comment":
             let rec = try decoder.decode(CommentRecord.self, from: data)

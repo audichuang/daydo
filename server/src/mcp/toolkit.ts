@@ -21,6 +21,7 @@ export interface ToolSchema {
 export interface ToolServices {
   db: AppDb;
   getScopeStub: (scope: string) => ScopeStub;
+  storage?: R2Bucket | null;
   /** `DEFAULT_TIMEZONE`, tried first when inferring a task's zone from an offset. Defaults to Asia/Taipei. */
   defaultTimeZone?: string;
   /** ICS tool overrides. Production leaves it unset: D1 store, real fetch, shared clock. */

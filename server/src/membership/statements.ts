@@ -9,7 +9,7 @@ import type { AppDb } from '../sync/push';
 
 export type BatchRows = ReadonlyArray<Record<string, unknown>>;
 
-function asMembershipRole(raw: unknown): MembershipRole | null {
+export function asMembershipRole(raw: unknown): MembershipRole | null {
   return raw === 'owner' || raw === 'editor' || raw === 'viewer' ? raw : null;
 }
 

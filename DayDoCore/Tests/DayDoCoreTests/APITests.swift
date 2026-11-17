@@ -715,4 +715,43 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         let roundTripped = try DayDoJSON.decoder.decode(TodoTask.self, from: encoded)
         #expect(roundTripped.ownerId == "m-partner")
     }
+
+    @Test func uploadAttachmentRejectsFilesOver20MBAndExcludesLocalStateFromOutbox() async throws {
+        let api = try await makeAPI()
+        let task = try await api.createTask(CreateTaskInput(title: "附件上限測試"))
+        let pendingBefore = try await api.pendingChanges(limit: 500).count
+
+        let overLimit = Data(count: Attachment.maxBytes + 1)
+        await #expect(throws: DayDoError.invalid("檔案超過 20 MB")) {
+            _ = try await api.uploadAttachment(
+                taskId: task.id,
+                fileName: "too-big.bin",
+                data: overLimit,
+                mimeType: "application/octet-stream",
+                originalPath: "/tmp/too-big.bin"
+            )
+        }
+        let reloadedAfterFail = try await api.getTask(id: task.id)
+        #expect(reloadedAfterFail.attachments.isEmpty)
+        #expect(try await api.pendingChanges(limit: 500).count == pendingBefore)
+
+        // Exact 20 MB boundary is allowed and local-only upload columns stay out of outbox.
+        let exactLimit = Data(count: Attachment.maxBytes)
+        let att = try await api.uploadAttachment(
+            taskId: task.id,
+            fileName: "exact-20mb.bin",
+            data: exactLimit,
+            mimeType: "application/octet-stream",
+            originalPath: "/tmp/exact-20mb.bin"
+        )
+        #expect(att.size == Int64(Attachment.maxBytes))
+
+        let changes = try await api.pendingChanges(limit: 500)
+        let attChange = try #require(changes.last { $0.entity == "attachment" && $0.entityId == att.id })
+        #expect(!attChange.fields.contains("fileUploadedAt"))
+        #expect(!attChange.fields.contains("fileUploadFailed"))
+        let rowObj = try #require(try JSONSerialization.jsonObject(with: Data(attChange.row.utf8)) as? [String: Any])
+        #expect(rowObj["fileUploadedAt"] == nil)
+        #expect(rowObj["fileUploadFailed"] == nil)
+    }
 }

@@ -67,7 +67,7 @@ function parseLimit(v: unknown): number {
 }
 
 /** A live task that must sit in `projectId`. */
-function taskIn(snapshot: Snapshot, taskId: string, projectId: string): SnapshotRow {
+export function taskIn(snapshot: Snapshot, taskId: string, projectId: string): SnapshotRow {
   const task = snapshot.liveTasks().find((t) => idOf(t) === taskId);
   if (!task) throw new Error(`Unknown task_id '${taskId}'`);
   if (task.row.projectId !== projectId) {

@@ -38,6 +38,7 @@ public actor SyncEngine {
     private let pullLimit: Int
     private let baseBackoffSeconds: TimeInterval
     private let maxBackoffSeconds: TimeInterval
+    private let attachmentsDirectory: URL?
 
     private var inFlightSync: Task<SyncSummary, Error>?
     private var rerunRequested: Bool = false
@@ -57,7 +58,8 @@ public actor SyncEngine {
         pushBatchSize: Int = 50,
         pullLimit: Int = 500,
         baseBackoffSeconds: TimeInterval = 1.0,
-        maxBackoffSeconds: TimeInterval = 300.0
+        maxBackoffSeconds: TimeInterval = 300.0,
+        attachmentsDirectory: URL? = nil
     ) {
         self.database = database
         self.transport = transport
@@ -67,6 +69,7 @@ public actor SyncEngine {
         self.pullLimit = max(1, pullLimit)
         self.baseBackoffSeconds = max(0.1, baseBackoffSeconds)
         self.maxBackoffSeconds = max(self.baseBackoffSeconds, maxBackoffSeconds)
+        self.attachmentsDirectory = attachmentsDirectory
     }
 
     /// Emits a `SyncSummary` whenever a sync cycle changes local data.
@@ -319,10 +322,13 @@ public actor SyncEngine {
     private func performSyncCycle(generation: UInt64) async throws -> SyncSummary {
         var pushProgress = PushProgress()
         var pullProgress = PullProgress()
+        var emittedChange = false
         defer {
-            let summary = makeSummary(push: pushProgress, pull: pullProgress)
-            if summary.didChangeLocalData {
-                emitChange(summary)
+            if !emittedChange {
+                let summary = makeSummary(push: pushProgress, pull: pullProgress)
+                if summary.didChangeLocalData {
+                    emitChange(summary)
+                }
             }
         }
 
@@ -330,8 +336,15 @@ public actor SyncEngine {
         try await performPull(&pullProgress, generation: generation)
 
         consecutiveRetryableFailures = 0
+        let summary = makeSummary(push: pushProgress, pull: pullProgress)
+        if summary.didChangeLocalData {
+            emittedChange = true
+            emitChange(summary)
+        }
 
-        return makeSummary(push: pushProgress, pull: pullProgress)
+        await uploadPendingAttachments(generation: generation)
+
+        return summary
     }
 
     private func makeSummary(push: PushProgress, pull: PullProgress) -> SyncSummary {
@@ -425,6 +438,13 @@ public actor SyncEngine {
                         sql: "UPDATE change SET ackedAt = ?, result = ? WHERE seq = ?",
                         arguments: [now, ackStatus, seq]
                     )
+
+                    if ackStatus == "rejected", change.entity == "attachment", Self.isCreateOp(change) {
+                        try db.execute(
+                            sql: "UPDATE attachment SET fileUploadFailed = 1 WHERE id = ?",
+                            arguments: [change.entityId]
+                        )
+                    }
 
                     if result.gone == true {
                         if try SyncApplier.applyGone(entity: change.entity, entityId: change.entityId, in: db) {
@@ -800,6 +820,136 @@ public actor SyncEngine {
         return changed
     }
 
+    // MARK: - Attachments
+
+    static let maxAttachmentUploadsPerCycle = 3
+
+    /// Uploads up to `maxAttachmentUploadsPerCycle` local attachment files whose metadata row
+    /// is already synced (`ackedAt != nil` / no unacked outbox entries). Stops early without
+    /// requesting a rerun on temporary failures, and requests a rerun when more candidates remain.
+    func uploadPendingAttachments() async {
+        await uploadPendingAttachments(generation: sessionGeneration)
+    }
+
+    private func uploadPendingAttachments(generation: UInt64) async {
+        guard let attachmentsDirectory, generation == sessionGeneration, !Task.isCancelled else {
+            return
+        }
+        let candidates: [AttachmentRecord]
+        do {
+            candidates = try await database.writer.read { db in
+                try AttachmentRecord.fetchAll(db, sql: """
+                    SELECT * FROM attachment
+                    WHERE \(AttachmentRecord.pendingUploadWhereClause)
+                    ORDER BY createdAt ASC, id ASC
+                    """)
+            }
+        } catch {
+            return
+        }
+
+        var uploadsAttempted = 0
+        var hasMoreCandidates = false
+        var hitTemporaryFailure = false
+
+        for att in candidates {
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+            guard let rel = att.localPath, !rel.isEmpty else { continue }
+            let fileURL = attachmentsDirectory.appendingPathComponent(rel)
+            guard FileManager.default.fileExists(atPath: fileURL.path) else { continue }
+
+            if uploadsAttempted >= Self.maxAttachmentUploadsPerCycle {
+                hasMoreCandidates = true
+                break
+            }
+            uploadsAttempted += 1
+
+            let encodedId = Self.percentEncodePathComponent(att.id)
+            let mime = att.mimeType.isEmpty ? "application/octet-stream" : att.mimeType
+            do {
+                let response = try await sendAuthorizedRequest { token in
+                    try await self.transport.upload(
+                        path: "/attachments/\(encodedId)/content",
+                        headers: [
+                            "Authorization": "Bearer \(token)",
+                            "Content-Type": mime,
+                        ],
+                        fileURL: fileURL
+                    )
+                }
+                guard generation == sessionGeneration, !Task.isCancelled else { return }
+
+                switch response.status {
+                case 200...299:
+                    let uploadedAt = clock.now().epochMillis
+                    try await database.writer.write { db in
+                        try db.execute(
+                            sql: "UPDATE attachment SET fileUploadedAt = ? WHERE id = ?",
+                            arguments: [uploadedAt, att.id]
+                        )
+                    }
+                case 400, 403, 410, 413:
+                    try await database.writer.write { db in
+                        try db.execute(
+                            sql: "UPDATE attachment SET fileUploadFailed = 1 WHERE id = ?",
+                            arguments: [att.id]
+                        )
+                    }
+                default:
+                    // 404 (row not yet visible), 429, 5xx, etc.: stop this cycle and retry on next sync.
+                    hitTemporaryFailure = true
+                    break
+                }
+            } catch {
+                // Network or token errors stop this cycle without requesting a rerun.
+                hitTemporaryFailure = true
+            }
+            if hitTemporaryFailure {
+                break
+            }
+        }
+
+        if !hitTemporaryFailure && hasMoreCandidates && generation == sessionGeneration && !Task.isCancelled {
+            rerunRequested = true
+        }
+    }
+
+    func downloadAttachmentContent(id: String) async throws -> Data {
+        let encodedId = Self.percentEncodePathComponent(id)
+        let response = try await sendAuthorizedRequest { token in
+            do {
+                return try await self.transport.download(
+                    path: "/attachments/\(encodedId)/content",
+                    headers: ["Authorization": "Bearer \(token)"]
+                )
+            } catch let error as SyncError {
+                throw error
+            } catch {
+                throw self.nextRetryableError(statusCode: nil, message: error.localizedDescription)
+            }
+        }
+        switch response.status {
+        case 200...299:
+            return response.body
+        case 403:
+            throw DayDoError.forbidden("沒有權限讀取此附件")
+        case 404:
+            throw DayDoError.attachmentNotUploaded
+        case 429, 500...599:
+            let bodyText = String(data: response.body, encoding: .utf8) ?? ""
+            throw nextRetryableError(statusCode: response.status, message: bodyText)
+        default:
+            let bodyText = String(data: response.body, encoding: .utf8) ?? ""
+            throw SyncError.protocolError("HTTP \(response.status): \(bodyText)")
+        }
+    }
+
+    static func percentEncodePathComponent(_ value: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+    }
+
     // MARK: - Authorized HTTP + Refresh
 
     private func sendAuthorized(method: String, path: String, body: Data?) async throws -> Data {
@@ -808,6 +958,19 @@ public actor SyncEngine {
     }
 
     func sendAuthorizedResponse(method: String, path: String, body: Data?) async throws -> SyncHTTPResponse {
+        try await sendAuthorizedRequest { token in
+            try await self.sendWithNetworkRetryable(
+                method: method,
+                path: path,
+                headers: ["Authorization": "Bearer \(token)"],
+                body: body
+            )
+        }
+    }
+
+    private func sendAuthorizedRequest(
+        _ perform: (String) async throws -> SyncHTTPResponse
+    ) async throws -> SyncHTTPResponse {
         let initialToken: String
         if let access = tokenStore.accessToken, !access.isEmpty {
             initialToken = access
@@ -817,21 +980,11 @@ public actor SyncEngine {
             throw SyncError.signedOut
         }
 
-        let firstResponse = try await sendWithNetworkRetryable(
-            method: method,
-            path: path,
-            headers: ["Authorization": "Bearer \(initialToken)"],
-            body: body
-        )
+        let firstResponse = try await perform(initialToken)
 
         if firstResponse.status == 401 {
             let newAccess = try await refreshAccessToken(failedAccessToken: initialToken)
-            let retryResponse = try await sendWithNetworkRetryable(
-                method: method,
-                path: path,
-                headers: ["Authorization": "Bearer \(newAccess)"],
-                body: body
-            )
+            let retryResponse = try await perform(newAccess)
             if retryResponse.status == 401 {
                 tokenStore.accessToken = nil
                 tokenStore.refreshToken = nil

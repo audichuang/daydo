@@ -4,6 +4,7 @@ import { defineDurableObject } from 'void/durable';
 import { advanceServerHlc, clampHlc, type Hlc } from '../src/sync/hlc';
 import type {
   ExpectedProjectMember,
+  ScopeAttachmentInfo,
   ScopeProjectInfo,
   ScopeProjectMemberInput,
   ScopePullInput,
@@ -16,7 +17,7 @@ import type {
 import { SqliteScopeStore, type ScopeStore } from '../src/scope/store';
 import { applyProjectMemberChanges, projectMemberChanges } from '../src/scope/members';
 import { purgeProject } from '../src/scope/purge';
-import { getInboxProjectId, getProjectInfo, pullScope } from '../src/scope/pull';
+import { getAttachmentInfo, getInboxProjectId, getProjectInfo, pullScope } from '../src/scope/pull';
 import { processPushBatch } from '../src/scope/push';
 import { ensureScopeSchema } from '../src/scope/schema';
 import { SplitTxnSnapshotStore } from './dev/splitTxnSnapshotStore';
@@ -83,6 +84,10 @@ export class ScopeObject extends DurableObject<CloudBindings> {
 
   getProjectInfo(input: { projectId: string }): ScopeProjectInfo | null {
     return getProjectInfo(this.ctx.storage.sql, input);
+  }
+
+  getAttachmentInfo(input: { attachmentId: string }): ScopeAttachmentInfo | null {
+    return getAttachmentInfo(this.ctx.storage.sql, input);
   }
 
   private applyProjectMemberChanges(

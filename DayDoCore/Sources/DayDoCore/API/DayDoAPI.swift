@@ -68,6 +68,7 @@ public protocol DayDoAPI: Sendable {
     func uploadAttachment(taskId: String, fileName: String, data: Data, mimeType: String, originalPath: String?) async throws -> Attachment
     func deleteAttachment(id: String) async throws
     func attachmentURL(_ attachment: Attachment) -> URL?
+    func attachmentFile(_ attachment: Attachment) async throws -> URL
 
     // Reminders
     func upcomingReminders(limit: Int) async throws -> [ScheduledReminder]

@@ -1,5 +1,6 @@
 import { entityHome, user } from '@schema';
 import { and, eq, isNull, or, type BatchItem } from 'void/db';
+import { deleteTaskAttachmentObjects } from '../../attachments/r2';
 import type { PushOpResult, ScopePushResponse, ScopeStub } from '../../scope/api';
 import {
   activeForUser,
@@ -38,6 +39,7 @@ export interface ApplyPushPlanParams {
   context: PushContext;
   plan: PushPlan;
   getScopeStub: (scope: string) => ScopeStub;
+  storage?: R2Bucket | null;
 }
 
 export interface AppliedPushOutcome {
@@ -449,7 +451,7 @@ export async function applyPushPlan(
   db: AppDb,
   params: ApplyPushPlanParams,
 ): Promise<AppliedPushOutcome> {
-  const { userId, deviceId, pusherScope, nowMs, parsedOps, context, plan, getScopeStub } = params;
+  const { userId, deviceId, pusherScope, nowMs, parsedOps, context, plan, getScopeStub, storage } = params;
 
   const results = [...plan.results];
   const opTargetScope = [...plan.opTargetScope];
@@ -503,6 +505,26 @@ export async function applyPushPlan(
     boundMeMemberId,
     scopeResponses,
   });
+
+  if (storage) {
+    const purgedTaskIds = new Set<string>();
+    for (let i = 0; i < parsedOps.length; i += 1) {
+      const { validated } = parsedOps[i];
+      if (
+        validated.ok &&
+        validated.op.entity === 'task' &&
+        validated.op.op === 'delete' &&
+        results[i]?.status === 'applied'
+      ) {
+        purgedTaskIds.add(validated.op.entityId);
+      }
+    }
+    if (purgedTaskIds.size > 0) {
+      await Promise.all(
+        Array.from(purgedTaskIds, (taskId) => deleteTaskAttachmentObjects(storage, taskId)),
+      );
+    }
+  }
 
   return {
     results: results as PushOpResult[],
