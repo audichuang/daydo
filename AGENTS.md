@@ -52,7 +52,7 @@ ios/scripts/uitest.sh [iphone|ipad] [xcodebuild 參數…]   # UI 流程測試�
 - UI 測試一律走 `ios/scripts/uitest.sh`：依名稱找機器、等別的 `xcodebuild` 跑完再開始（Codex、agy 和其他 session 共用這兩台，同時跑會在啟動時失敗：`Failed to send signal 19`）、關掉平行測試。
 - `uitest.sh` 會先自己開機並等開機完成，xcodebuild 就不會在測完時把模擬器關掉。不要繞過腳本直接跑 `xcodebuild test`：模擬器若是 xcodebuild 開的，它測完就會關機，常常只開了 30 秒，PosterBoard 還在寫桌布資料。2026-11-17 就這樣把資料寫壞（膨脹到 5.7G），之後每次開機 PosterBoard 都當。
 - 整批工作（多輪測試加互動驗收）都做完，才用 `ios/scripts/uitest.sh down [iphone|ipad]` 關掉本次用過的 DD 常駐機，不要每跑一輪就關一次。不要直接 `xcrun simctl shutdown`：`down` 會先等別人的測試跑完再關，直接關曾在別的 session 開機 14 秒時把機器關掉。只關自己用過的那台。
-- 收起：整批 iOS 工作做完、不再需要模擬器時，用 `ios/scripts/uitest.sh park [iphone|ipad]` 把用過的常駐機整台（App、登入、設定）收進 NAS 的 `/Volumes/WorkSpace/ios-sim`，本機刪除。它會先等 xcodebuild 鎖再關機，PosterBoard 資料超過 1G 時拒收，先照下一條修好。之後 `uitest.sh` 找不到常駐機時，會在鎖裡自動用 `sim-vault` 還原，UDID 會換新。要在別的地方用（例如手動驗收），先跑一次 `uitest.sh` 讓它還原，或在沒有 xcodebuild 執行時跑 `sim-vault restore "DD iPhone 18 Pro"`。`sim-vault list` 列出 NAS 上的封存。
+- 收起：整批 iOS 工作做完、不再需要模擬器時，用 `ios/scripts/uitest.sh park [iphone|ipad]` 把用過的常駐機整台（App、登入、設定）收進 NAS 的 `/Volumes/WorkSpace/ios-sim`，本機刪除。它會先等 xcodebuild 鎖再關機。PosterBoard 資料超過 1G 時不收也不關機，先照下面的 PosterBoard 修法重建（正常約 200M）。之後 `uitest.sh` 找不到常駐機時，會在鎖裡自動用 `sim-vault` 還原，UDID 會換新。手動驗收要用時跑 `ios/scripts/uitest.sh up [iphone|ipad]`，會還原、開機並印出 UDID；`record-uitest.sh` 也走這條路。`sim-vault list` 列出 NAS 上的封存。
 - 還原失敗時不重建：WorkSpace 沒掛上（結束碼 5）就先掛上再重跑；NAS 上沒有封存（3）或 runtime 已移除（4）就停下問使用者。空機之後再收起，會蓋掉有登入的封存。
 - 別的 session 可能還開著常駐機在驗收；只收自己這批工作用過的那台。
 - Mac 跳出 PosterBoard 當機視窗時，查 `~/Library/Logs/DiagnosticReports` 裡含 `SimDevice.<UDID>` 的 `.ips`。堆疊有 `PRPosterDescriptor _initWithPath:` 就先關機，把 `data/Library/Application Support/` 下的 `PRBPosterExtensionDataStore`、`com.apple.PosterKit` 改名備份後重開機，系統會重建。確認沒有新的 `.ips` 再刪備份；常駐機不 `erase`。

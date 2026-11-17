@@ -14,21 +14,11 @@ if [[ $# -ne 3 ]]; then
   exit 2
 fi
 target="$1"; test_id="$2"; out="$3"
-case "$target" in
-  iphone) name="DD iPhone 18 Pro" ;;
-  ipad) name="DD iPad Pro 11" ;;
-  "DD "*) name="$target" ;;
-  *) echo "unknown device: $target" >&2; exit 2 ;;
-esac
-udid=$(xcrun simctl list devices available -j | python3 -c '
-import json, sys
-ids = [d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["name"] == sys.argv[1]]
-print(ids[0] if len(ids) == 1 else "")
-' "$name")
-[[ -n "$udid" ]] || { echo "找不到唯一一台名為「${name}」的模擬器" >&2; exit 2; }
+here="$(cd "$(dirname "$0")" && pwd)"
+# `up` restores a resident device parked on the NAS, boots it and prints its UDID.
+udid=$("$here/uitest.sh" up "$target")
 mkdir -p "$(dirname "$out")"
 
-here="$(cd "$(dirname "$0")" && pwd)"
 "$here/uitest.sh" "$target" "-only-testing:DayDoUITests/$test_id" >"$out.log" 2>&1 &
 test_pid=$!
 

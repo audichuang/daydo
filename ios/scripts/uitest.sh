@@ -5,6 +5,7 @@
 #   ios/scripts/uitest.sh ipad -only-testing:DayDoUITests/DayDoFlowTests/testCalendar
 #   ios/scripts/uitest.sh down [iphone|ipad|"DD <name>"]   # shut down once the batch is done
 #   ios/scripts/uitest.sh park [iphone|ipad]               # archive a resident device to the NAS
+#   ios/scripts/uitest.sh up [iphone|ipad|"DD <name>"]     # restore if parked, boot, print the UDID
 #
 # `park` hands a resident device to sim-vault (whole device incl. app and login, stored on
 # the NAS) and deletes it locally; the next run that cannot find it restores it inside the
@@ -18,7 +19,7 @@
 set -euo pipefail
 
 mode=test
-case "${1:-}" in down|park) mode=$1; shift ;; esac
+case "${1:-}" in down|park|up) mode=$1; shift ;; esac
 target="${1:-iphone}"
 [[ $# -gt 0 ]] && shift
 resident=1
@@ -26,7 +27,7 @@ case "$target" in
   iphone) name="DD iPhone 18 Pro" ;;
   ipad) name="DD iPad Pro 11" ;;
   "DD "*) name="$target"; resident=0 ;;
-  *) echo "usage: $0 [down|park] [iphone|ipad|\"DD <name>\"] [xcodebuild args...]" >&2; exit 2 ;;
+  *) echo "usage: $0 [down|park|up] [iphone|ipad|\"DD <name>\"] [xcodebuild args...]" >&2; exit 2 ;;
 esac
 if [[ "$mode" == park && $resident == 0 ]]; then
   echo "park 只收常駐機（iphone／ipad）；臨時機用完直接 xcrun simctl delete" >&2
@@ -43,13 +44,31 @@ print(ids[0] if len(ids) == 1 else ("MISSING" if not ids else ""))
 ' "$name"
 }
 udid=$(lookup)
-if [[ "$udid" == MISSING && $resident == 1 && "$mode" != test ]]; then
+if [[ "$udid" == MISSING && $resident == 1 && ( "$mode" == down || "$mode" == park ) ]]; then
   echo "「${name}」不在本機（可能已收進 NAS），不用處理" >&2
   exit 0
 fi
 if [[ -z "$udid" || ( "$udid" == MISSING && $resident == 0 ) ]]; then
   echo "找不到唯一一台名為「${name}」的模擬器（xcrun simctl list devices）" >&2
   exit 2
+fi
+
+boot() {
+  xcrun simctl boot "$udid" 2>/dev/null || true
+  xcrun simctl bootstatus "$udid" -b >/dev/null
+}
+# `up` on a device that is already here needs no lock.
+if [[ "$mode" == up && "$udid" != MISSING ]]; then
+  boot
+  printf '%s\n' "$udid"
+  exit 0
+fi
+
+store="$HOME/Library/Developer/CoreSimulator/Devices/$udid/data/Library/Application Support/PRBPosterExtensionDataStore"
+if [[ "$mode" == park && -d "$store" ]] && (( $(du -sk "$store" | cut -f1) > 1048576 )); then
+  # A bloated PosterBoard store (12G on the iPad, 2026-11-17) would be archived as is. Healthy is about 200M.
+  echo "PosterBoard 資料超過 1G（$(du -sh "$store" | cut -f1)），先照 AGENTS.md「模擬器」的修法重建再收起；機器沒動" >&2
+  exit 1
 fi
 
 # Match the process name exactly: `pgrep -f` also matches shells whose command line mentions xcodebuild.
@@ -104,19 +123,17 @@ if [[ "$udid" == MISSING ]]; then
   fi
 fi
 
+if [[ "$mode" == up ]]; then
+  boot
+  printf '%s\n' "$udid"
+  exit 0
+fi
 if [[ "$mode" != test ]]; then
   echo "關機：${name} (${udid})" >&2
   xcrun simctl shutdown "$udid" 2>/dev/null || true
 fi
 [[ "$mode" == down ]] && exit 0
 if [[ "$mode" == park ]]; then
-  # A bloated PosterBoard store (12G on the iPad, 2026-11-17) would be archived as is and
-  # keep crashing after every restore. Healthy is about 200M.
-  store="$HOME/Library/Developer/CoreSimulator/Devices/$udid/data/Library/Application Support/PRBPosterExtensionDataStore"
-  if [[ -d "$store" ]] && (( $(du -sk "$store" | cut -f1) > 1048576 )); then
-    echo "PosterBoard 資料超過 1G（$(du -sh "$store" | cut -f1)），先照 AGENTS.md「模擬器」的修法重建再收起" >&2
-    exit 1
-  fi
   rc=0
   sim-vault park "$name" || rc=$?
   case "$rc" in
@@ -133,8 +150,7 @@ echo "UI 測試：${name} (${udid})" >&2
 # as soon as the run ends, often 30 s after boot while PosterBoard is still writing its
 # wallpaper store. One such cut on 2026-11-17 corrupted that store and PosterBoard then
 # crashed on every boot. A device that was already booted is left running.
-xcrun simctl boot "$udid" 2>/dev/null || true
-xcrun simctl bootstatus "$udid" -b >/dev/null
+boot
 xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
   -destination "platform=iOS Simulator,id=$udid" \
   -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO "$@"
