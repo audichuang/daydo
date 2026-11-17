@@ -138,6 +138,18 @@ private let guards: [Guard] = [
             ".shadow(color: .black.opacity(0.35), radius: 10)",
         ]
     ),
+    Guard(
+        name: "appearance is applied only through AppearanceApplier (window overrideUserInterfaceStyle)",
+        directories: ["ios/DayDo", "ios/DayDoWidgets"],
+        // .preferredColorScheme(nil) leaves already-presented sheets in the old scheme
+        // when switching back to 跟隨系統.
+        pattern: #"\.preferredColorScheme\("#,
+        allow: [],
+        bad: [
+            ".preferredColorScheme(.dark)",
+            ".preferredColorScheme(model.appearance.colorScheme)",
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {
