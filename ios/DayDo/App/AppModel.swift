@@ -373,15 +373,15 @@ final class AppModel {
         notificationDelegate.model = self
     }
 
+    /// Members eligible for filter chips (`me` + members sharing an active list).
+    var filterMembers: [Member] {
+        MemberFilter.filterableMembers(members: members, projects: projects)
+    }
+
     /// Member filter applied to 「全部」; drops back to `nil` (全部) unless
-    /// multiple members exist and the stored id still belongs to one of them.
+    /// multiple filterable members exist and the stored id still belongs to one of them.
     var effectiveAllMemberFilter: String? {
-        guard members.count > 1,
-              let id = allMemberFilter,
-              members.contains(where: { $0.id == id }) else {
-            return nil
-        }
-        return id
+        MemberFilter.effectiveFilter(allMemberFilter, among: filterMembers)
     }
 
     /// A task just added on 「全部」 that the active member filter would hide

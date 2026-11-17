@@ -823,6 +823,25 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(window.overrideUserInterfaceStyle, .unspecified)
     }
 
+    private func sharedProject(id: String = "shared-1", memberIds: [String], archived: Bool = false) -> Project {
+        Project(
+            id: id,
+            name: "共享清單",
+            viewMode: "list",
+            kind: "TASK",
+            isInbox: false,
+            ownerId: memberIds.first ?? "me",
+            sortKey: "z1",
+            showInSmart: "all",
+            notifyMode: "all",
+            archived: archived,
+            memberIds: memberIds,
+            activeCount: 0,
+            createdAt: 0,
+            updatedAt: 0
+        )
+    }
+
     func testAllMemberFilterPersistsAndFallsBackWhenMemberMissing() async throws {
         let suiteName = "daydo-tests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -836,6 +855,7 @@ final class AppModelTests: XCTestCase {
         await m1.reloadData()
         let me = try XCTUnwrap(m1.me)
         m1.members = [me, partner]
+        m1.projects.append(sharedProject(memberIds: [me.id, partner.id]))
         m1.allMemberFilter = partner.id
 
         XCTAssertEqual(defaults.string(forKey: AppModel.allMemberFilterKey), partner.id)
@@ -854,6 +874,32 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: AppModel.allMemberFilterKey), partner.id)
     }
 
+    func testAllMemberFilterFallsBackWhenPartnerLeavesAllSharedLists() async throws {
+        let suiteName = "daydo-tests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = try DeviceStore.inMemory()
+        try await store.bootstrap()
+        let model = AppModel(store: store, syncEnabled: false, defaults: defaults)
+        await model.reloadData()
+        let me = try XCTUnwrap(model.me)
+        let partner = Member(id: "partner-1", name: "小安", initial: "小", color: Member.avatarColors[0], isMe: false)
+        model.members = [me, partner]
+        let shared = sharedProject(memberIds: [me.id, partner.id])
+        model.projects.append(shared)
+        model.allMemberFilter = partner.id
+
+        XCTAssertEqual(model.filterMembers.map(\.id), [me.id, partner.id])
+        XCTAssertEqual(model.effectiveAllMemberFilter, partner.id)
+
+        // Both leave / are removed from the shared list, though partner remains in cached members.
+        model.projects.removeAll { $0.id == shared.id }
+        XCTAssertEqual(model.filterMembers.map(\.id), [me.id])
+        XCTAssertNil(model.effectiveAllMemberFilter)
+        XCTAssertEqual(defaults.string(forKey: AppModel.allMemberFilterKey), partner.id)
+    }
+
     func testCreatingTaskHiddenByAllMemberFilterResetsFilter() async throws {
         let suiteName = "daydo-tests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -866,6 +912,7 @@ final class AppModelTests: XCTestCase {
         let me = try XCTUnwrap(model.me)
         let partner = Member(id: "partner-1", name: "小安", initial: "小", color: Member.avatarColors[0], isMe: false)
         model.members = [me, partner]
+        model.projects.append(sharedProject(memberIds: [me.id, partner.id]))
         model.scope = .smart(.all)
 
         // Inbox task belongs to me: 「我的」 still shows it, filter stays.

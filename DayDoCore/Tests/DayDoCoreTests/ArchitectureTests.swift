@@ -175,6 +175,21 @@ private let guards: [Guard] = [
             #"sql: "SELECT projectId, memberId FROM projectMember WHERE deletedAt IS NULL AND role = 'owner'""#,
         ]
     ),
+    // Guards that member filter UI and effective-filter logic use AppModel.filterMembers
+    // (or MemberFilter) rather than raw model.members / members.count > 1.
+    Guard(
+        name: "member filter chips use filterMembers, never raw members",
+        directories: ["ios/DayDo"],
+        pattern: #"MemberFilterChips\s*\(\s*members:\s*(?:\w+\.)?members\b|\bmembers\.count\s*>\s*1|selection:\s*\$(?:model\.allMemberFilter|memberFilter)\b"#,
+        allow: [],
+        bad: [
+            "MemberFilterChips(members: model.filterMembers, selection: $model.allMemberFilter)",
+            "MemberFilterChips(members: model.filterMembers, selection: $memberFilter)",
+            "MemberFilterChips(members: model.members, selection: $model.allMemberFilter)",
+            "MemberFilterChips(members: members, selection: $memberFilter)",
+            "if model.members.count > 1 {",
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {

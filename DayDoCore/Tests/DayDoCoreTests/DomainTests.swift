@@ -189,3 +189,81 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         #expect(DayLayout.blocks(for: [t], on: d.adding(days: 1)).map { [$0.start, $0.end] } == [[0, 30]])
     }
 }
+
+@Suite struct MemberFilterTests {
+    private func member(_ id: String, _ name: String, isMe: Bool = false) -> Member {
+        Member(id: id, name: name, initial: String(name.prefix(1)), color: Member.avatarColors[0], isMe: isMe)
+    }
+
+    private func project(_ id: String, memberIds: [String], archived: Bool = false) -> Project {
+        Project(
+            id: id,
+            name: id,
+            viewMode: "list",
+            kind: "TASK",
+            isInbox: false,
+            ownerId: memberIds.first ?? "me",
+            sortKey: "a",
+            showInSmart: "all",
+            notifyMode: "all",
+            archived: archived,
+            memberIds: memberIds,
+            activeCount: 0,
+            createdAt: 0,
+            updatedAt: 0
+        )
+    }
+
+    @Test func meOnly() {
+        let me = member("me", "我", isMe: true)
+        let result = MemberFilter.filterableMembers(
+            members: [me],
+            projects: [project("inbox", memberIds: ["me"])]
+        )
+        #expect(result.map(\.id) == ["me"])
+    }
+
+    @Test func partnerInSharedLiveListIncludedWithMeFirst() {
+        let me = member("me", "我", isMe: true)
+        let partner = member("p1", "小安")
+        let partner2 = member("p2", "阿明")
+        let result = MemberFilter.filterableMembers(
+            members: [partner, partner2, me],
+            projects: [project("shared", memberIds: ["me", "p1", "p2"])]
+        )
+        #expect(result.map(\.id) == ["me", "p1", "p2"])
+    }
+
+    @Test func partnerOnlyInArchivedListExcluded() {
+        let me = member("me", "我", isMe: true)
+        let partner = member("p1", "小安")
+        let result = MemberFilter.filterableMembers(
+            members: [me, partner],
+            projects: [
+                project("inbox", memberIds: ["me"]),
+                project("old-shared", memberIds: ["me", "p1"], archived: true),
+            ]
+        )
+        #expect(result.map(\.id) == ["me"])
+    }
+
+    @Test func partnerInNoListExcluded() {
+        let me = member("me", "我", isMe: true)
+        let partner = member("p1", "小安")
+        let result = MemberFilter.filterableMembers(
+            members: [me, partner],
+            projects: [project("inbox", memberIds: ["me"])]
+        )
+        #expect(result.map(\.id) == ["me"])
+    }
+
+    @Test func effectiveFilterRequiresMultipleFilterableMembersAndMembership() {
+        let me = member("me", "我", isMe: true)
+        let partner = member("p1", "小安")
+        #expect(MemberFilter.effectiveFilter(me.id, among: [me]) == nil)
+        #expect(MemberFilter.effectiveFilter(partner.id, among: [me]) == nil)
+        #expect(MemberFilter.effectiveFilter(partner.id, among: [me, partner]) == partner.id)
+        #expect(MemberFilter.effectiveFilter("unknown", among: [me, partner]) == nil)
+        #expect(MemberFilter.effectiveFilter(nil, among: [me, partner]) == nil)
+    }
+}

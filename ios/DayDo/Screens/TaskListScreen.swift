@@ -39,8 +39,11 @@ struct TaskListScreen: View {
                             .foregroundStyle(Palette.textSecondary)
                             .contentTransition(reduceMotion ? .identity : .numericText())
                             .animation(loadedScope == scope ? Motion.count(reduceMotion) : nil, value: subtitle)
-                        if scope == .smart(.all) && model.members.count > 1 {
-                            MemberFilterChips(members: model.members, selection: $model.allMemberFilter)
+                        if scope == .smart(.all) && model.filterMembers.count > 1 {
+                            MemberFilterChips(
+                                members: model.filterMembers,
+                                selection: Binding(get: { model.effectiveAllMemberFilter }, set: { model.allMemberFilter = $0 })
+                            )
                                 .padding(.top, 10)
                         }
                     }

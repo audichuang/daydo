@@ -48,6 +48,9 @@ struct CalendarScreen: View {
     var mode: CalMode { CalMode(rawValue: modeRaw) ?? .list }
     var sel: LocalDay { selected ?? model.today }
     var shownMonth: LocalDay { month ?? sel.firstOfMonth }
+    private var effectiveMemberFilter: String? {
+        MemberFilter.effectiveFilter(memberFilter, among: model.filterMembers)
+    }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -58,7 +61,7 @@ struct CalendarScreen: View {
                 if !isRegular {
                     header
                 }
-                if model.members.count > 1 || projectFilter != nil {
+                if model.filterMembers.count > 1 || projectFilter != nil {
                     filters.padding(.horizontal, 16).padding(.top, isRegular ? 8 : 0).padding(.bottom, 6)
                 }
                 content
@@ -94,9 +97,14 @@ struct CalendarScreen: View {
                 }
             }
         }
-        .task(id: CalReload(range: range, member: memberFilter, completed: showCompleted, revision: model.revision)) { await load() }
+        .task(id: CalReload(range: range, member: effectiveMemberFilter, completed: showCompleted, revision: model.revision)) { await load() }
         .onAppear { applyPendingCalendarDay() }
         .onChange(of: model.calendarNavigationTrigger) { _, _ in applyPendingCalendarDay() }
+        .onChange(of: model.filterMembers) { _, _ in
+            if effectiveMemberFilter != memberFilter {
+                memberFilter = effectiveMemberFilter
+            }
+        }
         .onChange(of: showCompleted) { _, newValue in
             model.syncCalendarShowCompletedToWidget(newValue)
         }
@@ -225,8 +233,11 @@ struct CalendarScreen: View {
 
     var filters: some View {
         HStack(spacing: 6) {
-            if model.members.count > 1 {
-                MemberFilterChips(members: model.members, selection: $memberFilter)
+            if model.filterMembers.count > 1 {
+                MemberFilterChips(
+                    members: model.filterMembers,
+                    selection: Binding(get: { effectiveMemberFilter }, set: { memberFilter = $0 })
+                )
             }
             if let p = model.project(projectFilter) {
                 Button { projectFilter = nil } label: {
@@ -267,8 +278,9 @@ struct CalendarScreen: View {
     }
 
     func load() async {
-        let currentQuery = CalQueryKey(range: range, member: memberFilter, completed: showCompleted)
-        let q = TaskQuery(from: range.lowerBound, to: range.upperBound, includeCompleted: showCompleted, memberId: memberFilter)
+        let member = effectiveMemberFilter
+        let currentQuery = CalQueryKey(range: range, member: member, completed: showCompleted)
+        let q = TaskQuery(from: range.lowerBound, to: range.upperBound, includeCompleted: showCompleted, memberId: member)
         do {
             let loaded = try await model.api.listTasks(q)
             guard !Task.isCancelled else { return }
@@ -660,7 +672,7 @@ struct CalendarScreen: View {
     }
 
     private var agendaContext: CalAgendaContext {
-        CalAgendaContext(day: sel, member: memberFilter, project: projectFilter, completed: showCompleted)
+        CalAgendaContext(day: sel, member: effectiveMemberFilter, project: projectFilter, completed: showCompleted)
     }
 
     var cardAgenda: some View {
