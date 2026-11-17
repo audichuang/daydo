@@ -803,15 +803,7 @@ extension LocalDayDoAPI {
         var recs = try req.order(Column("sortKey")).fetchAll(db).filter { live.contains($0.projectId) || $0.projectId == query.projectId }
         if let tag = query.tag?.lowercased() { recs = recs.filter { $0.tags.contains(tag) } }
         if let mid = query.memberId {
-            let rows = try Row.fetchAll(db, sql: "SELECT projectId, memberId FROM projectMember WHERE deletedAt IS NULL")
-            var members: [String: Set<String>] = [:]
-            for r in rows { members[r["projectId"], default: []].insert(r["memberId"]) }
-            let meId = try me(db).id
-            recs = recs.filter { t in
-                let m = members[t.projectId] ?? []
-                if m.count <= 1 { return mid == meId }
-                return m.contains(mid)
-            }
+            recs = try filterTasks(recs, ownedBy: mid, in: db)
         }
         var out = try tasks(db, recs)
         if let from = query.from {
@@ -819,6 +811,54 @@ extension LocalDayDoAPI {
             out = out.filter { $0.schedule?.overlaps(from, to) ?? false }
         }
         return out
+    }
+
+    /// Single source of truth for task ownership (used by both calendar `TaskQuery.memberId`
+    /// and 「全部」 `listSections(.smart(.all), memberId:)`):
+    /// 1. `assigneeId != nil` → belongs to the assignee only.
+    /// 2. `assigneeId == nil` → belongs to the list owner (`projectMember` row with
+    ///    `role == "owner"`, falling back to `project.ownerId` if no owner row exists;
+    ///    inbox / personal lists → `me`).
+    func filterTasks(_ recs: [TaskRecord], ownedBy memberId: String, in db: Database) throws -> [TaskRecord] {
+        guard !recs.isEmpty else { return [] }
+        let meId = try me(db).id
+        let pmOwners = Dictionary(
+            try Row.fetchAll(
+                db,
+                sql: "SELECT projectId, memberId FROM projectMember WHERE deletedAt IS NULL AND role = 'owner'"
+            ).map { ($0["projectId"] as String, $0["memberId"] as String) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var projectOwners: [String: String] = [:]
+        for r in try Row.fetchAll(db, sql: "SELECT id, isInbox, ownerId FROM project") {
+            let pid: String = r["id"]
+            let isInbox: Bool = r["isInbox"]
+            let rawOwnerId: String = r["ownerId"]
+            if isInbox {
+                projectOwners[pid] = meId
+            } else if let pmOwner = pmOwners[pid], !pmOwner.isEmpty {
+                projectOwners[pid] = pmOwner
+            } else if !rawOwnerId.isEmpty {
+                projectOwners[pid] = rawOwnerId
+            } else {
+                projectOwners[pid] = meId
+            }
+        }
+        return recs.filter { t in
+            Self.taskOwnerId(assigneeId: t.assigneeId, projectId: t.projectId, projectOwners: projectOwners, meId: meId) == memberId
+        }
+    }
+
+    static func taskOwnerId(
+        assigneeId: String?,
+        projectId: String,
+        projectOwners: [String: String],
+        meId: String
+    ) -> String {
+        if let assigneeId, !assigneeId.isEmpty {
+            return assigneeId
+        }
+        return projectOwners[projectId] ?? meId
     }
 
     func completedToday(_ db: Database) throws -> [TodoTask] {
@@ -834,7 +874,7 @@ extension LocalDayDoAPI {
         try await writer.read { db in try self.fetchActive(db, query: query, smartOnly: false) }
     }
 
-    public func listSections(_ scope: TaskScope, limit: Int?) async throws -> [TaskSection] {
+    public func listSections(_ scope: TaskScope, limit: Int?, memberId: String?) async throws -> [TaskSection] {
         let today = today
         return try await writer.read { db in
             let meId = try self.me(db).id
@@ -853,7 +893,7 @@ extension LocalDayDoAPI {
                     let sections = TaskGrouping.sections(for: scope, tasks: active, completed: Array(fetched.prefix(pageLimit)), today: today)
                     return self.markingHasMore(sections, sectionId: "completed", hasMore: fetched.count > pageLimit)
                 case .all:
-                    let active = try self.fetchActive(db, query: TaskQuery(), smartOnly: true)
+                    let active = try self.fetchActive(db, query: TaskQuery(memberId: memberId), smartOnly: true)
                     return TaskGrouping.sections(for: scope, tasks: active, completed: [], today: today)
                 case .assigned:
                     let active = try self.fetchActive(db, query: TaskQuery(), smartOnly: false).filter { $0.assigneeId == meId }

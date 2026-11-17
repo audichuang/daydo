@@ -558,4 +558,108 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         let colors = (0..<64).map { Member.defaultColor(for: "member-\($0)") }
         #expect(Set(colors).count == Member.avatarColors.count)
     }
+
+    @Test func memberFilterOwnershipRuleAcrossCalendarAndAllSections() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-tests-\(UUID().uuidString)")
+        let db = try AppDatabase.inMemory()
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+
+        let me = try #require(try await api.listMembers().first(where: \.isMe))
+        let partnerId = "member-partner"
+        let nowMs = noon.epochMillis
+        let mySharedList = try await api.createProject(CreateProjectInput(name: "我建的共享清單", color: "#4AA8E8"))
+        let partnerSharedListId = "proj-partner-shared"
+        let partnerNoPMRowListId = "proj-partner-fallback"
+
+        try await db.writer.write { db in
+            try MemberRecord(
+                id: partnerId, name: "小安", initial: "小", color: "#5AC8FA",
+                isMe: false, createdAt: nowMs, updatedAt: nowMs
+            ).insert(db)
+            try ProjectMemberRecord(
+                projectId: mySharedList.id, memberId: partnerId, role: "editor",
+                createdAt: nowMs, updatedAt: nowMs
+            ).insert(db)
+
+            // Shared list owned by partner (with projectMember owner row)
+            try ProjectRecord(
+                id: partnerSharedListId, name: "小安的共享清單", viewMode: "list", kind: "TASK",
+                isInbox: false, ownerId: partnerId, sortKey: "z1",
+                showInSmart: "all", notifyMode: "all", createdAt: nowMs, updatedAt: nowMs
+            ).insert(db)
+            try ProjectMemberRecord(
+                projectId: partnerSharedListId, memberId: partnerId, role: "owner",
+                createdAt: nowMs, updatedAt: nowMs
+            ).insert(db)
+            try ProjectMemberRecord(
+                projectId: partnerSharedListId, memberId: me.id, role: "editor",
+                createdAt: nowMs, updatedAt: nowMs
+            ).insert(db)
+
+            // Shared list owned by partner without projectMember owner row (falls back to project.ownerId)
+            try ProjectRecord(
+                id: partnerNoPMRowListId, name: "唯讀清單", viewMode: "list", kind: "TASK",
+                isInbox: false, ownerId: partnerId, sortKey: "z2",
+                showInSmart: "all", notifyMode: "all", createdAt: nowMs, updatedAt: nowMs
+            ).insert(db)
+        }
+
+        let todayStr = LocalDay("2026-11-15")!.description
+        // Cell 1: list I own, unassigned -> mine
+        _ = try await api.createTask(CreateTaskInput(
+            projectId: mySharedList.id, title: "我建清單未指派", start: todayStr, allDay: true
+        ))
+        // Cell 2: shared list owned by partner, unassigned -> theirs (NOT mine)
+        _ = try await api.createTask(CreateTaskInput(
+            projectId: partnerSharedListId, title: "對方清單未指派", start: todayStr, allDay: true
+        ))
+        // Cell 3: list I own, assigned to partner -> theirs (NOT mine)
+        _ = try await api.createTask(CreateTaskInput(
+            projectId: mySharedList.id, title: "我建清單指派對方", start: todayStr, allDay: true, assigneeId: partnerId
+        ))
+        // Cell 4: inbox task -> mine
+        _ = try await api.createTask(CreateTaskInput(
+            title: "收件匣任務", start: todayStr, allDay: true
+        ))
+        // Extra cell: shared list owned by partner, assigned to me -> mine (NOT theirs)
+        _ = try await api.createTask(CreateTaskInput(
+            projectId: partnerSharedListId, title: "對方清單指派給我", start: todayStr, allDay: true, assigneeId: me.id
+        ))
+        // Fallback cell: list owned by partner with no projectMember owner row, unassigned -> theirs
+        try await db.writer.write { db in
+            try TaskRecord(
+                id: "task-fallback-owner", projectId: partnerNoPMRowListId, title: "對方ownerId回退",
+                content: "", priority: 0, status: 0, startDay: todayStr,
+                reminders: [], tags: [], sortKey: "a0", createdAt: nowMs, updatedAt: nowMs
+            ).insert(db)
+        }
+
+        let expectedAll = Set([
+            "我建清單未指派", "對方清單未指派", "我建清單指派對方",
+            "收件匣任務", "對方清單指派給我", "對方ownerId回退",
+        ])
+        let expectedMine = Set(["我建清單未指派", "收件匣任務", "對方清單指派給我"])
+        let expectedTheirs = Set(["對方清單未指派", "我建清單指派對方", "對方ownerId回退"])
+
+        // 1. Calendar path: listTasks(TaskQuery(memberId:))
+        let day = LocalDay("2026-11-15")!
+        let calAll = try await api.listTasks(TaskQuery(from: day, to: day))
+        let calMine = try await api.listTasks(TaskQuery(from: day, to: day, memberId: me.id))
+        let calTheirs = try await api.listTasks(TaskQuery(from: day, to: day, memberId: partnerId))
+        #expect(Set(calAll.map(\.title)) == expectedAll)
+        #expect(Set(calMine.map(\.title)) == expectedMine)
+        #expect(Set(calTheirs.map(\.title)) == expectedTheirs)
+
+        // 2. 「全部」 smart list path: listSections(.smart(.all), memberId:)
+        let secAll = try await api.listSections(.smart(.all), memberId: nil).flatMap(\.tasks)
+        let secMine = try await api.listSections(.smart(.all), memberId: me.id).flatMap(\.tasks)
+        let secTheirs = try await api.listSections(.smart(.all), memberId: partnerId).flatMap(\.tasks)
+        #expect(Set(secAll.map(\.title)) == expectedAll)
+        #expect(Set(secMine.map(\.title)) == expectedMine)
+        #expect(Set(secTheirs.map(\.title)) == expectedTheirs)
+
+        // 3. smartCounts().all remains unfiltered total
+        #expect(try await api.smartCounts().all == 6)
+    }
 }

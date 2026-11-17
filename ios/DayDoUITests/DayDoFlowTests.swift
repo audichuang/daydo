@@ -1043,7 +1043,7 @@ final class DayDoFlowTests: XCTestCase {
 
         // Apply both member and project filters on Calendar, then open daydo://calendar/<today>
         // and verify filters reset to "全部" so tasks are not hidden.
-        let memberChip = app.buttons["小安"]
+        let memberChip = app.buttons["小安的"]
         XCTAssertTrue(memberChip.waitForExistence(timeout: 3), app.debugDescription)
         memberChip.tap()
         XCTAssertTrue(memberChip.isSelected)
@@ -1062,7 +1062,7 @@ final class DayDoFlowTests: XCTestCase {
         app.open(URL(string: "daydo://calendar/\(dayString(offset: 0))")!)
         XCTAssertTrue(app.buttons["移除清單篩選：收件匣"].waitForNonExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(app.buttons["全部"].isSelected)
-        XCTAssertFalse(app.buttons["小安"].isSelected)
+        XCTAssertFalse(app.buttons["小安的"].isSelected)
         XCTAssertTrue(app.buttons["完成：買鮮奶"].waitForExistence(timeout: 5), app.debugDescription)
 
         // Open task detail via widget task deep link.
@@ -1398,5 +1398,64 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(lightAfterRelaunch.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertTrue(lightAfterRelaunch.isSelected)
         XCTAssertFalse(darkAfterRelaunch.isSelected)
+    }
+
+    @MainActor
+    func testAllViewMemberFilterChips() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoSeedSharedList"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        XCTAssertTrue(app.buttons["完成：買鮮奶"].waitForExistence(timeout: 5), app.debugDescription)
+
+        app.buttons["開啟清單抽屜"].tap()
+        let allRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '全部'")).firstMatch
+        XCTAssertTrue(allRow.waitForExistence(timeout: 3), app.debugDescription)
+        let badge = allRow.label.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+        XCTAssertEqual(badge, "4", allRow.label)
+        allRow.tap()
+
+        let allChip = app.buttons["memberFilter.all"]
+        let meChip = app.buttons["memberFilter.me"]
+        let partnerChip = app.buttons["memberFilter.debug-other-member-1"]
+        XCTAssertTrue(allChip.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(meChip.exists)
+        XCTAssertTrue(partnerChip.exists)
+        XCTAssertEqual(meChip.label, "我的")
+        XCTAssertEqual(partnerChip.label, "小安的")
+        XCTAssertTrue(allChip.isSelected)
+        XCTAssertTrue(app.staticTexts["4 項待辦"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["買鮮奶"].exists)
+        XCTAssertTrue(app.staticTexts["繳水電費"].exists)
+        XCTAssertTrue(app.staticTexts["訂機票"].exists)
+        XCTAssertTrue(app.staticTexts["換日幣"].exists)
+        shot("all-member-filter-all")
+
+        meChip.tap()
+        XCTAssertTrue(meChip.isSelected)
+        XCTAssertTrue(app.staticTexts["2 項待辦"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["買鮮奶"].exists)
+        XCTAssertTrue(app.staticTexts["換日幣"].exists)
+        XCTAssertTrue(app.staticTexts["繳水電費"].waitForNonExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["訂機票"].exists)
+        shot("all-member-filter-me")
+
+        partnerChip.tap()
+        XCTAssertTrue(partnerChip.isSelected)
+        XCTAssertTrue(app.staticTexts["2 項待辦"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["繳水電費"].exists)
+        XCTAssertTrue(app.staticTexts["訂機票"].exists)
+        XCTAssertTrue(app.staticTexts["買鮮奶"].waitForNonExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["換日幣"].exists)
+        shot("all-member-filter-partner")
+
+        // Verify opening the drawer while on 「全部」 still resolves the drawer row and unfiltered badge.
+        app.buttons["開啟清單抽屜"].tap()
+        let drawerAllAgain = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '全部'")).firstMatch
+        XCTAssertTrue(drawerAllAgain.waitForExistence(timeout: 3), app.debugDescription)
+        let badgeAgain = drawerAllAgain.label.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+        XCTAssertEqual(badgeAgain, "4", drawerAllAgain.label)
     }
 }

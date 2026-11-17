@@ -226,8 +226,7 @@ struct CalendarScreen: View {
     var filters: some View {
         HStack(spacing: 6) {
             if model.members.count > 1 {
-                chip("全部", on: memberFilter == nil) { memberFilter = nil }
-                ForEach(model.members) { m in chip(m.isMe ? "我參與" : m.name, on: memberFilter == m.id) { memberFilter = m.id } }
+                MemberFilterChips(members: model.members, selection: $memberFilter)
             }
             if let p = model.project(projectFilter) {
                 Button { projectFilter = nil } label: {
@@ -240,18 +239,6 @@ struct CalendarScreen: View {
             }
             Spacer()
         }
-    }
-
-    func chip(_ label: String, on: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label).txt(13, .semibold)
-                .foregroundStyle(on ? Palette.background : Palette.textNav)
-                .padding(.horizontal, 12).frame(height: 30)
-                .background(Capsule().fill(on ? Palette.text : .clear))
-                .overlay(Capsule().strokeBorder(on ? Palette.text : Palette.separator))
-        }
-        .buttonStyle(.press)
-        .accessibilityAddTraits(on ? .isSelected : [])
     }
 
     // MARK: Data

@@ -822,4 +822,61 @@ final class AppModelTests: XCTestCase {
         AppearanceApplier.apply(.system)
         XCTAssertEqual(window.overrideUserInterfaceStyle, .unspecified)
     }
+
+    func testAllMemberFilterPersistsAndFallsBackWhenMemberMissing() async throws {
+        let suiteName = "daydo-tests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = try DeviceStore.inMemory()
+        try await store.bootstrap()
+
+        let m1 = AppModel(store: store, syncEnabled: false, defaults: defaults)
+        let partner = Member(id: "partner-1", name: "小安", initial: "小", color: Member.avatarColors[0], isMe: false)
+        await m1.reloadData()
+        let me = try XCTUnwrap(m1.me)
+        m1.members = [me, partner]
+        m1.allMemberFilter = partner.id
+
+        XCTAssertEqual(defaults.string(forKey: AppModel.allMemberFilterKey), partner.id)
+        XCTAssertEqual(m1.effectiveAllMemberFilter, partner.id)
+
+        // New AppModel reads the persisted filter from UserDefaults.
+        let m2 = AppModel(store: store, syncEnabled: false, defaults: defaults)
+        XCTAssertEqual(m2.allMemberFilter, partner.id)
+        // Before members load (or when partner no longer exists), effective filter falls back to nil.
+        XCTAssertNil(m2.effectiveAllMemberFilter)
+
+        // A refresh that only sees `me` (e.g. before sync catches up) falls back
+        // to 全部 without forgetting the stored choice.
+        await m2.refreshLookups()
+        XCTAssertNil(m2.effectiveAllMemberFilter)
+        XCTAssertEqual(defaults.string(forKey: AppModel.allMemberFilterKey), partner.id)
+    }
+
+    func testCreatingTaskHiddenByAllMemberFilterResetsFilter() async throws {
+        let suiteName = "daydo-tests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = try DeviceStore.inMemory()
+        try await store.bootstrap()
+        let model = AppModel(store: store, syncEnabled: false, defaults: defaults)
+        await model.reloadData()
+        let me = try XCTUnwrap(model.me)
+        let partner = Member(id: "partner-1", name: "小安", initial: "小", color: Member.avatarColors[0], isMe: false)
+        model.members = [me, partner]
+        model.scope = .smart(.all)
+
+        // Inbox task belongs to me: 「我的」 still shows it, filter stays.
+        model.allMemberFilter = me.id
+        let mine = try await model.api.createTask(CreateTaskInput(title: "我的新任務"))
+        await model.revealCreatedTaskInAll(mine)
+        XCTAssertEqual(model.allMemberFilter, me.id)
+
+        // Same task under 「小安的」 would vanish, so the filter goes back to 全部.
+        model.allMemberFilter = partner.id
+        await model.revealCreatedTaskInAll(mine)
+        XCTAssertNil(model.allMemberFilter)
+    }
 }

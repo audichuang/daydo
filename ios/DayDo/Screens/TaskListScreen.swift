@@ -39,6 +39,10 @@ struct TaskListScreen: View {
                             .foregroundStyle(Palette.textSecondary)
                             .contentTransition(reduceMotion ? .identity : .numericText())
                             .animation(loadedScope == scope ? Motion.count(reduceMotion) : nil, value: subtitle)
+                        if scope == .smart(.all) && model.members.count > 1 {
+                            MemberFilterChips(members: model.members, selection: $model.allMemberFilter)
+                                .padding(.top, 10)
+                        }
                     }
                     .padding(.horizontal, 4)
 
@@ -86,7 +90,11 @@ struct TaskListScreen: View {
                 }
             }
         }
-        .task(id: TaskReload(scope: scope, revision: model.revision, limit: limits[scope])) { await load() }
+        .task(id: TaskReload(scope: scope, revision: model.revision, limit: limits[scope], memberId: activeMemberFilter)) { await load() }
+    }
+
+    private var activeMemberFilter: String? {
+        scope == .smart(.all) ? model.effectiveAllMemberFilter : nil
     }
 
     @ViewBuilder
@@ -149,7 +157,7 @@ struct TaskListScreen: View {
 
     func load() async {
         do {
-            let loadedSections = try await model.api.listSections(scope, limit: limits[scope])
+            let loadedSections = try await model.api.listSections(scope, limit: limits[scope], memberId: activeMemberFilter)
             guard !Task.isCancelled else { return }
             let shouldAnimate = loaded && loadedScope == scope
             if shouldAnimate {
@@ -223,7 +231,7 @@ struct TaskListScreen: View {
     }
 }
 
-struct TaskReload: Hashable { var scope: TaskScope; var revision: Int; var limit: Int? }
+struct TaskReload: Hashable { var scope: TaskScope; var revision: Int; var limit: Int?; var memberId: String? }
 
 struct SectionCard: View {
     @Environment(AppModel.self) private var model

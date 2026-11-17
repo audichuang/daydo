@@ -262,6 +262,16 @@ final class AppModel {
     var compact: Bool { didSet { defaults.set(compact, forKey: "compact") } }
     var textScale: Double { didSet { defaults.set(textScale, forKey: "textScale") } }
     var openFolders: Set<String> { didSet { defaults.set(Array(openFolders), forKey: "openFolders") } }
+    static let allMemberFilterKey = "allMemberFilter"
+    var allMemberFilter: String? {
+        didSet {
+            if let allMemberFilter {
+                defaults.set(allMemberFilter, forKey: Self.allMemberFilterKey)
+            } else {
+                defaults.removeObject(forKey: Self.allMemberFilterKey)
+            }
+        }
+    }
 
     struct CompletingOccurrence: Equatable {
         let token = UUID()
@@ -359,7 +369,28 @@ final class AppModel {
         compact = defaults.bool(forKey: "compact")
         textScale = defaults.object(forKey: "textScale") as? Double ?? 1
         openFolders = Set(defaults.stringArray(forKey: "openFolders") ?? [])
+        allMemberFilter = defaults.string(forKey: Self.allMemberFilterKey)
         notificationDelegate.model = self
+    }
+
+    /// Member filter applied to 「全部」; drops back to `nil` (全部) unless
+    /// multiple members exist and the stored id still belongs to one of them.
+    var effectiveAllMemberFilter: String? {
+        guard members.count > 1,
+              let id = allMemberFilter,
+              members.contains(where: { $0.id == id }) else {
+            return nil
+        }
+        return id
+    }
+
+    /// A task just added on 「全部」 that the active member filter would hide
+    /// (e.g. adding to the inbox while 「小安的」 is selected) switches the
+    /// filter back to 全部, so the new task doesn't seem to vanish.
+    func revealCreatedTaskInAll(_ task: TodoTask) async {
+        guard scope == .smart(.all), let memberId = effectiveAllMemberFilter else { return }
+        guard let owned = try? await api.listTasks(TaskQuery(memberId: memberId)) else { return }
+        if !owned.contains(where: { $0.id == task.id }) { allMemberFilter = nil }
     }
 
     var accent: AccentTheme { AccentTheme(hex: accentHex) }
@@ -715,6 +746,7 @@ final class AppModel {
         pendingManualInviteCode = nil
         showingJoinInvite = false
         showingMeNamePrompt = false
+        allMemberFilter = nil
         isSignedIn = false
         revision += 1
         scheduleWidgetReload()

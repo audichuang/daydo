@@ -262,6 +262,68 @@ struct OptionChip: View {
     }
 }
 
+/// Selectable capsule chip used by member filters (日曆 / 全部).
+struct FilterChip: View {
+    var label: String
+    var on: Bool
+    var identifier: String? = nil
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .txt(13, .semibold)
+                .foregroundStyle(on ? Palette.background : Palette.textNav)
+                .padding(.horizontal, 12)
+                .frame(height: 30)
+                .background(Capsule().fill(on ? Palette.text : .clear))
+                .overlay(Capsule().strokeBorder(on ? Palette.text : Palette.separator))
+        }
+        .buttonStyle(.press)
+        .hoverEffect(.highlight)
+        .accessibilityAddTraits(on ? .isSelected : [])
+        .modifier(OptionalAccessibilityIdentifier(identifier: identifier))
+    }
+}
+
+private struct OptionalAccessibilityIdentifier: ViewModifier {
+    var identifier: String?
+    func body(content: Content) -> some View {
+        if let identifier {
+            content.accessibilityIdentifier(identifier)
+        } else {
+            content
+        }
+    }
+}
+
+/// Row of member filter chips: (全部) (我的) (<partner>的).
+struct MemberFilterChips: View {
+    var members: [Member]
+    @Binding var selection: String?
+
+    private var orderedMembers: [Member] {
+        members.filter(\.isMe) + members.filter { !$0.isMe }
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            FilterChip(label: "全部", on: selection == nil, identifier: "memberFilter.all") {
+                selection = nil
+            }
+            ForEach(orderedMembers) { m in
+                FilterChip(
+                    label: m.isMe ? "我的" : "\(m.name)的",
+                    on: selection == m.id,
+                    identifier: m.isMe ? "memberFilter.me" : "memberFilter.\(m.id)"
+                ) {
+                    selection = m.id
+                }
+            }
+        }
+    }
+}
+
 /// Primary/secondary pill buttons in sheet headers (取消 / 儲存 / 確定).
 struct PillButton: View {
     @Environment(\.accent) private var accent

@@ -224,8 +224,7 @@ public struct TaskQuery: Codable, Hashable, Sendable {
     public var from: LocalDay?
     public var to: LocalDay?
     public var includeCompleted: Bool
-    /// Only tasks visible to this member (shared lists they belong to plus
-    /// their own private lists).
+    /// Only tasks belonging to this member (assignee, or list owner when unassigned).
     public var memberId: String?
 
     public init(projectId: String? = nil, tag: String? = nil, from: LocalDay? = nil, to: LocalDay? = nil, includeCompleted: Bool = false, memberId: String? = nil) {

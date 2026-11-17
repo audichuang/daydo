@@ -37,7 +37,7 @@ public protocol DayDoAPI: Sendable {
 
     // Tasks
     func listTasks(_ query: TaskQuery) async throws -> [TodoTask]
-    func listSections(_ scope: TaskScope, limit: Int?) async throws -> [TaskSection]
+    func listSections(_ scope: TaskScope, limit: Int?, memberId: String?) async throws -> [TaskSection]
     func searchTasks(text: String, activeOnly: Bool) async throws -> [TodoTask]
     func getTask(id: String) async throws -> TodoTask
     func createTask(_ input: CreateTaskInput) async throws -> TodoTask
@@ -77,7 +77,15 @@ public protocol DayDoAPI: Sendable {
 // forgets a requirement fails to compile instead of recursing forever.
 public extension DayDoAPI {
     func listSections(_ scope: TaskScope) async throws -> [TaskSection] {
-        try await listSections(scope, limit: nil)
+        try await listSections(scope, limit: nil, memberId: nil)
+    }
+
+    func listSections(_ scope: TaskScope, limit: Int?) async throws -> [TaskSection] {
+        try await listSections(scope, limit: limit, memberId: nil)
+    }
+
+    func listSections(_ scope: TaskScope, memberId: String?) async throws -> [TaskSection] {
+        try await listSections(scope, limit: nil, memberId: memberId)
     }
 
     func completeTask(id: String) async throws -> TodoTask {

@@ -54,6 +54,7 @@ struct RootView: View {
                                         .padding(.horizontal, 16)
                                         .padding(.bottom, 4)
                                 }
+                                .accessibilityHidden(model.drawerOpen)
                                 .gesture(
                                     EdgePanGesture(
                                         isEnabled: {

@@ -584,7 +584,10 @@ struct TaskDetailContent: View {
         let input = CreateTaskInput(projectId: task.projectId, title: task.title, content: task.content, priority: task.priority,
                                     schedule: task.schedule, reminders: task.reminders, repeat: task.repeat,
                                     subtasks: task.items.map(\.title), tags: task.tags)
-        Task { await model.perform { try await $0.createTask(input) } }
+        Task {
+            guard let copy = await model.perform({ try await $0.createTask(input) }) else { return }
+            await model.revealCreatedTaskInAll(copy)
+        }
     }
 
     func addFiles(_ urls: [URL]) {

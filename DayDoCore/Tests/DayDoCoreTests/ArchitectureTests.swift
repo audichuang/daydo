@@ -150,6 +150,31 @@ private let guards: [Guard] = [
             ".preferredColorScheme(model.appearance.colorScheme)",
         ]
     ),
+    // Guards against reintroducing the old membership-count member filter (`m.count <= 1`)
+    // that treated shared-list membership as visibility instead of task ownership.
+    Guard(
+        name: "no membership-count member filter",
+        directories: ["DayDoCore/Sources", "ios/DayDo", "ios/DayDoWidgets"],
+        pattern: #"SELECT projectId, memberId FROM projectMember WHERE deletedAt IS NULL["']|if\s+[A-Za-z_][A-Za-z0-9_]*\.count\s*<=\s*1\s*\{\s*return\s+mid\s*==\s*meId\s*\}"#,
+        allow: [],
+        bad: [
+            #"let rows = try Row.fetchAll(db, sql: "SELECT projectId, memberId FROM projectMember WHERE deletedAt IS NULL")"#,
+            "if m.count <= 1 { return mid == meId }",
+        ]
+    ),
+    // Guards that task ownership (assignee ?? list owner from projectMember role='owner' ?? ownerId ?? me)
+    // is implemented in a single place (LocalDayDoAPI) and not duplicated in another module or UI screen.
+    Guard(
+        name: "task ownership rule lives solely in LocalDayDoAPI",
+        directories: ["DayDoCore/Sources", "ios/DayDo", "ios/DayDoWidgets"],
+        pattern: #"\btaskOwnerId\s*\(|\bfilterTasks\([^)]*ownedBy:|role\s*=\s*'owner'"#,
+        allow: ["DayDoCore/Sources/DayDoCore/API/LocalDayDoAPI.swift"],
+        bad: [
+            "Self.taskOwnerId(assigneeId: t.assigneeId, projectId: t.projectId, projectOwners: projectOwners, meId: meId)",
+            "try filterTasks(recs, ownedBy: mid, in: db)",
+            #"sql: "SELECT projectId, memberId FROM projectMember WHERE deletedAt IS NULL AND role = 'owner'""#,
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {
@@ -167,5 +192,32 @@ private let guards: [Guard] = [
             hits.append(rel)
         }
         #expect(hits == g.allow.sorted(), "\(g.name)")
+    }
+
+    /// Guards that even inside LocalDayDoAPI there is only one call site computing task ownership
+    /// (`fetchActive` -> `filterTasks(_:ownedBy:in:)` -> `taskOwnerId(...)`), shared by both
+    /// calendar (`listTasks(TaskQuery)`) and 「全部」 (`listSections(.smart(.all), ...)`).
+    @Test func singleTaskOwnershipRuleCallSite() throws {
+        let code = try codeLines("DayDoCore/Sources/DayDoCore/API/LocalDayDoAPI.swift")
+        let filterCalls = code.components(separatedBy: "filterTasks(").count - 1
+        let ownerCalls = code.components(separatedBy: "taskOwnerId(").count - 1
+        #expect(filterCalls == 2, "Expected 1 definition + 1 call site in fetchActive for filterTasks(, found \(filterCalls)")
+        #expect(ownerCalls == 2, "Expected 1 definition + 1 call site in filterTasks for taskOwnerId(, found \(ownerCalls)")
+        #expect(code.contains("TaskQuery(memberId: memberId)"), "Expected listSections(.smart(.all)) to delegate to fetchActive via TaskQuery(memberId:)")
+    }
+
+    /// Every screen that creates a task must hand the result to
+    /// `revealCreatedTaskInAll`, or a task added while 「全部」 is filtered to
+    /// another member silently disappears (the duplicate action once did).
+    @Test func screensRevealCreatedTasksInAllFilter() throws {
+        let files = swiftFiles(in: ["ios/DayDo/Screens"])
+        var offenders: [String] = []
+        for rel in files {
+            let code = try codeLines(rel)
+            let creates = code.components(separatedBy: ".createTask(").count - 1
+            let reveals = code.components(separatedBy: "revealCreatedTaskInAll(").count - 1
+            if creates > reveals { offenders.append(rel) }
+        }
+        #expect(offenders.isEmpty, "createTask without revealCreatedTaskInAll in \(offenders)")
     }
 }

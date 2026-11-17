@@ -239,6 +239,7 @@ struct ComposerSheet: View {
             let created = await model.perform { try await $0.createTask(input) }
             isSubmitting = false
             guard let t = created else { return }
+            await model.revealCreatedTaskInAll(t)
             createdHaptic += 1
             if openDetail {
                 dismiss()
