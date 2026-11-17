@@ -327,15 +327,17 @@ public struct SmartCounts: Codable, Hashable, Sendable {
     public var assignedToMe: Int
     public var completed: Int
     public var trash: Int
+    /// Every open task the smart lists see, whatever its date.
+    public var all: Int
 
-    public init(today: Int, tomorrow: Int, next7Days: Int, inbox: Int, assignedToMe: Int, completed: Int, trash: Int) {
+    public init(today: Int, tomorrow: Int, next7Days: Int, inbox: Int, assignedToMe: Int, completed: Int, trash: Int, all: Int = 0) {
         self.today = today; self.tomorrow = tomorrow; self.next7Days = next7Days; self.inbox = inbox
-        self.assignedToMe = assignedToMe; self.completed = completed; self.trash = trash
+        self.assignedToMe = assignedToMe; self.completed = completed; self.trash = trash; self.all = all
     }
 }
 
 public enum SmartView: String, Codable, Sendable, CaseIterable {
-    case today, tomorrow, next7 = "next7", inbox, assigned, completed, trash
+    case today, tomorrow, next7 = "next7", all, inbox, assigned, completed, trash
 }
 
 /// What a task list screen shows.

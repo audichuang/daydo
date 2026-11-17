@@ -137,7 +137,8 @@ struct TaskListScreen: View {
     }
 
     var subtitle: String {
-        let active = sections.filter { $0.id != "completed" && $0.id != "trash" }.reduce(0) { $0 + $1.tasks.count }
+        // A multi-day task sits in both 今天 and 明天; count it once.
+        let active = Set(sections.filter { $0.id != "completed" && $0.id != "trash" }.flatMap { $0.tasks.map(\.id) }).count
         switch scope {
         case .smart(.today): return "\(DateText.full(model.today)) · \(model.counts.today) 項待辦"
         case .smart(.completed): return "\(sections.first?.tasks.count ?? 0) 項"

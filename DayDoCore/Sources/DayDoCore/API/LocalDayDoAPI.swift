@@ -852,6 +852,9 @@ extension LocalDayDoAPI {
                     let fetched = try self.completed(db, projectId: pid, limit: pageLimit + 1)
                     let sections = TaskGrouping.sections(for: scope, tasks: active, completed: Array(fetched.prefix(pageLimit)), today: today)
                     return self.markingHasMore(sections, sectionId: "completed", hasMore: fetched.count > pageLimit)
+                case .all:
+                    let active = try self.fetchActive(db, query: TaskQuery(), smartOnly: true)
+                    return TaskGrouping.sections(for: scope, tasks: active, completed: [], today: today)
                 case .assigned:
                     let active = try self.fetchActive(db, query: TaskQuery(), smartOnly: false).filter { $0.assigneeId == meId }
                     return TaskGrouping.sections(for: scope, tasks: active, completed: [], today: today)
@@ -941,7 +944,7 @@ extension LocalDayDoAPI {
                 next7Days: overdue + count { $0.overlaps(today, today.adding(days: 6)) },
                 inbox: all.filter { $0.projectId == inboxId }.count,
                 assignedToMe: all.filter { $0.assigneeId == meId }.count,
-                completed: completed, trash: trash)
+                completed: completed, trash: trash, all: smart.count)
         }
     }
 }

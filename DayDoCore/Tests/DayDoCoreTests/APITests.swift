@@ -109,6 +109,28 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         #expect(Set(inRange.map(\.id)).contains(trip.id))
     }
 
+    @Test func allViewListsEveryOpenTaskGroupedByDate() async throws {
+        let api = try await makeAPI()
+        _ = try await api.createTask(CreateTaskInput(title: "逾期", start: "2026-11-14T17:00"))
+        _ = try await api.createTask(CreateTaskInput(title: "今天", start: "2026-11-15T18:00"))
+        _ = try await api.createTask(CreateTaskInput(title: "明天", start: "2026-11-16"))
+        _ = try await api.createTask(CreateTaskInput(title: "下個月", start: "2026-12-20"))
+        _ = try await api.createTask(CreateTaskInput(title: "無日期"))
+        let doneT = try await api.createTask(CreateTaskInput(title: "完成的", start: "2026-11-15"))
+        _ = try await api.completeTask(id: doneT.id)
+        let deleted = try await api.createTask(CreateTaskInput(title: "刪掉的", start: "2026-11-20"))
+        try await api.deleteTask(id: deleted.id)
+
+        let sections = try await api.listSections(.smart(.all))
+        #expect(sections.map(\.id) == ["overdue", "today", "tomorrow", "later", "nodate"])
+        #expect(sections.first { $0.id == "later" }?.tasks.map(\.title) == ["下個月"])
+        #expect(sections.first { $0.id == "nodate" }?.tasks.map(\.title) == ["無日期"])
+        let titles = sections.flatMap(\.tasks).map(\.title)
+        #expect(!titles.contains("完成的"))
+        #expect(!titles.contains("刪掉的"))
+        #expect(try await api.smartCounts().all == 5)
+    }
+
     @Test func postponeOverdueOnlyTouchesSpecifiedTasks() async throws {
         let api = try await makeAPI()
         let projects = try await api.listProjects(includeArchived: false)

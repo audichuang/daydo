@@ -932,6 +932,7 @@ final class AppModel {
             case .today: "今天"
             case .tomorrow: "明天"
             case .next7: "未來 7 天"
+            case .all: "全部"
             case .inbox: "收件匣"
             case .assigned: "指派給我"
             case .completed: "已完成"

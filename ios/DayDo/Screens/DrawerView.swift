@@ -181,6 +181,7 @@ struct DrawerView: View {
                     smartRow(.today, "今天", "sun.max", model.counts.today)
                     smartRow(.tomorrow, "明天", "arrow.right", model.counts.tomorrow)
                     smartRow(.next7, "未來 7 天", "calendar.badge.clock", model.counts.next7Days)
+                    smartRow(.all, "全部", "list.bullet", model.counts.all)
                     smartRow(.inbox, "收件匣", "tray", model.counts.inbox)
                     if model.projects.contains(where: \.isShared) {
                         smartRow(.assigned, "指派給我", "person", model.counts.assignedToMe)

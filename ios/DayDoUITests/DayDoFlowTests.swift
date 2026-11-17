@@ -351,6 +351,27 @@ final class DayDoFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testAllViewShowsTasksBeyondNextSevenDays() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+        // 搬家整理 starts 13 days out, so 今天 and 未來 7 天 never show it.
+        XCTAssertFalse(app.staticTexts["搬家整理：打包書櫃"].exists)
+        app.buttons["開啟清單抽屜"].tap()
+        let all = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '全部'")).firstMatch
+        XCTAssertTrue(all.waitForExistence(timeout: 3))
+        all.tap()
+        XCTAssertTrue(app.staticTexts["全部"].waitForExistence(timeout: 3))
+        // Header count matches the drawer badge even though 花蓮小旅行 spans 今天 and 明天.
+        let badge = all.label.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+        XCTAssertTrue(app.staticTexts["\(badge) 項待辦"].waitForExistence(timeout: 3), "drawer badge \(badge) vs header")
+        XCTAssertTrue(app.staticTexts["之後"].waitForExistence(timeout: 3))
+        let far = app.staticTexts["搬家整理：打包書櫃"]
+        for _ in 0..<4 where !far.exists { app.swipeUp() }
+        XCTAssertTrue(far.waitForExistence(timeout: 3))
+        shot("50-all-view")
+    }
+
+    @MainActor
     func testDrawerSwipePinAndDelete() throws {
         try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         dismissNotificationPrompt()

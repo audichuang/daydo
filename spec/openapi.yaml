@@ -278,7 +278,7 @@ paths:
         Tasks grouped the way the app shows them. `today` returns 已逾期 / 今天 / 明天 / 已完成;
         lists and tags return overdue / today / tomorrow / later / nodate / completed.
       parameters:
-        - { name: view, in: query, schema: { type: string, enum: [today, tomorrow, next7, inbox, assigned, completed, trash] } }
+        - { name: view, in: query, schema: { type: string, enum: [today, tomorrow, next7, all, inbox, assigned, completed, trash] } }
         - { name: project_id, in: query, schema: { type: string } }
         - { name: tag, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer } }
@@ -617,6 +617,7 @@ components:
         assigned_to_me: { type: integer }
         completed: { type: integer }
         trash: { type: integer }
+        all: { type: integer, description: Open tasks shown by smart lists, any date }
     CreateTaskInput:
       type: object
       required: [title]

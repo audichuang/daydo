@@ -55,7 +55,7 @@ public enum TaskGrouping {
             add("completed", "已完成", completed)
         case .smart(.trash):
             add("trash", "垃圾桶", tasks)
-        case .smart(.inbox), .smart(.assigned), .project, .tag:
+        case .smart(.all), .smart(.inbox), .smart(.assigned), .project, .tag:
             let later = sortForDay(active.filter { t in t.schedule.map { $0.startDay > tomorrow } ?? false })
                 .sorted { ($0.schedule!.startDay, $0.schedule!.startMinute ?? -1) < ($1.schedule!.startDay, $1.schedule!.startMinute ?? -1) }
             let noDate = active.filter { $0.schedule == nil }.sorted { a, b in
