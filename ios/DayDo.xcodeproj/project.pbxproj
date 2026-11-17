@@ -30,7 +30,6 @@
 		6241455AB6BDC69BCF835DB0 /* DayDoFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93AF820DEE1E49529E90A0E0 /* DayDoFlowTests.swift */; };
 		635BEE00F58D95D66615961E /* DatePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3ADCB55D80C898953405EA4 /* DatePanel.swift */; };
 		6A2386BB97D9807DFD337605 /* TestClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550EFD129C4C0E515133339B /* TestClock.swift */; };
-		712BE556E14C8FEB3EDA5C9F /* JoinInviteSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBDFCB6E2A94018F4F751310 /* JoinInviteSheet.swift */; };
 		71E047BD3761B4116F06B846 /* DayDoIPadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E477F2C75D83F9691F85C75 /* DayDoIPadTests.swift */; };
 		728A01A5331B302B834B290A /* TaskDetailSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C790B6FFBAFDB9BADA3CE1FC /* TaskDetailSheet.swift */; };
 		7454858BA67E1C4407B53A26 /* OtherScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 586710AA91D1F8A386C4DA0F /* OtherScreens.swift */; };
@@ -126,7 +125,6 @@
 		B385BD7500B9C55FC5E7A64A /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		B40ED13459CB865ADD6D54F4 /* InviteConfirmSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteConfirmSheet.swift; sourceTree = "<group>"; };
 		B891DFDE4EE9759CC78BA7E9 /* DrawerMetricsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerMetricsTests.swift; sourceTree = "<group>"; };
-		BBDFCB6E2A94018F4F751310 /* JoinInviteSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinInviteSheet.swift; sourceTree = "<group>"; };
 		C790B6FFBAFDB9BADA3CE1FC /* TaskDetailSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskDetailSheet.swift; sourceTree = "<group>"; };
 		CBE69B8A39D6026F6C72A644 /* TaskListScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskListScreen.swift; sourceTree = "<group>"; };
 		DD944E1EAEB502E47717D303 /* ShareListSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareListSheet.swift; sourceTree = "<group>"; };
@@ -280,7 +278,6 @@
 				E45AF04A64333352B5667B17 /* DrawerView.swift */,
 				723C6FDF68327E755BBBC400 /* EditListSheet.swift */,
 				B40ED13459CB865ADD6D54F4 /* InviteConfirmSheet.swift */,
-				BBDFCB6E2A94018F4F751310 /* JoinInviteSheet.swift */,
 				87A6EE2C31E3EA193622C3D4 /* MeProfileSheet.swift */,
 				586710AA91D1F8A386C4DA0F /* OtherScreens.swift */,
 				B2E3411D9BD47A773354B9EE /* RootView.swift */,
@@ -522,7 +519,6 @@
 				FE3382C49FF0F62208E3B7C7 /* DrawerView.swift in Sources */,
 				2586B4711A3F7B5A08BFC598 /* EditListSheet.swift in Sources */,
 				8E2D7343DA9825517D9845EF /* InviteConfirmSheet.swift in Sources */,
-				712BE556E14C8FEB3EDA5C9F /* JoinInviteSheet.swift in Sources */,
 				2B68D0A20FBE89F153D00562 /* KeychainSyncTokenStore.swift in Sources */,
 				7D0D980B5B52B78EF1CA32AF /* MeProfileSheet.swift in Sources */,
 				C71F91C87DBE76BFE8A2BC0C /* Motion.swift in Sources */,

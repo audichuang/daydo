@@ -301,21 +301,6 @@ struct DrawerView: View {
                 .foregroundStyle(Palette.text)
                 .lineLimit(1)
             Spacer()
-            Button {
-                close()
-                model.tab = .settings
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(Palette.textBody)
-                    .frame(width: 40, height: 36)
-                    .contentShape(Capsule())
-            }
-            .buttonStyle(.press)
-            .glassEffect(.regular.interactive(), in: .capsule)
-            .hoverEffect(.highlight)
-            .accessibilityLabel("設定")
-            .accessibilityIdentifier("drawer.settings")
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)

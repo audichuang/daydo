@@ -170,11 +170,6 @@ struct RootView: View {
         }) { prompt in
             InviteConfirmSheet(prompt: prompt)
         }
-        .sheet(isPresented: $model.showingJoinInvite, onDismiss: {
-            model.flushPendingPresentations()
-        }) {
-            JoinInviteSheet()
-        }
         .sheet(isPresented: $model.showingMeNamePrompt, onDismiss: {
             model.flushPendingPresentations()
         }) {

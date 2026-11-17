@@ -71,9 +71,7 @@ final class AppModel {
 
     // Invites
     var pendingInviteCode: String?
-    var pendingManualInviteCode: String?
     var invitePrompt: PendingInvitePrompt?
-    var showingJoinInvite = false
     var showingMeNamePrompt = false
 
     // Navigation
@@ -210,17 +208,12 @@ final class AppModel {
             || editingProjectId != nil
             || sharingProjectId != nil
             || invitePrompt != nil
-            || showingJoinInvite
             || showingMeNamePrompt
     }
 
     /// Presents the next queued root-level sheet once the current sheet has dismissed.
     func flushPendingPresentations() {
         guard !hasActiveRootSheet else { return }
-        if pendingManualInviteCode != nil {
-            flushManualInviteIfNeeded()
-            return
-        }
         if isSignedIn, pendingInviteCode != nil {
             Task { [weak self] in
                 await self?.processPendingInviteIfNeeded()
@@ -423,6 +416,7 @@ final class AppModel {
             ready = true
             await DebugLaunch.apply(to: self)
             flushPendingWidgetDeepLinkIfNeeded()
+            await processPendingInviteIfNeeded()
             return
         }
 
@@ -744,8 +738,6 @@ final class AppModel {
         sharingProjectId = nil
         invitePrompt = nil
         pendingInviteCode = nil
-        pendingManualInviteCode = nil
-        showingJoinInvite = false
         showingMeNamePrompt = false
         allMemberFilter = nil
         isSignedIn = false
@@ -919,12 +911,6 @@ final class AppModel {
         Task { [weak self] in
             await self?.processPendingInviteIfNeeded()
         }
-    }
-
-    func flushManualInviteIfNeeded() {
-        guard let code = pendingManualInviteCode else { return }
-        pendingManualInviteCode = nil
-        handleIncomingInvite(code: code)
     }
 
     func processPendingInviteIfNeeded() async {

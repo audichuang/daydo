@@ -431,7 +431,7 @@ final class DayDoFlowTests: XCTestCase {
         dismissNotificationPrompt()
         app.buttons["開啟清單抽屜"].tap()
         XCTAssertTrue(app.staticTexts["我"].waitForExistence(timeout: 3), app.debugDescription)
-        XCTAssertTrue(app.buttons["設定"].exists)
+        XCTAssertFalse(app.buttons["drawer.settings"].exists)
         shot("34-drawer-header")
 
         let folder = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '工作與學習'")).firstMatch
@@ -536,10 +536,7 @@ final class DayDoFlowTests: XCTestCase {
         app.buttons["取消"].tap()
         XCTAssertTrue(kanbanOption.waitForNonExistence(timeout: 3))
 
-        app.buttons["開啟清單抽屜"].tap()
-        let settingsBtn = app.buttons["drawer.settings"]
-        XCTAssertTrue(settingsBtn.waitForExistence(timeout: 3))
-        settingsBtn.tap()
+        app.buttons["設定"].firstMatch.tap()
         XCTAssertTrue(app.buttons["外觀"].waitForExistence(timeout: 3), app.debugDescription)
     }
 
@@ -576,8 +573,8 @@ final class DayDoFlowTests: XCTestCase {
 
         let signOutButton = app.buttons["settings.signOut"]
         XCTAssertTrue(signOutButton.waitForExistence(timeout: 5), app.debugDescription)
-        let joinInviteButton = app.buttons["settings.joinInvite"]
-        XCTAssertTrue(joinInviteButton.exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["settings.joinInvite"].exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["加入共享清單"].exists, app.debugDescription)
         shot("36-settings-account")
 
         signOutButton.tap()
@@ -585,16 +582,9 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(confirmTitle.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '尚未同步的變更'")).firstMatch.exists)
         app.buttons["取消"].tap()
+        XCTAssertTrue(confirmTitle.waitForNonExistence(timeout: 3), app.debugDescription)
 
-        joinInviteButton.tap()
-        let joinInput = app.textFields["joinInvite.input"]
-        XCTAssertTrue(joinInput.waitForExistence(timeout: 3), app.debugDescription)
-        XCTAssertTrue(app.buttons["joinInvite.submit"].exists, app.debugDescription)
-        shot("38-join-invite")
-
-        joinInput.tap()
-        joinInput.typeText("daydo://invite/preview")
-        app.buttons["joinInvite.submit"].tap()
+        app.open(URL(string: "daydo://invite/preview")!)
         XCTAssertTrue(app.staticTexts["小安 邀請你加入「家庭採買」"].waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(app.buttons["invite.accept"].exists)
         app.buttons["關閉"].tap()
@@ -617,22 +607,13 @@ final class DayDoFlowTests: XCTestCase {
         app.launch()
         dismissNotificationPrompt()
 
-        let joinInviteButton = app.buttons["settings.joinInvite"]
-        XCTAssertTrue(joinInviteButton.waitForExistence(timeout: 5), app.debugDescription)
-
-        func submitInvite(_ code: String) {
-            joinInviteButton.tap()
-            let joinInput = app.textFields["joinInvite.input"]
-            XCTAssertTrue(joinInput.waitForExistence(timeout: 3), app.debugDescription)
-            let clearBtn = app.buttons["清除邀請連結"]
-            if clearBtn.exists { clearBtn.tap() }
-            joinInput.tap()
-            joinInput.typeText("daydo://invite/\(code)")
-            app.buttons["joinInvite.submit"].tap()
-        }
+        let accountRow = app.buttons["settings.accountRow"]
+        XCTAssertTrue(accountRow.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.buttons["settings.joinInvite"].exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["加入共享清單"].exists, app.debugDescription)
 
         // 1. loading -> loaded updates in place without closing/reopening the sheet.
-        submitInvite("slow-ok")
+        app.open(URL(string: "daydo://invite/slow-ok")!)
         XCTAssertTrue(app.staticTexts["正在讀取邀請資訊…"].waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertTrue(app.staticTexts["小安 邀請你加入「家庭採買」"].waitForExistence(timeout: 6), app.debugDescription)
         XCTAssertEqual(app.staticTexts["清單邀請"].value as? String, "appear:1", "Sheet should not dismiss and reopen during loading -> loaded")
@@ -640,7 +621,7 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["清單邀請"].waitForNonExistence(timeout: 3))
 
         // 2. Closing during loading suppresses generic (404) error from reopening the sheet.
-        submitInvite("slow-404")
+        app.open(URL(string: "daydo://invite/slow-404")!)
         XCTAssertTrue(app.staticTexts["正在讀取邀請資訊…"].waitForExistence(timeout: 3), app.debugDescription)
         app.buttons["關閉"].tap()
         XCTAssertTrue(app.staticTexts["清單邀請"].waitForNonExistence(timeout: 3))
@@ -648,7 +629,7 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["清單邀請"].exists, "Closed invite sheet should not reopen on 404 error")
 
         // 3. Closing during loading suppresses SyncError.retryable (500) from reopening the sheet.
-        submitInvite("slow-500")
+        app.open(URL(string: "daydo://invite/slow-500")!)
         XCTAssertTrue(app.staticTexts["正在讀取邀請資訊…"].waitForExistence(timeout: 3), app.debugDescription)
         app.buttons["關閉"].tap()
         XCTAssertTrue(app.staticTexts["清單邀請"].waitForNonExistence(timeout: 3))
@@ -1084,7 +1065,7 @@ final class DayDoFlowTests: XCTestCase {
         try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         dismissNotificationPrompt()
         XCTAssertTrue(app.buttons["開啟清單抽屜"].waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertFalse(app.buttons["drawer.settings"].exists)
+        XCTAssertFalse(app.buttons["垃圾桶"].exists)
 
         let window = app.windows.firstMatch
         let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5))
@@ -1103,10 +1084,11 @@ final class DayDoFlowTests: XCTestCase {
         midShotTimer.invalidate()
 
         // Released before half -> snaps back closed; then drag past half -> opens drawer.
-        XCTAssertTrue(app.buttons["drawer.settings"].waitForNonExistence(timeout: 2), app.debugDescription)
+        XCTAssertTrue(app.buttons["垃圾桶"].waitForNonExistence(timeout: 2), app.debugDescription)
         start.press(forDuration: 0.05, thenDragTo: end)
 
-        XCTAssertTrue(app.buttons["drawer.settings"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.buttons["垃圾桶"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(app.buttons["drawer.settings"].exists)
         shot("47-drawer-edge-opened")
     }
 
@@ -1121,7 +1103,8 @@ final class DayDoFlowTests: XCTestCase {
         let start = window.coordinate(withNormalizedOffset: CGVector(dx: startX, dy: 0.45))
         let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.45))
         start.press(forDuration: 0.02, thenDragTo: end, withVelocity: 1200, thenHoldForDuration: 0)
-        XCTAssertTrue(app.buttons["drawer.settings"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.buttons["垃圾桶"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(app.buttons["drawer.settings"].exists)
     }
 
     @MainActor

@@ -274,7 +274,12 @@ struct ShareListSheet: View {
     }
 
     private func inviteShareText(for url: String) -> String {
-        "在 DayDo 設定 → 加入共享清單 貼上這個連結\n\(url)"
+        let name = (project?.name ?? model.project(projectId)?.name ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty {
+            return "加入我在 DayDo 的共享清單\n\(url)"
+        }
+        return "加入我在 DayDo 的共享清單「\(name)」\n\(url)"
     }
 
     private func roleLabel(_ role: String) -> String {
