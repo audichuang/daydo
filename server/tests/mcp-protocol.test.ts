@@ -199,6 +199,18 @@ describe('mcp.call log', () => {
   });
 });
 
+describe('tool schemas', () => {
+  // MCP clients only see these strings; an undescribed parameter leaves the model guessing its meaning.
+  it('every parameter of every tool has a description', () => {
+    const missing = TOOL_DEFS.flatMap((t) =>
+      Object.entries(t.inputSchema.properties ?? {})
+        .filter(([, p]) => !p.description?.trim())
+        .map(([name]) => `${t.name}.${name}`),
+    );
+    expect(missing).toEqual([]);
+  });
+});
+
 describe('HINTS and annotations', () => {
   const hints: Record<string, Hint> = {
     r: 'read',

@@ -193,7 +193,12 @@ Extra checks: `npm run e2e:ics` (ICS sync and cron) and `npm run e2e:mcp` (OAuth
 - Connect Claude, ChatGPT and Codex to `https://daydo-mcp.audichuang.app/` and sign in with a real Apple account in both Safari and Chrome. Confirm: the web Apple `sub` equals the App's `sub` (same account); the Apple `form_post` callback receives the `SameSite=None` cookie; all three clients send `client_id` on `/token`. Repeat once with a Google account.
 - `npm run smoke:prod` against `daydo-api`: Access must still reject requests without a token.
 - `POST https://daydo-mcp.audichuang.app/sync/pull` must return 404.
-- If the change touches the cron or ICS wiring: production cron cannot run locally, so run `npx wrangler tail daydo-api --format json` until an `ics.cron.run` event arrives (every 5 minutes) with outcome `ok` and no exceptions.
+- If the change touches the cron or ICS wiring: production cron cannot run locally. Wait past the next 5-minute mark, then check the cron invocations since the deploy with the `cf` CLI (not wrangler; Workers Logs are off, so query the invocations dataset). Every row must be `success`:
+
+  ```bash
+  cf sql query --scope-account <account_id from void.lock.json> --time-since <deploy time, UTC ISO 8601> \
+    "SELECT status, count() AS n, APPROX_MAX(timestamp) AS last FROM events.workersInvocations WHERE scriptName = 'daydo-api' AND invocationType = 'cron' GROUP BY status"
+  ```
 
 ### Adding the connector
 

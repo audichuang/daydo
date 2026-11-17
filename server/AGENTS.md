@@ -14,9 +14,9 @@
 
 - push 只能為「重送也不會變」的結果回 `rejected`（資料不合法、權限不足、清單已永久刪除）：App 把 `rejected` 當已確認、永不重送。版本不一致、逾時這類暫時性錯誤回 429／5xx，讓整批重送。
 - 每位使用者的 `Scope` DO（`u:<userId>`）用自己的 SQLite 存列資料，寫入包在 `transactionSync` 內同步完成；`SYNC_FAULT=split-txn` 是僅開發建置有效的故障開關，並發測試開啟時必須失敗。改 push 路徑或 Scope DO 後要確認 `npm run e2e:fault` 通過（它證明 `split-txn` 故障會被並發測試抓到）。
-- 正式環境前面是 Cloudflare Access（應用程式「DayDo API (iOS app only)」，只放行 service token）。部署、secrets 與部署後的 smoke 照 `README.md` 的 Deploy；service token 與 `JWT_SECRET` 在 1Password `Agent` vault（「DayDo Cloudflare Access service token」「DayDo server JWT_SECRET」）。
+- 正式環境前面是 Cloudflare Access（應用程式「DayDo API (iOS app only)」，只放行 service token）。部署、secrets 與部署後的 smoke 照 `README.md` 的 Deploy；service token 與 `JWT_SECRET` 在 1Password `Agent` vault（「DayDo Cloudflare Access service token」「DayDo server JWT_SECRET」）；service token 的 `username` 欄是 `CF_ACCESS_CLIENT_ID`、`credential` 欄是 `CF_ACCESS_CLIENT_SECRET`，用 `op read` 帶進環境變數。
 - 改了 D1 schema 的部署會先套 migration 並留還原點。
-- void 固定 1.10.0：npm 設定只裝發布滿 3 天的版本。要用未滿 3 天的版本須使用者明說，再只對那次安裝加 `--min-release-age=0`，不改 npm 設定。
+- void 用 npm `latest` 的最新穩定版（不用 beta／rc），`package.json` 釘精確版本，不挑舊版。npm 設定只裝發布滿 3 天的版本，最新版未滿 3 天時只對那次安裝加 `--min-release-age=0`，不改 npm 設定。
 - Lint 用 oxlint（`npm run lint`，警告也算失敗，已含在 `npm run check`），不另加 ESLint 或 Prettier。`.oxlintrc.json` 規定模組間的 import 方向、禁止循環 import、檔案行數上限、`routes/**` 不得 import `void/db` 與 `durable-objects/`，並開了型別感知規則（例如忘了 await DO 或 D1 呼叫）；lint 表達不了的（`createDb(`／`Scope.get(` 只准在 `src/deps.ts`，其餘入口都跟 `productionAppDeps` 拿；重複的 updatedAt 計算、`u:` 字面值、驗證單點、`src/scope` 不得 async 等）在 `tests/architecture.test.ts`；這兩道擋下時改程式的結構，不要放寬規則。
 - 新的 server 測試用 `tests/helpers/serverHarness.ts`，時間用 `getNow` 注入，不用 fake timers（`tests/architecture.test.ts` 擋）。
 - 日常改動用 `npm run check:fast`（lint、typecheck、vitest），每張票結尾與合併前跑完整的 `npm run check`（含 e2e 與 `e2e:fault`）。e2e 各自挑空 port，多個 worktree 可同時跑；固定用 :8787 的只有 verify skill 的 devserver。
