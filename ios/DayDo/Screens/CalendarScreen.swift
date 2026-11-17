@@ -51,6 +51,9 @@ struct CalendarScreen: View {
     private var effectiveMemberFilter: String? {
         MemberFilter.effectiveFilter(memberFilter, among: model.filterMembers)
     }
+    private var showOwnerAvatars: Bool {
+        model.filterMembers.count > 1 && effectiveMemberFilter == nil
+    }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -496,6 +499,7 @@ struct CalendarScreen: View {
             case .week, .threeDay, .day:
                 ZStack {
                     TimeGrid(days: rangeDays, tasks: filtered, today: model.today, selected: sel, isRegular: isRegular,
+                             showOwnerAvatars: showOwnerAvatars,
                              openTask: { model.openTask($0, inlineAvailable: false) },
                              tapSlot: { d, m in compose(day: d, minute: m) },
                              tapDay: { d in
@@ -682,7 +686,7 @@ struct CalendarScreen: View {
             Group {
                 if items.isEmpty { emptyDay }
                 ForEach(items) { t in
-                    AgendaRow(task: t, day: sel)
+                    AgendaRow(task: t, day: sel, showOwnerAvatar: showOwnerAvatars)
                         .transition(Motion.rowTransition(reduceMotion))
                 }
             }
@@ -702,7 +706,7 @@ struct CalendarScreen: View {
             Group {
                 if items.isEmpty { emptyDay.card(16) }
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, t in
-                    TimelineAgendaRow(task: t, day: sel, last: i == items.count - 1)
+                    TimelineAgendaRow(task: t, day: sel, last: i == items.count - 1, showOwnerAvatar: showOwnerAvatars)
                         .transition(Motion.rowTransition(reduceMotion))
                 }
             }
@@ -736,6 +740,25 @@ struct CalReload: Hashable { var range: ClosedRange<LocalDay>; var member: Strin
 private struct CalQueryKey: Equatable { var range: ClosedRange<LocalDay>; var member: String?; var completed: Bool }
 private struct CalAgendaContext: Hashable { var day: LocalDay; var member: String?; var project: String?; var completed: Bool }
 
+private func partnerOwner(for task: TodoTask, show: Bool, members: [Member]) -> Member? {
+    guard show, !task.ownerId.isEmpty,
+          let member = members.first(where: { $0.id == task.ownerId }),
+          !member.isMe else { return nil }
+    return member
+}
+
+private struct OwnerAvatarBadge: View {
+    var member: Member
+    var size: CGFloat = 18
+    var strokeWidth: CGFloat = 1.5
+
+    var body: some View {
+        AvatarView(member: member, size: size)
+            .overlay(Circle().stroke(Palette.card, lineWidth: strokeWidth))
+            .accessibilityHidden(true)
+    }
+}
+
 /// Card-style agenda row with a checkbox (清單 view).
 struct AgendaRow: View {
     @Environment(AppModel.self) private var model
@@ -743,6 +766,7 @@ struct AgendaRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var task: TodoTask
     var day: LocalDay
+    var showOwnerAvatar = false
 
     private var isDone: Bool {
         model.displaysCompleted(task)
@@ -750,6 +774,7 @@ struct AgendaRow: View {
 
     var body: some View {
         let project = model.project(task.projectId)
+        let owner = partnerOwner(for: task, show: showOwnerAvatar, members: model.members)
         HStack(alignment: .top, spacing: 12) {
             Button { toggle() } label: {
                 TaskCheckbox(done: isDone, priority: task.priority, size: 22).frame(width: 32, height: 34)
@@ -760,8 +785,15 @@ struct AgendaRow: View {
             .accessibilityLabel((isDone ? "取消完成：" : "完成：") + task.title)
             Button { model.openTask(task.id, inlineAvailable: false) } label: {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(task.title).txt(17, .medium).foregroundStyle(isDone ? Palette.done : Palette.text)
-                        .strikethrough(isDone, color: Palette.done).lineLimit(2).multilineTextAlignment(.leading)
+                    HStack(alignment: .top, spacing: 6) {
+                        Text(task.title).txt(17, .medium).foregroundStyle(isDone ? Palette.done : Palette.text)
+                            .strikethrough(isDone, color: Palette.done).lineLimit(2).multilineTextAlignment(.leading)
+                        Spacer(minLength: 0)
+                        if let owner {
+                            OwnerAvatarBadge(member: owner)
+                                .padding(.top, 2)
+                        }
+                    }
                     if !task.content.isEmpty {
                         Text(task.content.split(whereSeparator: \.isNewline).first.map(String.init) ?? "").txt(14).foregroundStyle(Palette.textSecondary).lineLimit(1)
                     }
@@ -779,6 +811,7 @@ struct AgendaRow: View {
             }
             .buttonStyle(.press(scale: 0.985, opacity: 0.95, highlight: Palette.pressHighlightStrong))
             .hoverEffect(.highlight)
+            .accessibilityValue(owner.map { "\($0.name)的" } ?? "")
         }
         .padding(.leading, 14).padding(.trailing, 16).padding(.vertical, 12)
         .overlay(alignment: .leading) { Rectangle().fill(Palette.listColor(project?.color)).frame(width: 4) }
@@ -796,8 +829,10 @@ struct TimelineAgendaRow: View {
     var task: TodoTask
     var day: LocalDay
     var last: Bool
+    var showOwnerAvatar = false
 
     var body: some View {
+        let owner = partnerOwner(for: task, show: showOwnerAvatar, members: model.members)
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .trailing, spacing: 0) {
                 if let s = task.schedule {
@@ -814,8 +849,15 @@ struct TimelineAgendaRow: View {
             .frame(width: 14)
             Button { model.openTask(task.id, inlineAvailable: false) } label: {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(AgendaText.line(task, today: model.today, includeDay: task.schedule?.isMultiDay ?? false))
-                        .txt(15, .medium).foregroundStyle(AgendaText.color(task, today: model.today, accent: accent))
+                    HStack(alignment: .top, spacing: 6) {
+                        Text(AgendaText.line(task, today: model.today, includeDay: task.schedule?.isMultiDay ?? false))
+                            .txt(15, .medium).foregroundStyle(AgendaText.color(task, today: model.today, accent: accent))
+                        Spacer(minLength: 0)
+                        if let owner {
+                            OwnerAvatarBadge(member: owner)
+                                .opacity(task.isCompleted ? 0.75 : 1)
+                        }
+                    }
                     Text(task.title).txt(17, .medium).foregroundStyle(task.isCompleted ? Palette.done : Palette.text)
                         .strikethrough(task.isCompleted, color: Palette.done).multilineTextAlignment(.leading)
                     if !task.content.isEmpty {
@@ -827,6 +869,7 @@ struct TimelineAgendaRow: View {
                 .card(14)
             }
             .buttonStyle(.press(scale: 0.98, opacity: 0.92))
+            .accessibilityValue(owner.map { "\($0.name)的" } ?? "")
             .padding(.bottom, 12)
         }
     }
@@ -995,6 +1038,7 @@ struct TimeGrid: View {
     var today: LocalDay
     var selected: LocalDay
     var isRegular: Bool = false
+    var showOwnerAvatars: Bool = false
     var openTask: (String) -> Void
     var tapSlot: (LocalDay, Int) -> Void
     var tapDay: (LocalDay) -> Void
@@ -1171,8 +1215,18 @@ struct TimeGrid: View {
     }
     var nowY: CGFloat { CGFloat(nowMinute) / 60 * hourH }
 
+    /// Title width kept (~4 CJK characters) before an owner avatar may take
+    /// room in timed blocks and all-day chips: narrow cells drop the avatar
+    /// (VoiceOver still reads the owner) rather than truncating titles such as
+    /// 學校接小安／學校接小明 to the same prefix.
+    static let ownerAvatarMinTitleWidth: CGFloat = 56
+
     func allDayChip(_ t: TodoTask, width: CGFloat) -> some View {
         let color = Palette.listColor(model.project(t.projectId)?.color)
+        let owner = partnerOwner(for: t, show: showOwnerAvatars, members: model.members)
+        // Same title-first rule as timed blocks: color bar 2 + leading 4 + title
+        // + trailing 2 + avatar 14 + stroke 1 + trailing 3.
+        let showAvatar = owner != nil && width >= 2 + 4 + Self.ownerAvatarMinTitleWidth + 2 + 14 + 1 + 3
         return Button { openTask(t.id) } label: {
             HStack(spacing: 0) {
                 Rectangle().fill(color).frame(width: 2)
@@ -1180,8 +1234,14 @@ struct TimeGrid: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(t.isCompleted ? Palette.done : Palette.text)
                     .lineLimit(1)
-                    .padding(.horizontal, 4)
+                    .padding(.leading, 4)
+                    .padding(.trailing, showAvatar ? 2 : 4)
                 Spacer(minLength: 0)
+                if showAvatar, let owner {
+                    OwnerAvatarBadge(member: owner, size: 14, strokeWidth: 1)
+                        .opacity(t.isCompleted ? 0.75 : 1)
+                        .padding(.trailing, 3)
+                }
             }
             .frame(width: width, height: 19)
             .background(RoundedRectangle(cornerRadius: 3).fill(color.opacity(0.28)))
@@ -1189,6 +1249,7 @@ struct TimeGrid: View {
         }
         .buttonStyle(.press(scale: 0.96, opacity: 0.88))
         .hoverEffect(.highlight)
+        .accessibilityValue(owner.map { "\($0.name)的" } ?? "")
     }
 
     func nowLine(colW: CGFloat) -> some View {
@@ -1204,16 +1265,30 @@ struct TimeGrid: View {
         let w = colW / CGFloat(b.lanes) - 2
         let h = max(CGFloat(b.end - b.start) / 60 * hourH - 2, 18)
         let done = b.task.isCompleted
+        let owner = partnerOwner(for: b.task, show: showOwnerAvatars, members: model.members)
+        let avatarSize: CGFloat = (w >= 84 && h >= 32) ? 16 : 14
+        let strokeWidth: CGFloat = 1
+        let topInset: CGFloat = h >= 24 ? 3 : 2
+        let neededWidth: CGFloat = 3 + 4 + Self.ownerAvatarMinTitleWidth + 4 + avatarSize + strokeWidth + 4
+        let neededHeight: CGFloat = avatarSize + strokeWidth + topInset
+        let showAvatar = owner != nil && w >= neededWidth && h >= neededHeight
         return Button { openTask(b.task.id) } label: {
-            HStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
                 Rectangle().fill(color).frame(width: 3)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(b.task.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(done ? Palette.done : Palette.text)
                         .strikethrough(done).lineLimit(h > 40 ? 3 : 1).multilineTextAlignment(.leading)
                     if h > 34, let s = b.task.schedule { Text(DateText.range(s)).font(.system(size: 10)).foregroundStyle(Palette.textSecondary).lineLimit(1) }
                 }
-                .padding(.horizontal, 4).padding(.vertical, 3)
+                .padding(.horizontal, 4)
+                .padding(.vertical, h >= 24 ? 3 : 2)
                 Spacer(minLength: 0)
+                if showAvatar, let owner {
+                    OwnerAvatarBadge(member: owner, size: avatarSize, strokeWidth: strokeWidth)
+                        .opacity(done ? 0.75 : 1)
+                        .padding(.top, topInset)
+                        .padding(.trailing, 4)
+                }
             }
             .frame(width: w, height: h, alignment: .topLeading)
             .background(RoundedRectangle(cornerRadius: 4).fill(color.opacity(done ? 0.12 : 0.3)))
@@ -1222,6 +1297,7 @@ struct TimeGrid: View {
         .buttonStyle(.press(scale: 0.96, opacity: 0.88))
         .hoverEffect(.highlight)
         .accessibilityLabel(b.task.title + "，" + (b.task.schedule.map(DateText.range) ?? ""))
+        .accessibilityValue(owner.map { "\($0.name)的" } ?? "")
     }
 }
 

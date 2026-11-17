@@ -1458,4 +1458,75 @@ final class DayDoFlowTests: XCTestCase {
         let badgeAgain = drawerAllAgain.label.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
         XCTAssertEqual(badgeAgain, "4", drawerAllAgain.label)
     }
+
+    @MainActor
+    func testCalendarOwnerAvatarUnderAllFilter() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoSeedSharedList"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        XCTAssertTrue(app.buttons["完成：買鮮奶"].waitForExistence(timeout: 5), app.debugDescription)
+
+        app.buttons["日曆"].tap()
+        XCTAssertTrue(app.buttons["calendarTitle"].waitForExistence(timeout: 3), app.debugDescription)
+
+        let allChip = app.buttons["memberFilter.all"]
+        let meChip = app.buttons["memberFilter.me"]
+        let partnerChip = app.buttons["memberFilter.debug-other-member-1"]
+        XCTAssertTrue(allChip.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(allChip.isSelected)
+
+        func rowButton(_ title: String) -> XCUIElement {
+            app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
+        }
+        let buyMilk = rowButton("買鮮奶")
+        let exchangeJpy = rowButton("換日幣")
+        let bookFlight = rowButton("訂機票")
+        let payBills = rowButton("繳水電費")
+        XCTAssertTrue(buyMilk.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(exchangeJpy.exists, app.debugDescription)
+        XCTAssertTrue(bookFlight.exists, app.debugDescription)
+        XCTAssertTrue(payBills.exists, app.debugDescription)
+
+        func ownerValue(_ row: XCUIElement) -> String {
+            (row.value as? String) ?? ""
+        }
+        // Under 「全部」: partner rows expose "小安的" on the task button itself (no separate avatar element);
+        // my rows and checkbox labels remain unchanged.
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "ownerAvatar").count, 0)
+        XCTAssertEqual(ownerValue(bookFlight), "小安的")
+        XCTAssertEqual(ownerValue(payBills), "小安的")
+        XCTAssertFalse(ownerValue(buyMilk).contains("小安的"))
+        XCTAssertFalse(ownerValue(exchangeJpy).contains("小安的"))
+        XCTAssertTrue(app.buttons["完成：買鮮奶"].exists)
+        XCTAssertTrue(app.buttons["完成：訂機票"].exists)
+        shot("calendar-owner-avatar-all")
+
+        // Switch to 「我的」: no owner announced.
+        meChip.tap()
+        XCTAssertTrue(meChip.isSelected)
+        XCTAssertTrue(buyMilk.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(exchangeJpy.exists)
+        XCTAssertTrue(bookFlight.waitForNonExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(ownerValue(buyMilk).contains("小安的"))
+        XCTAssertFalse(ownerValue(exchangeJpy).contains("小安的"))
+
+        // Switch to 「小安的」: no owner announced either.
+        partnerChip.tap()
+        XCTAssertTrue(partnerChip.isSelected)
+        XCTAssertTrue(bookFlight.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(payBills.exists)
+        XCTAssertFalse(ownerValue(bookFlight).contains("小安的"))
+        XCTAssertFalse(ownerValue(payBills).contains("小安的"))
+
+        // Switch back to 「全部」 and verify partner row remains tappable.
+        allChip.tap()
+        XCTAssertTrue(bookFlight.waitForExistence(timeout: 3), app.debugDescription)
+        bookFlight.tap()
+        let titleField = app.descendants(matching: .any)["taskTitleField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertEqual(titleField.value as? String, "訂機票")
+    }
 }

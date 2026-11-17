@@ -98,8 +98,9 @@ final class LocalDayDoAPI: DayDoAPI {
         try c.insert(db)
     }
 
-    func tasks(_ db: Database, _ records: [TaskRecord]) throws -> [TodoTask] {
+    func tasks(_ db: Database, _ records: [TaskRecord], ownerIds: [String: String]? = nil) throws -> [TodoTask] {
         guard !records.isEmpty else { return [] }
+        let resolvedOwnerIds = try ownerIds ?? taskOwnerIds(records, in: db)
         let ids = records.map(\.id)
         let items = try ChecklistItemRecord.filter(ids.contains(Column("taskId")) && Column("deletedAt") == nil).fetchAll(db)
         let atts = try AttachmentRecord.filter(ids.contains(Column("taskId")) && Column("deletedAt") == nil).fetchAll(db)
@@ -122,7 +123,8 @@ final class LocalDayDoAPI: DayDoAPI {
                 attachments: (attsBy[r.id] ?? []).sorted { $0.createdAt < $1.createdAt }.map {
                     Attachment(id: $0.id, fileName: $0.fileName, size: $0.size, mimeType: $0.mimeType, localPath: $0.localPath, originalPath: $0.originalPath, createdAt: $0.createdAt)
                 },
-                commentCount: counts[r.id] ?? 0, sourceRaw: r.sourceRaw, importNote: r.importNote)
+                commentCount: counts[r.id] ?? 0, sourceRaw: r.sourceRaw, importNote: r.importNote,
+                ownerId: resolvedOwnerIds[r.id] ?? "")
         }
     }
 
@@ -802,10 +804,13 @@ extension LocalDayDoAPI {
         if let pid = query.projectId { req = req.filter(Column("projectId") == pid) }
         var recs = try req.order(Column("sortKey")).fetchAll(db).filter { live.contains($0.projectId) || $0.projectId == query.projectId }
         if let tag = query.tag?.lowercased() { recs = recs.filter { $0.tags.contains(tag) } }
+        var precomputedOwners: [String: String]?
         if let mid = query.memberId {
-            recs = try filterTasks(recs, ownedBy: mid, in: db)
+            let ownerIds = try taskOwnerIds(recs, in: db)
+            recs = filterTasks(recs, ownedBy: mid, ownerIds: ownerIds)
+            precomputedOwners = ownerIds
         }
-        var out = try tasks(db, recs)
+        var out = try tasks(db, recs, ownerIds: precomputedOwners)
         if let from = query.from {
             let to = query.to ?? from
             out = out.filter { $0.schedule?.overlaps(from, to) ?? false }
@@ -813,15 +818,15 @@ extension LocalDayDoAPI {
         return out
     }
 
-    /// Single source of truth for task ownership (used by both calendar `TaskQuery.memberId`
-    /// and 「全部」 `listSections(.smart(.all), memberId:)`):
+    /// Single source of truth for task ownership (used by `TodoTask.ownerId`,
+    /// calendar `TaskQuery.memberId`, and 「全部」 `listSections(.smart(.all), memberId:)`):
     /// 1. `assigneeId != nil` → belongs to the assignee only.
     /// 2. `assigneeId == nil` → belongs to the list owner (`projectMember` row with
     ///    `role == "owner"`, falling back to `project.ownerId` if no owner row exists;
     ///    inbox / personal lists → `me`).
-    func filterTasks(_ recs: [TaskRecord], ownedBy memberId: String, in db: Database) throws -> [TaskRecord] {
-        guard !recs.isEmpty else { return [] }
-        let meId = try me(db).id
+    func taskOwnerIds(_ recs: [TaskRecord], in db: Database) throws -> [String: String] {
+        guard !recs.isEmpty else { return [:] }
+        let meId = try MemberRecord.filter(Column("isMe") == true).fetchOne(db)?.id ?? ""
         let pmOwners = Dictionary(
             try Row.fetchAll(
                 db,
@@ -844,9 +849,13 @@ extension LocalDayDoAPI {
                 projectOwners[pid] = meId
             }
         }
-        return recs.filter { t in
-            Self.taskOwnerId(assigneeId: t.assigneeId, projectId: t.projectId, projectOwners: projectOwners, meId: meId) == memberId
-        }
+        return Dictionary(uniqueKeysWithValues: recs.map { t in
+            (t.id, Self.taskOwnerId(assigneeId: t.assigneeId, projectId: t.projectId, projectOwners: projectOwners, meId: meId))
+        })
+    }
+
+    func filterTasks(_ recs: [TaskRecord], ownedBy memberId: String, ownerIds: [String: String]) -> [TaskRecord] {
+        recs.filter { ownerIds[$0.id] == memberId }
     }
 
     static func taskOwnerId(

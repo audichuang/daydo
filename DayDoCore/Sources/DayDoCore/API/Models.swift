@@ -275,6 +275,7 @@ public struct TodoTask: Codable, Hashable, Sendable, Identifiable {
     public var tags: [String]
     public var items: [ChecklistItem]
     public var assigneeId: String?
+    public let ownerId: String
     public var sortKey: String
     public var completedAt: EpochMillis?
     public var createdAt: EpochMillis
@@ -285,10 +286,96 @@ public struct TodoTask: Codable, Hashable, Sendable, Identifiable {
     public var sourceRaw: String?
     public var importNote: String?
 
+    public init(
+        id: String,
+        projectId: String,
+        title: String,
+        content: String,
+        priority: Priority,
+        status: Int,
+        schedule: Schedule?,
+        start: String?,
+        due: String?,
+        allDay: Bool,
+        timeZone: String?,
+        reminders: [String],
+        repeat: String?,
+        tags: [String],
+        items: [ChecklistItem],
+        assigneeId: String?,
+        sortKey: String,
+        completedAt: EpochMillis?,
+        createdAt: EpochMillis,
+        updatedAt: EpochMillis,
+        deletedAt: EpochMillis?,
+        attachments: [Attachment],
+        commentCount: Int,
+        sourceRaw: String?,
+        importNote: String?,
+        ownerId: String = ""
+    ) {
+        self.id = id
+        self.projectId = projectId
+        self.title = title
+        self.content = content
+        self.priority = priority
+        self.status = status
+        self.schedule = schedule
+        self.start = start
+        self.due = due
+        self.allDay = allDay
+        self.timeZone = timeZone
+        self.reminders = reminders
+        self.repeat = `repeat`
+        self.tags = tags
+        self.items = items
+        self.assigneeId = assigneeId
+        self.sortKey = sortKey
+        self.completedAt = completedAt
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+        self.attachments = attachments
+        self.commentCount = commentCount
+        self.sourceRaw = sourceRaw
+        self.importNote = importNote
+        self.ownerId = ownerId
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        projectId = try c.decode(String.self, forKey: .projectId)
+        title = try c.decode(String.self, forKey: .title)
+        content = try c.decode(String.self, forKey: .content)
+        priority = try c.decode(Priority.self, forKey: .priority)
+        status = try c.decode(Int.self, forKey: .status)
+        schedule = try c.decodeIfPresent(Schedule.self, forKey: .schedule)
+        start = try c.decodeIfPresent(String.self, forKey: .start)
+        due = try c.decodeIfPresent(String.self, forKey: .due)
+        allDay = try c.decode(Bool.self, forKey: .allDay)
+        timeZone = try c.decodeIfPresent(String.self, forKey: .timeZone)
+        reminders = try c.decode([String].self, forKey: .reminders)
+        `repeat` = try c.decodeIfPresent(String.self, forKey: .repeat)
+        tags = try c.decode([String].self, forKey: .tags)
+        items = try c.decode([ChecklistItem].self, forKey: .items)
+        assigneeId = try c.decodeIfPresent(String.self, forKey: .assigneeId)
+        ownerId = try c.decodeIfPresent(String.self, forKey: .ownerId) ?? ""
+        sortKey = try c.decode(String.self, forKey: .sortKey)
+        completedAt = try c.decodeIfPresent(EpochMillis.self, forKey: .completedAt)
+        createdAt = try c.decode(EpochMillis.self, forKey: .createdAt)
+        updatedAt = try c.decode(EpochMillis.self, forKey: .updatedAt)
+        deletedAt = try c.decodeIfPresent(EpochMillis.self, forKey: .deletedAt)
+        attachments = try c.decode([Attachment].self, forKey: .attachments)
+        commentCount = try c.decode(Int.self, forKey: .commentCount)
+        sourceRaw = try c.decodeIfPresent(String.self, forKey: .sourceRaw)
+        importNote = try c.decodeIfPresent(String.self, forKey: .importNote)
+    }
+
     /// JSON uses `timezone` like ticktick-mcp.
     enum CodingKeys: String, CodingKey {
         case id, projectId, title, content, priority, status, schedule, start, due, allDay, reminders, `repeat`, tags, items
-        case assigneeId, sortKey, completedAt, createdAt, updatedAt, deletedAt, attachments, commentCount, sourceRaw, importNote
+        case assigneeId, ownerId, sortKey, completedAt, createdAt, updatedAt, deletedAt, attachments, commentCount, sourceRaw, importNote
         case timeZone = "timezone"
     }
 

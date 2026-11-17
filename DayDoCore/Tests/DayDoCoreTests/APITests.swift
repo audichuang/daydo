@@ -661,5 +661,58 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
 
         // 3. smartCounts().all remains unfiltered total
         #expect(try await api.smartCounts().all == 6)
+
+        // 4. TodoTask.ownerId matches the single ownership rule on both listTasks and listSections
+        let expectedOwners: [String: String] = [
+            "我建清單未指派": me.id,
+            "對方清單未指派": partnerId,
+            "我建清單指派對方": partnerId,
+            "收件匣任務": me.id,
+            "對方清單指派給我": me.id,
+            "對方ownerId回退": partnerId,
+        ]
+        #expect(Dictionary(uniqueKeysWithValues: calAll.map { ($0.title, $0.ownerId) }) == expectedOwners)
+        #expect(Dictionary(uniqueKeysWithValues: secAll.map { ($0.title, $0.ownerId) }) == expectedOwners)
+
+        // 5. getTask also populates ownerId
+        let partnerTask = try #require(calAll.first { $0.title == "對方清單未指派" })
+        #expect(try await api.getTask(id: partnerTask.id).ownerId == partnerId)
+    }
+
+    @Test func todoTaskDecodesLegacyJSONWithoutOwnerId() throws {
+        let legacyJSON = """
+        {
+          "id": "t-1",
+          "project_id": "p-1",
+          "title": "Legacy",
+          "content": "",
+          "priority": 0,
+          "status": 0,
+          "all_day": false,
+          "reminders": [],
+          "tags": [],
+          "items": [],
+          "sort_key": "a0",
+          "created_at": 1000,
+          "updated_at": 1000,
+          "attachments": [],
+          "comment_count": 0
+        }
+        """
+        let decoded = try DayDoJSON.decoder.decode(TodoTask.self, from: Data(legacyJSON.utf8))
+        #expect(decoded.ownerId == "")
+
+        let withOwner = TodoTask(
+            id: "t-2", projectId: "p-1", title: "Owned", content: "", priority: .none, status: 0,
+            schedule: nil, start: nil, due: nil, allDay: false, timeZone: nil,
+            reminders: [], repeat: nil, tags: [], items: [], assigneeId: nil,
+            sortKey: "a0", completedAt: nil, createdAt: 1000, updatedAt: 1000, deletedAt: nil,
+            attachments: [], commentCount: 0, sourceRaw: nil, importNote: nil, ownerId: "m-partner"
+        )
+        let encoded = try DayDoJSON.encoder.encode(withOwner)
+        let encodedDict = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        #expect(encodedDict?["owner_id"] as? String == "m-partner")
+        let roundTripped = try DayDoJSON.decoder.decode(TodoTask.self, from: encoded)
+        #expect(roundTripped.ownerId == "m-partner")
     }
 }

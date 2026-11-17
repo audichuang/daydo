@@ -592,6 +592,7 @@ components:
         tags: { type: array, items: { type: string } }
         items: { type: array, items: { $ref: "#/components/schemas/ChecklistItem" } }
         assignee_id: { type: [string, "null"] }
+        owner_id: { type: string, readOnly: true, description: Effective task owner member id (assignee if set, otherwise list owner or current user for inbox) }
         sort_key: { type: string }
         completed_at: { type: [integer, "null"] }
         created_at: { type: integer }

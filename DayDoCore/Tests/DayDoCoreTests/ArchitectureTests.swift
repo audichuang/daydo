@@ -167,11 +167,12 @@ private let guards: [Guard] = [
     Guard(
         name: "task ownership rule lives solely in LocalDayDoAPI",
         directories: ["DayDoCore/Sources", "ios/DayDo", "ios/DayDoWidgets"],
-        pattern: #"\btaskOwnerId\s*\(|\bfilterTasks\([^)]*ownedBy:|role\s*=\s*'owner'"#,
+        pattern: #"\btaskOwnerId\s*\(|\btaskOwnerIds\s*\(|\bfilterTasks\([^)]*ownedBy:|role\s*=\s*'owner'"#,
         allow: ["DayDoCore/Sources/DayDoCore/API/LocalDayDoAPI.swift"],
         bad: [
             "Self.taskOwnerId(assigneeId: t.assigneeId, projectId: t.projectId, projectOwners: projectOwners, meId: meId)",
-            "try filterTasks(recs, ownedBy: mid, in: db)",
+            "try taskOwnerIds(recs, in: db)",
+            "filterTasks(recs, ownedBy: mid, ownerIds: ownerIds)",
             #"sql: "SELECT projectId, memberId FROM projectMember WHERE deletedAt IS NULL AND role = 'owner'""#,
         ]
     ),
@@ -210,20 +211,34 @@ private let guards: [Guard] = [
     }
 
     /// Guards that even inside LocalDayDoAPI there is only one call site computing task ownership
-    /// (`fetchActive` -> `filterTasks(_:ownedBy:in:)` -> `taskOwnerId(...)`), shared by both
-    /// calendar (`listTasks(TaskQuery)`) and 「全部」 (`listSections(.smart(.all), ...)`).
+    /// (`taskOwnerIds(_:in:)` -> `taskOwnerId(...)`), shared by `TodoTask.ownerId` (`tasks(_:_:)`),
+    /// calendar (`listTasks(TaskQuery)`), and 「全部」 (`listSections(.smart(.all), ...)`).
     @Test func singleTaskOwnershipRuleCallSite() throws {
         let code = try codeLines("DayDoCore/Sources/DayDoCore/API/LocalDayDoAPI.swift")
         let filterCalls = code.components(separatedBy: "filterTasks(").count - 1
+        let ownerIdsCalls = code.components(separatedBy: "taskOwnerIds(").count - 1
         let ownerCalls = code.components(separatedBy: "taskOwnerId(").count - 1
         #expect(filterCalls == 2, "Expected 1 definition + 1 call site in fetchActive for filterTasks(, found \(filterCalls)")
-        #expect(ownerCalls == 2, "Expected 1 definition + 1 call site in filterTasks for taskOwnerId(, found \(ownerCalls)")
+        #expect(ownerIdsCalls == 3, "Expected 1 definition + 2 call sites (fetchActive & tasks) for taskOwnerIds(, found \(ownerIdsCalls)")
+        #expect(ownerCalls == 2, "Expected 1 definition + 1 call site in taskOwnerIds for taskOwnerId(, found \(ownerCalls)")
         #expect(code.contains("TaskQuery(memberId: memberId)"), "Expected listSections(.smart(.all)) to delegate to fetchActive via TaskQuery(memberId:)")
     }
 
     /// Every screen that creates a task must hand the result to
     /// `revealCreatedTaskInAll`, or a task added while 「全部」 is filtered to
     /// another member silently disappears (the duplicate action once did).
+    /// Every compact calendar cell that shows an owner avatar (sized badges in
+    /// TimeGrid) must gate it on the shared title-first width, or a narrow cell
+    /// truncates titles like 學校接小安／學校接小明 to the same prefix (review
+    /// rounds 2 and 3 each found one cell that skipped the rule).
+    @Test func compactOwnerAvatarsKeepTitleFirst() throws {
+        let code = try codeLines("ios/DayDo/Screens/CalendarScreen.swift")
+        let sizedBadges = code.components(separatedBy: "OwnerAvatarBadge(member: owner, size:").count - 1
+        let gates = code.components(separatedBy: "Self.ownerAvatarMinTitleWidth").count - 1
+        #expect(sizedBadges > 0, "no sized owner badges found; renamed?")
+        #expect(gates >= sizedBadges, "\(sizedBadges) sized owner badges but only \(gates) title-width gates")
+    }
+
     @Test func screensRevealCreatedTasksInAllFilter() throws {
         let files = swiftFiles(in: ["ios/DayDo/Screens"])
         var offenders: [String] = []
