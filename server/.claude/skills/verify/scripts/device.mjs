@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Acts as a DayDo device against DAYDO_API (default https://daydo-api.audichuang.app).
+// Acts as a DayDo device against DAYDO_API (default https://api.daydoapp.com).
 //   node device.mjs login            email start → code (Gmail or dev mail) → verify; saves session
 //   node device.mjs bootstrap        first-login data like the App: me member + inbox (skips if present)
 //   node device.mjs seed [--n 60]    project "verify-seed" with N tasks; skipped if it already exists

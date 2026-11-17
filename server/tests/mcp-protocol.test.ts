@@ -17,7 +17,7 @@ import { signMcpAccessToken } from '../src/oauth/tokens';
 import { createTestD1 } from './sqliteD1';
 
 const SECRET = 'unit-test-jwt-secret-32-bytes-minimum';
-const ORIGIN = 'https://daydo-mcp.audichuang.app';
+const ORIGIN = 'https://mcp.daydoapp.com';
 const CTX = { userId: 'user-1', clientId: 'mcp-test' };
 
 interface Envelope {

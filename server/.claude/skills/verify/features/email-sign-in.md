@@ -1,6 +1,6 @@
 # Email sign-in (device)
 
-A person signs up or logs in to DayDo with only an email address. They ask for a code, read the 6-digit code from the mail "你的 DayDo 驗證碼" sent by `DayDo <no-reply@audichuang.app>`, and submit it. The device then receives access and refresh tokens. The first successful verify creates the account; later ones log into it.
+A person signs up or logs in to DayDo with only an email address. They ask for a code, read the 6-digit code from the mail "你的 DayDo 驗證碼" sent by `DayDo <no-reply@daydoapp.com>`, and submit it. The device then receives access and refresh tokens. The first successful verify creates the account; later ones log into it.
 
 ## Sub-features
 

@@ -75,14 +75,14 @@ describe('selectMailer', () => {
     expect(res).toEqual({ ok: true });
     expect(sent).toEqual([
       {
-        from: { name: 'DayDo', email: 'no-reply@audichuang.app' },
+        from: { name: 'DayDo', email: 'no-reply@daydoapp.com' },
         to: 'user@example.com',
         subject: mail.subject,
         text: mail.text,
         html: mail.html,
       },
     ]);
-    expect(MAIL_FROM).toEqual({ name: 'DayDo', email: 'no-reply@audichuang.app' });
+    expect(MAIL_FROM).toEqual({ name: 'DayDo', email: 'no-reply@daydoapp.com' });
     expect(lastDevMail('user@example.com')).toBeNull();
     const joined = logs.join('\n');
     expect(joined).toContain('"event":"mail.send"');

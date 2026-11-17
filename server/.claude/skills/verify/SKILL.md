@@ -1,13 +1,13 @@
 ---
 name: verify
-description: "Drive the DayDo sync server and remote MCP end to end like a user: sign up / log in with an email code as a device (code read from Gmail in ego-browser), bootstrap and seed tasks over /sync/push, connect Claude Code to daydo-mcp through its OAuth authorize page, then assert MCP reads and writes with `claude -p` against a device pull. Use after deploying server/, or whenever auth, sync, OAuth or MCP tool behavior must be proven on production (daydo-api / daydo-mcp.audichuang.app) or on a local dev build."
+description: "Drive the DayDo sync server and remote MCP end to end like a user: sign up / log in with an email code as a device (code read from Gmail in ego-browser), bootstrap and seed tasks over /sync/push, connect Claude Code to daydo-mcp through its OAuth authorize page, then assert MCP reads and writes with `claude -p` against a device pull. Use after deploying server/, or whenever auth, sync, OAuth or MCP tool behavior must be proven on production (daydo-api / mcp.daydoapp.com) or on a local dev build."
 ---
 
 # Verify DayDo server + remote MCP
 
 Surface: two hostnames on one Worker.
-- `https://daydo-api.audichuang.app` is the App API. It sits behind Cloudflare Access, so every request carries the service token.
-- `https://daydo-mcp.audichuang.app/` is the remote MCP server. It has no Access; OAuth 2.1 with DCR is its only gate.
+- `https://api.daydoapp.com` is the App API. It sits behind Cloudflare Access, so every request carries the service token.
+- `https://mcp.daydoapp.com/` is the remote MCP server. It has no Access; OAuth 2.1 with DCR is its only gate.
 
 The user journey is:
 1. Email sign-in as a device.
@@ -27,8 +27,8 @@ All scripts read their config from the environment. Production is the default:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DAYDO_API` | `https://daydo-api.audichuang.app` | App API (Access headers are added automatically only for this host) |
-| `DAYDO_MCP` | `https://daydo-mcp.audichuang.app/` | MCP URL written into `.mcp.json` |
+| `DAYDO_API` | `https://api.daydoapp.com` | App API (Access headers are added automatically only for this host) |
+| `DAYDO_MCP` | `https://mcp.daydoapp.com/` | MCP URL written into `.mcp.json` |
 | `DAYDO_VERIFY_EMAIL` | `pokemongo030501@gmail.com` | test account |
 | `DAYDO_CODE_SOURCE` | `gmail` | `gmail` reads the code mail in ego-browser; `devmail` uses `GET <api>/test/mail` (dev builds only) |
 | `DAYDO_GMAIL_INDEX` | `8` | Gmail account index in ego-browser (`https://mail.google.com/mail/u/8/`) |

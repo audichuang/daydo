@@ -10,7 +10,7 @@ import { createScopeWorld, type ScopeWorld } from './helpers/scopeWorld';
 import { createTestD1 } from './sqliteD1';
 
 const SECRET = 'mcp-route-test-jwt-secret-at-least-32-bytes';
-const ORIGIN = 'https://daydo-mcp.audichuang.app';
+const ORIGIN = 'https://mcp.daydoapp.com';
 const NOW_ISH = 1_700_000_000_000;
 
 const testEnv: { JWT_SECRET: string; DEFAULT_TIMEZONE?: string; ICS_ALLOW_INSECURE_HOSTS?: string } = {

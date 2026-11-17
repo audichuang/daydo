@@ -13,7 +13,7 @@ import { handleGoogleCallback } from '../src/oauth/googleCallback';
 import type { WebIdentityConfig } from '../src/oauth/webIdentity';
 import { createTestD1 } from './sqliteD1';
 
-const ORIGIN = 'https://daydo-mcp.audichuang.app';
+const ORIGIN = 'https://mcp.daydoapp.com';
 const NOW = 1_800_000_000_000;
 const CLIENT_ID = 'mcp-client-a';
 const REDIRECT_URI = 'https://claude.ai/api/mcp/auth_callback';

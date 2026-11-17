@@ -63,7 +63,7 @@ describe('auth crypto', () => {
     const withAud = await new SignJWT({})
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject('user-123')
-      .setAudience('https://daydo-mcp.audichuang.app')
+      .setAudience('https://mcp.daydoapp.com')
       .setIssuedAt()
       .setExpirationTime('1h')
       .sign(key);
@@ -91,7 +91,7 @@ describe('auth crypto', () => {
   it('rejects MCP access tokens (isolation, spec/mcp.md 4.6)', async () => {
     const secret = 'unit-test-jwt-secret-32-bytes-minimum';
     const mcpToken = await signMcpAccessToken(secret, {
-      origin: 'https://daydo-mcp.audichuang.app',
+      origin: 'https://mcp.daydoapp.com',
       userId: 'user-123',
       scope: 'mcp',
       clientId: 'mcp-abc',

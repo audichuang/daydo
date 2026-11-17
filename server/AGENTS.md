@@ -23,7 +23,7 @@
 
 ## MCP 與 ICS（細節在 `../spec/mcp.md`）
 
-- 同一個 Worker 服務兩個主機：`daydo-api`（App，Access 把關）與 `daydo-mcp.audichuang.app`（MCP）。`middleware/00.host.ts` 依 `MCP_HOST` 做主機名閘門，排在 Access 之前、開發與正式建置都生效；MCP 主機只放行 `/`、`/register`、`/token`、`/authorize*`、兩個 `/.well-known/oauth-*`，其餘 404，API 主機則 404 這些 MCP 路徑。改路由時兩邊都要測（`npm run e2e:mcp`）。
+- 同一個 Worker 服務兩個主機：`api.daydoapp.com`（App，Access 把關；舊網址 `daydo-api.audichuang.app` 為舊版 App 保留，同一個 Access application）與 `mcp.daydoapp.com`（MCP）。`middleware/00.host.ts` 依 `MCP_HOST` 做主機名閘門，排在 Access 之前、開發與正式建置都生效；MCP 主機只放行 `/`、`/register`、`/token`、`/authorize*`、兩個 `/.well-known/oauth-*`，其餘 404，API 主機則 404 這些 MCP 路徑。改路由時兩邊都要測（`npm run e2e:mcp`）。
 - `src/mcp/`：JSON-RPC 傳輸、工具註冊與工具實作，工具清單以 `spec/mcp.md` 第 8 節為準。`src/oauth/`：OAuth 2.1（註冊、授權頁、token、refresh），金鑰由 `JWT_SECRET` 以 HKDF 衍生，不另設 secret。
 - `src/serverops/`：伺服器端讀 snapshot、寫 op（走與 `/sync/push` 相同的 Scope DO 路徑），MCP 與 ICS 都經它寫入，不繞過去直接寫 DO。`writer` 自己補 `updatedAt`（呼叫端傳 `nowMs`）與 schedule 成組；與 App `LocalDayDoAPI` 對齊的任務寫入（完成重複任務、checklist、標籤）在 `taskWrites.ts`，MCP 工具只做參數解析與格式化。
 - `src/domain/`：從 Swift 移植的規則（重複、提醒、排程、sortKey、標籤、uuid），以 `spec/fixtures` 的向量測試，行為要和 Swift 一致，改一邊就要改另一邊。

@@ -18,7 +18,7 @@ import {
 import { createTestD1 } from './sqliteD1';
 
 const SECRET = 'unit-test-jwt-secret-32-bytes-minimum';
-const ORIGIN = 'https://daydo-mcp.audichuang.app';
+const ORIGIN = 'https://mcp.daydoapp.com';
 
 const b64url = (bytes: Uint8Array | Buffer): string => Buffer.from(bytes).toString('base64url');
 const b64urlJson = (obj: unknown): string => b64url(Buffer.from(JSON.stringify(obj), 'utf8'));
@@ -118,7 +118,7 @@ describe('MCP access token sign/verify', () => {
       ['no exp', hmacJwt(header, claims({ exp: undefined }), key)],
       ['wrong iss', hmacJwt(header, claims({ iss: 'https://evil.example' }), key)],
       ['missing aud', hmacJwt(header, claims({ aud: undefined }), key)],
-      ['wrong aud origin', hmacJwt(header, claims({ aud: 'https://daydo-api.audichuang.app' }), key)],
+      ['wrong aud origin', hmacJwt(header, claims({ aud: 'https://api.daydoapp.com' }), key)],
       ['aud not a URL', hmacJwt(header, claims({ aud: 'not a url' }), key)],
       ['aud array', hmacJwt(header, claims({ aud: [ORIGIN] }), key)],
       ['scope without mcp', hmacJwt(header, claims({ scope: 'offline_access' }), key)],

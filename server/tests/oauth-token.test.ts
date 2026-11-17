@@ -11,7 +11,7 @@ import { sha256b64url, successorToken, verifyMcpAccessToken } from '../src/oauth
 import { createTestD1 } from './sqliteD1';
 
 const SECRET = 'unit-test-jwt-secret-32-bytes-minimum';
-const ORIGIN = 'https://daydo-mcp.audichuang.app';
+const ORIGIN = 'https://mcp.daydoapp.com';
 const TOKEN_URL = `${ORIGIN}/token`;
 const NOW = 1_800_000_000_000;
 const CLIENT_ID = 'mcp-client-a';

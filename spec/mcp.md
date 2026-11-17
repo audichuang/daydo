@@ -6,9 +6,9 @@
 
 ## 1. 目標與範圍
 
-- 在現有 Worker `daydo-api` 上加一個遠端 MCP server，用第二個主機名 `daydo-mcp.audichuang.app` 對外。
+- 在現有 Worker `daydo-api` 上加一個遠端 MCP server，用第二個主機名 `mcp.daydoapp.com` 對外。
   - 這個主機名不放 Cloudflare Access。
-  - `daydo-api.audichuang.app` 維持原本的 Access。
+  - `api.daydoapp.com` 維持原本的 Access。
 - OAuth 2.1：DCR、PKCE（S256）、JWT access token，每次都發 refresh token。
   - `/authorize` 讓使用者用 DayDo 帳號登入，方式是 Google 網頁登入、Sign in with Apple JS 或信箱驗證碼，登入後再按同意。
 - 登入身分只對應既有的 `identity(provider, sub) → userId`，**不建立新帳號**。
@@ -55,7 +55,7 @@ server/
   src/deps.ts                  AppDeps／productionAppDeps：入口唯一建 D1 session（first-primary）與取 Scope stub 的地方
 ```
 
-**MCP endpoint 放在主機根目錄 `https://daydo-mcp.audichuang.app/`**，與 REF 相同。
+**MCP endpoint 放在主機根目錄 `https://mcp.daydoapp.com/`**，與 REF 相同。
 - resource 等於 origin，metadata 放在 `/.well-known/oauth-protected-resource`。
 - REF 已在 Claude、ChatGPT、Codex 實測過這個形狀。
 - Codex（rmcp）會 `GET <server url>`，並把 200 的 JSON 當成 protected-resource metadata 讀。所以 `GET /` 回傳的 body 同時帶 `resource`、`authorization_servers`、`ok`、`server`、`protocol`。
@@ -64,7 +64,7 @@ server/
 
 ## 3. 主機名閘門與 Access
 
-- 新增 env `MCP_HOST`，預設 `daydo-mcp.audichuang.app`。比對 `new URL(c.req.url).hostname`，不比對 port。
+- 新增 env `MCP_HOST`，預設 `mcp.daydoapp.com`。比對 `new URL(c.req.url).hostname`，不比對 port。
 - `middleware/00.host.ts` 在開發與正式建置**都**生效，而且排在 Access 之前。它不受「開發建置跳過 Access」影響，所以 e2e 能證明閘門有效。
 - **MCP 主機**只放行下列路徑，其餘一律 404：
   - `/`
@@ -546,20 +546,20 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 
 | 名稱 | 類型 | 說明 |
 |---|---|---|
-| `MCP_HOST` | 預設 `daydo-mcp.audichuang.app` | 主機名閘門 |
+| `MCP_HOST` | 預設 `mcp.daydoapp.com` | 主機名閘門 |
 | `GOOGLE_WEB_CLIENT_ID` | 預設 `710830841029-i2n5hhd9kgg56r3svnmb0c5g32no5lmv.apps.googleusercontent.com` | 網頁 client id |
 | `GOOGLE_WEB_CLIENT_SECRET` | optional，**Worker secret** | 換 code 用；沒設時 Google 按鈕顯示「未設定」 |
 | `GOOGLE_AUTH_URL`、`GOOGLE_TOKEN_URL` | 預設官方網址 | e2e 覆寫 |
 | `APPLE_WEB_AUDIENCE` | 預設 `com.audichuang.daydo.web` | Services ID |
 | `APPLE_AUTH_URL` | 預設官方網址 | e2e 覆寫 |
 | `DEFAULT_TIMEZONE` | 預設 `Asia/Taipei` | ICS 浮動時間、時區推斷、重複任務補進度的「今天」 |
-| `EMAIL` | Cloudflare Email Service `send_email` binding | 寄驗證碼，寄件人 `DayDo <no-reply@audichuang.app>`；開發建置改用可注入的記憶體 mailer，沒有此 binding 時 start 仍回 202 但不寄信並記 log |
+| `EMAIL` | Cloudflare Email Service `send_email` binding | 寄驗證碼，寄件人 `DayDo <no-reply@daydoapp.com>`；開發建置改用可注入的記憶體 mailer，沒有此 binding 時 start 仍回 202 但不寄信並記 log |
 | `ICS_ALLOW_INSECURE_HOSTS` | optional，只在開發建置有效 | e2e 抓本機 fixture |
 
 - `JWT_SECRET` 沿用；MCP 的 access 金鑰與 refresh 金鑰都由它經 HKDF 衍生。
 - 正式環境唯一新增的 secret 是 `GOOGLE_WEB_CLIENT_SECRET`；信箱登入只新增 `EMAIL` binding，不是 secret。
 
-**E1 spike 結果（Void 1.8.0，`EMAIL` binding）**：Void 的 `CloudflareConfig` 型別有 `send_email`，`void.config.ts` 的 `cloudflare.send_email: [{ name: 'EMAIL' }]` 會原樣帶進 `vite build` 產物：`dist/ssr/wrangler.json` 有 `send_email`，`.cloudflare/output/v0/workers/default/worker.config.json` 的 `env.EMAIL` 是 `{type: 'send-email'}`；`void prepare` 也自動產生 `.void/bindings.d.ts`，讓 `c.env.EMAIL` 的型別是 `SendEmail`，`env.ts` 不用改。不需要退回 REST API。Void 內建的 `void/email` 的 `sendEmail` 讀的是名為 `SEND_EMAIL` 的 binding，所以不用它，由 `src/mail/mailer.ts` 直接呼叫 `env.EMAIL.send({from, to, subject, text, html})`（寄件人用物件形式 `{name:'DayDo', email:'no-reply@audichuang.app'}`）；`send` 不 throw，失敗只記 `mail.send` 與 Cloudflare 的錯誤代碼（`E_*`），不記主旨與內文。開發建置一律用模組層級的記憶體 mailer（每個收件人留最後一封），Void dev server 是單一 isolate，`npm run e2e` 驗證了一個請求寄出的信，下一個請求能從 `GET /test/mail?to=` 讀到。正式建置不含 `/test/mail`。實際寄送沒有測過：寄給任意收件人需要 Workers Paid，且寄件網域 `audichuang.app` 要先完成 Email Sending 的設定（SPF／DKIM），這是部署前的前置作業。另外 dev server 與 `vite build` 會依設定改寫 `void.lock.json` 的 `send_email`，部署時一起 commit。
+**E1 spike 結果（Void 1.8.0，`EMAIL` binding）**：Void 的 `CloudflareConfig` 型別有 `send_email`，`void.config.ts` 的 `cloudflare.send_email: [{ name: 'EMAIL' }]` 會原樣帶進 `vite build` 產物：`dist/ssr/wrangler.json` 有 `send_email`，`.cloudflare/output/v0/workers/default/worker.config.json` 的 `env.EMAIL` 是 `{type: 'send-email'}`；`void prepare` 也自動產生 `.void/bindings.d.ts`，讓 `c.env.EMAIL` 的型別是 `SendEmail`，`env.ts` 不用改。不需要退回 REST API。Void 內建的 `void/email` 的 `sendEmail` 讀的是名為 `SEND_EMAIL` 的 binding，所以不用它，由 `src/mail/mailer.ts` 直接呼叫 `env.EMAIL.send({from, to, subject, text, html})`（寄件人用物件形式 `{name:'DayDo', email:'no-reply@daydoapp.com'}`）；`send` 不 throw，失敗只記 `mail.send` 與 Cloudflare 的錯誤代碼（`E_*`），不記主旨與內文。開發建置一律用模組層級的記憶體 mailer（每個收件人留最後一封），Void dev server 是單一 isolate，`npm run e2e` 驗證了一個請求寄出的信，下一個請求能從 `GET /test/mail?to=` 讀到。正式建置不含 `/test/mail`。實際寄送沒有測過：寄給任意收件人需要 Workers Paid，且寄件網域（現為 `daydoapp.com`）要先完成 Email Sending 的設定（SPF／DKIM），這是部署前的前置作業。另外 dev server 與 `vite build` 會依設定改寫 `void.lock.json` 的 `send_email`，部署時一起 commit。
 
 ## 11. 測試策略
 

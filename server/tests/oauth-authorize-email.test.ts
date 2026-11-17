@@ -19,7 +19,7 @@ import { createTestD1 } from './sqliteD1';
 
 // MCP authorize page, third option: email sign-in code for an existing user (spec/mcp.md 4.4 3b).
 
-const ORIGIN = 'https://daydo-mcp.audichuang.app';
+const ORIGIN = 'https://mcp.daydoapp.com';
 const NOW = 1_800_000_000_000;
 const CLIENT_ID = 'mcp-client-a';
 const REDIRECT_URI = 'https://claude.ai/api/mcp/auth_callback';

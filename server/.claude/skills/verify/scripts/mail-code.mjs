@@ -61,7 +61,7 @@ while (!result && Date.now() < deadline) {
 emit(result ?? { error: 'timed out waiting for the code mail', attempts });
 `;
 
-const DAYDO_QUERY = 'in:anywhere from:no-reply@audichuang.app subject:"你的 DayDo 驗證碼"';
+const DAYDO_QUERY = 'in:anywhere from:no-reply@daydoapp.com subject:"你的 DayDo 驗證碼"';
 const DAYDO_PATTERN = '驗證碼[：:]\\s*(\\d{6})';
 
 export async function getCode({ email = cfg.email, since, timeoutMs = 120_000, exclude = [], query = DAYDO_QUERY, pattern = DAYDO_PATTERN } = {}) {

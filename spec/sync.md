@@ -10,7 +10,7 @@
 | 衝突 | 同一欄位以修改時間決定，後改的贏；時間用 HLC。**伺服器合併後的資料列是唯一正確答案**，App 一律照它覆蓋（只保留本機未送出且較新的欄位）。 |
 | 時鐘 | 伺服器把快 5 分鐘以上的 HLC 校正成伺服器時間；push 回應帶 `serverTime`，App 用它推進自己的 HLC，同一台裝置的修改不會被自己蓋掉。 |
 | 多人架構 | 以服務多人為前提：每個使用者一個 Durable Object（**範圍**），存在 DO 自帶的 SQLite。每筆資料永遠住在**建立它的人**的範圍（子項目、附件、留言住在所屬任務的範圍），「在哪份清單」只是資料上的欄位：移進別人建立的共享清單也只是改欄位，資料不搬家。共享、轉移擁有者只改 D1 的權限。看一份共享清單時，從每個存有它資料的範圍各拿一部分。pull 每個範圍各一個游標。（原本寫「每份共享清單一個 DO」，後來改成「清單住在建立者範圍」，兩者都會在移動任務時跨 DO 搬資料、中間有空檔，2026-11-15 使用者同意改成資料不搬家。） |
-| 對外網址 | `https://daydo-api.audichuang.app`，前面加 Cloudflare Access：App 每個請求都帶 service token 的 `CF-Access-Client-Id`／`CF-Access-Client-Secret`；Worker 驗 `Cf-Access-Jwt-Assertion`；關掉 `workers.dev` 與 preview 網址。token 編在 App 裡、拆得出來，只擋亂打的流量，真正的保護是帳號登入。設定照既有的 `OkiBus API (iOS app only)` Access 應用程式，用 `cf` CLI 操作。 |
+| 對外網址 | `https://api.daydoapp.com`（2026-11-18 前的 App build 用 `https://daydo-api.audichuang.app`，兩者掛在同一個 Worker 與同一個 Access application，舊網址待所有裝置換新版後移除），前面加 Cloudflare Access：App 每個請求都帶 service token 的 `CF-Access-Client-Id`／`CF-Access-Client-Secret`；Worker 驗 `Cf-Access-Jwt-Assertion`；關掉 `workers.dev` 與 preview 網址。token 編在 App 裡、拆得出來，只擋亂打的流量，真正的保護是帳號登入。設定照既有的 `OkiBus API (iOS app only)` Access 應用程式，用 `cf` CLI 操作。 |
 | 第一次登入 | 登入回應帶：帳號有沒有資料、伺服器上的「我」與收件匣 id。新裝置（平板、重新安裝）：不建預設資料，直接把全部資料拉下來；帳號沒資料才建預設資料並上傳。已在用的舊版手機（本機有資料）：帳號沒資料就整份上傳；帳號有資料就把本機「我」與收件匣換成伺服器的 id、丟掉沒動過且沒任務的預設清單，其他照常上傳。id 對應要在第一次 push 前、同一個交易裡完成，**連尚未送出的 outbox 一起改**：`row` 裡的引用與 `entityId`（含 projectMember 的複合鍵）；被丟掉的預設清單，它們的建立 op 一併刪掉。 |
 | 永久刪除與副本 id | App 用 `purgedId` 記住永久刪除過的 id（含套用伺服器 tombstone 時），重複任務副本的確定性 id 已被刪過就改用隨機 id。 |
 | push 批次 | App 每批 50 個 op；伺服器上限維持 200，部署後實測再調。 |
@@ -163,7 +163,7 @@
   - 限速：每個信箱每小時最多 5 次 start；每個來源 IP（`CF-Connecting-IP`，IPv6 取 /64）每小時最多 20 次 start（App 與 MCP 授權頁共用這兩個額度）。超過上限仍回 202 但不寄信（只記 log）。
   - 跨碼鎖定：同一信箱在 24 小時內發出的碼（兩種流程合計）累計猜錯 10 次就鎖定，不另加欄位，直接加總 `emailCode.attempts`。鎖定期間 start 仍回 202（MCP 頁仍顯示「已寄出」）但不寄信、不建碼，log 記 `locked`；verify 一律回與錯碼相同的 401（MCP 頁顯示同樣的錯碼訊息），即使碼正確也不消耗。猜錯次數的檢查與扣次數在同一個條件式 UPDATE 內，並發猜測無法超過上限。那些碼發出滿 24 小時後自動解除。
   - `start` 一律回 `202 {sent:true}`，不透露該信箱是否已有帳號。
-  - 信件：Cloudflare Email Service 的 `send_email` binding（名稱 `EMAIL`），寄件人 `DayDo <no-reply@audichuang.app>`，主旨「你的 DayDo 驗證碼」，純文字與 HTML 兩份，內含驗證碼與「10 分鐘內有效」的說明。開發建置使用可注入的記憶體 mailer，並提供僅開發建置掛上的路由（`routes/test/*.dev.ts`）讀取某信箱最後一組碼；正式環境不記驗證碼。
+  - 信件：Cloudflare Email Service 的 `send_email` binding（名稱 `EMAIL`），寄件人 `DayDo <no-reply@daydoapp.com>`，主旨「你的 DayDo 驗證碼」，純文字與 HTML 兩份，內含驗證碼與「10 分鐘內有效」的說明。開發建置使用可注入的記憶體 mailer，並提供僅開發建置掛上的路由（`routes/test/*.dev.ts`）讀取某信箱最後一組碼；正式環境不記驗證碼。
   - 過期的 `emailCode` 列由既有的每小時 OAuth 清理一併刪除，保留到過期後 24 小時，跨碼鎖定要加總的列都還在。
 - 帳號用 `(provider, sub)` 識別，不用 email 自動合併帳號：Apple 可能給隱藏的轉寄 email。要讓兩種登入方式共用同一個帳號，登入後在設定裡手動連結。
 - Worker 自己發 token：access token 為 JWT，1 小時；refresh token 90 天，每次使用就換一組新的，D1 只存雜湊值。
@@ -212,6 +212,6 @@
 3. ✓ T5a Worker：資料改到範圍 DO（單一使用者，先不做共享）：`entityHome`、移動帶子列、「未知的列不憑空建立」、子列 `taskId` 不可改、讀取依成員資格過濾。
 4. ✓ T5b Worker：`serverTime`、登入回應的 `hasData`／`meMemberId`／`inboxProjectId`、兩台裝置的 e2e。T7 從這裡開始。
 5. ✓ T5c Worker：成員與邀請 API、權限矩陣、成員投影、`listScopes` 與多範圍 pull、`gone` 與離開紀錄、加入時的 backfill、共享清單的 members 與 folderId 規則、永久刪除清單的通知。
-6. ✓ T6：Access 驗證、部署到 `daydo-api.audichuang.app`、對公開網址跑冒煙測試（`npm run smoke:prod`：Access 擋未帶 token 的請求、假 token 登入被拒）。完整登入與同步要真的 Apple／Google token，留到 T8 在手機上驗。
+6. ✓ T6：Access 驗證、部署到 `daydo-api.audichuang.app`（2026-11-18 起主網址改為 `api.daydoapp.com`）、對公開網址跑冒煙測試（`npm run smoke:prod`：Access 擋未帶 token 的請求、假 token 登入被拒）。完整登入與同步要真的 Apple／Google token，留到 T8 在手機上驗。
 7. T7 App：✓ T7a 同步引擎與兩台裝置收斂測試；✓ T7b 登入、登出與第一次登入；✓ T7c 共享清單。✓ T8 App：登入畫面、同步觸發、設定帳號區、邀請連結（分享、貼上加入、確認畫面）。
 8. WebSocket 通知；✓ MCP（OAuth、工具、ICS 訂閱同步，見 `spec/mcp.md`）。

@@ -8,7 +8,7 @@ export default defineEnv({
   GOOGLE_JWKS_URL: url().default('https://www.googleapis.com/oauth2/v3/certs'),
   ACCESS_TEAM_DOMAIN: string().optional(),
   ACCESS_AUD: string().optional(),
-  MCP_HOST: string().default('daydo-mcp.audichuang.app'),
+  MCP_HOST: string().default('mcp.daydoapp.com'),
   GOOGLE_WEB_CLIENT_ID: string().default(
     '710830841029-i2n5hhd9kgg56r3svnmb0c5g32no5lmv.apps.googleusercontent.com',
   ),

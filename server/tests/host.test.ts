@@ -2,9 +2,9 @@ import type { CloudContext } from 'void';
 import { describe, expect, it } from 'vitest';
 import { createHostGateMiddleware, isMcpHost, isMcpPath } from '../src/auth/host';
 
-const MCP_HOST = 'daydo-mcp.audichuang.app';
+const MCP_HOST = 'mcp.daydoapp.com';
 const MCP_ORIGIN = `https://${MCP_HOST}`;
-const API_ORIGIN = 'https://daydo-api.audichuang.app';
+const API_ORIGIN = 'https://api.daydoapp.com';
 
 const MCP_PATHS = [
   '/',
@@ -64,7 +64,7 @@ describe('isMcpHost', () => {
   it('compares hostname only, ignoring port and case', () => {
     expect(isMcpHost(`${MCP_ORIGIN}/`, MCP_HOST)).toBe(true);
     expect(isMcpHost('http://localhost:5173/token', 'localhost')).toBe(true);
-    expect(isMcpHost('http://DAYDO-MCP.audichuang.app:8443/', MCP_HOST)).toBe(true);
+    expect(isMcpHost('http://MCP.DAYDOAPP.com:8443/', MCP_HOST)).toBe(true);
     expect(isMcpHost(`${API_ORIGIN}/`, MCP_HOST)).toBe(false);
     expect(isMcpHost('http://127.0.0.1:5173/', 'localhost')).toBe(false);
   });

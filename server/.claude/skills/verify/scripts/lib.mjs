@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 
 export const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
-const PROD_API = 'https://daydo-api.audichuang.app';
-const PROD_MCP = 'https://daydo-mcp.audichuang.app/';
+const PROD_API = 'https://api.daydoapp.com';
+const PROD_MCP = 'https://mcp.daydoapp.com/';
 
 export const cfg = {
   api: (process.env.DAYDO_API ?? PROD_API).replace(/\/$/, ''),
@@ -26,7 +26,7 @@ export const cfg = {
   tmuxSocket: 'daydo-verify',
 };
 
-export const isProdApi = () => new URL(cfg.api).hostname === 'daydo-api.audichuang.app';
+export const isProdApi = () => new URL(cfg.api).hostname === 'api.daydoapp.com';
 
 fs.mkdirSync(cfg.stateDir, { recursive: true, mode: 0o700 });
 

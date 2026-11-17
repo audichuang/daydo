@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAccessMiddleware, verifyAccessJwt } from '../src/auth/access';
 
 vi.mock('void/env', () => ({
-  env: { MCP_HOST: 'daydo-mcp.audichuang.app' },
+  env: { MCP_HOST: 'mcp.daydoapp.com' },
 }));
 
 const TEAM_DOMAIN = 'daydo-test.cloudflareaccess.com';
@@ -22,8 +22,8 @@ async function makeRsaKeyFixture(kid: string) {
   };
 }
 
-const MCP_HOST = 'daydo-mcp.audichuang.app';
-const API_URL = 'https://daydo-api.audichuang.app/sync/pull';
+const MCP_HOST = 'mcp.daydoapp.com';
+const API_URL = 'https://api.daydoapp.com/sync/pull';
 
 function makeMockContext(
   headers: Record<string, string | undefined> = {},
@@ -315,7 +315,7 @@ describe('Cloudflare Access verification middleware', () => {
 
     nextCalled = false;
     const apiRes = await middleware(
-      makeMockContext({}, 'https://daydo-api.audichuang.app/token'),
+      makeMockContext({}, 'https://api.daydoapp.com/token'),
       async () => {
         nextCalled = true;
       },

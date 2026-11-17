@@ -9,7 +9,7 @@ import WidgetKit
 import DayDoCore
 
 enum SyncConfig {
-    static let baseURL = URL(string: "https://daydo-api.audichuang.app")!
+    static let baseURL = URL(string: "https://api.daydoapp.com")!
 
     static func accessHeaders(bundle: Bundle = .main) -> [String: String] {
         var headers: [String: String] = [:]

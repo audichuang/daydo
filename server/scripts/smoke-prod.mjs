@@ -1,4 +1,4 @@
-const baseUrl = (process.env.BASE_URL ?? 'https://daydo-api.audichuang.app').replace(/\/+$/, '');
+const baseUrl = (process.env.BASE_URL ?? 'https://api.daydoapp.com').replace(/\/+$/, '');
 const clientId = process.env.CF_ACCESS_CLIENT_ID;
 const clientSecret = process.env.CF_ACCESS_CLIENT_SECRET;
 

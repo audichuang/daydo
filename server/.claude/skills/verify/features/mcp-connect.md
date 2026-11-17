@@ -14,7 +14,7 @@ A Claude Code user adds DayDo as an HTTP MCP server and signs in. Claude Code re
 ## How to get to it (user POV)
 
 - Claude Code, in an empty project:
-  - `.mcp.json` holds `{"mcpServers":{"daydo-verify":{"type":"http","url":"https://daydo-mcp.audichuang.app/"}}}`;
+  - `.mcp.json` holds `{"mcpServers":{"daydo-verify":{"type":"http","url":"https://mcp.daydoapp.com/"}}}`;
   - trust the folder and approve the server (`.claude/settings.local.json` `{"enabledMcpjsonServers":["daydo-verify"]}`);
   - run `claude mcp login daydo-verify --no-browser` and open the printed URL.
 - Claude.ai / ChatGPT connectors use the same `/authorize` page (README "Adding the connector"); they are not driven here.

@@ -18,7 +18,7 @@ export interface Mailer {
   send(message: MailMessage): Promise<MailResult>;
 }
 
-export const MAIL_FROM = { name: 'DayDo', email: 'no-reply@audichuang.app' } as const;
+export const MAIL_FROM = { name: 'DayDo', email: 'no-reply@daydoapp.com' } as const;
 
 export interface DevMail extends MailMessage {
   sentAt: number;
