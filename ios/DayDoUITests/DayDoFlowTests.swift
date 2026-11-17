@@ -359,10 +359,12 @@ final class DayDoFlowTests: XCTestCase {
         app.buttons["開啟清單抽屜"].tap()
         let all = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '全部'")).firstMatch
         XCTAssertTrue(all.waitForExistence(timeout: 3))
+        // Read the badge before the tap closes the drawer.
+        let badge = all.label.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+        XCTAssertFalse(badge.isEmpty, all.label)
         all.tap()
         XCTAssertTrue(app.staticTexts["全部"].waitForExistence(timeout: 3))
         // Header count matches the drawer badge even though 花蓮小旅行 spans 今天 and 明天.
-        let badge = all.label.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
         XCTAssertTrue(app.staticTexts["\(badge) 項待辦"].waitForExistence(timeout: 3), "drawer badge \(badge) vs header")
         XCTAssertTrue(app.staticTexts["之後"].waitForExistence(timeout: 3))
         let far = app.staticTexts["搬家整理：打包書櫃"]
