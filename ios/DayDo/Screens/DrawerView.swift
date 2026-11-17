@@ -2,7 +2,9 @@ import SwiftUI
 import DayDoCore
 
 enum DrawerMetrics {
-    static let edgeWidth: CGFloat = 24
+    /// Where a rightward drag may start to open the drawer. A thumb on a real phone lands
+    /// 20–40 pt in, so 24 pt missed most real swipes.
+    static let edgeWidth: CGFloat = 40
 
     static func width(for containerWidth: CGFloat) -> CGFloat {
         min(containerWidth * 0.82, 340)

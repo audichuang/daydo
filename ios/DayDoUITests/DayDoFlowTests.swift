@@ -1111,6 +1111,20 @@ final class DayDoFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testEdgeDragFromThumbDistanceOpensDrawer() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+        XCTAssertTrue(app.buttons["開啟清單抽屜"].waitForExistence(timeout: 5), app.debugDescription)
+        // A real thumb starts ~30 pt in, over the task list; that must still open the drawer.
+        let window = app.windows.firstMatch
+        let startX = 30 / window.frame.width
+        let start = window.coordinate(withNormalizedOffset: CGVector(dx: startX, dy: 0.45))
+        let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.45))
+        start.press(forDuration: 0.02, thenDragTo: end, withVelocity: 1200, thenHoldForDuration: 0)
+        XCTAssertTrue(app.buttons["drawer.settings"].waitForExistence(timeout: 3), app.debugDescription)
+    }
+
+    @MainActor
     func testOptimisticTaskCompletionUpdatesLabelThenMovesToCompleted() throws {
         try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
         dismissNotificationPrompt()
