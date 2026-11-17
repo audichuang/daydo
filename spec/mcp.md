@@ -399,7 +399,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 | `list_tasks` | read | `project_id` 可省略；只含未完成，依 `sortKey` |
 | `search_tasks` | read | `query*`、`active_only`；比對標題、內容、標籤、checklist 標題；先依 status、再依 `updatedAt` 排序，最多 200 筆 |
 | `get_task` | read | `project_id*`、`task_id*`；`project_id` 不符就報錯；回完整紀錄 |
-| `create_task` | write | `project_id*`、`title*`、`content`、`priority`（none／low／medium／high）、`start`、`due`、`all_day`、`timezone`、`reminder`、`repeat`、`subtasks`、`tags`。有 `reminder` 卻沒有日期時拒絕；`content` 裡字面的 `\n` 轉成真換行；清單必須可寫。描述沿用 REF 的規則，拿掉 TickTick 專屬段落 |
+| `create_task` | write | `project_id*`、`title*`、`content`、`priority`（none／low／medium／high）、`start`、`due`、`all_day`、`timezone`、`reminder`、`repeat`、`subtasks`、`tags`。有 `reminder` 卻沒有日期時拒絕；`content` 裡字面的 `\n` 轉成真換行；清單必須可寫。描述沿用 REF 的規則，拿掉 TickTick 專屬段落與重述 enum 的優先級條目；「建立前先查」改指向 `search_tasks`，只有未完成的同名任務才改用 `update_task`（它不能重新開啟已完成的任務） |
 | `update_task` | idempotent-overwrite | 同上，加 `task_id*`。`repeat:""` 清除重複；`start:""` 清除排程，同時清 reminders 與 repeat；`subtasks` 整份取代（舊項目軟刪除，以新 id 重建，與 App 相同） |
 | `complete_task` | idempotent-write | 見下 |
 | `delete_task` | destructive | **軟刪除**（`deletedAt`），可以從 App 垃圾桶還原；回 `{deleted:true, task_id, title}`。任務不在該清單時報錯 |

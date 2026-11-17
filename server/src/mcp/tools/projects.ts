@@ -106,7 +106,7 @@ export function projectTools(): ToolDef[] {
         type: 'object',
         required: ['name'],
         properties: {
-          name: { type: 'string' },
+          name: { type: 'string', description: 'Project (list) name. Required.' },
           color: { type: 'string', description: 'Hex color, #RRGGBB or #RGB.' },
           view_mode: { type: 'string', enum: ['list', 'kanban', 'timeline'], description: 'Default view mode.' },
           kind: { type: 'string', enum: ['TASK', 'NOTE'], description: 'Project type. Defaults to TASK.' },

@@ -84,6 +84,7 @@ function checklistTitles(snapshot: Snapshot, taskId: string): string[] {
 }
 
 const PROJECT_ID = { type: 'string', description: 'Project id from list_projects.' };
+const TASK_ID = { type: 'string', description: 'The task `id` field returned by the list, search and get tools.' };
 const OPTIONAL_PROJECT = { type: 'string', description: 'Optional. Restrict to this project; omit for all projects.' };
 
 export function taskReadTools(): ToolDef[] {
@@ -136,11 +137,11 @@ export function taskReadTools(): ToolDef[] {
     },
     {
       name: 'search_tasks',
-      description: `Full-text search across task titles, content, tags and checklist item titles. By default includes completed tasks; set active_only to restrict to pending. Active tasks come first, newest update first; at most ${SEARCH_LIMIT} results. Returns task summaries (see get_task).`,
+      description: `Case-insensitive substring search across task titles, content, tags and checklist item titles. The query is matched as one string (not split into words), so search one keyword at a time. By default includes completed tasks; set active_only to restrict to pending. Active tasks come first, newest update first; at most ${SEARCH_LIMIT} results. Returns task summaries (see get_task).`,
       inputSchema: {
         type: 'object',
         required: ['query'],
-        properties: { query: { type: 'string' }, active_only: { type: 'boolean', description: 'Exclude completed tasks.' } },
+        properties: { query: { type: 'string', description: 'Text to look for (one substring, case-insensitive).' }, active_only: { type: 'boolean', description: 'Exclude completed tasks.' } },
       },
       run: async (args, ctx) => {
         const query = requireStr(args, 'query').trim().toLowerCase();
@@ -169,7 +170,7 @@ export function taskReadTools(): ToolDef[] {
       inputSchema: {
         type: 'object',
         required: ['project_id', 'task_id'],
-        properties: { project_id: PROJECT_ID, task_id: { type: 'string' } },
+        properties: { project_id: PROJECT_ID, task_id: TASK_ID },
       },
       run: async (args, ctx) => {
         const projectId = requireStr(args, 'project_id');
@@ -181,7 +182,7 @@ export function taskReadTools(): ToolDef[] {
     {
       name: 'get_completed_tasks',
       description:
-        'List completed tasks, most recently completed first, optionally filtered to one project. Returns task summaries (see get_task).',
+        'List completed tasks, most recently completed first, optionally filtered to one project. Returns every completed task with no limit, so pass project_id when you only need one list. Returns task summaries (see get_task).',
       inputSchema: { type: 'object', properties: { project_id: OPTIONAL_PROJECT } },
       run: async (args, ctx) => {
         const { snapshot } = await openSession(ctx);
@@ -256,12 +257,12 @@ const NEEDS_DATE = (field: string) =>
   `\`${field}\` needs a date: set \`start\` or \`due\` in this same call, or omit \`${field}\`.`;
 
 const TASK_FIELDS = {
-  title: { type: 'string' },
+  title: { type: 'string', description: 'Task title; surrounding whitespace is trimmed and it must not be empty.' },
   content: {
     type: 'string',
     description: 'Notes / description. Use real newline characters for line breaks (a literal \\n is converted to one).',
   },
-  priority: { type: 'string', enum: ['none', 'low', 'medium', 'high'] },
+  priority: { type: 'string', enum: ['none', 'low', 'medium', 'high'], description: 'Task priority. Defaults to none on create.' },
   start: {
     type: 'string',
     description: 'ISO 8601 start, e.g. 2026-04-20T13:00:00+08:00 (timed) or 2026-04-20 (all-day). Without an offset or timezone the time floats with the device.',
@@ -287,13 +288,12 @@ export function taskWriteTools(): ToolDef[] {
       name: 'create_task',
       description:
         'Create a task. Rules:\n' +
-        '1. Before calling, use list_recent_tasks to check the project for a same-title or same-intent task. If one exists (even completed), use update_task instead.\n' +
+        '1. Before creating, look for a task with the same title or intent (search_tasks covers every list, completed tasks included). If an active one exists, change it with update_task instead. update_task cannot reopen a completed task, so a completed match means creating a new task (or asking the user).\n' +
         '2. Timed items (meetings, classes, workouts, a to-do you want pinged at a set time): set both `start` and `due` in ISO 8601 with an offset, e.g. 2026-04-20T13:00:00+08:00; a timed task needs both.\n' +
         '3. All-day items: set `start` to the date (2026-04-20) and, for several days, `due` to the last day. Never combine a time with `all_day`.\n' +
         "4. One piece of work you want reminding about on several days but finish once (chasing a colleague, a follow-up before a deadline): one task with `start` on the last day and relative reminders for the earlier ones, e.g. start Thu 09:00 with reminder 'TRIGGER:-P2D,TRIGGER:-P1D,TRIGGER:PT0S'. Ticking it off then stops the rest; `repeat` or one task per day would keep firing after the work is done. Split into separate tasks only when the clock times themselves differ.\n" +
         "5. Keep times out of the title (not 'Badminton 13:00-14:00'); put them in start/due.\n" +
-        '6. Priorities: none | low | medium | high.\n' +
-        '7. Match existing task formatting conventions within the same project (title style, content structure, reminder, tags).\n' +
+        '6. Match existing task formatting conventions within the same project (title style, content structure, reminder, tags).\n' +
         '`reminder` and `repeat` need a date in the same call; the call is rejected without one. The project must be writable (can_write in list_projects).',
       inputSchema: {
         type: 'object',
@@ -348,8 +348,9 @@ export function taskWriteTools(): ToolDef[] {
         required: ['project_id', 'task_id'],
         properties: {
           project_id: PROJECT_ID,
-          task_id: { type: 'string' },
+          task_id: TASK_ID,
           ...TASK_FIELDS,
+          priority: { ...TASK_FIELDS.priority, description: 'Task priority; omit to keep the current one.' },
           subtasks: { ...TASK_FIELDS.subtasks, description: 'Replaces the whole checklist.' },
         },
       },
@@ -422,7 +423,7 @@ export function taskWriteTools(): ToolDef[] {
       inputSchema: {
         type: 'object',
         required: ['project_id', 'task_id'],
-        properties: { project_id: PROJECT_ID, task_id: { type: 'string' } },
+        properties: { project_id: PROJECT_ID, task_id: TASK_ID },
       },
       run: async (args, ctx) => {
         const projectId = requireStr(args, 'project_id');
@@ -452,7 +453,7 @@ export function taskWriteTools(): ToolDef[] {
       inputSchema: {
         type: 'object',
         required: ['project_id', 'task_id'],
-        properties: { project_id: PROJECT_ID, task_id: { type: 'string' } },
+        properties: { project_id: PROJECT_ID, task_id: TASK_ID },
       },
       run: async (args, ctx) => {
         const projectId = requireStr(args, 'project_id');
@@ -474,7 +475,7 @@ export function taskWriteTools(): ToolDef[] {
         type: 'object',
         required: ['task_id', 'from_project_id', 'to_project_id'],
         properties: {
-          task_id: { type: 'string' },
+          task_id: TASK_ID,
           from_project_id: { type: 'string', description: "The task's current project id." },
           to_project_id: { type: 'string', description: 'Destination project id.' },
         },
