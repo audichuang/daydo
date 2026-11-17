@@ -14,12 +14,6 @@ export default defineConfig({
         "pattern": "api.daydoapp.com",
         "custom_domain": true
       },
-      // Legacy App API host: TestFlight builds before the daydoapp.com move still call it.
-      // Remove once every device runs a build that uses api.daydoapp.com.
-      {
-        "pattern": "daydo-api.audichuang.app",
-        "custom_domain": true
-      },
       {
         "pattern": "mcp.daydoapp.com",
         "custom_domain": true

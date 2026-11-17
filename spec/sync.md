@@ -10,7 +10,7 @@
 | 衝突 | 同一欄位以修改時間決定，後改的贏；時間用 HLC。**伺服器合併後的資料列是唯一正確答案**，App 一律照它覆蓋（只保留本機未送出且較新的欄位）。 |
 | 時鐘 | 伺服器把快 5 分鐘以上的 HLC 校正成伺服器時間；push 回應帶 `serverTime`，App 用它推進自己的 HLC，同一台裝置的修改不會被自己蓋掉。 |
 | 多人架構 | 以服務多人為前提：每個使用者一個 Durable Object（**範圍**），存在 DO 自帶的 SQLite。每筆資料永遠住在**建立它的人**的範圍（子項目、附件、留言住在所屬任務的範圍），「在哪份清單」只是資料上的欄位：移進別人建立的共享清單也只是改欄位，資料不搬家。共享、轉移擁有者只改 D1 的權限。看一份共享清單時，從每個存有它資料的範圍各拿一部分。pull 每個範圍各一個游標。（原本寫「每份共享清單一個 DO」，後來改成「清單住在建立者範圍」，兩者都會在移動任務時跨 DO 搬資料、中間有空檔，2026-11-15 使用者同意改成資料不搬家。） |
-| 對外網址 | `https://api.daydoapp.com`（2026-11-18 前的 App build 用 `https://daydo-api.audichuang.app`，兩者掛在同一個 Worker 與同一個 Access application，舊網址待所有裝置換新版後移除），前面加 Cloudflare Access：App 每個請求都帶 service token 的 `CF-Access-Client-Id`／`CF-Access-Client-Secret`；Worker 驗 `Cf-Access-Jwt-Assertion`；關掉 `workers.dev` 與 preview 網址。token 編在 App 裡、拆得出來，只擋亂打的流量，真正的保護是帳號登入。設定照既有的 `OkiBus API (iOS app only)` Access 應用程式，用 `cf` CLI 操作。 |
+| 對外網址 | `https://api.daydoapp.com`（2026-11-18 前用 `https://daydo-api.audichuang.app`，已停用；build 17 以前的 App 連不上），前面加 Cloudflare Access：App 每個請求都帶 service token 的 `CF-Access-Client-Id`／`CF-Access-Client-Secret`；Worker 驗 `Cf-Access-Jwt-Assertion`；關掉 `workers.dev` 與 preview 網址。token 編在 App 裡、拆得出來，只擋亂打的流量，真正的保護是帳號登入。設定照既有的 `OkiBus API (iOS app only)` Access 應用程式，用 `cf` CLI 操作。 |
 | 第一次登入 | 登入回應帶：帳號有沒有資料、伺服器上的「我」與收件匣 id。新裝置（平板、重新安裝）：不建預設資料，直接把全部資料拉下來；帳號沒資料才建預設資料並上傳。已在用的舊版手機（本機有資料）：帳號沒資料就整份上傳；帳號有資料就把本機「我」與收件匣換成伺服器的 id、丟掉沒動過且沒任務的預設清單，其他照常上傳。id 對應要在第一次 push 前、同一個交易裡完成，**連尚未送出的 outbox 一起改**：`row` 裡的引用與 `entityId`（含 projectMember 的複合鍵）；被丟掉的預設清單，它們的建立 op 一併刪掉。 |
 | 永久刪除與副本 id | App 用 `purgedId` 記住永久刪除過的 id（含套用伺服器 tombstone 時），重複任務副本的確定性 id 已被刪過就改用隨機 id。 |
 | push 批次 | App 每批 50 個 op；伺服器上限維持 200，部署後實測再調。 |
