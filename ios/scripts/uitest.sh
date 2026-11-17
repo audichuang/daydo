@@ -8,7 +8,7 @@
 #   ios/scripts/uitest.sh up [iphone|ipad|"DD <name>"]     # restore if parked, boot, print the UDID
 #
 # Resident devices come from `sim-vault ensure` (restored from the NAS when parked; never
-# created here: on 3/4 ask the user) and go back with `sim-vault park --shutdown`. Their exit
+# created here: on 3 no archive, on 4 the archive's runtime is not installed; ask the user) and go back with `sim-vault park --shutdown`. Their exit
 # codes are passed on unchanged; see `sim-vault --help`.
 #
 # Codex, agy and other sessions share the DD simulators; two xcodebuild runs at
@@ -63,10 +63,12 @@ need_sim_vault() {
 }
 
 # A parked resident device is restored by sim-vault, which holds its own device lock, so
-# this needs no xcodebuild lock. 3/4 (no archive) stop here: ask the user before creating it.
+# this needs no xcodebuild lock. --wait matches the 30 min this script waits for its own lock:
+# restoring a 6 GB archive takes minutes. 3 (no archive) and 4 (runtime of the archive not
+# installed: install it, no need to recreate) stop here; ask the user, never create it here.
 if [[ "$udid" == MISSING ]]; then
   need_sim_vault
-  udid=$(sim-vault ensure "$name")
+  udid=$(sim-vault ensure "$name" --wait 1800)
 fi
 if [[ "$mode" == up ]]; then
   boot
@@ -105,6 +107,13 @@ done
 trap 'rm -rf "$lock"' EXIT
 
 if [[ "$mode" == park ]]; then
+  # While this waited, another session may have parked it and restored a new device under the
+  # same name, possibly in use; park only the device that was here when we queued.
+  now=$(lookup)
+  if [[ "$now" != "$udid" ]]; then
+    echo "排隊期間「${name}」已換成另一台（${udid} → ${now:-多台}），可能有人在用，這次不收" >&2
+    exit 0
+  fi
   need_sim_vault
   sim-vault park "$name" --shutdown --missing-ok
   exit

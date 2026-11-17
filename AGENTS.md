@@ -55,7 +55,7 @@ repo 沒有 GitHub Actions：push 後不等 CI，合併前以本機測試結果�
 - `uitest.sh` 會先自己開機並等開機完成，xcodebuild 就不會在測完時把模擬器關掉。不要繞過腳本直接跑 `xcodebuild test`：模擬器若是 xcodebuild 開的，它測完就會關機，常常只開了 30 秒，PosterBoard 還在寫桌布資料。2026-11-17 就這樣把資料寫壞（膨脹到 5.7G），之後每次開機 PosterBoard 都當。
 - 整批工作（多輪測試加互動驗收）都做完，才用 `ios/scripts/uitest.sh down [iphone|ipad]` 關掉本次用過的 DD 常駐機，不要每跑一輪就關一次。不要直接 `xcrun simctl shutdown`：`down` 會先等別人的測試跑完再關，直接關曾在別的 session 開機 14 秒時把機器關掉。只關自己用過的那台。
 - 收起：整批 iOS 工作做完、不再需要模擬器時，用 `ios/scripts/uitest.sh park [iphone|ipad]` 把用過的常駐機整台（App、登入）收進 NAS（先等 xcodebuild 鎖，再 `sim-vault park --shutdown`）。之後 `uitest.sh` 找不到常駐機會用 `sim-vault ensure` 還原，UDID 會換新；手動驗收或新腳本要用常駐機，跑 `ios/scripts/uitest.sh up [iphone|ipad]` 拿 UDID，不要自己依名稱查（收起後查不到，`record-uitest.sh` 曾這樣壞過）。
-- DD 政策：NAS 上沒有封存（結束碼 3／4）時不自動建機，停下問使用者，重建後要重新登入。其他結束碼原樣傳回，照 `sim-vault --help` 的下一步處理，背景見 modern-ios-guidance 技能。
+- DD 政策：結束碼 3 是 NAS 上沒有封存；4 是封存用的 iOS runtime 沒裝（先裝回 runtime 再跑，不用重建）。兩者都不自動建機，停下問使用者；真的重建才要重新登入。其他結束碼原樣傳回，照 `sim-vault --help` 的下一步處理，背景見 modern-ios-guidance 技能。
 - 別的 session 可能還開著常駐機在驗收；只收自己這批工作用過的那台。
 - Mac 跳出 PosterBoard 當機視窗時，查 `~/Library/Logs/DiagnosticReports` 裡含 `SimDevice.<UDID>` 的 `.ips`。堆疊有 `PRPosterDescriptor _initWithPath:` 就先關機，把 `data/Library/Application Support/` 下的 `PRBPosterExtensionDataStore`、`com.apple.PosterKit` 改名備份後重開機，系統會重建。確認沒有新的 `.ips` 再刪備份；常駐機不 `erase`。
 - 平行 UI 測試才開臨時機，命名 `DD tmp <任務名>`，用 `ios/scripts/uitest.sh "DD tmp <任務名>"` 跑。
