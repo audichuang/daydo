@@ -10,7 +10,7 @@ final class DrawerMetricsTests: XCTestCase {
     }
 
     func testEdgeWidthMatchesSharedGestureContract() {
-        XCTAssertEqual(DrawerMetrics.edgeWidth, 24)
+        XCTAssertEqual(DrawerMetrics.edgeWidth, 40)
     }
 
     func testShouldOpenThreshold() {
