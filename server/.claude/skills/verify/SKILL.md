@@ -1,6 +1,6 @@
 ---
 name: verify
-description: "Drive the DayDo sync server and remote MCP end to end like a user: sign up / log in with an email code as a device (code read from Gmail in ego-browser), bootstrap and seed tasks over /sync/push, connect Claude Code to daydo-mcp through its OAuth authorize page, then assert MCP reads and writes with `claude -p` against a device pull. Use after deploying server/, or whenever auth, sync, OAuth or MCP tool behavior must be proven on production (daydo-api / mcp.daydoapp.com) or on a local dev build."
+description: "Drive the DayDo sync server and remote MCP end to end like a user: sign up / log in with an email code as a device (code read from Gmail in ego-browser), bootstrap and seed tasks over /sync/push, connect Claude Code to the MCP server through its OAuth authorize page, then assert MCP reads and writes with `claude -p` against a device pull. Use after deploying server/, or whenever auth, sync, OAuth or MCP tool behavior must be proven on production (api.daydoapp.com / mcp.daydoapp.com) or on a local dev build."
 ---
 
 # Verify DayDo server + remote MCP

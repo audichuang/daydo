@@ -1,6 +1,6 @@
 # DayDo server + MCP verification map
 
-This directory is the maintained source for verifying the user-facing behavior of the DayDo Worker. That covers the App API (`daydo-api`, as a device) and the remote MCP server (`daydo-mcp`, as Claude Code). Read this index first, then use the matching feature file as the recipe. `S` is `server/.claude/skills/verify/scripts`, and every command is in `../SKILL.md`.
+This directory is the maintained source for verifying the user-facing behavior of the DayDo Worker. That covers the App API (`api.daydoapp.com`, as a device) and the remote MCP server (`daydo-mcp`, as Claude Code). Read this index first, then use the matching feature file as the recipe. `S` is `server/.claude/skills/verify/scripts`, and every command is in `../SKILL.md`.
 
 ## Baseline preconditions
 
