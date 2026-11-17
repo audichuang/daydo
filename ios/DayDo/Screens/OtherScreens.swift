@@ -222,7 +222,7 @@ struct SettingsScreen: View {
                                 .frame(minHeight: 58)
                                 .contentShape(Rectangle())
                             }
-                            .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Color.white.opacity(0.04)))
+                            .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Palette.pressHighlight))
                             .hoverEffect(.highlight)
                             .accessibilityIdentifier("settings.accountRow")
 
@@ -233,7 +233,7 @@ struct SettingsScreen: View {
                             } label: {
                                 row(icon: "person.badge.plus", title: "加入共享清單")
                             }
-                            .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Color.white.opacity(0.04)))
+                            .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Palette.pressHighlight))
                             .hoverEffect(.highlight)
                             .accessibilityIdentifier("settings.joinInvite")
 
@@ -257,7 +257,7 @@ struct SettingsScreen: View {
                                 .frame(minHeight: 52)
                                 .contentShape(Rectangle())
                             }
-                            .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Color.white.opacity(0.04)))
+                            .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Palette.pressHighlight))
                             .hoverEffect(.highlight)
                             .accessibilityIdentifier("settings.signOut")
                         }
@@ -268,7 +268,7 @@ struct SettingsScreen: View {
                         NavigationLink(value: SettingsRoute.appearance) {
                             row(icon: "paintpalette", title: "外觀")
                         }
-                        .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Color.white.opacity(0.04)))
+                        .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Palette.pressHighlight))
                         .hoverEffect(.highlight)
 
                         if !archivedProjects.isEmpty {
@@ -276,7 +276,7 @@ struct SettingsScreen: View {
                             NavigationLink(value: SettingsRoute.archivedProjects) {
                                 row(icon: "archivebox", title: "已封存的清單", value: "\(archivedProjects.count)")
                             }
-                            .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Color.white.opacity(0.04)))
+                            .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Palette.pressHighlight))
                             .hoverEffect(.highlight)
                         }
                     }
@@ -286,7 +286,7 @@ struct SettingsScreen: View {
                         NavigationLink(value: SettingsRoute.data) {
                             row(icon: "externaldrive", title: "資料")
                         }
-                        .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Color.white.opacity(0.04)))
+                        .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Palette.pressHighlight))
                         .hoverEffect(.highlight)
                     }
                     .card()
@@ -361,6 +361,20 @@ private struct AppearanceSettingsView: View {
                     }
 
                     section("顯示") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("外觀").txt(15).foregroundStyle(Palette.text)
+                            HStack(spacing: 8) {
+                                OptionChip(label: "深色", on: model.appearance == .dark) { model.appearance = .dark }
+                                OptionChip(label: "淺色", on: model.appearance == .light) { model.appearance = .light }
+                                OptionChip(label: "跟隨系統", on: model.appearance == .system) { model.appearance = .system }
+                                Spacer()
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+
+                        Rectangle().fill(Palette.separatorSoft).frame(height: 1).padding(.leading, 14)
+
                         VStack(alignment: .leading, spacing: 10) {
                             Text("列表密度").txt(15).foregroundStyle(Palette.text)
                             HStack(spacing: 8) {

@@ -219,7 +219,7 @@ struct NextWidgetView: View {
                         Link(destination: WidgetDeepLink.task(chip.task.id).url) {
                             Text(chip.displayTitle)
                                 .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(WidgetPalette.mixedWithWhite(chip.projectColorHex, amount: 0.45))
+                                .foregroundStyle(WidgetPalette.tintedListText(chip.projectColorHex))
                                 .lineLimit(1)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
@@ -282,7 +282,7 @@ struct NextWidgetView: View {
                             : WidgetPalette.listColor(block.projectColorHex).opacity(0.22)
                         let fg = block.isPrimary
                             ? accent.onAccent
-                            : WidgetPalette.mixedWithWhite(block.projectColorHex, amount: 0.45)
+                            : WidgetPalette.tintedListText(block.projectColorHex)
 
                         Link(destination: WidgetDeepLink.task(block.task.id).url) {
                             VStack(alignment: .leading, spacing: 1) {

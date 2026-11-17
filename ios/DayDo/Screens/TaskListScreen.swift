@@ -354,7 +354,7 @@ struct TaskRow: View {
                 .overlay(alignment: .top) { if separator && !isSelected { Rectangle().fill(Palette.separator).frame(height: 1) } }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.press(scale: 0.985, opacity: 0.95, highlight: Color.white.opacity(0.05)))
+            .buttonStyle(.press(scale: 0.985, opacity: 0.95, highlight: Palette.pressHighlightStrong))
             .hoverEffect(.highlight)
         }
         .background(isSelected ? accent.soft : .clear)

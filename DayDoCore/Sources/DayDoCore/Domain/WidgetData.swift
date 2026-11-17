@@ -453,3 +453,27 @@ public struct WidgetCalendarData: Sendable {
         return [(now, todayData), (nextMidnight, tomorrowData)]
     }
 }
+
+/// User-selected color appearance stored in UserDefaults and the App Group.
+public enum AppAppearance: String, CaseIterable, Sendable {
+    case dark
+    case light
+    case system
+
+    public static let defaultsKey = "appearance"
+
+    public static func from(defaults: UserDefaults?) -> AppAppearance {
+        guard let raw = defaults?.string(forKey: defaultsKey),
+              let value = AppAppearance(rawValue: raw) else {
+            return .dark
+        }
+        return value
+    }
+
+    public static func override(from arguments: [String]) -> AppAppearance? {
+        guard let i = arguments.lastIndex(of: "-appearance"), i + 1 < arguments.count else {
+            return nil
+        }
+        return AppAppearance(rawValue: arguments[i + 1].lowercased())
+    }
+}

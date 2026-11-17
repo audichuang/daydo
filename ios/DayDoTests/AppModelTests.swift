@@ -609,4 +609,192 @@ final class AppModelTests: XCTestCase {
         }
         await model.waitForCompletions()
     }
+
+    func testAppearanceDefaultRoundTripAndLaunchArgOverride() async throws {
+        let suiteName = "daydo.test.appearance.\(UUID().uuidString)"
+        let sharedSuiteName = "daydo.test.appearance.shared.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let shared = try XCTUnwrap(UserDefaults(suiteName: sharedSuiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            shared.removePersistentDomain(forName: sharedSuiteName)
+            AppearanceApplier.apply(.dark)
+        }
+
+        let store = try DeviceStore.inMemory()
+        try await store.bootstrap()
+
+        // 1. Default is dark when nothing is stored.
+        let initial = AppModel(
+            store: store,
+            tokenStore: InMemorySyncTokenStore(),
+            syncEnabled: false,
+            defaults: defaults,
+            sharedDefaults: shared,
+            arguments: []
+        )
+        XCTAssertEqual(initial.appearance, .dark)
+        XCTAssertEqual(shared.string(forKey: AppAppearance.defaultsKey), "dark")
+
+        // 2. Stored value round-trips to defaults, sharedDefaults, and a fresh AppModel.
+        initial.appearance = .light
+        XCTAssertEqual(defaults.string(forKey: AppAppearance.defaultsKey), "light")
+        XCTAssertEqual(shared.string(forKey: AppAppearance.defaultsKey), "light")
+
+        let reloaded = AppModel(
+            store: store,
+            tokenStore: InMemorySyncTokenStore(),
+            syncEnabled: false,
+            defaults: defaults,
+            sharedDefaults: shared,
+            arguments: []
+        )
+        XCTAssertEqual(reloaded.appearance, .light)
+
+        reloaded.appearance = .system
+        let reloadedSystem = AppModel(
+            store: store,
+            tokenStore: InMemorySyncTokenStore(),
+            syncEnabled: false,
+            defaults: defaults,
+            sharedDefaults: shared,
+            arguments: []
+        )
+        XCTAssertEqual(reloadedSystem.appearance, .system)
+
+        // 3. Launch argument `-appearance` overrides the stored setting.
+        let forcedDark = AppModel(
+            store: store,
+            tokenStore: InMemorySyncTokenStore(),
+            syncEnabled: false,
+            defaults: defaults,
+            sharedDefaults: shared,
+            arguments: ["DayDo", "-appearance", "dark"]
+        )
+        XCTAssertEqual(forcedDark.appearance, .dark)
+
+        let forcedLight = AppModel(
+            store: store,
+            tokenStore: InMemorySyncTokenStore(),
+            syncEnabled: false,
+            defaults: defaults,
+            sharedDefaults: shared,
+            arguments: ["DayDo", "-appearance", "light"]
+        )
+        XCTAssertEqual(forcedLight.appearance, .light)
+    }
+
+    func testPaletteDarkTokensMatchOriginalHexByteForByte() throws {
+        let darkTraits = UITraitCollection(userInterfaceStyle: .dark)
+        let lightTraits = UITraitCollection(userInterfaceStyle: .light)
+
+        func rgbaHex(_ color: Color, traits: UITraitCollection) -> String {
+            let resolved = UIColor(color).resolvedColor(with: traits)
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            XCTAssertTrue(resolved.getRed(&r, green: &g, blue: &b, alpha: &a))
+            let ri = Int((r * 255).rounded())
+            let gi = Int((g * 255).rounded())
+            let bi = Int((b * 255).rounded())
+            let ai = Int((a * 255).rounded())
+            if ai == 255 {
+                return String(format: "#%02X%02X%02X", ri, gi, bi)
+            }
+            return String(format: "#%02X%02X%02X%02X", ri, gi, bi, ai)
+        }
+
+        let darkExpected: [(String, Color, String, String)] = [
+            ("background", Palette.background, "#0E0F10", "#F2F3F5"),
+            ("card", Palette.card, "#18191B", "#FFFFFF"),
+            ("raised", Palette.raised, "#1F2123", "#F4F5F7"),
+            ("control", Palette.control, "#232527", "#ECEDEF"),
+            ("chip", Palette.chip, "#2A2C2E", "#E7E9EB"),
+            ("separator", Palette.separator, "#26282A", "#E3E5E7"),
+            ("separatorSoft", Palette.separatorSoft, "#2A2C2E", "#E7E9EB"),
+            ("text", Palette.text, "#F1F3F2", "#111314"),
+            ("textBody", Palette.textBody, "#D3D8D6", "#2A2E2C"),
+            ("textSecondary", Palette.textSecondary, "#9BA3A0", "#5F6764"),
+            ("textTertiary", Palette.textTertiary, "#8A928F", "#6F7774"),
+            ("textFaint", Palette.textFaint, "#6E7673", "#767E7B"),
+            ("textMuted", Palette.textMuted, "#B7BEBB", "#4E5653"),
+            ("textNav", Palette.textNav, "#C9CFCC", "#3A403E"),
+            ("done", Palette.done, "#7A827F", "#7C8481"),
+            ("overdue", Palette.overdue, "#FF7A70", "#D9383E"),
+            ("conflict", Palette.conflict, "#F7B500", "#A87300"),
+            ("danger", Palette.danger, "#FF7A70", "#D9383E"),
+            ("handle", Palette.handle, "#3A3D40", "#C9CDCF"),
+            ("priority.high", Palette.priority(.high), "#F2555A", "#E03E43"),
+            ("priority.medium", Palette.priority(.medium), "#F7B500", "#C98F00"),
+            ("priority.low", Palette.priority(.low), "#4E8BF7", "#3270DF"),
+            ("priority.none", Palette.priority(.none), "#7C8582", "#8A928F"),
+            ("textDay", Palette.textDay, "#E6E9E8", "#1D201F"),
+            ("textDisabled", Palette.textDisabled, "#737B78", "#8C9491"),
+            ("gridLabel", Palette.gridLabel, "#737B78", "#767E7B"),
+            ("border", Palette.border, "#33363A", "#D5D8DC"),
+            ("gridLine", Palette.gridLine, "#222426", "#E6E8EB"),
+            ("gridColumnLine", Palette.gridColumnLine, "#1E2022", "#ECEEF0"),
+            ("blockMuted", Palette.blockMuted, "#26292B", "#ECEDEF"),
+            ("blockMutedBorder", Palette.blockMutedBorder, "#33373A", "#D5D8DC"),
+            ("checkboxMuted", Palette.checkboxMuted, "#5B6461", "#9AA19E"),
+            ("codeWell", Palette.codeWell, "#121314", "#FFFFFF"),
+            ("segmentSelected", Palette.segmentSelected, "#3A3D40", "#FFFFFF"),
+            ("segmentSelectedText", Palette.segmentSelectedText, "#FFFFFF", "#111314"),
+        ]
+
+        for (name, color, darkHex, lightHex) in darkExpected {
+            XCTAssertEqual(rgbaHex(color, traits: darkTraits), darkHex, "Dark mismatch for \(name)")
+            XCTAssertEqual(rgbaHex(color, traits: lightTraits), lightHex, "Light mismatch for \(name)")
+        }
+
+        // AccentTheme.text: dark mixes 10% toward white; light mixes 30% toward black.
+        let orange = AccentTheme(hex: "#FF8A1E")
+        XCTAssertEqual(rgbaHex(orange.text, traits: darkTraits), "#FF9635")
+        XCTAssertEqual(rgbaHex(orange.text, traits: lightTraits), "#B36115")
+
+        // Tag style in dark matches exact tag color + 16% alpha; light is darkened for contrast.
+        let (tagBg, tagFg) = Palette.tagStyle("會議", color: "#B6C1FF")
+        XCTAssertEqual(rgbaHex(tagFg, traits: darkTraits), "#B6C1FF")
+        XCTAssertEqual(rgbaHex(tagBg, traits: darkTraits), "#B6C1FF29")
+        XCTAssertNotEqual(rgbaHex(tagFg, traits: lightTraits), "#B6C1FF")
+
+        // Glass & nav tokens keep exact dark RGBA.
+        XCTAssertEqual(rgbaHex(Palette.glassTint, traits: darkTraits), "#282A2C8C")
+        XCTAssertEqual(rgbaHex(Palette.navGlassTint, traits: darkTraits), "#24262899")
+        XCTAssertEqual(rgbaHex(Palette.navSelection, traits: darkTraits), "#FFFFFF14")
+    }
+
+    func testAppearanceApplierUpdatesWindowsAndPresentedSheet() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let rootVC = UIViewController()
+        let sheetVC = UIViewController()
+        window.rootViewController = rootVC
+        window.makeKeyAndVisible()
+        defer {
+            rootVC.dismiss(animated: false)
+            window.isHidden = true
+            AppearanceApplier.apply(.dark)
+        }
+
+        rootVC.present(sheetVC, animated: false)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        AppearanceApplier.apply(.dark)
+        window.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(window.overrideUserInterfaceStyle, .dark)
+        XCTAssertEqual(window.traitCollection.userInterfaceStyle, .dark)
+        XCTAssertEqual(rootVC.traitCollection.userInterfaceStyle, .dark)
+        XCTAssertEqual(sheetVC.traitCollection.userInterfaceStyle, .dark)
+
+        AppearanceApplier.apply(.light)
+        window.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(window.overrideUserInterfaceStyle, .light)
+        XCTAssertEqual(window.traitCollection.userInterfaceStyle, .light)
+        XCTAssertEqual(rootVC.traitCollection.userInterfaceStyle, .light)
+        XCTAssertEqual(sheetVC.traitCollection.userInterfaceStyle, .light)
+
+        AppearanceApplier.apply(.system)
+        XCTAssertEqual(window.overrideUserInterfaceStyle, .unspecified)
+    }
 }

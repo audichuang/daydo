@@ -110,6 +110,36 @@ private let guards: [Guard] = [
             "withAnimation(.default) {",
         ]
     ),
+    Guard(
+        name: "hard-coded colors in screens/components are centralized in ios/DayDo/Theme/Theme.swift",
+        directories: ["ios/DayDo/Screens", "ios/DayDo/Components"],
+        pattern: #"\bColor\(\s*hex:|\bColor\.(white|black)\b|(?<![A-Za-z0-9_])\.(white|black)\b"#,
+        allow: [
+            // Scheme-independent FAB drop shadow (.black.opacity(0.35)).
+            "ios/DayDo/Screens/CalendarScreen.swift",
+            // Scheme-independent swipe action pill buttons (#F7B500/#1A1206, #FF8A1E/.white, #F2555A/.white).
+            "ios/DayDo/Screens/DrawerView.swift",
+            // List color picker swatch circles (Palette.listColors).
+            "ios/DayDo/Screens/EditListSheet.swift",
+            // Member avatar color picker swatches (Member.avatarColors).
+            "ios/DayDo/Screens/MeProfileSheet.swift",
+            // Accent color picker swatches (Palette.accentOptions).
+            "ios/DayDo/Screens/OtherScreens.swift",
+            // Sign in with Apple button style (.black in light mode, .white in dark mode).
+            "ios/DayDo/Screens/SignInView.swift",
+            // File-type attachment badge colors (semantic fixed swatches).
+            "ios/DayDo/Screens/TaskDetailSheet.swift",
+            // White drag handle capsule inside accent-bordered TimeBlockEditor handles.
+            "ios/DayDo/Screens/TimeBlockEditor.swift",
+        ],
+        bad: [
+            ##"Color(hex: "#18191B")"##,
+            "Color.white.opacity(0.08)",
+            "Color.black.opacity(0.45)",
+            ".foregroundStyle(.white)",
+            ".shadow(color: .black.opacity(0.35), radius: 10)",
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {

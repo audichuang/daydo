@@ -193,7 +193,7 @@ struct TaskDetailContent: View {
                         checklist(task, readOnly: readOnly)
                         attachments(task, readOnly: readOnly)
                         if task.importNote != nil || task.sourceRaw != nil { importCard(task) }
-                        Text(footer(task)).txt(12).foregroundStyle(Color(hex: "#737B78"))
+                        Text(footer(task)).txt(12).foregroundStyle(Palette.textDisabled)
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 6)
@@ -212,7 +212,7 @@ struct TaskDetailContent: View {
                 Button(action: onToggleDetent) {
                     Image(systemName: isLargeDetent ? "chevron.down" : "chevron.up")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color(hex: "#E6E9E8"))
+                        .foregroundStyle(Palette.textDay)
                         .frame(width: 40, height: 40)
                         .background(Circle().fill(Palette.control))
                 }
@@ -236,7 +236,7 @@ struct TaskDetailContent: View {
                         Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold))
                     }
                 }
-                .foregroundStyle(Color(hex: "#E6E9E8"))
+                .foregroundStyle(Palette.textDay)
                 .frame(height: 40)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
@@ -270,7 +270,7 @@ struct TaskDetailContent: View {
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Color(hex: "#E6E9E8"))
+                        .foregroundStyle(Palette.textDay)
                         .frame(width: 40, height: 40)
                         .background(Circle().fill(Palette.control))
                 }
@@ -378,7 +378,7 @@ struct TaskDetailContent: View {
                         Task { await model.perform { try await $0.updateChecklistItem(id: id, title: nil, done: done) } }
                     } label: {
                         Circle()
-                            .strokeBorder(item.isDone ? accent.color : Color(hex: "#5B6461"), lineWidth: 2)
+                            .strokeBorder(item.isDone ? accent.color : Palette.checkboxMuted, lineWidth: 2)
                             .background(Circle().fill(item.isDone ? accent.color : .clear))
                             .frame(width: 18, height: 18)
                             .frame(width: 30, height: 44)
@@ -441,7 +441,7 @@ struct TaskDetailContent: View {
                         let ext = (a.fileName as NSString).pathExtension.uppercased()
                         Text(ext.isEmpty ? "FILE" : String(ext.prefix(4)))
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Palette.background)
+                            .foregroundStyle(Palette.onLightFill)
                             .frame(width: 34, height: 40, alignment: .bottom)
                             .padding(.bottom, 5)
                             .background(RoundedRectangle(cornerRadius: 6).fill(fileColor(ext)))
@@ -480,7 +480,7 @@ struct TaskDetailContent: View {
                 Button(showRaw ? "收合原文" : "查看原文") { withAnimation(Motion.toggle(reduceMotion)) { showRaw.toggle() } }
                     .txt(13, .semibold).foregroundStyle(accent.text)
                     .padding(.horizontal, 12).frame(height: 34)
-                    .overlay(Capsule().strokeBorder(Color(hex: "#33363A")))
+                    .overlay(Capsule().strokeBorder(Palette.border))
                     .buttonStyle(.plain)
                 if showRaw {
                     ScrollView {
@@ -489,7 +489,7 @@ struct TaskDetailContent: View {
                     }
                     .frame(maxHeight: 180)
                     .padding(.horizontal, 12).padding(.vertical, 10)
-                    .card(10, color: Color(hex: "#121314"))
+                    .card(10, color: Palette.codeWell)
                 }
             }
         }

@@ -203,7 +203,7 @@ private struct WidgetCalendarWeekView: View {
                     let done = bar.task.isCompleted
                     let hex = projectColorsById[bar.task.projectId]
                     let bg = done ? WidgetPalette.doneBackground : WidgetPalette.listColor(hex).opacity(0.22)
-                    let fg = done ? WidgetPalette.doneText : WidgetPalette.mixedWithWhite(hex, amount: 0.45)
+                    let fg = done ? WidgetPalette.doneText : WidgetPalette.tintedListText(hex)
                     let barW = max(8, colW * CGFloat(bar.endColumn - bar.startColumn + 1) - 2)
                     let barX = colW * CGFloat(bar.startColumn) + 1
                     let barY = headerH + CGFloat(bar.lane) * laneStep

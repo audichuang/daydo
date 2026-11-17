@@ -94,9 +94,9 @@ struct DatePanel: View {
     func tabButton(_ title: String, _ i: Int) -> some View {
         Button { withAnimation(Motion.toggle(reduceMotion)) { tab = i; expanded = nil } } label: {
             Text(title).txt(15, .semibold)
-                .foregroundStyle(tab == i ? .white : Palette.textSecondary)
+                .foregroundStyle(tab == i ? Palette.segmentSelectedText : Palette.textSecondary)
                 .padding(.horizontal, 18).frame(height: 36)
-                .background(Capsule().fill(tab == i ? Palette.handle : .clear))
+                .background(Capsule().fill(tab == i ? Palette.segmentSelected : .clear))
         }
         .buttonStyle(.press)
         .accessibilityIdentifier(i == 0 ? "dateTab" : "durationTab")

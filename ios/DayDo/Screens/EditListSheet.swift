@@ -34,7 +34,7 @@ struct EditListSheet: View {
     }
 
     var body: some View {
-        let iconHex = color ?? "#5B6461"
+        let iconColor = Palette.listColor(color)
         VStack(spacing: 0) {
             HStack {
                 PillButton(title: "取消") { dismiss() }
@@ -50,9 +50,9 @@ struct EditListSheet: View {
                     HStack(spacing: 12) {
                         Image(systemName: (original?.isShared ?? false) ? "person.2" : "list.bullet")
                             .font(.system(size: 18))
-                            .foregroundStyle(Color(hex: iconHex))
+                            .foregroundStyle(iconColor)
                             .frame(width: 44, height: 44)
-                            .background(RoundedRectangle(cornerRadius: 12).fill(Color(hex: iconHex).opacity(0.2)))
+                            .background(RoundedRectangle(cornerRadius: 12).fill(iconColor.opacity(0.2)))
                         TextField("清單名稱", text: $name)
                             .txt(19, .bold).foregroundStyle(Palette.text)
                             .focused($nameFocused)

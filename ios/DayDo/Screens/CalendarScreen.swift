@@ -636,11 +636,11 @@ struct CalendarScreen: View {
             VStack(spacing: 3) {
                 Text("\(d.day)")
                     .txt(17, isSel || isToday ? .bold : .medium)
-                    .foregroundStyle(isSel ? accent.onAccent : (isToday ? accent.color : Color(hex: "#E6E9E8")))
+                    .foregroundStyle(isSel ? accent.onAccent : (isToday ? Palette.todayText(accent: accent) : Palette.textDay))
                     .frame(width: 38, height: 38)
-                    .background(Circle().fill(isSel ? accent.color : (isToday ? Color.white : .clear)))
+                    .background(Circle().fill(isSel ? accent.color : (isToday ? Palette.todayFill(accent: accent) : .clear)))
                 HStack(spacing: 3) {
-                    ForEach(colors.prefix(3), id: \.self) { c in Circle().fill(Color(hex: c)).frame(width: 4, height: 4) }
+                    ForEach(colors.prefix(3), id: \.self) { c in Circle().fill(Palette.listColor(c)).frame(width: 4, height: 4) }
                 }
                 .frame(height: 4)
             }
@@ -778,7 +778,7 @@ struct AgendaRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.press(scale: 0.985, opacity: 0.95, highlight: Color.white.opacity(0.05)))
+            .buttonStyle(.press(scale: 0.985, opacity: 0.95, highlight: Palette.pressHighlightStrong))
             .hoverEffect(.highlight)
         }
         .padding(.leading, 14).padding(.trailing, 16).padding(.vertical, 12)
@@ -940,7 +940,7 @@ struct WeekRow: View {
                             VStack(spacing: 0) {
                                 Text("\(d.day)")
                                     .font(.system(size: 14, weight: isToday ? .bold : .semibold))
-                                    .foregroundStyle(isToday ? accent.onAccent : Color(hex: "#E6E9E8"))
+                                    .foregroundStyle(isToday ? accent.onAccent : Palette.textDay)
                                     .frame(width: 28, height: 28)
                                     .background(Circle().fill(isToday ? accent.color : .clear))
                                     .padding(.top, 4)
@@ -959,7 +959,7 @@ struct WeekRow: View {
                     }
                 }
                 ForEach(Array(week.bars.enumerated()), id: \.offset) { _, bar in
-                    let color = Color(hex: model.project(bar.task.projectId)?.color ?? "#5B6461")
+                    let color = Palette.listColor(model.project(bar.task.projectId)?.color)
                     let done = bar.task.isCompleted
                     let timed = bar.task.schedule?.startMinute.map { "[\(DateText.hm($0))] " } ?? ""
                     Button { open(bar.task.id) } label: {
@@ -1117,7 +1117,7 @@ struct TimeGrid: View {
                                     HStack(alignment: .top, spacing: 0) {
                                         Text(h == 24 ? "00" : String(format: "%02d", h)).font(.system(size: 12)).foregroundStyle(Palette.textTertiary)
                                             .frame(width: gutter, alignment: .center).offset(y: -7)
-                                        Rectangle().fill(Color(hex: "#222426")).frame(height: 1)
+                                        Rectangle().fill(Palette.gridLine).frame(height: 1)
                                     }
                                     .frame(height: h == 24 ? 1 : hourH, alignment: .top)
                                     .id(h)
@@ -1127,9 +1127,10 @@ struct TimeGrid: View {
                             HStack(spacing: 0) {
                                 Spacer().frame(width: gutter)
                                 ForEach(days, id: \.self) { d in
-                                    Rectangle().fill(Color.white.opacity(0.001))
+                                    Color.clear
+                                        .contentShape(Rectangle())
                                         .frame(width: colW, height: hourH * 24)
-                                        .overlay(alignment: .leading) { Rectangle().fill(Color(hex: "#1E2022")).frame(width: 1) }
+                                        .overlay(alignment: .leading) { Rectangle().fill(Palette.gridColumnLine).frame(width: 1) }
                                         .onTapGesture(coordinateSpace: .local) { p in
                                             let m = Int(p.y / hourH * 60) / 30 * 30
                                             tapSlot(d, min(m, 23 * 60 + 30))
@@ -1172,7 +1173,7 @@ struct TimeGrid: View {
     var nowY: CGFloat { CGFloat(nowMinute) / 60 * hourH }
 
     func allDayChip(_ t: TodoTask, width: CGFloat) -> some View {
-        let color = Color(hex: model.project(t.projectId)?.color ?? "#5B6461")
+        let color = Palette.listColor(model.project(t.projectId)?.color)
         return Button { openTask(t.id) } label: {
             HStack(spacing: 0) {
                 Rectangle().fill(color).frame(width: 2)
@@ -1200,7 +1201,7 @@ struct TimeGrid: View {
     }
 
     func block(_ b: DayLayout.Block, colW: CGFloat) -> some View {
-        let color = Color(hex: model.project(b.task.projectId)?.color ?? "#5B6461")
+        let color = Palette.listColor(model.project(b.task.projectId)?.color)
         let w = colW / CGFloat(b.lanes) - 2
         let h = max(CGFloat(b.end - b.start) / 60 * hourH - 2, 18)
         let done = b.task.isCompleted

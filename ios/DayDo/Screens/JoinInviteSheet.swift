@@ -93,7 +93,7 @@ struct JoinInviteSheet: View {
             } label: {
                 Text("查看邀請")
                     .txt(16, .bold)
-                    .foregroundStyle(hasInput ? accent.onAccent : Color(hex: "#737B78"))
+                    .foregroundStyle(hasInput ? accent.onAccent : Palette.textDisabled)
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
                     .background(

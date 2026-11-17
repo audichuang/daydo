@@ -185,6 +185,12 @@ struct RootView: View {
             Text(model.errorMessage ?? "")
         }
         .environment(\.isRegularWindow, isRegular)
+        .background {
+            WindowAppearanceBridge(style: model.appearance.userInterfaceStyle)
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rootWidth = $0 }
         .sensoryFeedback(.success, trigger: model.completionHapticTrigger)
         .sensoryFeedback(.impact(weight: .light), trigger: model.uncompletionHapticTrigger)
@@ -212,8 +218,8 @@ struct BottomNav: View {
         }
         .padding(5)
         .frame(height: 62)
-        .glassEffect(.regular.tint(Color(hex: "#242628").opacity(0.6)), in: .capsule)
-        .shadow(color: .black.opacity(0.35), radius: 12, y: 8)
+        .glassEffect(.regular.tint(Palette.navGlassTint), in: .capsule)
+        .shadow(color: Palette.navShadow, radius: 12, y: 8)
         .animation(Motion.tab(reduceMotion), value: tab)
     }
 
@@ -236,7 +242,7 @@ struct BottomNav: View {
                 .background {
                     if on {
                         Capsule()
-                            .fill(Color.white.opacity(0.08))
+                            .fill(Palette.navSelection)
                             .matchedGeometryIfPresent(id: "bottomNavSelection", in: reduceMotion ? nil : selectionNamespace)
                             .transition(.opacity)
                     }
@@ -541,5 +547,32 @@ private final class SelectionShortcutViewController: UIViewController {
     private static func hasActiveTextInput(in view: UIView) -> Bool {
         if (view is UITextField || view is UITextView) && view.isFirstResponder { return true }
         return view.subviews.contains { hasActiveTextInput(in: $0) }
+    }
+}
+
+private struct WindowAppearanceBridge: UIViewRepresentable {
+    var style: UIUserInterfaceStyle
+
+    func makeUIView(context: Context) -> BridgeView {
+        let view = BridgeView()
+        view.style = style
+        return view
+    }
+
+    func updateUIView(_ uiView: BridgeView, context: Context) {
+        uiView.style = style
+        AppearanceApplier.applyStyle(style)
+    }
+
+    final class BridgeView: UIView {
+        var style: UIUserInterfaceStyle = .dark
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if let window {
+                window.overrideUserInterfaceStyle = style
+            }
+            AppearanceApplier.applyStyle(style)
+        }
     }
 }

@@ -147,11 +147,11 @@ struct TimeBlockEditor: View {
                     VStack(spacing: 0) {
                         ForEach(0...26, id: \.self) { h in
                             ZStack(alignment: .topLeading) {
-                                Rectangle().fill(h >= 24 ? Color(hex: "#F5A623").opacity(0.05) : .clear)
-                                Rectangle().fill(Color(hex: "#222426")).frame(height: 1)
+                                Rectangle().fill(h >= 24 ? Palette.overnightTint : .clear)
+                                Rectangle().fill(Palette.gridLine).frame(height: 1)
                                 Text((h >= 24 ? "隔日 " : "") + String(format: "%02d:00", h % 24))
                                     .font(.system(size: 11))
-                                    .foregroundStyle(h >= 24 ? Palette.conflict : Color(hex: "#737B78"))
+                                    .foregroundStyle(h >= 24 ? Palette.conflict : Palette.gridLabel)
                                     .padding(.horizontal, 2)
                                     .background(Palette.card)
                                     .offset(x: 10, y: -8)
@@ -171,8 +171,8 @@ struct TimeBlockEditor: View {
                             }
                             .padding(.horizontal, 6).padding(.vertical, 4)
                             .frame(width: laneW - 4, height: max(CGFloat(o.end - o.start), 18), alignment: .topLeading)
-                            .background(RoundedRectangle(cornerRadius: 8).fill(Color(hex: "#26292B")))
-                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(hex: "#33373A")))
+                            .background(RoundedRectangle(cornerRadius: 8).fill(Palette.blockMuted))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.blockMutedBorder))
                             .clipped()
                             .offset(x: 56 + CGFloat(o.lane) * laneW, y: top + CGFloat(o.start))
                         }

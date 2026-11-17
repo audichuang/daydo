@@ -1231,4 +1231,158 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(day12Cell.isSelected, "Tap below collapse handle should not select a hidden week's day")
         XCTAssertTrue(agendaHeading.exists, "Agenda heading should remain on \(day12Label)")
     }
+
+    @MainActor
+    func testAppearanceSwitchDarkToSystemToLightWithSheet() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        app.buttons["設定"].firstMatch.tap()
+        let appearanceRow = app.buttons["外觀"].firstMatch
+        XCTAssertTrue(appearanceRow.waitForExistence(timeout: 3), app.debugDescription)
+        appearanceRow.tap()
+
+        let darkBtn = app.buttons["深色"].firstMatch
+        let systemBtn = app.buttons["跟隨系統"].firstMatch
+        let lightBtn = app.buttons["淺色"].firstMatch
+        XCTAssertTrue(darkBtn.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(darkBtn.isSelected)
+
+        // Switch 深色 -> 跟隨系統 (with simulator in light mode), then present a sheet over it.
+        systemBtn.tap()
+        XCTAssertTrue(systemBtn.isSelected)
+        shot("light-switch-01-system")
+
+        app.typeKey("n", modifierFlags: .command)
+        let composer = app.descendants(matching: .any)["composerTitle"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 3), "⌘N should present ComposerSheet over AppearanceSettingsView")
+        shot("light-switch-02-system-sheet")
+        app.buttons["composerMore"].tap()
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(composer.waitForNonExistence(timeout: 3))
+
+        // Switch 跟隨系統 -> 淺色, then present the sheet again.
+        lightBtn.tap()
+        XCTAssertTrue(lightBtn.isSelected)
+        shot("light-switch-03-light")
+
+        app.typeKey("n", modifierFlags: .command)
+        XCTAssertTrue(composer.waitForExistence(timeout: 3))
+        shot("light-switch-04-light-sheet")
+        app.buttons["composerMore"].tap()
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(composer.waitForNonExistence(timeout: 3))
+    }
+
+    @MainActor
+    func testLightAppearanceWalkthroughScreenshots() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDemo", "-DayDoSkipLogin", "-appearance", "light"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        // 1. 今天
+        let grocery = app.buttons["完成：去全聯買菜"]
+        XCTAssertTrue(grocery.waitForExistence(timeout: 5), app.debugDescription)
+        shot("light-01-today")
+
+        // 2. Task detail (from 今天)
+        let brief = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).element(boundBy: 1)
+        XCTAssertTrue(brief.waitForExistence(timeout: 5), app.debugDescription)
+        brief.tap()
+        XCTAssertTrue(app.buttons["儲存"].waitForExistence(timeout: 3), app.debugDescription)
+        shot("light-06-detail")
+        let headerBtn = app.buttons["展開為全屏"]
+        let dragStart = headerBtn.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        dragStart.press(forDuration: 0.05, thenDragTo: dragStart.withOffset(CGVector(dx: 0, dy: 420)))
+        XCTAssertTrue(headerBtn.waitForNonExistence(timeout: 3))
+
+        // 3. Composer
+        app.buttons["新增任務"].firstMatch.tap()
+        let composerField = app.descendants(matching: .any)["composerTitle"]
+        XCTAssertTrue(composerField.waitForExistence(timeout: 3), app.debugDescription)
+        shot("light-07-composer")
+        app.buttons["composerMore"].tap()
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(composerField.waitForNonExistence(timeout: 3))
+
+        // 4. Drawer
+        app.buttons["開啟清單抽屜"].tap()
+        let folder = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '工作與學習'")).firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 3), app.debugDescription)
+        folder.tap()
+        shot("light-02-drawer")
+
+        // 5. 全部
+        let all = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '全部'")).firstMatch
+        XCTAssertTrue(all.waitForExistence(timeout: 3), app.debugDescription)
+        all.tap()
+        XCTAssertTrue(app.staticTexts["全部"].waitForExistence(timeout: 3))
+        shot("light-03-all")
+
+        // 6. 日曆 (月 and 週)
+        app.buttons["日曆"].tap()
+        XCTAssertTrue(app.buttons["calendarTitle"].waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["calendarMode"].tap()
+        app.buttons["月"].firstMatch.tap()
+        sleep(1)
+        shot("light-04-calendar-month")
+
+        app.buttons["calendarMode"].tap()
+        app.buttons["週"].firstMatch.tap()
+        sleep(1)
+        shot("light-05-calendar-week")
+
+        // 7. 搜尋
+        app.buttons["搜尋"].firstMatch.tap()
+        let searchField = app.textFields["搜尋任務、描述、標籤、子任務"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 3), app.debugDescription)
+        searchField.tap()
+        searchField.typeText("簡報")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).firstMatch.waitForExistence(timeout: 3))
+        shot("light-08-search")
+
+        // 8. 設定 -> 外觀
+        app.buttons["設定"].firstMatch.tap()
+        let appearanceBtn = app.buttons["外觀"].firstMatch
+        XCTAssertTrue(appearanceBtn.waitForExistence(timeout: 3), app.debugDescription)
+        shot("light-09-settings")
+        appearanceBtn.tap()
+        XCTAssertTrue(app.buttons["淺色"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.buttons["淺色"].isSelected)
+        shot("light-10-settings-appearance")
+    }
+
+    @MainActor
+    func testAppearanceChoicePersistsAcrossRelaunch() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        app.buttons["設定"].firstMatch.tap()
+        app.buttons["外觀"].firstMatch.tap()
+        let darkBtn = app.buttons["深色"].firstMatch
+        let lightBtn = app.buttons["淺色"].firstMatch
+        XCTAssertTrue(darkBtn.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(darkBtn.isSelected)
+        XCTAssertFalse(lightBtn.isSelected)
+
+        lightBtn.tap()
+        XCTAssertTrue(lightBtn.isSelected)
+        XCTAssertFalse(darkBtn.isSelected)
+
+        // Relaunch without -DayDoReset and verify 淺色 remains selected.
+        app.terminate()
+        app.launchArguments = ["-DayDoDemo", "-DayDoSkipLogin"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        app.buttons["設定"].firstMatch.tap()
+        app.buttons["外觀"].firstMatch.tap()
+        let lightAfterRelaunch = app.buttons["淺色"].firstMatch
+        let darkAfterRelaunch = app.buttons["深色"].firstMatch
+        XCTAssertTrue(lightAfterRelaunch.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(lightAfterRelaunch.isSelected)
+        XCTAssertFalse(darkAfterRelaunch.isSelected)
+    }
 }

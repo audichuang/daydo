@@ -237,20 +237,31 @@ final class AppModel {
     var sharingProjectId: String?
 
     // Preferences
-    private static var sharedDefaults: UserDefaults? {
+    private static var defaultSharedDefaults: UserDefaults? {
         UserDefaults(suiteName: DayDoStorage.appGroup)
     }
 
+    private let defaults: UserDefaults
+    private let sharedDefaults: UserDefaults?
+
     var accentHex: String {
         didSet {
-            UserDefaults.standard.set(accentHex, forKey: "accent")
-            Self.sharedDefaults?.set(accentHex, forKey: "accent")
+            defaults.set(accentHex, forKey: "accent")
+            sharedDefaults?.set(accentHex, forKey: "accent")
             scheduleWidgetReload()
         }
     }
-    var compact: Bool { didSet { UserDefaults.standard.set(compact, forKey: "compact") } }
-    var textScale: Double { didSet { UserDefaults.standard.set(textScale, forKey: "textScale") } }
-    var openFolders: Set<String> { didSet { UserDefaults.standard.set(Array(openFolders), forKey: "openFolders") } }
+    var appearance: AppAppearance {
+        didSet {
+            defaults.set(appearance.rawValue, forKey: AppAppearance.defaultsKey)
+            sharedDefaults?.set(appearance.rawValue, forKey: AppAppearance.defaultsKey)
+            scheduleWidgetReload()
+            AppearanceApplier.apply(appearance)
+        }
+    }
+    var compact: Bool { didSet { defaults.set(compact, forKey: "compact") } }
+    var textScale: Double { didSet { defaults.set(textScale, forKey: "textScale") } }
+    var openFolders: Set<String> { didSet { defaults.set(Array(openFolders), forKey: "openFolders") } }
 
     struct CompletingOccurrence: Equatable {
         let token = UUID()
@@ -311,7 +322,10 @@ final class AppModel {
         syncEnabled: Bool = !ProcessInfo.processInfo.arguments.contains("-DayDoSkipLogin"),
         transport: (any SyncTransport)? = nil,
         clock: any Swift.Clock<Duration> = ContinuousClock(),
-        reduceMotion: @escaping @MainActor () -> Bool = { UIAccessibility.isReduceMotionEnabled }
+        reduceMotion: @escaping @MainActor () -> Bool = { UIAccessibility.isReduceMotionEnabled },
+        defaults: UserDefaults = .standard,
+        sharedDefaults: UserDefaults? = AppModel.defaultSharedDefaults,
+        arguments: [String] = ProcessInfo.processInfo.arguments
     ) {
         self.store = store
         self.api = store.api
@@ -319,6 +333,8 @@ final class AppModel {
         self.syncEnabled = syncEnabled
         self.clock = clock
         self.reduceMotion = reduceMotion
+        self.defaults = defaults
+        self.sharedDefaults = sharedDefaults
         let resolvedTransport: any SyncTransport = transport ?? HTTPSyncTransport(
             baseURL: SyncConfig.baseURL,
             extraHeaders: SyncConfig.accessHeaders()
@@ -331,15 +347,18 @@ final class AppModel {
         self.sharing = syncEnabled
             ? RemoteListSharing(syncEngine: engine)
             : store.makeLocalSharing()
-        let d = UserDefaults.standard
-        let initialAccent = d.string(forKey: "accent") ?? "#FF8A1E"
+        let initialAccent = defaults.string(forKey: "accent") ?? "#FF8A1E"
         accentHex = initialAccent
-        Self.sharedDefaults?.set(initialAccent, forKey: "accent")
-        let initialShowCompleted = d.object(forKey: "calendarShowCompleted") as? Bool ?? true
-        Self.sharedDefaults?.set(initialShowCompleted, forKey: "calendarShowCompleted")
-        compact = d.bool(forKey: "compact")
-        textScale = d.object(forKey: "textScale") as? Double ?? 1
-        openFolders = Set(d.stringArray(forKey: "openFolders") ?? [])
+        sharedDefaults?.set(initialAccent, forKey: "accent")
+        let initialAppearance = AppAppearance.override(from: arguments) ?? AppAppearance.from(defaults: defaults)
+        appearance = initialAppearance
+        sharedDefaults?.set(initialAppearance.rawValue, forKey: AppAppearance.defaultsKey)
+        AppearanceApplier.apply(initialAppearance)
+        let initialShowCompleted = defaults.object(forKey: "calendarShowCompleted") as? Bool ?? true
+        sharedDefaults?.set(initialShowCompleted, forKey: "calendarShowCompleted")
+        compact = defaults.bool(forKey: "compact")
+        textScale = defaults.object(forKey: "textScale") as? Double ?? 1
+        openFolders = Set(defaults.stringArray(forKey: "openFolders") ?? [])
         notificationDelegate.model = self
     }
 
@@ -704,7 +723,7 @@ final class AppModel {
     // MARK: - Widgets
 
     func syncCalendarShowCompletedToWidget(_ showCompleted: Bool) {
-        Self.sharedDefaults?.set(showCompleted, forKey: "calendarShowCompleted")
+        sharedDefaults?.set(showCompleted, forKey: "calendarShowCompleted")
         scheduleWidgetReload()
     }
 

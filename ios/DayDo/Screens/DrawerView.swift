@@ -45,7 +45,7 @@ struct DrawerOverlay: View {
                 : (open ? min(0, drag) : min(0, -width + edgeDrag))
 
             ZStack(alignment: .leading) {
-                Color.black.opacity(0.45 * progress)
+                Palette.scrim.opacity(progress)
                     .ignoresSafeArea()
                     .onTapGesture { close() }
                     .allowsHitTesting(open)
@@ -372,7 +372,7 @@ struct DrawerView: View {
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(current || highlighted ? accent.soft : .clear))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.press(scale: 0.98, opacity: 0.92, highlight: Color.white.opacity(0.04)))
+        .buttonStyle(.press(scale: 0.98, opacity: 0.92, highlight: Palette.pressHighlight))
         .hoverEffect(.highlight)
     }
 

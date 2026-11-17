@@ -68,11 +68,11 @@ struct MeProfileSheet: View {
                         if trimmedName.isEmpty {
                             Image(systemName: "person.fill")
                                 .font(.system(size: 28, weight: .semibold))
-                                .foregroundStyle(Palette.background)
+                                .foregroundStyle(Palette.onLightFill)
                         } else {
                             Text(Member.makeInitial(from: trimmedName))
                                 .font(.system(size: 28, weight: .bold))
-                                .foregroundStyle(Palette.background)
+                                .foregroundStyle(Palette.onLightFill)
                         }
                     }
                     .padding(.top, 4)

@@ -8,6 +8,7 @@ import DayDoCore
 
 struct SignInView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
 
     var logoNamespace: Namespace.ID? = nil
     var logoRevealed: Bool = true
@@ -77,7 +78,8 @@ struct SignInView: View {
                     } onCompletion: { result in
                         handleAppleResult(result)
                     }
-                    .signInWithAppleButtonStyle(.white)
+                    .signInWithAppleButtonStyle(colorScheme == .light ? .black : .white)
+                    .id(colorScheme)
                     .frame(height: 52)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .accessibilityIdentifier("signIn.apple")
@@ -117,7 +119,7 @@ struct SignInView: View {
             .frame(maxWidth: 420)
 
             if model.isSigningIn {
-                Color.black.opacity(0.45).ignoresSafeArea()
+                Palette.scrim.ignoresSafeArea()
                 VStack(spacing: 12) {
                     ProgressView().tint(Palette.text)
                     Text("正在登入並同步資料…")

@@ -77,7 +77,7 @@ struct TaskCheckbox: View {
                 if done {
                     Image(systemName: "checkmark")
                         .font(.system(size: size * 0.55, weight: .heavy))
-                        .foregroundStyle(Palette.background)
+                        .foregroundStyle(accent.onAccent)
                         .transition(reduceMotion ? .opacity : .scale(scale: 0.4).combined(with: .opacity))
                 }
             }
@@ -166,7 +166,7 @@ struct AvatarView: View {
     }
 
     private var fillColor: Color {
-        Color(hex: member?.color ?? fallbackColor ?? accent.hex)
+        Palette.avatarColor(member?.color, fallback: fallbackColor ?? accent.hex)
     }
 
     var body: some View {
@@ -181,7 +181,7 @@ struct AvatarView: View {
             } else {
                 Text(member?.initial ?? "")
                     .font(.system(size: max(9, (size * 0.42).rounded()), weight: .bold))
-                    .foregroundStyle(Palette.background)
+                    .foregroundStyle(Palette.onLightFill)
                     .frame(width: size, height: size)
                     .background(Circle().fill(fillColor))
             }
@@ -250,7 +250,7 @@ struct OptionChip: View {
                 .padding(.horizontal, 12)
                 .frame(height: 32)
                 .background(Capsule().fill(on ? (filled ? accent.color : accent.soft) : (filled ? Palette.chip : .clear)))
-                .overlay(Capsule().strokeBorder(on ? accent.color : (filled ? .clear : Color(hex: "#33363A")), lineWidth: 1))
+                .overlay(Capsule().strokeBorder(on ? accent.color : (filled ? .clear : Palette.border), lineWidth: 1))
         }
         .buttonStyle(.press)
         .hoverEffect(.highlight)
@@ -269,7 +269,7 @@ struct PillButton: View {
         Button(action: action) {
             Text(title)
                 .txt(14, kind == .secondary ? .semibold : .bold)
-                .foregroundStyle(kind == .primary ? accent.onAccent : (kind == .disabled ? Color(hex: "#737B78") : Color(hex: "#E6E9E8")))
+                .foregroundStyle(kind == .primary ? accent.onAccent : (kind == .disabled ? Palette.textDisabled : Palette.textDay))
                 .padding(.horizontal, 16)
                 .frame(height: 38)
                 .background(Capsule().fill(kind == .primary ? accent.color : (kind == .disabled ? Palette.separator : Palette.control)))
@@ -342,9 +342,9 @@ struct MonthPicker: View {
                     } label: {
                         Text("\(d.day)")
                             .txt(14, sel || isToday ? .bold : .medium)
-                            .foregroundStyle(sel ? accent.onAccent : (isToday ? accent.color : Color(hex: "#E6E9E8")))
+                            .foregroundStyle(sel ? accent.onAccent : (isToday ? Palette.todayText(accent: accent) : Palette.textDay))
                             .frame(width: 38, height: 38)
-                            .background(Circle().fill(sel ? accent.color : (isToday ? Color.white : .clear)))
+                            .background(Circle().fill(sel ? accent.color : (isToday ? Palette.todayFill(accent: accent) : .clear)))
                             .frame(maxWidth: .infinity, minHeight: 46)
                             .contentShape(Rectangle())
                     }

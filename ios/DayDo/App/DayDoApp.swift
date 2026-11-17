@@ -160,7 +160,6 @@ struct DayDoApp: App {
                 .environment(\.accent, model.accent)
                 .environment(\.textScale, CGFloat(model.textScale))
                 .tint(model.accent.color)
-                .preferredColorScheme(.dark)
                 .task {
                     await model.launch()
                 }

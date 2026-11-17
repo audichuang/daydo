@@ -1,28 +1,40 @@
 import SwiftUI
+import UIKit
 import WidgetKit
 import DayDoCore
 
 enum WidgetPalette {
-    static let background = color("#1A1B1D")
-    static let border = color("#26282A")
-    static let divider = color("#26282A")
-    static let dividerSoft = color("#2A2C2E")
-    static let text = color("#F1F3F2")
-    static let textSecondary = color("#9BA3A0")
-    static let textTertiary = color("#8A928F")
-    static let textMuted = color("#737B78")
-    static let textSection = color("#C9CFCC")
-    static let textDay = color("#E6E9E8")
-    static let doneBackground = color("#26282A")
-    static let doneText = color("#7A827F")
-    static let overdue = color("#FF7A70")
+    private static func dynamic(dark: String, light: String) -> Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .light ? uiColor(light) : uiColor(dark)
+        })
+    }
+
+    private static func uiColor(_ hex: String) -> UIColor {
+        let (r, g, b, a) = parseRGBA(hex)
+        return UIColor(red: r, green: g, blue: b, alpha: a)
+    }
+
+    static let background = dynamic(dark: "#1A1B1D", light: "#FFFFFF")
+    static let border = dynamic(dark: "#26282A", light: "#E3E5E7")
+    static let divider = dynamic(dark: "#26282A", light: "#E7E9EB")
+    static let dividerSoft = dynamic(dark: "#2A2C2E", light: "#E7E9EB")
+    static let text = dynamic(dark: "#F1F3F2", light: "#111314")
+    static let textSecondary = dynamic(dark: "#9BA3A0", light: "#5F6764")
+    static let textTertiary = dynamic(dark: "#8A928F", light: "#6F7774")
+    static let textMuted = dynamic(dark: "#737B78", light: "#767E7B")
+    static let textSection = dynamic(dark: "#C9CFCC", light: "#3A403E")
+    static let textDay = dynamic(dark: "#E6E9E8", light: "#1D201F")
+    static let doneBackground = dynamic(dark: "#26282A", light: "#ECEDEF")
+    static let doneText = dynamic(dark: "#7A827F", light: "#7C8481")
+    static let overdue = dynamic(dark: "#FF7A70", light: "#D9383E")
 
     static func priority(_ p: Priority) -> Color {
         switch p {
-        case .high: return color("#F2555A")
-        case .medium: return color("#F7B500")
-        case .low: return color("#4E8BF7")
-        case .none: return color("#7C8582")
+        case .high: return dynamic(dark: "#F2555A", light: "#E03E43")
+        case .medium: return dynamic(dark: "#F7B500", light: "#C98F00")
+        case .low: return dynamic(dark: "#4E8BF7", light: "#3270DF")
+        case .none: return dynamic(dark: "#7C8582", light: "#8A928F")
         }
     }
 
@@ -30,10 +42,16 @@ enum WidgetPalette {
         color(hex ?? "#5B6461")
     }
 
-    static func mixedWithWhite(_ hex: String?, amount: Double) -> Color {
+    static func tintedListText(_ hex: String?, darkAmount: Double = 0.45, lightAmount: Double = 0.45) -> Color {
         let (r, g, b) = parseRGB(hex ?? "#5B6461")
-        let p = max(0, min(1, amount))
-        return Color(.sRGB, red: r * (1 - p) + p, green: g * (1 - p) + p, blue: b * (1 - p) + p)
+        let pd = max(0, min(1, darkAmount))
+        let pl = max(0, min(1, lightAmount))
+        return Color(uiColor: UIColor { traits in
+            if traits.userInterfaceStyle == .light {
+                return UIColor(red: r * (1 - pl), green: g * (1 - pl), blue: b * (1 - pl), alpha: 1)
+            }
+            return UIColor(red: r * (1 - pd) + pd, green: g * (1 - pd) + pd, blue: b * (1 - pd) + pd, alpha: 1)
+        })
     }
 
     static func color(_ hex: String) -> Color {
@@ -83,13 +101,35 @@ struct WidgetAccent: Equatable, Sendable {
 
     var color: Color { WidgetPalette.color(hex) }
 
-    var text: Color { WidgetPalette.mixedWithWhite(hex, amount: 0.1) }
+    var text: Color { WidgetPalette.tintedListText(hex, darkAmount: 0.1, lightAmount: 0.3) }
 
     var onAccent: Color {
         let lin = { (c: Double) in c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
         let (r, g, b) = WidgetPalette.parseRGB(hex)
         let l = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
         return l > 0.3 ? WidgetPalette.color("#1A1206") : .white
+    }
+}
+
+enum WidgetAppearance {
+    static func fromSharedDefaults() -> AppAppearance {
+        AppAppearance.from(defaults: UserDefaults(suiteName: DayDoStorage.appGroup))
+    }
+}
+
+private struct WidgetAppearanceModifier: ViewModifier {
+    var appearance: AppAppearance
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch appearance {
+        case .dark:
+            content.environment(\.colorScheme, .dark)
+        case .light:
+            content.environment(\.colorScheme, .light)
+        case .system:
+            content
+        }
     }
 }
 
@@ -128,6 +168,10 @@ struct WidgetUnavailableView: View {
 }
 
 extension View {
+    func widgetAppearance(_ appearance: AppAppearance) -> some View {
+        modifier(WidgetAppearanceModifier(appearance: appearance))
+    }
+
     func widgetPadding(for family: WidgetFamily) -> some View {
         let insets: EdgeInsets = switch family {
         case .systemSmall:
