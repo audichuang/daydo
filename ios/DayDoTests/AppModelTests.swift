@@ -760,6 +760,31 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(rgbaHex(Palette.glassTint, traits: darkTraits), "#282A2C8C")
         XCTAssertEqual(rgbaHex(Palette.navGlassTint, traits: darkTraits), "#24262899")
         XCTAssertEqual(rgbaHex(Palette.navSelection, traits: darkTraits), "#FFFFFF14")
+        XCTAssertEqual(rgbaHex(Palette.fabShadow, traits: darkTraits), "#00000059")
+        XCTAssertEqual(rgbaHex(Palette.fabShadow, traits: lightTraits), "#00000024")
+    }
+
+    func testTaskCheckboxCheckmarkResolvesToDarkInkForAllAccents() throws {
+        let darkTraits = UITraitCollection(userInterfaceStyle: .dark)
+        let lightTraits = UITraitCollection(userInterfaceStyle: .light)
+
+        func hex(_ color: Color, traits: UITraitCollection) -> String {
+            let resolved = UIColor(color).resolvedColor(with: traits)
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            XCTAssertTrue(resolved.getRed(&r, green: &g, blue: &b, alpha: &a))
+            return String(
+                format: "#%02X%02X%02X",
+                Int((r * 255).rounded()),
+                Int((g * 255).rounded()),
+                Int((b * 255).rounded())
+            )
+        }
+
+        for accentHex in Palette.accentOptions {
+            let checkmark = TaskCheckbox.checkmarkColor(accent: AccentTheme(hex: accentHex))
+            XCTAssertEqual(hex(checkmark, traits: darkTraits), "#0E0F10", "Dark checkmark mismatch for \(accentHex)")
+            XCTAssertEqual(hex(checkmark, traits: lightTraits), "#0E0F10", "Light checkmark mismatch for \(accentHex)")
+        }
     }
 
     func testAppearanceApplierUpdatesWindowsAndPresentedSheet() throws {

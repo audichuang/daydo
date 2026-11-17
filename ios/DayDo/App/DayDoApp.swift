@@ -110,6 +110,9 @@ struct DayDoApp: App {
         let m = AppModel(store: store, tokenStore: tokenStore)
 #endif
         _model = State(initialValue: m)
+        // Match the always-dark LaunchBackground (#0E0F10) on the connecting scene before the
+        // first frame; RootView switches to `model.appearance` once SplashOverlay finishes dismissing.
+        AppearanceApplier.applyStyle(.dark)
         UNUserNotificationCenter.current().delegate = m.notificationDelegate
         if let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String,
            !clientID.isEmpty {

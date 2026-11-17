@@ -68,7 +68,7 @@ struct CalendarScreen: View {
                     Image(systemName: "plus").font(.system(size: 24, weight: .semibold)).foregroundStyle(accent.onAccent)
                         .frame(width: 60, height: 60)
                         .background(Circle().fill(accent.color))
-                        .shadow(color: .black.opacity(0.35), radius: 10, y: 6)
+                        .shadow(color: Palette.fabShadow, radius: 10, y: 6)
                 }
                 .buttonStyle(.press(scale: 0.94, opacity: 0.9))
                 .hoverEffect(.lift)

@@ -90,6 +90,7 @@ enum Palette {
     static let navGlassTint = dynamic(dark: "#242628", light: "#FFFFFF", darkAlpha: 0.60, lightAlpha: 0.75)
     static let navSelection = dynamic(dark: "#FFFFFF", light: "#000000", darkAlpha: 0.08, lightAlpha: 0.07)
     static let navShadow = dynamic(dark: "#000000", light: "#000000", darkAlpha: 0.35, lightAlpha: 0.14)
+    static let fabShadow = dynamic(dark: "#000000", light: "#000000", darkAlpha: 0.35, lightAlpha: 0.14)
 
     static let accentOptions = ["#FF8A1E", "#4772FA", "#2BB673", "#8B6CE8"]
     static let listColors: [(String, String)] = [("無", "#5B6461"), ("紅", "#F2555A"), ("橘", "#E98A5B"), ("黃", "#E8C14E"), ("綠", "#4FC3A1"), ("天藍", "#4AA8E8"), ("靛", "#4E8BF7"), ("紫", "#C77DDB")]
@@ -205,9 +206,19 @@ enum AppearanceApplier {
         installObserverIfNeeded()
         for scene in UIApplication.shared.connectedScenes {
             guard let windowScene = scene as? UIWindowScene else { continue }
-            for window in windowScene.windows where window.overrideUserInterfaceStyle != style {
-                window.overrideUserInterfaceStyle = style
-            }
+            apply(style, to: windowScene)
+        }
+    }
+
+    private static func apply(_ style: UIUserInterfaceStyle, to windowScene: UIWindowScene) {
+        if style == .unspecified {
+            windowScene.traitOverrides.remove(UITraitUserInterfaceStyle.self)
+        } else {
+            windowScene.traitOverrides.userInterfaceStyle = style
+        }
+        for window in windowScene.windows where window.overrideUserInterfaceStyle != style {
+            window.overrideUserInterfaceStyle = style
+            window.rootViewController?.setNeedsStatusBarAppearanceUpdate()
         }
     }
 
@@ -215,16 +226,41 @@ enum AppearanceApplier {
         guard !installedObserver else { return }
         installedObserver = true
         NotificationCenter.default.addObserver(
-            forName: UIWindow.didBecomeVisibleNotification,
+            forName: UIScene.willConnectNotification,
             object: nil,
-            queue: .main
+            queue: nil
         ) { notification in
-            let window = notification.object as? UIWindow
-            MainActor.assumeIsolated {
-                if let window, window.overrideUserInterfaceStyle != currentStyle {
-                    window.overrideUserInterfaceStyle = currentStyle
+            let windowScene = notification.object as? UIWindowScene
+            runOnMain {
+                if let windowScene {
+                    apply(currentStyle, to: windowScene)
                 }
             }
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIWindow.didBecomeVisibleNotification,
+            object: nil,
+            queue: nil
+        ) { notification in
+            let window = notification.object as? UIWindow
+            runOnMain {
+                guard let window else { return }
+                if let windowScene = window.windowScene {
+                    apply(currentStyle, to: windowScene)
+                }
+                if window.overrideUserInterfaceStyle != currentStyle {
+                    window.overrideUserInterfaceStyle = currentStyle
+                    window.rootViewController?.setNeedsStatusBarAppearanceUpdate()
+                }
+            }
+        }
+    }
+
+    private nonisolated static func runOnMain(_ work: @escaping @MainActor () -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated(work)
+        } else {
+            Task { @MainActor in work() }
         }
     }
 }

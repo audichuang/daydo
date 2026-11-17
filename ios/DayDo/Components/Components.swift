@@ -77,12 +77,16 @@ struct TaskCheckbox: View {
                 if done {
                     Image(systemName: "checkmark")
                         .font(.system(size: size * 0.55, weight: .heavy))
-                        .foregroundStyle(accent.onAccent)
+                        .foregroundStyle(Self.checkmarkColor(accent: accent))
                         .transition(reduceMotion ? .opacity : .scale(scale: 0.4).combined(with: .opacity))
                 }
             }
             .frame(width: size, height: size)
             .animation(Motion.checkbox(reduceMotion), value: done)
+    }
+
+    static func checkmarkColor(accent: AccentTheme) -> Color {
+        Palette.onLightFill
     }
 }
 

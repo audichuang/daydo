@@ -115,8 +115,6 @@ private let guards: [Guard] = [
         directories: ["ios/DayDo/Screens", "ios/DayDo/Components"],
         pattern: #"\bColor\(\s*hex:|\bColor\.(white|black)\b|(?<![A-Za-z0-9_])\.(white|black)\b"#,
         allow: [
-            // Scheme-independent FAB drop shadow (.black.opacity(0.35)).
-            "ios/DayDo/Screens/CalendarScreen.swift",
             // Scheme-independent swipe action pill buttons (#F7B500/#1A1206, #FF8A1E/.white, #F2555A/.white).
             "ios/DayDo/Screens/DrawerView.swift",
             // List color picker swatch circles (Palette.listColors).

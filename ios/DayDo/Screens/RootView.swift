@@ -186,7 +186,9 @@ struct RootView: View {
         }
         .environment(\.isRegularWindow, isRegular)
         .background {
-            WindowAppearanceBridge(style: model.appearance.userInterfaceStyle)
+            // Keep `.dark` on the window until SplashOverlay (#0E0F10) finishes dismissing
+            // so the status bar stays light-content with no dark flash before the light UI is on screen.
+            WindowAppearanceBridge(style: splashRemoved ? model.appearance.userInterfaceStyle : .dark)
                 .frame(width: 0, height: 0)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
