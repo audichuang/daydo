@@ -154,6 +154,8 @@ Deploy to Cloudflare Workers (behind Cloudflare Access at `https://api.daydoapp.
 CF_ACCESS_CLIENT_ID=... CF_ACCESS_CLIENT_SECRET=... CF_ACCESS_READINESS_ORIGIN=https://api.daydoapp.com npx void deploy --platform cloudflare
 ```
 
+Void probes `/__void/ready` on the first entry of `routes`, and a new Custom Domain is attached only after that probe passes. When adding a hostname, list it after an already attached one for the first deploy (and point `CF_ACCESS_READINESS_ORIGIN` at that attached host), then move it back; otherwise the deploy fails with "did not pass /__void/ready" and rolls back.
+
 Verify the deployed Worker with the smoke test:
 
 ```bash
