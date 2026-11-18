@@ -1363,4 +1363,153 @@ final class AppModelTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
         XCTAssertEqual(model.projects.filter { $0.name == "共用清單 副本" }.count, 1)
     }
+
+    func testPrepareSignOutConfirmationWaitsForCancelledDuplicationAndBlocksDuplicateWhileConfirming() async throws {
+        actor GateTransport: SyncTransport {
+            private let projId = "confirm-dup-proj-1"
+            private let taskId = "confirm-dup-task-1"
+            private let attId = "confirm-dup-att-1"
+            private var started = false
+            private var startedCont: CheckedContinuation<Void, Never>?
+            private var allowFinish = false
+            private var finishCont: CheckedContinuation<Void, Never>?
+            private(set) var downloadCount = 0
+
+            func waitForDownloadStart() async {
+                if started { return }
+                await withCheckedContinuation { startedCont = $0 }
+            }
+
+            func allowDownloadFinish() {
+                allowFinish = true
+                finishCont?.resume()
+                finishCont = nil
+            }
+
+            func send(method: String, path: String, headers: [String: String], body: Data?) async throws -> SyncHTTPResponse {
+                let nowMs = EpochMillis(Date().timeIntervalSince1970 * 1000)
+                let serverHLC = HLC(ms: nowMs, counter: 0, deviceId: "srv").description
+                if method == "POST" && path == "/auth/apple" {
+                    return try jsonResponse(200, [
+                        "accessToken": "acc",
+                        "refreshToken": "ref",
+                        "user": ["id": "u-confirm"],
+                        "isNewAccount": true,
+                        "hasData": false,
+                        "meMemberId": NSNull(),
+                        "inboxProjectId": NSNull(),
+                    ])
+                }
+                if method == "POST" && path == "/sync/push" {
+                    var results: [[String: Any]] = []
+                    if let body,
+                       let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                       let ops = payload["ops"] as? [[String: Any]] {
+                        for op in ops {
+                            if let opId = op["opId"] as? String {
+                                results.append(["opId": opId, "status": "applied"])
+                            }
+                        }
+                    }
+                    return try jsonResponse(200, ["results": results, "serverTime": serverHLC])
+                }
+                if method == "POST" && path == "/sync/pull" {
+                    return try jsonResponse(200, [
+                        "scopes": [[
+                            "scope": "u:u-confirm",
+                            "rows": [
+                                [
+                                    "entity": "project",
+                                    "row": [
+                                        "id": projId, "name": "確認登出清單", "viewMode": "list", "kind": "TASK",
+                                        "isInbox": false, "ownerId": "m-1", "sortKey": "z1",
+                                        "showInSmart": "all", "notifyMode": "all", "createdAt": nowMs, "updatedAt": nowMs,
+                                    ],
+                                    "clocks": ["name": serverHLC], "serverSeq": 1,
+                                ],
+                                [
+                                    "entity": "task",
+                                    "row": [
+                                        "id": taskId, "projectId": projId, "title": "附件任務", "content": "",
+                                        "priority": 0, "status": 0, "reminders": [], "tags": [], "sortKey": "a0",
+                                        "createdAt": nowMs, "updatedAt": nowMs,
+                                    ],
+                                    "clocks": ["title": serverHLC], "serverSeq": 2,
+                                ],
+                                [
+                                    "entity": "attachment",
+                                    "row": [
+                                        "id": attId, "taskId": taskId, "fileName": "doc.txt", "size": 4,
+                                        "mimeType": "text/plain", "createdAt": nowMs, "updatedAt": nowMs,
+                                    ],
+                                    "clocks": ["fileName": serverHLC], "serverSeq": 3,
+                                ],
+                            ],
+                            "cursor": 3, "hasMore": false,
+                        ]],
+                        "members": [],
+                    ])
+                }
+                if method == "GET" && path == "/attachments/\(attId)/content" {
+                    downloadCount += 1
+                    started = true
+                    startedCont?.resume()
+                    startedCont = nil
+                    if !allowFinish {
+                        await withCheckedContinuation { finishCont = $0 }
+                    }
+                    return SyncHTTPResponse(status: 200, body: Data("test".utf8))
+                }
+                return try jsonResponse(404, ["error": "Not found"])
+            }
+
+            private func jsonResponse(_ status: Int, _ object: Any) throws -> SyncHTTPResponse {
+                SyncHTTPResponse(status: status, body: try JSONSerialization.data(withJSONObject: object))
+            }
+        }
+
+        let transport = GateTransport()
+        let (model, _) = try await makeModel(syncEnabled: true, transport: transport)
+        model.scope = .project("confirm-dup-proj-1")
+
+        // 1. Start duplication while attachment download is blocked, then tap Sign Out confirmation.
+        model.duplicateProject(id: "confirm-dup-proj-1")
+        await transport.waitForDownloadStart()
+
+        var confirmFinished = false
+        let confirmTask = Task {
+            let count = await model.prepareSignOutConfirmation()
+            confirmFinished = true
+            return count
+        }
+
+        for _ in 0..<5 {
+            await Task.yield()
+        }
+        // Must still be waiting for the cancelled duplication before reading unsyncedChangeCount.
+        XCTAssertTrue(model.isConfirmingSignOut)
+        XCTAssertFalse(confirmFinished)
+
+        // Release download -> cancelled duplication finishes without writing -> confirmation returns 0.
+        await transport.allowDownloadFinish()
+        let unsyncedCount = await confirmTask.value
+        XCTAssertTrue(confirmFinished)
+        XCTAssertEqual(unsyncedCount, 0)
+        XCTAssertTrue(model.projects.filter { $0.name == "確認登出清單 副本" }.isEmpty)
+
+        // 2. While sign-out confirmation is open, duplicateProject must be blocked.
+        model.duplicateProject(id: "confirm-dup-proj-1")
+        XCTAssertFalse(model.isDuplicatingProject("confirm-dup-proj-1"))
+        let downloadsWhileConfirming = await transport.downloadCount
+        XCTAssertEqual(downloadsWhileConfirming, 1)
+
+        // 3. Cancelling confirmation lifts the block so duplicating works again.
+        model.cancelSignOutConfirmation()
+        XCTAssertFalse(model.isConfirmingSignOut)
+        model.duplicateProject(id: "confirm-dup-proj-1")
+        await model.waitForProjectDuplications()
+        let downloadsAfterCancel = await transport.downloadCount
+        XCTAssertEqual(downloadsAfterCancel, 2)
+        XCTAssertEqual(model.projects.filter { $0.name == "確認登出清單 副本" }.count, 1)
+    }
 }

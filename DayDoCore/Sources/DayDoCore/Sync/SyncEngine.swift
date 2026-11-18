@@ -52,6 +52,7 @@ public actor SyncEngine {
     private var attachmentUploadGeneration: UInt64?
     private var attachmentUploadWakeRequested: Bool = false
     private var retiredAttachmentUploadTasks: [UUID: Task<Void, Never>] = [:]
+    private var recentTemporaryUploadFailureIds: Set<String> = []
     private var continuations: [UUID: AsyncStream<SyncSummary>.Continuation] = [:]
 
     private let encoder = Outbox.encoder
@@ -222,6 +223,7 @@ public actor SyncEngine {
         attachmentUploadTaskID = nil
         attachmentUploadGeneration = nil
         attachmentUploadWakeRequested = false
+        recentTemporaryUploadFailureIds.removeAll()
         tokenStore.accessToken = nil
         tokenStore.refreshToken = nil
         consecutiveRetryableFailures = 0
@@ -892,8 +894,6 @@ public actor SyncEngine {
 
         guard let attachmentsDirectory else { return }
 
-        var temporarilyFailedIds: Set<String> = []
-
         while generation == sessionGeneration, !Task.isCancelled {
             attachmentUploadWakeRequested = false
 
@@ -910,17 +910,24 @@ public actor SyncEngine {
                 return
             }
 
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+
             if rawCandidates.isEmpty {
+                recentTemporaryUploadFailureIds.removeAll()
                 if attachmentUploadWakeRequested {
                     continue
                 }
                 return
             }
 
-            // Try untried candidates before items that already hit a temporary failure in this run,
-            // so a failing upload cannot starve newly woken attachments.
-            let candidates = rawCandidates.filter { !temporarilyFailedIds.contains($0.id) }
-                + rawCandidates.filter { temporarilyFailedIds.contains($0.id) }
+            let rawIds = Set(rawCandidates.map(\.id))
+            recentTemporaryUploadFailureIds.formIntersection(rawIds)
+
+            // Try candidates that did not recently hit a temporary failure before retrying
+            // recently failed ones, so a persistent 5xx on one file does not block the queue.
+            let failedIds = recentTemporaryUploadFailureIds
+            let candidates = rawCandidates.filter { !failedIds.contains($0.id) }
+                + rawCandidates.filter { failedIds.contains($0.id) }
 
             var didAttemptAny = false
             var hitTemporaryFailure = false
@@ -948,7 +955,7 @@ public actor SyncEngine {
 
                     switch response.status {
                     case 200...299:
-                        temporarilyFailedIds.remove(att.id)
+                        recentTemporaryUploadFailureIds.remove(att.id)
                         let uploadedAt = clock.now().epochMillis
                         try await database.writer.write { db in
                             guard !Task.isCancelled else { return }
@@ -958,7 +965,7 @@ public actor SyncEngine {
                             )
                         }
                     case 400, 403, 410, 413:
-                        temporarilyFailedIds.remove(att.id)
+                        recentTemporaryUploadFailureIds.remove(att.id)
                         try await database.writer.write { db in
                             guard !Task.isCancelled else { return }
                             try db.execute(
@@ -967,8 +974,8 @@ public actor SyncEngine {
                             )
                         }
                     default:
-                        // 404 (row not yet visible), 429, 5xx, etc.: stop unless a new sync woke us.
-                        temporarilyFailedIds.insert(att.id)
+                        // 404 (row not yet visible), 429, 5xx, etc.: remember for deprioritization and stop unless woken.
+                        recentTemporaryUploadFailureIds.insert(att.id)
                         hitTemporaryFailure = true
                     }
                 } catch is CancellationError {
@@ -977,7 +984,8 @@ public actor SyncEngine {
                     return
                 } catch {
                     // Network or temporary token errors stop without tight retries unless woken.
-                    temporarilyFailedIds.insert(att.id)
+                    guard generation == sessionGeneration, !Task.isCancelled else { return }
+                    recentTemporaryUploadFailureIds.insert(att.id)
                     hitTemporaryFailure = true
                 }
                 if hitTemporaryFailure {

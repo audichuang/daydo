@@ -5420,6 +5420,168 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         let putPaths = await transport.capturedRequests().filter { $0.method == "PUT" }.map(\.path)
         #expect(putPaths == ["/attachments/\(copiedAtt.id)/content"])
     }
+
+    @Test func duplicateProjectAbortsWithoutCreatingCopyOnSignedOutError() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+        let store = try DeviceStore.inMemory(clock: .fixed(noon, timeZone: taipei))
+        let projId = ID.make()
+        let taskId = ID.make()
+        let attId = ID.make()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/auth/apple" {
+                return try jsonResponse(200, [
+                    "accessToken": "acc-dup",
+                    "refreshToken": "ref-dup",
+                    "user": ["id": "u-dup"],
+                    "isNewAccount": false,
+                    "hasData": true,
+                    "meMemberId": NSNull(),
+                    "inboxProjectId": NSNull(),
+                ])
+            }
+            if req.path == "/auth/refresh" {
+                return SyncHTTPResponse(status: 401, body: Data())
+            }
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                return try jsonResponse(200, [
+                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "applied"] },
+                    "serverTime": serverHLC,
+                ])
+            }
+            if req.path == "/sync/pull" {
+                return try jsonResponse(200, [
+                    "scopes": [[
+                        "scope": "u:u-dup",
+                        "rows": [
+                            [
+                                "entity": "member",
+                                "row": [
+                                    "id": "m-dup", "name": "我", "initial": "我", "color": "#6FA8FF",
+                                    "isMe": true, "createdAt": nowMs, "updatedAt": nowMs,
+                                ],
+                                "clocks": ["name": serverHLC], "serverSeq": 1,
+                            ],
+                            [
+                                "entity": "project",
+                                "row": [
+                                    "id": projId, "name": "遠端清單", "viewMode": "list", "kind": "TASK",
+                                    "isInbox": false, "ownerId": "m-dup", "sortKey": "a0",
+                                    "showInSmart": "all", "notifyMode": "all", "createdAt": nowMs, "updatedAt": nowMs,
+                                ],
+                                "clocks": ["name": serverHLC], "serverSeq": 2,
+                            ],
+                            [
+                                "entity": "task",
+                                "row": [
+                                    "id": taskId, "projectId": projId, "title": "任務", "content": "",
+                                    "priority": 0, "status": 0, "reminders": [], "tags": [],
+                                    "sortKey": "a0", "createdAt": nowMs, "updatedAt": nowMs,
+                                ],
+                                "clocks": ["title": serverHLC], "serverSeq": 3,
+                            ],
+                            [
+                                "entity": "attachment",
+                                "row": [
+                                    "id": attId, "taskId": taskId, "fileName": "secret.pdf", "size": 100,
+                                    "mimeType": "application/pdf", "createdAt": nowMs, "updatedAt": nowMs,
+                                ],
+                                "clocks": ["fileName": serverHLC], "serverSeq": 4,
+                            ],
+                        ],
+                        "cursor": 4, "hasMore": false,
+                    ]],
+                    "memberships": [],
+                    "members": [],
+                ])
+            }
+            if req.method == "GET" && req.path == "/attachments/\(attId)/content" {
+                return SyncHTTPResponse(status: 401, body: Data())
+            }
+            return try jsonResponse(404, ["error": "not-found"])
+        }
+
+        let engine = store.makeSyncEngine(transport: transport, tokenStore: InMemorySyncTokenStore(), attachToAPI: true)
+        _ = try await engine.signIn(with: .apple(identityToken: "tok", nonce: "n"))
+
+        await #expect(throws: SyncError.signedOut) {
+            _ = try await store.api.duplicateProject(id: projId)
+        }
+        let projects = try await store.api.listProjects(includeArchived: true)
+        #expect(projects.filter { $0.name.hasSuffix("副本") }.isEmpty)
+    }
+
+    @Test func persistentTemporaryFailureDoesNotBlockSubsequentSyncUploads() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-att-deprioritize-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+        let task = try await api.createTask(CreateTaskInput(title: "跨輪不卡佇列"))
+        let attA = try await api.uploadAttachment(
+            taskId: task.id, fileName: "a.txt", data: Data("a".utf8), mimeType: "text/plain", originalPath: nil
+        )
+        try await ackAllChanges(in: db)
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                return try jsonResponse(200, [
+                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "applied"] },
+                    "serverTime": serverHLC,
+                ])
+            }
+            if req.method == "PUT" && req.path == "/attachments/\(attA.id)/content" {
+                return try jsonResponse(503, ["error": "persistent-503"])
+            }
+            if req.method == "PUT" {
+                return SyncHTTPResponse(status: 204, body: Data())
+            }
+            return try jsonResponse(200, ["scopes": [], "members": []])
+        }
+
+        let engine = SyncEngine(
+            database: db,
+            transport: transport,
+            tokenStore: InMemorySyncTokenStore(accessToken: "acc", refreshToken: "ref"),
+            clock: .fixed(noon, timeZone: taipei),
+            attachmentsDirectory: dir
+        )
+
+        // Sync 1: A hits 503 and the upload worker exits.
+        _ = try await engine.syncNow()
+        await engine.waitForAttachmentUploads()
+        let putCountAfterSync1 = await transport.capturedRequests().filter { $0.method == "PUT" }.count
+        #expect(putCountAfterSync1 == 1)
+
+        // Non-overlapping Sync 2 after adding B: B is tried before A and succeeds even though A still returns 503.
+        let attB = try await api.uploadAttachment(
+            taskId: task.id, fileName: "b.txt", data: Data("b".utf8), mimeType: "text/plain", originalPath: nil
+        )
+        try await db.writer.write { db in
+            try db.execute(sql: "UPDATE attachment SET createdAt = ? WHERE id = ?", arguments: [nowMs + 10, attB.id])
+        }
+        _ = try await engine.syncNow()
+        await engine.waitForAttachmentUploads()
+
+        let putPaths = await transport.capturedRequests().filter { $0.method == "PUT" }.map(\.path)
+        #expect(putPaths == [
+            "/attachments/\(attA.id)/content",
+            "/attachments/\(attB.id)/content",
+            "/attachments/\(attA.id)/content",
+        ])
+
+        let records = try await db.writer.read { db in
+            try Dictionary(uniqueKeysWithValues: AttachmentRecord.fetchAll(db).map { ($0.id, $0) })
+        }
+        #expect(records[attB.id]?.fileUploadedAt == nowMs)
+        #expect(records[attA.id]?.fileUploadedAt == nil)
+        #expect(records[attA.id]?.fileUploadFailed == false)
+    }
 }
 
 private actor AsyncGate {

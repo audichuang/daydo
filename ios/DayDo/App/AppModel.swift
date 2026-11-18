@@ -67,6 +67,8 @@ final class AppModel {
     var isSignedIn = false
     var isSigningIn = false
     var isSyncing = false
+    private(set) var isConfirmingSignOut = false
+    private var isSigningOut = false
     private(set) var duplicationLocks: [String: UUID] = [:]
     private var duplicationTasks: [UUID: Task<Void, Never>] = [:]
     private var retiredDuplicationTasks: [UUID: Task<Void, Never>] = [:]
@@ -499,9 +501,10 @@ final class AppModel {
         duplicationLocks[id] != nil
     }
 
-    /// Duplicates a list through `DayDoAPI`, ignoring re-entry for the same list until it finishes.
+    /// Duplicates a list through `DayDoAPI`, ignoring re-entry for the same list until it finishes
+    /// or while sign-out confirmation / sign-out is active.
     func duplicateProject(id: String) {
-        guard duplicationLocks[id] == nil else { return }
+        guard !isConfirmingSignOut, !isSigningOut, duplicationLocks[id] == nil else { return }
         let token = UUID()
         duplicationLocks[id] = token
         let task = Task {
@@ -524,10 +527,28 @@ final class AppModel {
                 return
             } catch {
                 guard !Task.isCancelled, duplicationLocks[id] == token else { return }
+                if await handleErrorIfSignedOut(error) {
+                    return
+                }
                 errorMessage = error.localizedDescription
             }
         }
         duplicationTasks[token] = task
+    }
+
+    func prepareSignOutConfirmation() async -> Int {
+        isConfirmingSignOut = true
+        await cancelAndWaitProjectDuplications()
+        return await unsyncedChangeCount()
+    }
+
+    func cancelSignOutConfirmation() {
+        isConfirmingSignOut = false
+    }
+
+    func cancelAndWaitProjectDuplications() async {
+        cancelProjectDuplications()
+        await waitForRetiredProjectDuplications()
     }
 
     func waitForProjectDuplications() async {
@@ -755,6 +776,8 @@ final class AppModel {
     }
 
     func signOut() async {
+        isSigningOut = true
+        defer { isSigningOut = false }
         cancelProjectDuplications()
         stopSyncObservers()
         GIDSignIn.sharedInstance.signOut()
@@ -762,6 +785,7 @@ final class AppModel {
             do {
                 try await syncEngine.signOut()
             } catch {
+                isConfirmingSignOut = false
                 errorMessage = error.localizedDescription
                 return
             }
@@ -771,7 +795,11 @@ final class AppModel {
 
     func replaceAccountAndSignIn(with credential: SyncAuthCredential, displayName: String? = nil, avatarUrl: String? = nil) async throws {
         isSigningIn = true
-        defer { isSigningIn = false }
+        isSigningOut = true
+        defer {
+            isSigningIn = false
+            isSigningOut = false
+        }
         cancelProjectDuplications()
         stopSyncObservers()
         GIDSignIn.sharedInstance.signOut()
@@ -805,6 +833,7 @@ final class AppModel {
         pendingInviteCode = nil
         showingMeNamePrompt = false
         allMemberFilter = nil
+        isConfirmingSignOut = false
         cancelProjectDuplications()
         isSignedIn = false
         revision += 1
@@ -908,6 +937,7 @@ final class AppModel {
     private func handleSyncError(_ error: SyncError) async {
         switch error {
         case .signedOut:
+            cancelProjectDuplications()
             stopSyncObservers()
             isSignedIn = false
         case let .retryable(retryAfter, _, _):

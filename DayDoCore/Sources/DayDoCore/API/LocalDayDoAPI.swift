@@ -549,6 +549,8 @@ extension LocalDayDoAPI {
                 _ = try await attachmentFile(att)
             } catch is CancellationError {
                 throw CancellationError()
+            } catch SyncError.signedOut {
+                throw SyncError.signedOut
             } catch {
                 // Skip individual attachment download failures so the rest of the list still copies.
             }

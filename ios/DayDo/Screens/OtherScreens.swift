@@ -162,6 +162,9 @@ struct SettingsScreen: View {
         }
         .onDisappear {
             model.hasPushedNavigation = false
+            if !confirmSignOut {
+                model.cancelSignOutConfirmation()
+            }
         }
         .task(id: model.revision) {
             do {
@@ -175,7 +178,9 @@ struct SettingsScreen: View {
             }
         }
         .alert("確定要登出？", isPresented: $confirmSignOut) {
-            Button("取消", role: .cancel) {}
+            Button("取消", role: .cancel) {
+                model.cancelSignOutConfirmation()
+            }
             Button("登出", role: .destructive) {
                 Task { await model.signOut() }
             }
@@ -184,6 +189,11 @@ struct SettingsScreen: View {
                 Text("登出會清除這台裝置上的所有本機資料。目前還有 \(unsyncedCount) 筆尚未同步的變更，登出後將會遺失。")
             } else {
                 Text("登出會清除這台裝置上的所有本機資料，下次登入後可從雲端同步回來。")
+            }
+        }
+        .onChange(of: confirmSignOut) { _, isPresented in
+            if !isPresented {
+                model.cancelSignOutConfirmation()
             }
         }
         .sheet(isPresented: $editingMeProfile) {
@@ -230,8 +240,12 @@ struct SettingsScreen: View {
 
                             Button {
                                 Task {
-                                    unsyncedCount = await model.unsyncedChangeCount()
-                                    confirmSignOut = true
+                                    unsyncedCount = await model.prepareSignOutConfirmation()
+                                    if model.isSignedIn {
+                                        confirmSignOut = true
+                                    } else {
+                                        model.cancelSignOutConfirmation()
+                                    }
                                 }
                             } label: {
                                 HStack(spacing: 12) {

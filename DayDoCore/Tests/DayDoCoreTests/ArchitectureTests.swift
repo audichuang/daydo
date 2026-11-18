@@ -261,13 +261,45 @@ private let guards: [Guard] = [
         #expect(offenders.isEmpty, "createTask without revealCreatedTaskInAll in \(offenders)")
     }
 
+    private func functionBody(named name: String, in code: String) throws -> String {
+        let marker = "func \(name)("
+        let startRange = try #require(code.range(of: marker), "Function \(name) not found")
+        let openBrace = try #require(code[startRange.upperBound...].firstIndex(of: "{"), "Opening brace for \(name) not found")
+        var depth = 0
+        var idx = openBrace
+        while idx < code.endIndex {
+            let ch = code[idx]
+            if ch == "{" { depth += 1 }
+            else if ch == "}" {
+                depth -= 1
+                if depth == 0 {
+                    return String(code[startRange.lowerBound...idx])
+                }
+            }
+            idx = code.index(after: idx)
+        }
+        Issue.record("Unclosed brace in \(name)")
+        return ""
+    }
+
     @Test func attachmentSyncStaysDecoupledFromTaskSyncLoopAndBackoff() throws {
         let code = try codeLines("DayDoCore/Sources/DayDoCore/Sync/SyncEngine.swift")
-        let retryableCalls = code.components(separatedBy: "nextRetryableError(").count - 1
-        #expect(retryableCalls == 2, "Expected 1 definition + 1 task-sync boundary call site in performSyncCycle for nextRetryableError(, found \(retryableCalls)")
+        let runSyncLoopBody = try functionBody(named: "runSyncLoop", in: code)
+        let performSyncCycleBody = try functionBody(named: "performSyncCycle", in: code)
+
+        let uploadAwaitRegex = try NSRegularExpression(
+            pattern: #"\bawait\s+(?:self\.)?(?:uploadPendingAttachments|waitForAttachmentUploads|runAttachmentUploadLoop|triggerAttachmentUpload|attachmentUploadTask)\b"#
+        )
+        #expect(!matches(uploadAwaitRegex, runSyncLoopBody), "runSyncLoop must not await attachment upload work")
+        #expect(!matches(uploadAwaitRegex, performSyncCycleBody), "performSyncCycle must not await attachment upload work")
+
+        let retryableCallsTotal = code.components(separatedBy: "nextRetryableError(").count - 1
+        let retryableCallsInCycle = performSyncCycleBody.components(separatedBy: "nextRetryableError(").count - 1
+        #expect(retryableCallsTotal == 2, "Expected 1 definition + 1 call site in performSyncCycle for nextRetryableError(, found \(retryableCallsTotal)")
+        #expect(retryableCallsInCycle == 1, "nextRetryableError( may only be called inside performSyncCycle")
+
         let backoffIncrements = code.components(separatedBy: "consecutiveRetryableFailures +=").count - 1
         #expect(backoffIncrements == 1, "Expected consecutiveRetryableFailures += only inside nextRetryableError")
-        #expect(!code.contains("await uploadPendingAttachments("), "Attachment upload must not be awaited in the sync loop")
         #expect(!code.contains("maxAttachmentUploadsPerCycle"), "Per-cycle upload cap must stay removed")
     }
 }
