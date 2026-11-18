@@ -5582,6 +5582,73 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         #expect(records[attA.id]?.fileUploadedAt == nil)
         #expect(records[attA.id]?.fileUploadFailed == false)
     }
+
+    /// A always returns 503 and B fails once: failed ids rotate to the back, so B is retried
+    /// within a few non-overlapping syncs instead of always queuing behind A.
+    @Test func failedAttachmentsRotateSoOnePersistentFailureCannotStarveAnother() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-att-rotate-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+        let task = try await api.createTask(CreateTaskInput(title: "失敗輪替"))
+        let attA = try await api.uploadAttachment(
+            taskId: task.id, fileName: "a.txt", data: Data("a".utf8), mimeType: "text/plain", originalPath: nil
+        )
+        let attB = try await api.uploadAttachment(
+            taskId: task.id, fileName: "b.txt", data: Data("b".utf8), mimeType: "text/plain", originalPath: nil
+        )
+        try await db.writer.write { db in
+            try db.execute(sql: "UPDATE attachment SET createdAt = ? WHERE id = ?", arguments: [nowMs + 10, attB.id])
+        }
+        try await ackAllChanges(in: db)
+
+        let bFailures = Counter()
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                return try jsonResponse(200, [
+                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "applied"] },
+                    "serverTime": serverHLC,
+                ])
+            }
+            if req.method == "PUT" && req.path == "/attachments/\(attA.id)/content" {
+                return try jsonResponse(503, ["error": "persistent-503"])
+            }
+            if req.method == "PUT" && req.path == "/attachments/\(attB.id)/content" {
+                if await bFailures.next() == 1 { return try jsonResponse(503, ["error": "once"]) }
+                return SyncHTTPResponse(status: 204, body: Data())
+            }
+            return try jsonResponse(200, ["scopes": [], "members": []])
+        }
+        let engine = SyncEngine(
+            database: db,
+            transport: transport,
+            tokenStore: InMemorySyncTokenStore(accessToken: "acc", refreshToken: "ref"),
+            clock: .fixed(noon, timeZone: taipei),
+            attachmentsDirectory: dir
+        )
+
+        for _ in 0..<4 {
+            _ = try await engine.syncNow()
+            await engine.waitForAttachmentUploads()
+        }
+
+        let putPaths = await transport.capturedRequests().filter { $0.method == "PUT" }.map(\.path)
+        let a = "/attachments/\(attA.id)/content", b = "/attachments/\(attB.id)/content"
+        // 1: A fails. 2: B (untried) fails once. 3: A (oldest failure) fails again.
+        // 4: B (now the oldest failure) succeeds, then the same pass retries A, which fails and stops.
+        #expect(putPaths == [a, b, a, b, a])
+        let uploadedB = try await db.writer.read { db in try AttachmentRecord.fetchOne(db, key: attB.id)?.fileUploadedAt }
+        #expect(uploadedB == nowMs)
+    }
+}
+
+private actor Counter {
+    private var value = 0
+    func next() -> Int { value += 1; return value }
 }
 
 private actor AsyncGate {

@@ -52,7 +52,9 @@ public actor SyncEngine {
     private var attachmentUploadGeneration: UInt64?
     private var attachmentUploadWakeRequested: Bool = false
     private var retiredAttachmentUploadTasks: [UUID: Task<Void, Never>] = [:]
-    private var recentTemporaryUploadFailureIds: Set<String> = []
+    /// Attachments that recently hit a temporary upload failure, oldest failure first.
+    /// A new failure moves the id to the end so one persistently failing file cannot starve others.
+    private var recentTemporaryUploadFailureIds: [String] = []
     private var continuations: [UUID: AsyncStream<SyncSummary>.Continuation] = [:]
 
     private let encoder = Outbox.encoder
@@ -881,6 +883,11 @@ public actor SyncEngine {
         }
     }
 
+    private func markTemporaryUploadFailure(_ id: String) {
+        recentTemporaryUploadFailureIds.removeAll { $0 == id }
+        recentTemporaryUploadFailureIds.append(id)
+    }
+
     private func runAttachmentUploadLoop(generation: UInt64, taskID: UUID) async {
         defer {
             if self.attachmentUploadTaskID == taskID {
@@ -921,13 +928,15 @@ public actor SyncEngine {
             }
 
             let rawIds = Set(rawCandidates.map(\.id))
-            recentTemporaryUploadFailureIds.formIntersection(rawIds)
+            recentTemporaryUploadFailureIds.removeAll { !rawIds.contains($0) }
 
             // Try candidates that did not recently hit a temporary failure before retrying
             // recently failed ones, so a persistent 5xx on one file does not block the queue.
-            let failedIds = recentTemporaryUploadFailureIds
+            // Recently failed ones follow in failure order (oldest first).
+            let failedIds = Set(recentTemporaryUploadFailureIds)
+            let byId = Dictionary(uniqueKeysWithValues: rawCandidates.map { ($0.id, $0) })
             let candidates = rawCandidates.filter { !failedIds.contains($0.id) }
-                + rawCandidates.filter { failedIds.contains($0.id) }
+                + recentTemporaryUploadFailureIds.compactMap { byId[$0] }
 
             var didAttemptAny = false
             var hitTemporaryFailure = false
@@ -955,7 +964,7 @@ public actor SyncEngine {
 
                     switch response.status {
                     case 200...299:
-                        recentTemporaryUploadFailureIds.remove(att.id)
+                        recentTemporaryUploadFailureIds.removeAll { $0 == att.id }
                         let uploadedAt = clock.now().epochMillis
                         try await database.writer.write { db in
                             guard !Task.isCancelled else { return }
@@ -965,7 +974,7 @@ public actor SyncEngine {
                             )
                         }
                     case 400, 403, 410, 413:
-                        recentTemporaryUploadFailureIds.remove(att.id)
+                        recentTemporaryUploadFailureIds.removeAll { $0 == att.id }
                         try await database.writer.write { db in
                             guard !Task.isCancelled else { return }
                             try db.execute(
@@ -975,7 +984,7 @@ public actor SyncEngine {
                         }
                     default:
                         // 404 (row not yet visible), 429, 5xx, etc.: remember for deprioritization and stop unless woken.
-                        recentTemporaryUploadFailureIds.insert(att.id)
+                        markTemporaryUploadFailure(att.id)
                         hitTemporaryFailure = true
                     }
                 } catch is CancellationError {
@@ -985,7 +994,7 @@ public actor SyncEngine {
                 } catch {
                     // Network or temporary token errors stop without tight retries unless woken.
                     guard generation == sessionGeneration, !Task.isCancelled else { return }
-                    recentTemporaryUploadFailureIds.insert(att.id)
+                    markTemporaryUploadFailure(att.id)
                     hitTemporaryFailure = true
                 }
                 if hitTemporaryFailure {
