@@ -1609,30 +1609,56 @@ final class DayDoFlowTests: XCTestCase {
         return (s, e)
     }
 
-    private func isVisibleInGrid(_ element: XCUIElement, scrollView: XCUIElement) -> Bool {
+    private func isVisibleInGrid(
+        _ element: XCUIElement,
+        scrollView: XCUIElement,
+        topOffsetRange: ClosedRange<CGFloat>? = nil
+    ) -> Bool {
         guard element.exists && element.isHittable else { return false }
         let f = element.frame
         let s = scrollView.frame
+        if let range = topOffsetRange {
+            let offset = f.minY - s.minY
+            return offset >= range.lowerBound && offset <= range.upperBound && f.maxY <= s.maxY - 96
+        }
         // Keep clear of the top edge and bottom floating nav bar so taps/drags land cleanly.
-        return f.minY >= s.minY + 8 && f.maxY <= s.maxY - 96
+        return f.minY >= s.minY + 12 && f.maxY <= s.maxY - 96
+    }
+
+    private func dragScrollGrid(_ scrollView: XCUIElement, contentDeltaY: CGFloat) {
+        let s = scrollView.frame
+        // Drag inside the left hour-label gutter so we never touch task blocks or empty-slot taps.
+        let x = s.minX + 20
+        let topY = s.minY + 48
+        let bottomY = s.maxY - 120
+        let maxSpan = max(80, bottomY - topY)
+        // Compensate ~12pt for UIScrollView pan recognition threshold; hold before lift to avoid inertia.
+        let step = min(max(abs(contentDeltaY) + 12, 36), maxSpan)
+        let startY = contentDeltaY > 0 ? bottomY : topY
+        let endY = contentDeltaY > 0 ? startY - step : startY + step
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        origin.withOffset(CGVector(dx: x, dy: startY))
+            .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: endY)), withVelocity: .slow, thenHoldForDuration: 0.25)
     }
 
     private func ensureVisibleInGrid(
         _ element: XCUIElement,
         scrollView: XCUIElement,
-        maxSwipes: Int = 8,
+        topOffsetRange: ClosedRange<CGFloat>? = nil,
+        maxSteps: Int = 12,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        if isVisibleInGrid(element, scrollView: scrollView) { return }
-        let preferDownFirst = element.exists && element.frame.minY < scrollView.frame.minY + 8
-        let directions: [() -> Void] = preferDownFirst
-            ? [{ scrollView.swipeDown() }, { scrollView.swipeUp() }]
-            : [{ scrollView.swipeUp() }, { scrollView.swipeDown() }]
-        for swipe in directions {
-            for _ in 0..<maxSwipes {
-                if isVisibleInGrid(element, scrollView: scrollView) { return }
-                swipe()
+        if isVisibleInGrid(element, scrollView: scrollView, topOffsetRange: topOffsetRange) { return }
+        let s = scrollView.frame
+        let desiredTop = s.minY + (topOffsetRange.map { ($0.lowerBound + $0.upperBound) / 2 } ?? max(48, s.height * 0.3))
+        for stepIndex in 0..<maxSteps {
+            if isVisibleInGrid(element, scrollView: scrollView, topOffsetRange: topOffsetRange) { return }
+            if element.exists {
+                let delta = element.frame.minY - desiredTop
+                dragScrollGrid(scrollView, contentDeltaY: abs(delta) < 1 ? 80 : delta)
+            } else {
+                dragScrollGrid(scrollView, contentDeltaY: stepIndex < maxSteps / 2 ? 220 : -220)
             }
         }
         XCTFail(
@@ -1644,10 +1670,7 @@ final class DayDoFlowTests: XCTestCase {
 
     private func scrollGridToTop(_ gridScroll: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
         let hour01 = app.staticTexts["01"].firstMatch
-        for _ in 0..<8 where !isVisibleInGrid(hour01, scrollView: gridScroll) {
-            gridScroll.swipeDown()
-        }
-        XCTAssertTrue(isVisibleInGrid(hour01, scrollView: gridScroll), "Expected 01:00 label visible after scrolling to top", file: file, line: line)
+        ensureVisibleInGrid(hour01, scrollView: gridScroll, topOffsetRange: 24...110, file: file, line: line)
     }
 
     @MainActor
@@ -1803,12 +1826,12 @@ final class DayDoFlowTests: XCTestCase {
         scrollGridToTop(gridScroll)
         XCTAssertFalse(brief.isHittable, "18:00 task should not be visible when scrolled to 00:00")
 
-        // Today has no timed demo tasks before 18:00; bring 10:00–12:00 cleanly into view.
+        // Today has no timed demo tasks before 18:00; position 10:00 in the upper safe band (60–200pt from grid top)
+        // so both 10:00 and 12:00 stay comfortably visible at once.
         let hour10 = app.staticTexts["10"].firstMatch
         let hour12 = app.staticTexts["12"].firstMatch
-        ensureVisibleInGrid(hour12, scrollView: gridScroll)
-        ensureVisibleInGrid(hour10, scrollView: gridScroll)
-        XCTAssertTrue(isVisibleInGrid(hour12, scrollView: gridScroll), "Expected 12:00 label visible alongside 10:00")
+        ensureVisibleInGrid(hour10, scrollView: gridScroll, topOffsetRange: 60...200)
+        XCTAssertTrue(isVisibleInGrid(hour12, scrollView: gridScroll), "Expected 12:00 label visible alongside 10:00 (10=\(hour10.frame), 12=\(hour12.frame), scroll=\(gridScroll.frame))")
 
         let emptySlot = app.descendants(matching: .any).matching(NSPredicate(format: "label ENDSWITH '空白時段，點兩下新增'")).firstMatch
         XCTAssertTrue(emptySlot.waitForExistence(timeout: 3), app.debugDescription)
