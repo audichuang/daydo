@@ -206,20 +206,19 @@ import Testing
             showInSmart: "all", notifyMode: "all", archivedAt: nil,
             createdAt: now, updatedAt: now
         )
-        let master = TaskRecord(
-            id: ID.make(), projectId: inbox.id, title: "吃藥", content: "",
-            priority: 0, status: 0,
-            startDay: "2026-11-15", startMinute: 540, endDay: nil, endMinute: nil, timeZone: "Asia/Taipei",
-            reminders: [], repeatRule: "RRULE:FREQ=DAILY", tags: [], assigneeId: nil,
-            sortKey: "a0", completedAt: nil, sourceRaw: nil, importNote: nil,
-            createdAt: now, updatedAt: now
-        )
-        let purgedCloneId = ID.v5(name: "\(master.id)|2026-11-15|540")
+        let masterId = ID.make()
+        let purgedCloneId = ID.v5(name: "\(masterId)|2026-11-15|540")
 
         try await queue.write { db in
             try me.insert(db)
             try inbox.insert(db)
-            try master.insert(db)
+            try db.execute(
+                sql: """
+                    INSERT INTO task (id, projectId, title, content, priority, status, startDay, startMinute, endDay, endMinute, timeZone, reminders, repeatRule, tags, assigneeId, sortKey, completedAt, sourceRaw, importNote, createdAt, updatedAt, deletedAt)
+                    VALUES (?, ?, '吃藥', '', 0, 0, '2026-11-15', 540, NULL, NULL, 'Asia/Taipei', '[]', 'RRULE:FREQ=DAILY', '[]', NULL, 'a0', NULL, NULL, NULL, ?, ?, NULL)
+                    """,
+                arguments: [masterId, inbox.id, now, now]
+            )
             var deleteChange = ChangeRecord(
                 seq: nil, entity: "task", entityId: purgedCloneId,
                 op: "delete", fields: [], row: "{}", at: purgeAt,
@@ -250,7 +249,7 @@ import Testing
 
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-tests-\(UUID().uuidString)")
         let api = LocalDayDoAPI(database: appDB, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
-        let done = try await api.completeTask(id: master.id)
+        let done = try await api.completeTask(id: masterId)
         #expect(done.id != purgedCloneId)
         #expect(done.status == 2)
     }
@@ -502,7 +501,8 @@ import Testing
             reminder: "TRIGGER:-PT15M",
             repeat: "RRULE:FREQ=WEEKLY",
             subtasks: ["準備章節摘要"],
-            tags: ["讀書"]
+            tags: ["讀書"],
+            countdown: true
         ))
 
         // 4. Add a tag explicitly.

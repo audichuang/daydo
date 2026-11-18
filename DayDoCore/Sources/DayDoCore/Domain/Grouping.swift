@@ -194,12 +194,16 @@ public enum DateText {
 
     /// The meta line under a task title.
     /// - list mode (`viewDay == nil`, 1b): "18:00 – 18:30", "明天 10:00 – 11:00",
-    ///   "昨天 17:00", "全天・第 3/4 天"; a single all-day task today shows "".
+    ///   "昨天 17:00", "全天・第 3/4 天", "12 月 24 日 起・5 天"; a single all-day task today shows "".
     /// - agenda mode (`viewDay` set, 2a): no day prefix, "全天" spelled out.
     public static func taskLine(_ s: Schedule, on viewDay: LocalDay? = nil, today: LocalDay) -> String {
         let dayPart = (viewDay == nil && !s.isMultiDay && s.startDay != today) ? relative(s.startDay, today: today) : ""
         if s.isAllDay {
             if s.isMultiDay {
+                if viewDay == nil && today < s.startDay {
+                    let n = s.startDay.days(until: s.lastDay) + 1
+                    return "\(monthDay(s.startDay)) 起・\(n) 天"
+                }
                 let probe = viewDay ?? (s.occurs(on: today) ? today : s.startDay)
                 let (i, n) = s.dayPosition(on: probe) ?? (1, s.startDay.days(until: s.lastDay) + 1)
                 return "全天・第 \(i)/\(n) 天"
@@ -208,6 +212,29 @@ public enum DateText {
         }
         let r = range(s)
         return dayPart.isEmpty ? r : dayPart + " " + r
+    }
+
+    /// Calendar-day countdown badge text for a schedule relative to `today`.
+    /// Returns nil when `lastDay < today`.
+    public static func countdownLabel(_ s: Schedule, today: LocalDay) -> String? {
+        if s.lastDay < today { return nil }
+        let daysUntilStart = today.days(until: s.startDay)
+        if daysUntilStart > 0 {
+            return daysUntilStart == 1 ? "明天" : "還有 \(daysUntilStart) 天"
+        }
+        if s.isMultiDay {
+            if today == s.lastDay { return "最後一天" }
+            let remaining = today.days(until: s.lastDay) + 1
+            return "還剩 \(remaining) 天"
+        }
+        return "今天"
+    }
+
+    public static func countdownLabel(for task: TodoTask, today: LocalDay) -> String? {
+        guard task.countdown, !task.isCompleted, task.deletedAt == nil, let s = task.schedule else {
+            return nil
+        }
+        return countdownLabel(s, today: today)
     }
 }
 

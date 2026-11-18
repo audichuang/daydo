@@ -139,20 +139,27 @@ describe('Scope push RPC: new Worker → old DO', () => {
         });
       let doSource: string;
       let splitSource: string;
+      let entitiesSource: string;
+      let hlcSource: string;
+      let mergeSource: string;
       try {
         doSource = show('durable-objects/scope.ts');
         splitSource = show('durable-objects/dev/splitTxnSnapshotStore.ts');
+        entitiesSource = show('src/sync/entities.ts');
+        hlcSource = show('src/sync/hlc.ts');
+        mergeSource = show('src/sync/merge.ts');
       } catch {
         return; // History not available (shallow clone): the cross-run test is skipped.
       }
-      // Place the legacy DO two levels deeper than durable-objects/ and repoint its src imports.
       const doDir = path.join(legacyDir, 'durable-objects');
+      const syncDir = path.join(legacyDir, 'src', 'sync');
       mkdirSync(path.join(doDir, 'dev'), { recursive: true });
-      writeFileSync(path.join(doDir, 'scope.ts'), doSource.replaceAll("'../src/", "'../../../src/"));
-      writeFileSync(
-        path.join(doDir, 'dev', 'splitTxnSnapshotStore.ts'),
-        splitSource.replaceAll("'../../src/", "'../../../../src/"),
-      );
+      mkdirSync(syncDir, { recursive: true });
+      writeFileSync(path.join(syncDir, 'entities.ts'), entitiesSource);
+      writeFileSync(path.join(syncDir, 'hlc.ts'), hlcSource);
+      writeFileSync(path.join(syncDir, 'merge.ts'), mergeSource);
+      writeFileSync(path.join(doDir, 'scope.ts'), doSource);
+      writeFileSync(path.join(doDir, 'dev', 'splitTxnSnapshotStore.ts'), splitSource);
       const mod = (await import(path.join(doDir, 'scope.ts'))) as {
         ScopeObject: NonNullable<CreateScopeWorldOptions['scopeClass']>;
       };

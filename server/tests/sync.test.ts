@@ -163,6 +163,7 @@ describe('sync merge', () => {
       status: 0,
       reminders: [],
       tags: [],
+      countdown: false,
       sortKey: '',
       createdAt: 1000,
       updatedAt: 1000,
@@ -578,6 +579,7 @@ describe('sync merge', () => {
     expect(recurring.startMinute).toBe(1140);
     expect(recurring.endMinute).toBe(1230);
     expect(recurring.timeZone).toBe('Asia/Taipei');
+    expect(recurring.countdown).toBe(true);
 
     // Verify cleared + soft-deleted + purged task
     const purgedEntry = entries.find(
@@ -621,6 +623,7 @@ describe('sync merge', () => {
         'status',
         'reminders',
         'tags',
+        'countdown',
         'sortKey',
         'createdAt',
         'updatedAt',

@@ -277,6 +277,7 @@ public struct TodoTask: Codable, Hashable, Sendable, Identifiable {
     public var tags: [String]
     public var items: [ChecklistItem]
     public var assigneeId: String?
+    public var countdown: Bool
     public let ownerId: String
     public var sortKey: String
     public var completedAt: EpochMillis?
@@ -314,6 +315,7 @@ public struct TodoTask: Codable, Hashable, Sendable, Identifiable {
         commentCount: Int,
         sourceRaw: String?,
         importNote: String?,
+        countdown: Bool = false,
         ownerId: String = ""
     ) {
         self.id = id
@@ -332,6 +334,7 @@ public struct TodoTask: Codable, Hashable, Sendable, Identifiable {
         self.tags = tags
         self.items = items
         self.assigneeId = assigneeId
+        self.countdown = countdown
         self.sortKey = sortKey
         self.completedAt = completedAt
         self.createdAt = createdAt
@@ -362,6 +365,7 @@ public struct TodoTask: Codable, Hashable, Sendable, Identifiable {
         tags = try c.decode([String].self, forKey: .tags)
         items = try c.decode([ChecklistItem].self, forKey: .items)
         assigneeId = try c.decodeIfPresent(String.self, forKey: .assigneeId)
+        countdown = try c.decodeIfPresent(Bool.self, forKey: .countdown) ?? false
         ownerId = try c.decodeIfPresent(String.self, forKey: .ownerId) ?? ""
         sortKey = try c.decode(String.self, forKey: .sortKey)
         completedAt = try c.decodeIfPresent(EpochMillis.self, forKey: .completedAt)
@@ -377,7 +381,7 @@ public struct TodoTask: Codable, Hashable, Sendable, Identifiable {
     /// JSON uses `timezone` like ticktick-mcp.
     enum CodingKeys: String, CodingKey {
         case id, projectId, title, content, priority, status, schedule, start, due, allDay, reminders, `repeat`, tags, items
-        case assigneeId, ownerId, sortKey, completedAt, createdAt, updatedAt, deletedAt, attachments, commentCount, sourceRaw, importNote
+        case assigneeId, countdown, ownerId, sortKey, completedAt, createdAt, updatedAt, deletedAt, attachments, commentCount, sourceRaw, importNote
         case timeZone = "timezone"
     }
 

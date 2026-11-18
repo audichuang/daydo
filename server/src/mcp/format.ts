@@ -98,6 +98,7 @@ export function formatTask(snapshot: Snapshot, t: SnapshotRow) {
     timezone: api.timezone,
     reminders: Array.isArray(r.reminders) ? (r.reminders as string[]) : [],
     repeat: nil(r.repeatRule as string | null | undefined),
+    countdown: r.countdown === true,
     tags: Array.isArray(r.tags) ? (r.tags as string[]) : [],
     items: checklistOf(snapshot, String(r.id)),
     attachments: attachmentsOf(snapshot, String(r.id)),

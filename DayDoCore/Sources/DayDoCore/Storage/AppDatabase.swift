@@ -297,6 +297,11 @@ final class AppDatabase: Sendable {
                 t.add(column: "fileUploadFailed", .boolean).notNull().defaults(to: false)
             }
         }
+        m.registerMigration("v9") { db in
+            try db.alter(table: "task") { t in
+                t.add(column: "countdown", .boolean).notNull().defaults(to: false)
+            }
+        }
         return m
     }
 }

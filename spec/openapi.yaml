@@ -629,6 +629,7 @@ components:
         tags: { type: array, items: { type: string } }
         items: { type: array, items: { $ref: "#/components/schemas/ChecklistItem" } }
         assignee_id: { type: [string, "null"] }
+        countdown: { type: boolean }
         owner_id: { type: string, readOnly: true, description: Effective task owner member id (assignee if set, otherwise list owner or current user for inbox) }
         sort_key: { type: string }
         completed_at: { type: [integer, "null"] }
@@ -676,6 +677,7 @@ components:
         subtasks: { type: array, items: { type: string } }
         tags: { type: array, items: { type: string } }
         assignee_id: { type: string }
+        countdown: { type: boolean }
         source_raw: { type: string }
         import_note: { type: string }
     UpdateTaskInput:
@@ -696,3 +698,4 @@ components:
         subtasks: { type: array, items: { type: string }, description: Replaces the whole checklist }
         tags: { type: array, items: { type: string } }
         assignee_id: { type: [string, "null"] }
+        countdown: { type: boolean }

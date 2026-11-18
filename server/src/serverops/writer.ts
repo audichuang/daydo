@@ -314,7 +314,7 @@ function planOps(
       fields = Object.keys(row).filter((f) => f !== key);
       if (!hasAllRequiredFields(entity, [key, ...fields])) {
         const missing = Object.entries(ENTITY_FIELDS[entity])
-          .filter(([f, spec]) => !spec.nullable && f !== key && !fields.includes(f))
+          .filter(([f, spec]) => !spec.nullable && !spec.optional && f !== key && !fields.includes(f))
           .map(([f]) => f);
         throw new WriteValidationError(
           missing[0] ?? key,

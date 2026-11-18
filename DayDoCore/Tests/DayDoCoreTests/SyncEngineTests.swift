@@ -3672,11 +3672,13 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
                 viewMode: "list", kind: "TASK", isInbox: true, ownerId: meId, sortKey: "a0",
                 showInSmart: "all", notifyMode: "all", archivedAt: nil, createdAt: nowMs, updatedAt: nowMs
             ).insert(db)
-            try TaskRecord(
-                id: taskId, projectId: projectId, title: "舊附件任務", content: "",
-                priority: 0, status: 0, reminders: [], tags: [], sortKey: "a0",
-                createdAt: nowMs, updatedAt: nowMs
-            ).insert(db)
+            try db.execute(
+                sql: """
+                    INSERT INTO task (id, projectId, title, content, priority, status, reminders, tags, sortKey, createdAt, updatedAt)
+                    VALUES (?, ?, '舊附件任務', '', 0, 0, '[]', '[]', 'a0', ?, ?)
+                    """,
+                arguments: [taskId, projectId, nowMs, nowMs]
+            )
             try db.execute(
                 sql: """
                     INSERT INTO attachment (id, taskId, fileName, size, mimeType, localPath, originalPath, createdAt, updatedAt)

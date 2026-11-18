@@ -371,12 +371,26 @@ struct TaskRow: View {
                 model.openTask(task.id, inlineAvailable: usesInlineSelection)
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(task.title)
-                        .txt(17, .medium)
-                        .foregroundStyle(isDone ? Palette.done : Palette.text)
-                        .strikethrough(isDone, color: Palette.done)
-                        .lineLimit(compact ? 1 : 2)
-                        .multilineTextAlignment(.leading)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(task.title)
+                            .txt(17, .medium)
+                            .foregroundStyle(isDone ? Palette.done : Palette.text)
+                            .strikethrough(isDone, color: Palette.done)
+                            .lineLimit(compact ? 1 : 2)
+                            .multilineTextAlignment(.leading)
+                        if let countdown = countdownText {
+                            Spacer(minLength: 4)
+                            Text(countdown)
+                                .txt(12, .semibold)
+                                .foregroundStyle(accent.text)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(accent.soft))
+                                .fixedSize(horizontal: true, vertical: false)
+                                .layoutPriority(1)
+                                .accessibilityIdentifier("taskCountdownBadge")
+                        }
+                    }
                     if !compact, !task.content.isEmpty {
                         Text(firstLine(task.content)).txt(14).foregroundStyle(Palette.textSecondary).lineLimit(1)
                     }
@@ -434,6 +448,11 @@ struct TaskRow: View {
     var dateLine: String {
         guard let s = task.schedule else { return "" }
         return DateText.taskLine(s, today: model.today)
+    }
+
+    var countdownText: String? {
+        guard !isDone, !inTrash else { return nil }
+        return DateText.countdownLabel(for: task, today: model.today)
     }
 
     var dateColor: Color {

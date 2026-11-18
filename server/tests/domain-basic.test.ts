@@ -17,16 +17,16 @@ const fixturePath = path.resolve(__dirname, '../../spec/fixtures/sync-ops.json')
 
 describe('uuid', () => {
   it('uuidv5 matches the Swift vector', async () => {
-    expect(await uuidv5('01a1dd5b-fc89-75e1-b4c4-fb62891e2107|2026-11-15|1140')).toBe(
-      'cc64dbd5-1983-5448-8442-0fba63492416',
+    expect(await uuidv5('01a1ef06-b34a-7d85-86a8-d4f2b004f094|2026-11-15|1140')).toBe(
+      '90507cf8-1026-5591-aa81-b3335371de82',
     );
   });
 
   it('uuidv5 ids in the sync fixture are reproduced', async () => {
     const text = readFileSync(fixturePath, 'utf8');
-    expect(text).toContain('cc64dbd5-1983-5448-8442-0fba63492416');
-    expect(await uuidv5('01a1dd5b-fc89-75e1-b4c4-fb62891e2107|2026-11-15|1140')).toBe(
-      'cc64dbd5-1983-5448-8442-0fba63492416',
+    expect(text).toContain('90507cf8-1026-5591-aa81-b3335371de82');
+    expect(await uuidv5('01a1ef06-b34a-7d85-86a8-d4f2b004f094|2026-11-15|1140')).toBe(
+      '90507cf8-1026-5591-aa81-b3335371de82',
     );
   });
 

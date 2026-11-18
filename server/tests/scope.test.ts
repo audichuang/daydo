@@ -1734,4 +1734,91 @@ describe('Scope DO T5b serverTime & inbox RPC', () => {
       'p-inbox',
     );
   });
+
+  it('upgrades an existing Scope task table lacking countdown and defaults old rows and legacy clients to false', async () => {
+    const doState = createTestDoState();
+    // Simulate a pre-countdown Scope DO SQLite table with an existing task row.
+    doState.sqlite.exec(`
+      CREATE TABLE task (
+        id TEXT PRIMARY KEY NOT NULL,
+        projectId TEXT NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        priority INTEGER NOT NULL DEFAULT 0,
+        status INTEGER NOT NULL DEFAULT 0,
+        startDay TEXT,
+        startMinute INTEGER,
+        endDay TEXT,
+        endMinute INTEGER,
+        timeZone TEXT,
+        reminders TEXT NOT NULL DEFAULT '[]',
+        repeatRule TEXT,
+        tags TEXT NOT NULL DEFAULT '[]',
+        assigneeId TEXT,
+        sortKey TEXT NOT NULL,
+        completedAt INTEGER,
+        sourceRaw TEXT,
+        importNote TEXT,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        deletedAt INTEGER,
+        clocks TEXT NOT NULL DEFAULT '{}',
+        serverSeq INTEGER NOT NULL,
+        purgedAt INTEGER
+      );
+      INSERT INTO task (id, projectId, title, sortKey, createdAt, updatedAt, serverSeq)
+      VALUES ('t-old', 'p-1', 'Old task', 'a0', 1000, 1000, 1);
+    `);
+
+    const scope = new ScopeClass(doState.ctx, { SYNC_FAULT: 'none' } as never);
+    const cols = (doState.sqlite.prepare('PRAGMA table_info(task)').all() as Array<{ name: string }>).map(
+      (c) => c.name,
+    );
+    expect(cols).toContain('countdown');
+
+    // Legacy client push omitting countdown creates a task with countdown: false.
+    const pushRes = await scope.push({
+      scope: 'u:u-compat',
+      scopeUserId: 'u-compat',
+      pusherUserId: 'u-compat',
+      deviceId: 'dev-old',
+      memberships: { 'p-1': 'owner' },
+      purgedProjects: [],
+      meMemberId: null,
+      ops: [
+        {
+          opId: 'op-old-p1',
+          hlc: '1700000000001:0000:dev-old',
+          entity: 'project',
+          entityId: 'p-1',
+          op: 'upsert',
+          fields: ['id', 'name', 'viewMode', 'kind', 'isInbox', 'ownerId', 'sortKey', 'showInSmart', 'notifyMode', 'createdAt', 'updatedAt'],
+          row: { id: 'p-1', name: 'List', viewMode: 'list', kind: 'TASK', isInbox: false, ownerId: 'm-1', sortKey: 'a0', showInSmart: 'all', notifyMode: 'all', createdAt: 1000, updatedAt: 1000 },
+        },
+        {
+          opId: 'op-old-t',
+          hlc: '1700000000002:0000:dev-old',
+          entity: 'task',
+          entityId: 't-legacy',
+          op: 'upsert',
+          fields: ['id', 'projectId', 'title', 'content', 'priority', 'status', 'reminders', 'tags', 'sortKey', 'createdAt', 'updatedAt'],
+          row: { id: 't-legacy', projectId: 'p-1', title: 'From old client', content: '', priority: 0, status: 0, reminders: [], tags: [], sortKey: 'a1', createdAt: 1000, updatedAt: 1000 },
+        },
+      ],
+    });
+    expect(pushRes.results.map((r) => r.status)).toEqual(['applied', 'applied']);
+    expect(pushRes.results[1]?.row?.countdown).toBe(false);
+
+    const pulled = scope.pull({
+      scope: 'u:u-compat',
+      scopeUserId: 'u-compat',
+      requesterUserId: 'u-compat',
+      since: 0,
+      limit: 100,
+      memberships: { 'p-1': 'owner' },
+      meMemberId: null,
+    });
+    const oldRow = pulled.rows.find((r) => r.entity === 'task' && 'row' in r && r.row.id === 't-old');
+    expect(oldRow && 'row' in oldRow ? oldRow.row.countdown : undefined).toBe(false);
+  });
 });

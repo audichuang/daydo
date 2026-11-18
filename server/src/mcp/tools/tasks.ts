@@ -124,6 +124,10 @@ const TASK_FIELDS = {
     type: 'string',
     description: 'Calendar recurrence (RRULE), e.g. RRULE:FREQ=DAILY. Supported: FREQ=DAILY|WEEKLY|MONTHLY|YEARLY with INTERVAL (1-999), BYDAY, BYMONTHDAY. Needs a date. For genuinely repeating commitments only: completing one occurrence does NOT cancel the later ones.',
   },
+  countdown: {
+    type: 'boolean',
+    description: 'Show a day countdown badge on the task row (only shown when the task has a date). Defaults to false on create.',
+  },
   subtasks: { type: 'array', items: { type: 'string' }, description: 'Checklist item titles, in order.' },
   tags: { type: 'array', items: { type: 'string' }, description: 'Tag names; new tags are created.' },
 } as const;
@@ -153,6 +157,7 @@ export function taskWriteTools(): ToolDef[] {
         const priority = parsePriority(args) ?? 0;
         const reminder = nonBlank(optString(args, 'reminder'));
         const repeat = nonBlank(optString(args, 'repeat'));
+        const countdown = optBoolean(args, 'countdown');
         const subtasks = optStringList(args, 'subtasks') ?? [];
         const tags = normalizeTagLabels(optStringList(args, 'tags') ?? []);
         const schedule = scheduleFromAPI(
@@ -174,7 +179,10 @@ export function taskWriteTools(): ToolDef[] {
         requireWritableList(snapshot, projectId);
         const now = nowOf(ctx);
         const id = uuidv7(now);
-        const task = { projectId, title, content, priority, reminders, tags, subtasks, schedule, repeatRule };
+        const task = {
+          projectId, title, content, priority, reminders, tags, subtasks, schedule, repeatRule,
+          ...(countdown !== undefined && { countdown }),
+        };
         const outcomes = await writeOrThrow(deps, snapshot, newTaskIntents(snapshot, ctx.userId, id, task, now), { nowMs: now });
         const view = withCreated(snapshot, outcomes);
         return formatTask(view, view.findRow('task', id)!);
@@ -213,6 +221,7 @@ export function taskWriteTools(): ToolDef[] {
         const timezone = nonBlank(optString(args, 'timezone'));
         const reminder = optString(args, 'reminder');
         const repeat = optString(args, 'repeat');
+        const countdown = optBoolean(args, 'countdown');
         const subtasks = optStringList(args, 'subtasks');
         const rawTags = optStringList(args, 'tags');
         if (allDay !== undefined && start === undefined && nonBlank(due) === undefined) {
@@ -254,7 +263,7 @@ export function taskWriteTools(): ToolDef[] {
 
         const now = nowOf(ctx);
         const tags = rawTags === undefined ? undefined : normalizeTagLabels(rawTags);
-        const patch = { title, content, priority, schedule: next, reminders, repeatRule, tags, subtasks };
+        const patch = { title, content, priority, schedule: next, reminders, repeatRule, countdown, tags, subtasks };
         const intents = patchTaskIntents(snapshot, ctx.userId, task, patch, now);
         if (intents === null) throw new Error('Nothing to update: give at least one field to change');
         const outcomes = await writeOrThrow(deps, snapshot, intents, { nowMs: now });
