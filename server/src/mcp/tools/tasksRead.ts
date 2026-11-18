@@ -70,8 +70,9 @@ function searchableTasksWithDeleted(snapshot: Snapshot): SnapshotRow[] {
     if (t.row.purgedAt != null) return false;
     const pid = String(t.row.projectId ?? '');
     if (t.row.deletedAt == null) return liveIds.has(pid);
+    if (!snapshot.memberships.has(pid)) return false;
     const p = projectsById.get(pid);
-    return !p || (p.row.archivedAt == null && p.row.purgedAt == null);
+    return !p || p.row.purgedAt == null;
   });
 }
 

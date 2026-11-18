@@ -893,4 +893,126 @@ describe('MCP get_attachment', () => {
       (await call(h, 'u-a', 'get_attachment', { project_id: 'p1', task_id: 't-del', attachment_id: 'att-tdel' })).isError,
     ).toBe(true);
   });
+
+  it('sniffs PNG uploaded without content_type (application/octet-stream) via R2 range and returns image content', async () => {
+    const h = createServerHarness();
+    await seedBasic(h);
+
+    // 2 MB valid PNG signature + payload, uploaded without content_type (defaults to application/octet-stream).
+    const pngBytes = new Uint8Array(2 * 1024 * 1024);
+    pngBytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    for (let i = 8; i < pngBytes.byteLength; i += 1) pngBytes[i] = (i * 17) & 0xff;
+
+    const uploaded = await call(h, 'u-a', 'upload_attachment', {
+      project_id: 'p1',
+      task_id: 't1',
+      content_base64: Buffer.from(pngBytes).toString('base64'),
+      filename: 'unnamed-upload.bin',
+    });
+    expect(uploaded.isError, uploaded.text).toBe(false);
+    expect(uploaded.json.mime_type).toBe('application/octet-stream');
+
+    const getSpy = vi.spyOn(h.storage, 'get');
+    try {
+      const raw = await handleToolCall(
+        'get_attachment',
+        { project_id: 'p1', task_id: 't1', attachment_id: uploaded.json.id },
+        h.toolContext('u-a'),
+      );
+      expect(raw.isError).toBeUndefined();
+      // First call used R2 range 0..16.
+      expect(getSpy.mock.calls[0]?.[1]).toEqual({ range: { offset: 0, length: 16 } });
+      const textPart = raw.content.find((c) => c.type === 'text');
+      const imgPart = raw.content.find((c) => c.type === 'image');
+      expect(JSON.parse(textPart!.text)).toMatchObject({
+        id: uploaded.json.id,
+        mime_type: 'application/octet-stream',
+        size: pngBytes.byteLength,
+      });
+      expect(imgPart).toEqual({
+        type: 'image',
+        data: Buffer.from(pngBytes).toString('base64'),
+        mimeType: 'image/png',
+      });
+    } finally {
+      getSpy.mockRestore();
+    }
+
+    // Sniffed JPEG over 3.75 MB returns too_large without fetching full object.
+    const bigJpg = new Uint8Array(3_750_001);
+    bigJpg.set([0xff, 0xd8, 0xff, 0xe0], 0);
+    await seedAttachment(h, 'att-big-sniff', 't1', bigJpg.byteLength, { fileName: 'big.bin', mimeType: '' });
+    await h.storage.put(attachmentObjectKey('t1', 'att-big-sniff'), bigJpg);
+    const getSpy2 = vi.spyOn(h.storage, 'get');
+    try {
+      const bigRes = await call(h, 'u-a', 'get_attachment', {
+        project_id: 'p1',
+        task_id: 't1',
+        attachment_id: 'att-big-sniff',
+      });
+      expect(bigRes.isError).toBe(false);
+      expect(bigRes.json).toMatchObject({ id: 'att-big-sniff', too_large: true, max_bytes: 3_750_000 });
+      expect(getSpy2).toHaveBeenCalledTimes(1);
+      expect(getSpy2.mock.calls[0]?.[1]).toEqual({ range: { offset: 0, length: 16 } });
+    } finally {
+      getSpy2.mockRestore();
+    }
+  });
+
+  it('decodes UTF-8/UTF-16 BOM and MIME charset, and falls back to base64 + encoding_note on invalid bytes or unsupported charset', async () => {
+    const h = createServerHarness();
+    await seedBasic(h);
+
+    const utf8Text = '哈囉 BOM';
+    const utf8Bom = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode(utf8Text)]);
+    await seedAttachment(h, 'att-u8-bom', 't1', utf8Bom.byteLength, { fileName: 'u8.txt', mimeType: 'text/plain' });
+    await h.storage.put(attachmentObjectKey('t1', 'att-u8-bom'), utf8Bom);
+    const rU8 = await call(h, 'u-a', 'get_attachment', { project_id: 'p1', task_id: 't1', attachment_id: 'att-u8-bom' });
+    expect(rU8.isError).toBe(false);
+    expect(rU8.json.content).toBe(utf8Text);
+
+    // UTF-16LE BOM: "Hi\n中" -> [FF FE] + 0x48 0x00 0x69 0x00 0x0a 0x00 0x2d 0x4e
+    const utf16le = new Uint8Array([0xff, 0xfe, 0x48, 0x00, 0x69, 0x00, 0x0a, 0x00, 0x2d, 0x4e]);
+    await seedAttachment(h, 'att-u16le', 't1', utf16le.byteLength, { fileName: 'le.txt', mimeType: 'text/plain' });
+    await h.storage.put(attachmentObjectKey('t1', 'att-u16le'), utf16le);
+    const rLe = await call(h, 'u-a', 'get_attachment', { project_id: 'p1', task_id: 't1', attachment_id: 'att-u16le' });
+    expect(rLe.isError).toBe(false);
+    expect(rLe.json.content).toBe('Hi\n中');
+
+    // UTF-16BE BOM: "Hi" -> [FE FF] + 0x00 0x48 0x00 0x69
+    const utf16be = new Uint8Array([0xfe, 0xff, 0x00, 0x48, 0x00, 0x69]);
+    await seedAttachment(h, 'att-u16be', 't1', utf16be.byteLength, { fileName: 'be.txt', mimeType: 'text/plain; charset=utf-16' });
+    await h.storage.put(attachmentObjectKey('t1', 'att-u16be'), utf16be);
+    const rBe = await call(h, 'u-a', 'get_attachment', { project_id: 'p1', task_id: 't1', attachment_id: 'att-u16be' });
+    expect(rBe.isError).toBe(false);
+    expect(rBe.json.content).toBe('Hi');
+
+    // MIME charset=utf-16 without BOM -> decoded as UTF-16LE per WHATWG spec.
+    const utf16NoBom = new Uint8Array([0x4f, 0x00, 0x4b, 0x00]);
+    await seedAttachment(h, 'att-u16-cs', 't1', utf16NoBom.byteLength, { fileName: 'cs.txt', mimeType: 'text/plain; charset=utf-16' });
+    await h.storage.put(attachmentObjectKey('t1', 'att-u16-cs'), utf16NoBom);
+    const rCs = await call(h, 'u-a', 'get_attachment', { project_id: 'p1', task_id: 't1', attachment_id: 'att-u16-cs' });
+    expect(rCs.isError).toBe(false);
+    expect(rCs.json.content).toBe('OK');
+
+    // Invalid UTF-8 bytes without BOM -> fallback to content_base64 + encoding_note.
+    const invalidUtf8 = new Uint8Array([0x80, 0xfe, 0xff]);
+    await seedAttachment(h, 'att-bad-u8', 't1', invalidUtf8.byteLength, { fileName: 'bad.txt', mimeType: 'text/plain' });
+    await h.storage.put(attachmentObjectKey('t1', 'att-bad-u8'), invalidUtf8);
+    const rBad = await call(h, 'u-a', 'get_attachment', { project_id: 'p1', task_id: 't1', attachment_id: 'att-bad-u8' });
+    expect(rBad.isError).toBe(false);
+    expect(rBad.json.content).toBeUndefined();
+    expect(rBad.json.content_base64).toBe(Buffer.from(invalidUtf8).toString('base64'));
+    expect(rBad.json.encoding_note).toMatch(/UTF-8/i);
+
+    // Unsupported charset parameter -> fallback to content_base64 + encoding_note.
+    const rawBytes = new Uint8Array([0x00, 0x00, 0x00, 0x41]);
+    await seedAttachment(h, 'att-unsup', 't1', rawBytes.byteLength, { fileName: 'u32.txt', mimeType: 'text/plain; charset=utf-32' });
+    await h.storage.put(attachmentObjectKey('t1', 'att-unsup'), rawBytes);
+    const rUnsup = await call(h, 'u-a', 'get_attachment', { project_id: 'p1', task_id: 't1', attachment_id: 'att-unsup' });
+    expect(rUnsup.isError).toBe(false);
+    expect(rUnsup.json.content).toBeUndefined();
+    expect(rUnsup.json.content_base64).toBe(Buffer.from(rawBytes).toString('base64'));
+    expect(rUnsup.json.encoding_note).toMatch(/utf-32/i);
+  });
 });

@@ -74,10 +74,28 @@ export function createMemoryR2(): MemoryR2Bucket {
       return entry ? makeObjectMeta(key, entry) : null;
     },
 
-    async get(key: string) {
+    async get(key: string, options?: R2GetOptions) {
       const entry = store.get(key);
       if (!entry) return null;
-      const bytes = new Uint8Array(entry.bytes);
+      const fullLen = entry.bytes.byteLength;
+      let start = 0;
+      let end = fullLen;
+      let hasRange = false;
+      if (options?.range && !(options.range instanceof Headers)) {
+        hasRange = true;
+        const r = options.range;
+        if ('suffix' in r) {
+          start = Math.max(0, fullLen - r.suffix);
+        } else {
+          const offset = 'offset' in r ? (r.offset ?? 0) : 0;
+          const length = 'length' in r ? r.length : undefined;
+          start = Math.max(0, offset);
+          if (length !== undefined) {
+            end = Math.min(fullLen, start + Math.max(0, length));
+          }
+        }
+      }
+      const bytes = entry.bytes.slice(start, end);
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
           if (bytes.byteLength > 0) controller.enqueue(bytes);
@@ -87,6 +105,7 @@ export function createMemoryR2(): MemoryR2Bucket {
       const meta = makeObjectMeta(key, entry);
       return {
         ...meta,
+        ...(hasRange ? { range: { offset: start, length: bytes.byteLength } } : {}),
         body,
         bodyUsed: false,
         arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),

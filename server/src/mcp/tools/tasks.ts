@@ -33,6 +33,18 @@ export { SEARCH_LIMIT, taskIn, taskReadTools } from './tasksRead';
 
 // MARK: - Write tools
 
+function parseOptionalProjectId(args: Record<string, unknown>): string | undefined {
+  if (!Object.hasOwn(args, 'project_id') || args.project_id === undefined) return undefined;
+  const raw = args.project_id;
+  if (typeof raw !== 'string') {
+    throw new ToolValidationError('project_id', "Argument 'project_id' must be a string");
+  }
+  if (raw.trim() === '') {
+    throw new ToolValidationError('project_id', "Argument 'project_id' must not be empty");
+  }
+  return raw;
+}
+
 const DEFAULT_TIME_ZONE = 'Asia/Taipei';
 const PRIORITY: Record<string, number> = { none: 0, low: 1, medium: 3, high: 5 };
 
@@ -319,7 +331,7 @@ export function taskWriteTools(): ToolDef[] {
       },
       run: async (args, ctx) => {
         const taskId = requireStr(args, 'task_id');
-        const expectedProjectId = nonBlank(optString(args, 'project_id'));
+        const expectedProjectId = parseOptionalProjectId(args);
         const { snapshot, deps } = await openSession(ctx);
         assertHasData(snapshot);
         const task = snapshot.findRow('task', taskId);

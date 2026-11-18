@@ -645,4 +645,18 @@ describe('restore_task', () => {
 
     expect(h.calls).toEqual([]);
   });
+
+  it('rejects explicit invalid project_id values (empty, whitespace, null, non-string) without pushing', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    await h.devicePush('u-a', [deviceOp(h, 'task', taskRow('t-del', 'p1', { deletedAt: NOW_ISH }))]);
+    h.calls.length = 0;
+
+    for (const bad of ['', '   ', null, 123, true, {}]) {
+      const r = await call(h, 'u-a', 'restore_task', { task_id: 't-del', project_id: bad });
+      expect(r.isError, JSON.stringify(bad)).toBe(true);
+      expect(r.text, JSON.stringify(bad)).toContain('project_id');
+    }
+    expect(h.calls).toEqual([]);
+  });
 });

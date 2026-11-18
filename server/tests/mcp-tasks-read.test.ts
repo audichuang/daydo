@@ -153,20 +153,29 @@ describe('M11a search_tasks', () => {
     expect(active.json.map((t: any) => t.id)).toEqual(['s-content', 's-tag', 's-item', 's-title']);
   });
 
-  it('include_deleted returns trashed tasks (including in deleted projects) marked deleted:true, hiding purged and archived', async () => {
-    const h = createServerHarness();
+  it('include_deleted returns trashed tasks (including in deleted or archived lists) marked deleted:true, hiding purged and non-member lists', async () => {
+    const h = createServerHarness({ getNow: () => NOW_ISH + 25 });
     await seedBasic(h);
+    await seedUser(h, 'u-other', 'm-other');
+    await h.devicePush('u-other', [
+      deviceOp(h, 'project', projectRow('p-other', { ownerId: 'm-other' })),
+      deviceOp(h, 'task', taskRow('other-del', 'p-other', { title: 'needle other', deletedAt: NOW_ISH })),
+    ]);
     await h.devicePush('u-a', [
       deviceOp(h, 'project', projectRow('p-trash', { deletedAt: NOW_ISH })),
-      deviceOp(h, 'project', projectRow('p-arch', { archivedAt: NOW_ISH })),
+      deviceOp(h, 'project', projectRow('p-arch')),
       deviceOp(h, 'task', taskRow('live', 'p1', { title: 'needle live', updatedAt: NOW_ISH + 30 })),
       deviceOp(h, 'task', taskRow('del-open', 'p1', { title: 'needle del open', deletedAt: NOW_ISH, updatedAt: NOW_ISH + 20 })),
       deviceOp(h, 'task', taskRow('del-done', 'p1', { title: 'needle del done', status: 2, completedAt: NOW_ISH, deletedAt: NOW_ISH, updatedAt: NOW_ISH + 40 })),
       deviceOp(h, 'task', taskRow('del-proj', 'p-trash', { title: 'needle del proj', deletedAt: NOW_ISH, updatedAt: NOW_ISH + 10 })),
-      deviceOp(h, 'task', taskRow('arch', 'p-arch', { title: 'needle arch', deletedAt: NOW_ISH, updatedAt: NOW_ISH + 50 })),
+      deviceOp(h, 'task', taskRow('arch-live', 'p-arch', { title: 'needle arch live', updatedAt: NOW_ISH + 60 })),
+      deviceOp(h, 'task', taskRow('arch', 'p-arch', { title: 'needle arch', updatedAt: NOW_ISH + 15 })),
       deviceOp(h, 'task', taskRow('purged', 'p1', { title: 'needle purged', deletedAt: NOW_ISH })),
     ]);
+    // Delete task first, then archive the list.
+    expect((await call(h, 'u-a', 'delete_task', { project_id: 'p-arch', task_id: 'arch' })).isError).toBe(false);
     await h.devicePush('u-a', [
+      { ...deviceOp(h, 'project', { id: 'p-arch', archivedAt: NOW_ISH }), fields: ['archivedAt'] },
       { opId: 'purge-1', hlc: h.deviceHlc(), entity: 'task', entityId: 'purged', op: 'delete', fields: [], row: {} },
     ]);
 
@@ -177,13 +186,23 @@ describe('M11a search_tasks', () => {
     const withDel = await call(h, 'u-a', 'search_tasks', { query: 'needle', include_deleted: true });
     expect(withDel.json.map((t: any) => [t.id, t.deleted ?? false])).toEqual([
       ['live', false],
+      ['arch', true],
       ['del-open', true],
       ['del-proj', true],
       ['del-done', true],
     ]);
 
     const activeDel = await call(h, 'u-a', 'search_tasks', { query: 'needle', include_deleted: true, active_only: true });
-    expect(activeDel.json.map((t: any) => t.id)).toEqual(['live', 'del-open', 'del-proj']);
+    expect(activeDel.json.map((t: any) => t.id)).toEqual(['live', 'arch', 'del-open', 'del-proj']);
+
+    // Restoring the trashed task from the archived list restores it in place (stays in p-arch).
+    const restored = await call(h, 'u-a', 'restore_task', { task_id: 'arch' });
+    expect(restored.isError, restored.text).toBe(false);
+    expect(restored.json).toMatchObject({ id: 'arch', project_id: 'p-arch' });
+    const afterPull = await h.pull('u-a');
+    const archRow = afterPull.scopes.flatMap((s) => s.rows).find((r) => r.entity === 'task' && !('gone' in r) && r.row.id === 'arch');
+    expect(archRow && !('gone' in archRow) && archRow.row.projectId).toBe('p-arch');
+    expect(archRow && !('gone' in archRow) && archRow.row.deletedAt).toBeUndefined();
   });
 
   it('caps results at 200', async () => {

@@ -49,6 +49,96 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(parts.join(''));
 }
 
+function sniffImageMime(header: Uint8Array): string | null {
+  if (
+    header.length >= 8 &&
+    header[0] === 0x89 &&
+    header[1] === 0x50 &&
+    header[2] === 0x4e &&
+    header[3] === 0x47 &&
+    header[4] === 0x0d &&
+    header[5] === 0x0a &&
+    header[6] === 0x1a &&
+    header[7] === 0x0a
+  ) {
+    return 'image/png';
+  }
+  if (header.length >= 3 && header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (
+    header.length >= 6 &&
+    header[0] === 0x47 &&
+    header[1] === 0x49 &&
+    header[2] === 0x46 &&
+    header[3] === 0x38 &&
+    (header[4] === 0x37 || header[4] === 0x39) &&
+    header[5] === 0x61
+  ) {
+    return 'image/gif';
+  }
+  if (
+    header.length >= 12 &&
+    header[0] === 0x52 &&
+    header[1] === 0x49 &&
+    header[2] === 0x46 &&
+    header[3] === 0x46 &&
+    header[8] === 0x57 &&
+    header[9] === 0x45 &&
+    header[10] === 0x42 &&
+    header[11] === 0x50
+  ) {
+    return 'image/webp';
+  }
+  return null;
+}
+
+function parseCharset(rawMime: string): string | null {
+  for (const part of rawMime.split(';').slice(1)) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim().toLowerCase() !== 'charset') continue;
+    let val = part.slice(eq + 1).trim();
+    if (
+      (val.startsWith('"') && val.endsWith('"') && val.length >= 2) ||
+      (val.startsWith("'") && val.endsWith("'") && val.length >= 2)
+    ) {
+      val = val.slice(1, -1).trim();
+    }
+    return val || null;
+  }
+  return null;
+}
+
+function decodeText(bytes: Uint8Array, charset: string | null): { ok: true; text: string } | { ok: false; note: string } {
+  let encoding = charset ?? 'utf-8';
+  let slice = bytes;
+  let bomLabel: string | null = null;
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    encoding = 'utf-8';
+    slice = bytes.subarray(3);
+    bomLabel = 'UTF-8';
+  } else if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    encoding = 'utf-16le';
+    slice = bytes.subarray(2);
+    bomLabel = 'UTF-16LE';
+  } else if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    encoding = 'utf-16be';
+    slice = bytes.subarray(2);
+    bomLabel = 'UTF-16BE';
+  }
+
+  try {
+    return { ok: true, text: new TextDecoder(encoding, { fatal: true }).decode(slice) };
+  } catch (err) {
+    if (err instanceof RangeError) {
+      return { ok: false, note: `Unsupported charset '${encoding}'; returned as base64.` };
+    }
+    const label = bomLabel ? `${bomLabel} (BOM)` : encoding.toUpperCase();
+    return { ok: false, note: `Unable to decode attachment as ${label}; returned as base64.` };
+  }
+}
+
 const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
 function decodeBase64(raw: string): Uint8Array {
@@ -178,7 +268,7 @@ export function attachmentTools(): ToolDef[] {
     {
       name: 'get_attachment',
       description:
-        'Read an attachment\'s metadata and content. Caller must be a member of `project_id`, and the attachment must belong to `task_id` and not be deleted. Text files (text/*, JSON, XML, CSV) <= 1 MB return UTF-8 text; images (png, jpeg, gif, webp) <= 3.75 MB return MCP image content plus metadata; other files <= 1 MB return content_base64. Files over the size limit or not yet uploaded to storage return metadata with an explanation (not an error).',
+        'Read an attachment\'s metadata and content. Caller must be a member of `project_id`, and the attachment must belong to `task_id` and not be deleted. Text files (text/*, JSON, XML, CSV; decoded via BOM/charset or UTF-8, falling back to content_base64 with encoding_note if undecodable) <= 1 MB return text; images (png, jpeg, gif, webp, including generic application/octet-stream files whose header matches those image types) <= 3.75 MB return MCP image content plus metadata; other files <= 1 MB return content_base64. Files over the size limit or not yet uploaded to storage return metadata with an explanation (not an error).',
       inputSchema: {
         type: 'object',
         required: ['project_id', 'task_id', 'attachment_id'],
@@ -223,16 +313,12 @@ export function attachmentTools(): ToolDef[] {
           created_at: Number(att.row.createdAt ?? 0),
         };
 
-        const isImage = IMAGE_MIMES.has(normalizedMime);
-        const isText = !isImage && isTextMime(normalizedMime);
-        const limit = isImage ? IMAGE_LIMIT_BYTES : isText ? TEXT_LIMIT_BYTES : BINARY_LIMIT_BYTES;
-
         const notUploaded = () => ({
           ...meta,
           available: false,
           message: '檔案還沒上傳（Attachment file has not been uploaded yet）',
         });
-        const tooLarge = (actualSize: number) => ({
+        const tooLarge = (actualSize: number, limit: number) => ({
           ...meta,
           available: true,
           too_large: true,
@@ -241,30 +327,61 @@ export function attachmentTools(): ToolDef[] {
         });
 
         const key = attachmentObjectKey(taskId, attachmentId);
-        if (declaredSize > limit) {
-          const head = await storage.head(key);
-          if (!head) return notUploaded();
-          if (head.size > limit) return tooLarge(head.size);
+        let effectiveMime = normalizedMime;
+        let preloadedBytes: Uint8Array | null = null;
+
+        if (normalizedMime === 'application/octet-stream') {
+          const headObj = await storage.get(key, { range: { offset: 0, length: 16 } });
+          if (!headObj) return notUploaded();
+          const header = new Uint8Array(await headObj.arrayBuffer());
+          const sniffed = sniffImageMime(header);
+          if (sniffed !== null) {
+            effectiveMime = sniffed;
+          }
+          const sniffLimit = sniffed !== null ? IMAGE_LIMIT_BYTES : BINARY_LIMIT_BYTES;
+          if (headObj.size > sniffLimit) return tooLarge(headObj.size, sniffLimit);
+          if (headObj.size <= header.byteLength) {
+            preloadedBytes = header;
+          }
         }
 
-        const obj = await storage.get(key);
-        if (!obj) return notUploaded();
-        if (obj.size > limit) {
-          await obj.body?.cancel().catch(() => {});
-          return tooLarge(obj.size);
-        }
+        const isImage = IMAGE_MIMES.has(effectiveMime);
+        const isText = !isImage && isTextMime(effectiveMime);
+        const limit = isImage ? IMAGE_LIMIT_BYTES : isText ? TEXT_LIMIT_BYTES : BINARY_LIMIT_BYTES;
 
-        const bytes = new Uint8Array(await obj.arrayBuffer());
-        if (bytes.byteLength > limit) return tooLarge(bytes.byteLength);
+        let bytes: Uint8Array;
+        if (preloadedBytes !== null) {
+          bytes = preloadedBytes;
+        } else {
+          if (declaredSize > limit) {
+            const head = await storage.head(key);
+            if (!head) return notUploaded();
+            if (head.size > limit) return tooLarge(head.size, limit);
+          }
+
+          const obj = await storage.get(key);
+          if (!obj) return notUploaded();
+          if (obj.size > limit) {
+            await obj.body?.cancel().catch(() => {});
+            return tooLarge(obj.size, limit);
+          }
+
+          bytes = new Uint8Array(await obj.arrayBuffer());
+          if (bytes.byteLength > limit) return tooLarge(bytes.byteLength, limit);
+        }
 
         if (isImage) {
           return mcpResult([
             { type: 'text', text: JSON.stringify(meta) },
-            { type: 'image', data: bytesToBase64(bytes), mimeType: normalizedMime },
+            { type: 'image', data: bytesToBase64(bytes), mimeType: effectiveMime },
           ]);
         }
         if (isText) {
-          return { ...meta, content: new TextDecoder().decode(bytes) };
+          const decoded = decodeText(bytes, parseCharset(rawMime));
+          if (decoded.ok) {
+            return { ...meta, content: decoded.text };
+          }
+          return { ...meta, content_base64: bytesToBase64(bytes), encoding_note: decoded.note };
         }
         return { ...meta, content_base64: bytesToBase64(bytes) };
       },

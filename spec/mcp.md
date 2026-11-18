@@ -396,7 +396,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 | `delete_project` | destructive | 只有 owner 能刪，收件匣不能刪。先軟刪除清單內所有未刪除的任務，再設清單的 `deletedAt` |
 | `list_recent_tasks` | read | `project_id*`、`limit`（預設 10）、`active_only`、`tag`；依 `updatedAt` 由新到舊 |
 | `list_tasks` | read | `project_id` 可省略；只含未完成，依 `sortKey` |
-| `search_tasks` | read | `query*`、`active_only`、`include_deleted`（預設 false，含垃圾桶任務並標 `deleted: true`）；比對標題、內容、標籤、checklist 標題；先依 status、再依 `updatedAt` 排序，最多 200 筆 |
+| `search_tasks` | read | `query*`、`active_only`、`include_deleted`（預設 false，含垃圾桶任務並標 `deleted: true`，涵蓋封存清單內已刪除任務，仍排除 purged 與非成員可見範圍）；比對標題、內容、標籤、checklist 標題；先依 status、再依 `updatedAt` 排序，最多 200 筆 |
 | `get_task` | read | `project_id*`、`task_id*`；`project_id` 不符就報錯；回完整紀錄（含未刪除附件 `attachments`） |
 | `create_task` | write | `project_id*`、`title*`、`content`、`priority`（none／low／medium／high）、`start`、`due`、`all_day`、`timezone`、`reminder`、`repeat`、`subtasks`、`tags`。有 `reminder` 卻沒有日期時拒絕；`content` 裡字面的 `\n` 轉成真換行；清單必須可寫。描述沿用 REF 的規則，拿掉 TickTick 專屬段落與重述 enum 的優先級條目；「建立前先查」改指向 `search_tasks`，只有未完成的同名任務才改用 `update_task`（它不能重新開啟已完成的任務） |
 | `update_task` | idempotent-overwrite | 同上，加 `task_id*`。`repeat:""` 清除重複；`start:""` 清除排程，同時清 reminders 與 repeat；`subtasks` 整份取代（舊項目軟刪除，以新 id 重建，與 App 相同） |
@@ -408,7 +408,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 | `move_all` | idempotent-write | 搬移來源清單所有未完成任務 |
 | `get_completed_tasks` | read | `project_id` 可省略；依 `completedAt` 由新到舊 |
 | `upload_attachment` | write | `project_id*`、`task_id*`、`content_base64*`、`filename*`、`content_type`（預設 `application/octet-stream`）；解碼後上限 20 MB。任務必須在該清單且清單可寫；先寫 R2（`att/<taskId>/<attachmentId>`）再寫 `attachment` 資料列，回傳 `{id, file_name, size, mime_type, created_at}` |
-| `get_attachment` | read | `project_id*`、`task_id*`、`attachment_id*`；須能讀該清單、附件屬該任務且未刪除。文字型（`text/*`、`application/json`、`application/xml` 等）≤ 1 MB 回 metadata＋文字；圖片（png/jpeg/gif/webp）≤ 3.75 MB（base64 後不超過 Claude 的 5 MB 圖片上限）回 MCP image content＋metadata；HEIC 等其他圖片格式照「其他」處理，AI 看不到圖；其他 ≤ 1 MB 回 metadata＋`content_base64`；超過上限只回 metadata 說明太大；R2 缺檔回 metadata 與 `available: false`（皆非錯誤） |
+| `get_attachment` | read | `project_id*`、`task_id*`、`attachment_id*`；須能讀該清單、附件屬該任務且未刪除。文字型（`text/*`、`application/json`、`application/xml` 等，依 BOM／`charset` 或 UTF-8 `fatal` 解碼，無法解碼時改回 `content_base64`＋`encoding_note`）≤ 1 MB 回 metadata＋文字；圖片（png/jpeg/gif/webp，含通用 `application/octet-stream` 透過 R2 range 讀前 16 bytes 辨識檔頭者）≤ 3.75 MB（base64 後不超過 Claude 的 5 MB 圖片上限）回 MCP image content＋metadata；HEIC 等其他圖片格式照「其他」處理，AI 看不到圖；其他 ≤ 1 MB 回 metadata＋`content_base64`；超過上限只回 metadata 說明太大；R2 缺檔回 metadata 與 `available: false`（皆非錯誤） |
 | `list_tags` | read | 使用者自己的標籤 |
 | `create_tag` | write | `name*`、`color`；沒有 `parent`（DayDo 沒有巢狀標籤） |
 | `add_ics_source` | write、openWorld | 見第 9 節；多一個可選欄位 `timezone` |
