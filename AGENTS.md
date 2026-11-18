@@ -52,7 +52,7 @@ repo 沒有 GitHub Actions：push 後不等 CI，合併前以本機測試結果�
 常駐機：`DD iPhone 18 Pro`（iOS 27.2）；iPad 版面用 `DD iPad Pro 11`。
 
 - UI 測試一律走 `ios/scripts/uitest.sh`：依名稱找機器、等別的 `xcodebuild` 跑完再開始（Codex、agy 和其他 session 共用這兩台，同時跑會在啟動時失敗：`Failed to send signal 19`）、關掉平行測試。
-- `uitest.sh` 會先自己開機並等開機完成，xcodebuild 就不會在測完時把模擬器關掉。不要繞過腳本直接跑 `xcodebuild test`／`build`／`build-for-testing`：測試方面模擬器若是 xcodebuild 開的，測完就會關機，PosterBoard 還在寫桌布資料時斷開會把資料寫壞（2026-11-17 曾膨脹到 5.7G 導致每次開機當掉）；編譯方面和 `uitest.sh` 共用同一份 DerivedData，別人跑 UI 測試時直接編譯會蓋掉測試中的 App、讓後續測試啟動閃退，編譯檢查一律用 `ios/scripts/uitest.sh build`。
+- `uitest.sh` 會先自己開機並等開機完成，xcodebuild 就不會在測完時把模擬器關掉。不要繞過腳本直接跑 `xcodebuild test`／`build`／`build-for-testing`：測試方面模擬器若是 xcodebuild 開的，測完就會關機，PosterBoard 還在寫桌布資料時斷開會把資料寫壞（2026-11-17 曾膨脹到 5.7G 導致每次開機當掉）；編譯方面，DerivedData 每個 worktree 一份，同一個 worktree 裡 UI 測試進行中再編譯會換掉測試中的 App，編譯檢查一律用 `ios/scripts/uitest.sh build`（它會等全機任何 xcodebuild 結束，最長 30 分鐘後回 8）。
 - 整批工作（多輪測試加互動驗收）都做完，才用 `ios/scripts/uitest.sh down [iphone|ipad]` 關掉本次用過的 DD 常駐機，不要每跑一輪就關一次。不要直接 `xcrun simctl shutdown`：`down` 會先等別人的測試跑完再關，直接關曾在別的 session 開機 14 秒時把機器關掉。只關自己用過的那台。
 - 收起：整批 iOS 工作做完、不再需要模擬器時，用 `ios/scripts/uitest.sh park [iphone|ipad]` 把用過的常駐機整台（App、登入）收進 NAS（先等 xcodebuild 鎖，再 `sim-vault park --shutdown`）。之後 `uitest.sh` 找不到常駐機會用 `sim-vault ensure` 還原，UDID 會換新；手動驗收或新腳本要用常駐機，跑 `ios/scripts/uitest.sh up [iphone|ipad]` 拿 UDID，不要自己依名稱查（收起後查不到，`record-uitest.sh` 曾這樣壞過）。
 - DD 政策：結束碼 3 是 NAS 上沒有封存；4 是封存用的 iOS runtime 沒裝（先裝回 runtime 再跑，不用重建）。兩者都不自動建機，停下問使用者；真的重建才要重新登入。8 是 `uitest.sh` 等 xcodebuild 鎖逾時；其他結束碼原樣傳回，照 `sim-vault --help` 的下一步處理，背景見 modern-ios-guidance 技能。
