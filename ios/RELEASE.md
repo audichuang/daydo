@@ -15,6 +15,6 @@ tf verify --app 6834936769 --build <N> --group "自己" --wait 20m
 ```
 
 - 簽章走 Xcode 已登入的帳號；帶 API key（`-authenticationKey*`）時 Xcode 27.2 回 `Authentication failed: bearer token`。
-- `testflight.sh` 匯出失敗、export.log 出現「No Accounts with App Store Connect Access」加「The request cannot be processed at this time. Please try again later」是 App Store Connect 暫時錯誤，不是帳號登出；匯出階段失敗代表還沒上傳，先 `tf verify` 確認該 build 不在 App Store Connect 後用同一個 build 號重跑即可。
+- `testflight.sh` 的 `-exportArchive` 用 `ExportOptions.plist` 的 `destination=upload` 同一個指令就上傳；只有 `export.log` 顯示在上傳前失敗（例如取得 App Store Connect store configuration／帳號這步報「No Accounts with App Store Connect Access」加「The request cannot be processed at this time. Please try again later」的暫時錯誤，並非帳號登出）才確定沒上傳，可用同一個 build 號重跑。上傳階段的錯誤（連線中斷、逾時）結果不明，`tf verify` 回 PENDING 時繼續查，確認 Apple 沒收到才重用 build 號。
 - build 號用 `tf next-build` 的流水號，不用時間戳。
 - 上傳後 build 不會自動進「自己」，照 `tf verify` 的 `next=` 跑 `tf distribute`，到 `RESULT READY` 才算發出去。

@@ -9,8 +9,8 @@
 //   node device.mjs trash --id <taskId>              soft-delete one task with an HLC newer than existing clocks
 //   node device.mjs attach [--empty] [--png-no-type] create inbox probe task, PUT/GET attachment content, check 401/404
 //   node device.mjs get-attachment --id <attId> [--expect-base64 <b64>] [--expect-type <mime>]
-//   node device.mjs delete-probes                    soft-delete live "verify-probe*" tasks across all visible lists
-//   node device.mjs purge-probes                     permanently delete (op=delete) all unpurged "verify-probe*" tasks
+//   node device.mjs delete-probes                    soft-delete live ledger probes belonging to this account
+//   node device.mjs purge-probes                     permanently delete (op=delete) ledger probes belonging to this account
 //   node device.mjs status                           session summary without tokens
 // Session (tokens, deviceId) lives in <stateDir>/session.<host>.json (0600); evidence in the run dir.
 import fs from 'node:fs';
@@ -26,6 +26,9 @@ import {
   parseArgs,
   readBoundSession,
   readJson,
+  readProbeLedger,
+  recordProbe,
+  removeProbesFromLedger,
   saveEvidence,
   sessionFile,
   statePath,
@@ -155,7 +158,7 @@ async function pullAll(s) {
     for (const scope of res.data.scopes) {
       for (const r of scope.rows) {
         const id = r.gone ? r.entityId : (r.row.id ?? r.row.name ?? `${r.row.projectId}:${r.row.memberId}`);
-        rows.set(`${r.entity}/${id}`, r);
+        rows.set(`${r.entity}/${id}`, { ...r, _scope: scope.scope });
       }
       cursors[scope.scope] = scope.cursor;
       more ||= scope.hasMore;
@@ -169,7 +172,7 @@ const absent = (row, ...f) => f.every((k) => row[k] === undefined || row[k] === 
 
 /** Mirrors the MCP snapshot rules (liveProjects / liveTasks / open = status 0). */
 function view(pulled) {
-  const live = (e) => pulled.rows.filter((r) => !r.gone && r.entity === e).map((r) => ({ ...r.row, _clocks: r.clocks }));
+  const live = (e) => pulled.rows.filter((r) => !r.gone && r.entity === e).map((r) => ({ ...r.row, _clocks: r.clocks, _scope: r._scope }));
   const projects = live('project').filter((p) => absent(p, 'deletedAt', 'purgedAt', 'archivedAt'));
   const liveProjectIds = new Set(projects.map((p) => p.id));
   const seed = projects.find((p) => p.name === cfg.seedProject) ?? null;
@@ -185,6 +188,7 @@ function view(pulled) {
     liveTasks,
     allLiveTasks,
     allTasksRaw,
+    memberships: pulled.memberships,
     summary: {
       projectId: seed?.id ?? null,
       inboxProjectId: inbox?.id ?? null,
@@ -203,7 +207,7 @@ function view(pulled) {
 }
 
 function stripClocks(row) {
-  const { _clocks, ...rest } = row;
+  const { _clocks, _scope, ...rest } = row;
   return rest;
 }
 
@@ -416,31 +420,71 @@ async function trash(id) {
   if (!deletedAt) process.exit(1);
 }
 
+function selectLedgerProbes(s, v, { liveOnly = false } = {}) {
+  const ledger = readProbeLedger(s.userId);
+  const ownScope = `u:${s.userId}`;
+  const ownProjectIds = new Set(
+    (v.memberships ?? []).filter((m) => m.role === 'owner' && m.scope === ownScope).map((m) => m.projectId),
+  );
+  const byId = new Map(v.allTasksRaw.map((t) => [t.id, t]));
+  const eligible = [];
+  const staleIds = [];
+  const skippedSafety = [];
+  for (const entry of ledger.probes) {
+    const t = byId.get(entry.id);
+    if (!t || t.purgedAt != null) {
+      staleIds.push(entry.id);
+      continue;
+    }
+    if (
+      !String(t.title ?? '').startsWith(cfg.probePrefix) ||
+      t._scope !== ownScope ||
+      !ownProjectIds.has(t.projectId)
+    ) {
+      skippedSafety.push({ id: entry.id, title: t.title ?? null, projectId: t.projectId ?? null, scope: t._scope ?? null });
+      continue;
+    }
+    if (liveOnly && t.deletedAt != null) continue;
+    eligible.push(t);
+  }
+  return { ledger, eligible, staleIds, skippedSafety };
+}
+
 async function deleteProbes() {
   const s = loadSession();
-  const v = view(await pullAll(s));
-  const probes = v.allLiveTasks.filter((t) => String(t.title).startsWith(cfg.probePrefix));
-  if (!probes.length) {
+  const initialLedger = readProbeLedger(s.userId);
+  if (!initialLedger.probes.length) {
     console.log(JSON.stringify({ step: 'delete-probes', deleted: 0 }));
     return;
   }
-  const results = await push(s, softDeleteOps(s, probes));
+  const v = view(await pullAll(s));
+  const { eligible, skippedSafety } = selectLedgerProbes(s, v, { liveOnly: true });
+  if (!eligible.length) {
+    const out = { step: 'delete-probes', deleted: 0, skippedSafety };
+    evidence('device.log', out);
+    console.log(JSON.stringify(out));
+    if (skippedSafety.length) process.exit(1);
+    return;
+  }
+  const results = await push(s, softDeleteOps(s, eligible), { allowRejected: () => true });
   const notApplied = results.filter((r) => !r.result.row?.deletedAt).map((r) => r.op.entityId);
-  const out = { step: 'delete-probes', deleted: results.length - notApplied.length, notApplied };
+  const out = { step: 'delete-probes', deleted: results.length - notApplied.length, notApplied, skippedSafety };
   evidence('device.log', out);
   console.log(JSON.stringify(out));
-  if (notApplied.length) process.exit(1);
+  if (notApplied.length || skippedSafety.length) process.exit(1);
 }
 
 async function purgeProbes() {
   const s = loadSession();
-  const v = view(await pullAll(s));
-  const probes = v.allTasksRaw.filter((t) => absent(t, 'purgedAt') && String(t.title ?? '').startsWith(cfg.probePrefix));
-  if (!probes.length) {
-    console.log(JSON.stringify({ step: 'purge-probes', purged: 0 }));
+  const initialLedger = readProbeLedger(s.userId);
+  if (!initialLedger.probes.length) {
+    console.log(JSON.stringify({ step: 'purge-probes', purged: 0, staleRemoved: 0, remaining: 0 }));
     return;
   }
-  const ops = probes.map((t) => {
+  const v = view(await pullAll(s));
+  const { eligible, staleIds, skippedSafety } = selectLedgerProbes(s, v);
+  if (staleIds.length) removeProbesFromLedger(s.userId, staleIds);
+  const ops = eligible.map((t) => {
     const maxMs = Math.max(0, ...Object.values(t._clocks ?? {}).map((c) => Number(String(c).slice(0, 13))));
     return {
       opId: uuidv7(),
@@ -452,12 +496,26 @@ async function purgeProbes() {
       row: {},
     };
   });
-  const results = await push(s, ops);
-  const notApplied = results.filter((r) => !r.result.row?.purgedAt).map((r) => r.op.entityId);
-  const out = { step: 'purge-probes', purged: results.length - notApplied.length, notApplied };
+  let purgedCount = 0;
+  const notApplied = [];
+  for (let i = 0; i < ops.length; i += 50) {
+    const batch = ops.slice(i, i + 50);
+    const res = await call(s, '/sync/push', { deviceId: s.deviceId, ops: batch });
+    if (res.status !== 200) die(`purge push failed: ${res.status} ${JSON.stringify(res.data)}`);
+    const confirmed = [];
+    res.data.results.forEach((r, j) => {
+      const entityId = batch[j].entityId;
+      if (r.status === 'applied' && r.row?.purgedAt) confirmed.push(entityId);
+      else notApplied.push({ id: entityId, status: r.status, reason: r.reason ?? null });
+    });
+    if (confirmed.length) removeProbesFromLedger(s.userId, confirmed);
+    purgedCount += confirmed.length;
+  }
+  const remaining = readProbeLedger(s.userId).probes.length;
+  const out = { step: 'purge-probes', purged: purgedCount, staleRemoved: staleIds.length, skippedSafety, notApplied, remaining };
   evidence('device.log', out);
   console.log(JSON.stringify(out));
-  if (notApplied.length) process.exit(1);
+  if (skippedSafety.length || notApplied.length || remaining > 0) process.exit(1);
 }
 
 function pngChunk(type, data) {
@@ -547,6 +605,8 @@ async function attach({ empty, pngNoType }) {
       updatedAt: now,
     }),
   );
+  // Record before push so an interrupted or unacknowledged push can still be cleaned up.
+  recordProbe(s.userId, { id: taskId, title, projectId: inboxId });
   await push(s, [op(s, 'task', taskRow), ...attOps]);
 
   const attResults = [];
@@ -577,7 +637,6 @@ async function attach({ empty, pngNoType }) {
   const firstRoute = `/attachments/${specs[0].id}/content`;
   const unauthRes = await fetch(`${cfg.api}${firstRoute}`, { headers: accessHeaders(), redirect: 'manual' });
   const mcpRes = await fetch(`${new URL(cfg.mcp).origin}${firstRoute}`, {
-    headers: { Authorization: `Bearer ${s.accessToken}` },
     redirect: 'manual',
   });
   const unauthGetStatus = unauthRes.status;

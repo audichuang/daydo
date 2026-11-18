@@ -10,6 +10,54 @@ import Testing
 private let attachmentE2EBaseURL = ProcessInfo.processInfo.environment["DAYDO_SYNC_BASE_URL"]
 private let attachmentE2EEmailLogin = ProcessInfo.processInfo.environment["DAYDO_SYNC_EMAIL_LOGIN"] == "1"
 private let attachmentE2EEnabled = attachmentE2EBaseURL != nil && attachmentE2EEmailLogin
+private let allowedLoopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+
+private func normalizedURLHost(_ url: URL?) -> String? {
+    url?.host?
+        .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        .lowercased()
+}
+
+private func requireLoopbackBaseURL(_ raw: String) throws -> (url: URL, host: String) {
+    let url = try #require(URL(string: raw), "Invalid DAYDO_SYNC_BASE_URL: \(raw)")
+    let scheme = url.scheme?.lowercased()
+    try #require(
+        scheme == "http" || scheme == "https",
+        "DAYDO_SYNC_BASE_URL must use http or https, got: \(raw)"
+    )
+    let host = try #require(
+        normalizedURLHost(url),
+        "DAYDO_SYNC_BASE_URL must include a loopback host (127.0.0.1, localhost, or ::1), got: \(raw)"
+    )
+    try #require(
+        allowedLoopbackHosts.contains(host),
+        "DAYDO_SYNC_BASE_URL must target a loopback host (127.0.0.1, localhost, or ::1), got: \(raw)"
+    )
+    return (url, host)
+}
+
+private final class NoCrossHostRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    let allowedHost: String
+
+    init(allowedHost: String) {
+        self.allowedHost = allowedHost
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        if normalizedURLHost(request.url) == allowedHost {
+            completionHandler(request)
+        } else {
+            Issue.record("Blocked cross-host redirect to \(request.url?.absoluteString ?? "unknown")")
+            completionHandler(nil)
+        }
+    }
+}
 
 private struct EmailStartRequest: Encodable, Sendable {
     let email: String
@@ -26,6 +74,7 @@ private struct DevMailResponse: Decodable, Sendable {
     let code: String?
 }
 
+extension FileBackedDatabaseTests {
 @Suite struct AttachmentTransportE2ETests {
     @Test(
         .enabled(
@@ -35,7 +84,11 @@ private struct DevMailResponse: Decodable, Sendable {
     )
     func attachmentUploadAndDownloadOverHTTPWithEmailLogin() async throws {
         let baseURLString = try #require(attachmentE2EBaseURL)
-        let baseURL = try #require(URL(string: baseURLString))
+        let (baseURL, allowedHost) = try requireLoopbackBaseURL(baseURLString)
+
+        let redirectDelegate = NoCrossHostRedirectDelegate(allowedHost: allowedHost)
+        let session = URLSession(configuration: .ephemeral, delegate: redirectDelegate, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
 
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("daydo-att-e2e-\(UUID().uuidString)", isDirectory: true)
@@ -51,7 +104,7 @@ private struct DevMailResponse: Decodable, Sendable {
         let deviceIdB = try await dbB.writer.write { db in try HLC.ensureDeviceId(in: db) }
         #expect(deviceIdA != deviceIdB)
 
-        let transport = HTTPSyncTransport(baseURL: baseURL)
+        let transport = HTTPSyncTransport(baseURL: baseURL, session: session)
         let tokensA = InMemorySyncTokenStore()
         let tokensB = InMemorySyncTokenStore()
 
@@ -83,6 +136,8 @@ private struct DevMailResponse: Decodable, Sendable {
         // 1. Device A: email login -> bootstrap -> create task -> uploadAttachment -> syncNow -> waitForAttachmentUploads.
         let loginA = try await loginWithEmailCode(
             baseURL: baseURL,
+            allowedHost: allowedHost,
+            session: session,
             transport: transport,
             email: email,
             deviceId: deviceIdA,
@@ -116,6 +171,8 @@ private struct DevMailResponse: Decodable, Sendable {
         // 2. Device B: email login -> pull -> attachment row has localPath == nil -> api.attachmentFile downloads bytes.
         let loginB = try await loginWithEmailCode(
             baseURL: baseURL,
+            allowedHost: allowedHost,
+            session: session,
             transport: transport,
             email: email,
             deviceId: deviceIdB,
@@ -160,9 +217,12 @@ private struct DevMailResponse: Decodable, Sendable {
         #expect(try await apiB.unsyncedChangeCount() == 0)
     }
 }
+}
 
 private func loginWithEmailCode(
     baseURL: URL,
+    allowedHost: String,
+    session: URLSession,
     transport: HTTPSyncTransport,
     email: String,
     deviceId: String,
@@ -181,8 +241,9 @@ private func loginWithEmailCode(
     var mailComponents = try #require(URLComponents(url: baseURL.appendingPathComponent("test/mail"), resolvingAgainstBaseURL: false))
     mailComponents.queryItems = [URLQueryItem(name: "to", value: email)]
     let mailURL = try #require(mailComponents.url)
-    let (mailData, mailURLResponse) = try await URLSession.shared.data(from: mailURL)
+    let (mailData, mailURLResponse) = try await session.data(from: mailURL)
     let mailHTTPResponse = try #require(mailURLResponse as? HTTPURLResponse)
+    #expect(normalizedURLHost(mailHTTPResponse.url) == allowedHost)
     #expect(mailHTTPResponse.statusCode == 200)
     let mail = try JSONDecoder().decode(DevMailResponse.self, from: mailData)
     let code = try #require(mail.code)

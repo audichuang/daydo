@@ -5,7 +5,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 ## Baseline preconditions
 
 - **Production:** the Worker is deployed; deploying is not part of verification.
-- **Stand-in:** `bash $S/devserver.sh up <ref>` plus the `DAYDO_*` exports in `../SKILL.md` Launch.
+- **Stand-in:** `bash $S/devserver.sh up [<git ref>]` (ref optional, defaults to `HEAD`) plus the `DAYDO_*` exports in `../SKILL.md` Launch (prepend the one-line prefix on every shell call; `:8787` and `$HOME/.local/state/daydo-verify-dryrun` are fixed so only one agent may run stand-in at a time, and `ego-browser` is still required for `mcp-login`).
 - `bash $S/doctor.sh --new-run` passes, and the evidence dir it prints is the current run.
 - Production only: the test address `pokemongo030501@gmail.com` is signed in at `https://mail.google.com/mail/u/8/` inside ego-browser.
 - Production only: the 1Password service account can read `Agent` / "DayDo Cloudflare Access service token".
@@ -25,7 +25,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 ## Proof and skip reporting
 
 - Assert on data, not prose: tool_result JSON from the `claude -p` stream, and pull summaries from the device.
-- Every MCP mutation needs a device-side read-back (`device.mjs find`). Every seed needs a pull after the push.
+- Every MCP mutation needs a device-side read-back (`device.mjs find`, `device.mjs task-status`, or `device.mjs get-attachment`). Every seed needs a pull after the push.
 - Screens: authorize login, code, consent and callback pages. The code page is captured before typing; Gmail is never captured.
 - Each artifact goes to `$DAYDO_VERIFY_STATE/<run>/` with the step name in its file name.
 - Report an unreachable path with the command that failed and the unmet precondition. Examples: the code mail never arrived (rate limit, spam), the authorize page shows "這個…帳號還沒有 DayDo 帳號", or `claude mcp list` shows Pending approval.

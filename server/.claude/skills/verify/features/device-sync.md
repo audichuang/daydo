@@ -24,7 +24,7 @@ Preconditions:
 - **Seed.** Run `node $S/device.mjs seed --n 60`.
   - The first run prints `"skipped":false` with pushed counts. For N=60 that is 60 tasks: 54 active, 6 completed, 7 repeating, 20 all-day, 40 timed, 27 checklist items. It also prints a `pulled` summary that must match.
   - Later runs print `"skipped":true` with the current pulled counts.
-- **Read-back.** Run `node $S/device.mjs pull --label <name>`. The summary is written to `<run>/pull-<name>.json`.
+- **Read-back.** Run `node $S/device.mjs pull [--label <name>]` (`--label` is optional and defaults to `latest`). The summary is written to `<run>/pull-<name>.json`.
 - **Find.** Run `node $S/device.mjs find --title "verify-seed #001"`. It exits 0 and prints the id and status.
 - **Proof.** `seed.json` holds the pushed counts next to the pulled counts, and a mismatch fails the step. `pull-*.json` before and after the MCP steps shows the probe arriving and leaving.
 
@@ -39,5 +39,5 @@ Preconditions:
   - reminders and repeat rules only go on scheduled tasks;
   - sort keys never end in `0`.
 - The seed is skipped whenever `verify-seed` exists, even a partial one from an interrupted run. The assertions compare MCP results with a fresh device pull, never with the requested N. To reseed, delete the list in the App first.
-- Soft-deleted probes stay in pull as rows with `deletedAt` (the trash), and `deleted` in the summary keeps growing across runs. That is expected.
+- Soft-deleted and purged rows in `verify-seed` stay in `deleted` (`allTasks.length - liveTasks.length`), so `deleted` keeps growing across runs while `probes` drops to `[]` after cleanup. That is expected.
 - `/sync/*` exists only on the API host; the MCP host returns 404 for it.

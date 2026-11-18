@@ -13,7 +13,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { SCRIPTS_DIR, cfg, die, parseArgs, readJson, redact, runDir, saveEvidence, statePath } from './lib.mjs';
+import { SCRIPTS_DIR, cfg, die, parseArgs, readBoundSession, readJson, recordProbe, redact, runDir, saveEvidence, statePath } from './lib.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const model = args.model ?? 'haiku';
@@ -140,7 +140,12 @@ function write() {
   const out = claude('write', `Call the daydo tool create_task with project_id "${seed.projectId}" and title "${title}". Do nothing else.`, ['create_task']);
   const ct = out.calls.find((c) => c.tool === 'create_task' && !c.isError);
   const found = device('find', '--title', title, '--status', '0');
-  const probe = { title, id: ct?.json?.id ?? null, projectId: seed.projectId };
+  const probeId = ct?.json?.id ?? found.data?.id ?? null;
+  const session = readBoundSession();
+  if (session?.userId && probeId) {
+    recordProbe(session.userId, { id: probeId, title, projectId: seed.projectId });
+  }
+  const probe = { title, id: probeId, projectId: seed.projectId };
   fs.writeFileSync(path.join(runDir(), 'probe.json'), `${JSON.stringify(probe, null, 2)}\n`);
   check('write', out, {
     createTaskOk: Boolean(ct),
@@ -178,6 +183,7 @@ function attachment() {
     `1. Call get_task for that project_id and task_id.\n` +
     `2. Call get_attachment for each of these attachment_ids: ${attIds}.\n` +
     `3. Call upload_attachment with project_id "${probe.projectId}", task_id "${probe.taskId}", filename "${uploadFileName}", content_type "text/plain", and content_base64 "${uploadBase64}".\n` +
+    `4. After upload_attachment succeeds, call get_task again for project_id "${probe.projectId}" and task_id "${probe.taskId}".\n` +
     'Do nothing else.';
   const out = claude('attachment', prompt, ['get_task', 'get_attachment', 'upload_attachment']);
 
@@ -186,7 +192,13 @@ function attachment() {
   const getTaskListsAllAttachments =
     Array.isArray(listedAtts) &&
     probe.attachments.every((att) =>
-      listedAtts.some((a) => a.id === att.id && a.file_name === att.fileName && Number(a.size) === att.size),
+      listedAtts.some(
+        (a) =>
+          a.id === att.id &&
+          a.file_name === att.fileName &&
+          Number(a.size) === att.size &&
+          a.mime_type === att.mimeType,
+      ),
     );
 
   const perAttChecks = {};
@@ -205,6 +217,21 @@ function attachment() {
 
   const up = out.calls.find((c) => c.tool === 'upload_attachment' && !c.isError);
   const uploadedId = up?.json?.id;
+  const upIdx = up ? out.calls.indexOf(up) : -1;
+  const gtAfterUpload =
+    upIdx >= 0
+      ? out.calls.slice(upIdx + 1).find((c) => c.tool === 'get_task' && !c.isError && c.input?.task_id === probe.taskId)
+      : null;
+  const getTaskAfterUploadHasUploaded =
+    Boolean(uploadedId) &&
+    Array.isArray(gtAfterUpload?.json?.attachments) &&
+    gtAfterUpload.json.attachments.some(
+      (a) =>
+        a.id === uploadedId &&
+        a.file_name === uploadFileName &&
+        Number(a.size) === uploadSize &&
+        a.mime_type === 'text/plain',
+    );
   const dev = uploadedId
     ? device('get-attachment', '--id', uploadedId, '--expect-base64', uploadBase64, '--expect-type', 'text/plain')
     : { status: 1, data: null };
@@ -215,6 +242,7 @@ function attachment() {
     getTaskListsAllAttachments,
     ...perAttChecks,
     uploadAttachmentOk: Boolean(uploadedId) && up.json?.file_name === uploadFileName && Number(up.json?.size) === uploadSize,
+    getTaskAfterUploadHasUploaded,
     deviceGetUploadedMatches: dev.status === 0 && dev.data?.sameBytes === true,
   });
 }

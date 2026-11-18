@@ -11,12 +11,15 @@ info:
     list_members and update_me.
     MCP-only tools (ICS, move_all, list_recent_tasks, get_attachment) are not in this file.
 
-    HTTP contract of `DayDoAPI` (DayDoCore/Sources/DayDoCore/API/DayDoAPI.swift).
-    The iOS app implements it locally (`LocalDayDoAPI`); the phase-2 Cloudflare
-    Worker serves it over HTTP, and the MCP server maps one tool per operation
-    (operationId = MCP tool name, aligned with ticktick-mcp), except
-    `/attachments/{attachment_id}/content`, whose two operations are Worker
-    HTTP endpoints only and do not map to MCP tools.
+    Model contract of the App's local `DayDoAPI`
+    (DayDoCore/Sources/DayDoCore/API/DayDoAPI.swift, implemented by `LocalDayDoAPI`).
+    The Cloudflare Worker does not expose these REST paths; its HTTP routes are
+    only `/auth/*`, `/me/avatar`, `/sync/*`, `/attachments/{id}/content`,
+    `/invites/*`, `/projects/{id}/members/*`, `/health`, and the MCP/OAuth
+    endpoints (see `server/README.md`). Only operations whose `operationId`
+    matches a tool in `server/src/mcp/registry.ts` (`spec/mcp.md` section 8)
+    correspond to MCP tools; all other operations here are local App API only
+    (except `/attachments/{attachment_id}/content`, which is Worker HTTP only).
 
     Conventions
     - JSON keys are snake_case.

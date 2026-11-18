@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Tears down what a verify run created; evidence in <state>/<run>/ is never touched.
 #   bash cleanup.sh [--keep-probe] [--keep-session]
-#   1. permanently deletes (purges, op=delete) all "verify-probe*" tasks and their R2 attachment
-#      prefixes; GET 404 after purge does not prove R2 deletion (purged tasks return 404 before
-#      reading R2), so cleanup does not claim R2 deletion is verified           [--keep-probe skips]
+#   1. permanently deletes (purges, op=delete) probe tasks recorded in this target's probe ledger
+#      (verified by existence, prefix, and account ownership); R2 cleanup is best-effort because
+#      GET 404 after purge cannot prove R2 deletion (purged tasks return 404 before reading R2).
+#      Fails if session is missing while pending ledger entries remain.         [--keep-probe skips]
 #   2. `claude mcp logout daydo-verify` in the temp dir, then checks the keychain entry is gone
 #   3. removes the temp dir recorded in <state>/claude-dir (only daydo-verify-claude.* paths)
 #   4. kills the private tmux socket daydo-verify (never other tmux servers)
 #   5. finishes the recorded ego-browser TaskSpace with keep: [] (user tabs are protected)
-#   6. deletes the device session file (tokens)                                        [--keep-session skips]
+#   6. deletes the device session file (kept if step 1 failed so purge can retry) [--keep-session skips]
 # The verify-seed project and the account stay (there is no delete-account endpoint).
 # Steps 2-3 fail closed: if logout fails, a token remains, or CLAUDE_CONFIG_DIR differs from the one
 # mcp-login recorded (<state>/claude-config-dir), the temp dir and pointers are kept and the exit code is 1.
@@ -28,14 +29,30 @@ js() { node --input-type=module -e "import * as L from '$LIB'; $1"; }
 STATE="$(js 'console.log(L.cfg.stateDir)')"
 RUN="$(js 'console.log(L.runDir())')"
 rc=0
+purge_failed=0
 
 if [ "$keep_probe" = 0 ]; then
   if [ -n "$(js 'import("node:fs").then((fs) => console.log(fs.existsSync(L.sessionFile()) ? 1 : ""))')" ]; then
-    node "$HERE/device.mjs" purge-probes && rm -f "$STATE/attachment-probe.json" || rc=1
-    node "$HERE/device.mjs" pull --label after-cleanup >/dev/null || rc=1
+    if node "$HERE/device.mjs" purge-probes; then
+      rm -f "$STATE/attachment-probe.json"
+      node "$HERE/device.mjs" pull --label after-cleanup >/dev/null || rc=1
+    else
+      echo "FAIL  purge-probes failed; keeping device session and probe ledger for retry"
+      purge_failed=1
+      rc=1
+    fi
   else
-    echo "skip  purge-probes: no device session"
+    js '
+      const pending = L.pendingProbeLedgersForApi();
+      if (pending.length) {
+        console.log(`FAIL  no device session, but probe ledger still has pending probe(s): ${pending.map((p) => `${p.file} (${p.count})`).join(", ")}`);
+        process.exit(1);
+      }
+      console.log("skip  purge-probes: no device session and no pending probes");
+    ' || { purge_failed=1; rc=1; }
   fi
+else
+  echo "skip  purge-probes: --keep-probe"
 fi
 
 DIR=""
@@ -77,6 +94,8 @@ fi
 
 if tmux -L daydo-verify list-sessions >/dev/null 2>&1; then
   tmux -L daydo-verify kill-server && echo "ok    killed tmux socket daydo-verify"
+else
+  echo "skip  tmux socket daydo-verify not running"
 fi
 
 js '
@@ -87,7 +106,13 @@ js '
   if (!ok) process.exit(1);
 ' || rc=1
 
-if [ "$keep_session" = 0 ]; then node "$HERE/device.mjs" forget; fi
+if [ "$keep_session" = 0 ]; then
+  if [ "$purge_failed" = 0 ]; then
+    node "$HERE/device.mjs" forget
+  else
+    echo "skip  forget device session: kept so purge-probes can be retried"
+  fi
+fi
 
 echo "evidence kept in $RUN:"
 ls "$RUN"

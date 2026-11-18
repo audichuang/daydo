@@ -80,6 +80,76 @@ export function readBoundSession() {
   return s;
 }
 
+// ---------------------------------------------------------------------------
+// Probe ledger (scoped by API base URL + userId) so purge-probes / delete-probes
+// only touch probes created by verify scripts for this target and account.
+
+export function probeLedgerFile(userId) {
+  const host = new URL(cfg.api).host.replace(/[^a-z0-9.]/gi, '_');
+  const uid = String(userId).replace(/[^a-z0-9_-]/gi, '_');
+  return statePath(`probe-ledger.${host}.${sha8(cfg.api)}.${uid}.json`);
+}
+
+export function readProbeLedger(userId) {
+  const file = probeLedgerFile(userId);
+  const data = readJson(file, null);
+  if (!data || data.api !== cfg.api || data.userId !== userId || !Array.isArray(data.probes)) {
+    return { file, api: cfg.api, userId, probes: [] };
+  }
+  return { file, api: data.api, userId: data.userId, probes: data.probes };
+}
+
+export function writeProbeLedger(userId, probes) {
+  const file = probeLedgerFile(userId);
+  if (!probes.length) {
+    fs.rmSync(file, { force: true });
+    return;
+  }
+  writeJson(file, { api: cfg.api, userId, probes });
+}
+
+export function recordProbe(userId, entry) {
+  const ledger = readProbeLedger(userId);
+  if (ledger.probes.some((p) => p.id === entry.id)) return ledger.file;
+  const next = [
+    ...ledger.probes,
+    {
+      id: entry.id,
+      title: entry.title ?? null,
+      projectId: entry.projectId ?? null,
+      recordedAt: entry.recordedAt ?? Date.now(),
+    },
+  ];
+  writeProbeLedger(userId, next);
+  return ledger.file;
+}
+
+export function removeProbesFromLedger(userId, ids) {
+  const drop = new Set(ids);
+  if (!drop.size) return;
+  const ledger = readProbeLedger(userId);
+  writeProbeLedger(userId, ledger.probes.filter((p) => !drop.has(p.id)));
+}
+
+export function pendingProbeLedgersForApi() {
+  let names = [];
+  try {
+    names = fs.readdirSync(cfg.stateDir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of names) {
+    if (!name.startsWith('probe-ledger.') || !name.endsWith('.json')) continue;
+    const file = statePath(name);
+    const data = readJson(file, null);
+    if (data && data.api === cfg.api && Array.isArray(data.probes) && data.probes.length > 0) {
+      out.push({ file, userId: data.userId ?? null, count: data.probes.length, probes: data.probes });
+    }
+  }
+  return out;
+}
+
 /** Appends one redacted line to <run>/<name>. */
 export function evidence(name, value) {
   const text = typeof value === 'string' ? value : JSON.stringify(value);
