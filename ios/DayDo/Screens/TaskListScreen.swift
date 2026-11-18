@@ -24,70 +24,80 @@ struct TaskListScreen: View {
         return false
     }
 
+    private var showComposeFAB: Bool {
+        model.canCompose(in: scope)
+    }
+
     var body: some View {
         @Bindable var model = model
-        ZStack(alignment: .top) {
+        ZStack(alignment: .bottomTrailing) {
             if isRegular {
                 Palette.background.ignoresSafeArea()
             }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(model.scopeTitle(scope)).txt(30, .bold).foregroundStyle(Palette.text)
-                        Text(subtitle)
-                            .txt(14)
-                            .foregroundStyle(Palette.textSecondary)
-                            .contentTransition(reduceMotion ? .identity : .numericText())
-                            .animation(loadedScope == scope ? Motion.count(reduceMotion) : nil, value: subtitle)
-                        if scope == .smart(.all) && model.filterMembers.count > 1 {
-                            MemberFilterChips(
-                                members: model.filterMembers,
-                                selection: Binding(get: { model.effectiveAllMemberFilter }, set: { model.allMemberFilter = $0 })
-                            )
-                                .padding(.top, 10)
+            ZStack(alignment: .top) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(model.scopeTitle(scope)).txt(30, .bold).foregroundStyle(Palette.text)
+                            Text(subtitle)
+                                .txt(14)
+                                .foregroundStyle(Palette.textSecondary)
+                                .contentTransition(reduceMotion ? .identity : .numericText())
+                                .animation(loadedScope == scope ? Motion.count(reduceMotion) : nil, value: subtitle)
+                            if scope == .smart(.all) && model.filterMembers.count > 1 {
+                                MemberFilterChips(
+                                    members: model.filterMembers,
+                                    selection: Binding(get: { model.effectiveAllMemberFilter }, set: { model.allMemberFilter = $0 })
+                                )
+                                    .padding(.top, 10)
+                            }
                         }
-                    }
-                    .padding(.horizontal, 4)
+                        .padding(.horizontal, 4)
 
-                    Group {
-                        if loaded && sections.isEmpty {
-                            EmptyState(scope: scope)
-                                .transition(.opacity)
+                        Group {
+                            if loaded && sections.isEmpty {
+                                EmptyState(scope: scope)
+                                    .transition(.opacity)
+                            }
+                            ForEach(sections) { sec in
+                                SectionCard(section: sec, scope: scope, closed: closed.contains(sec.id)) { toggle(sec.id) }
+                                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                            }
                         }
-                        ForEach(sections) { sec in
-                            SectionCard(section: sec, scope: scope, closed: closed.contains(sec.id)) { toggle(sec.id) }
-                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                        .id(loadedScope)
+                        if sections.contains(where: \.hasMore) {
+                            Button { loadMore() } label: {
+                                Text("載入更多").txt(13, .semibold).foregroundStyle(accent.text)
+                                    .frame(maxWidth: .infinity, minHeight: 36)
+                            }
+                            .buttonStyle(.press)
+                            .hoverEffect(.highlight)
+                        } else if !sections.isEmpty {
+                            Text("已顯示全部").txt(12).foregroundStyle(Palette.textFaint).frame(maxWidth: .infinity).padding(.vertical, 4)
                         }
                     }
-                    .id(loadedScope)
-                    if sections.contains(where: \.hasMore) {
-                        Button { loadMore() } label: {
-                            Text("載入更多").txt(13, .semibold).foregroundStyle(accent.text)
-                                .frame(maxWidth: .infinity, minHeight: 36)
+                    .padding(.horizontal, 16)
+                    .padding(.top, isRegular ? 12 : 60)
+                    .padding(.bottom, isRegular ? (showComposeFAB ? 96 : 32) : 170)
+                }
+                .scrollIndicators(.hidden)
+
+                if !isRegular {
+                    ScreenHeader {
+                        if isDuplicatingCurrentProject {
+                            duplicatingStatusView
+                                .padding(.horizontal, 12)
+                                .frame(height: 36)
+                                .glassEffect(.regular, in: .capsule)
                         }
-                        .buttonStyle(.press)
-                        .hoverEffect(.highlight)
-                    } else if !sections.isEmpty {
-                        Text("已顯示全部").txt(12).foregroundStyle(Palette.textFaint).frame(maxWidth: .infinity).padding(.vertical, 4)
+                    } trailing: {
+                        trailingActions
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, isRegular ? 12 : 60)
-                .padding(.bottom, isRegular ? 32 : 140)
             }
-            .scrollIndicators(.hidden)
 
-            if !isRegular {
-                ScreenHeader {
-                    if isDuplicatingCurrentProject {
-                        duplicatingStatusView
-                            .padding(.horizontal, 12)
-                            .frame(height: 36)
-                            .glassEffect(.regular, in: .capsule)
-                    }
-                } trailing: {
-                    trailingActions
-                }
+            if showComposeFAB {
+                ComposeFAB { compose() }
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -112,9 +122,6 @@ struct TaskListScreen: View {
 
     @ViewBuilder
     private var trailingActions: some View {
-        if scope != .smart(.trash) && scope != .smart(.completed) && !isViewerScope {
-            HeaderAction(systemName: "plus", label: "新增任務", tint: accent.text) { compose() }
-        }
         if case .project(let id) = scope, !(model.project(id)?.isInbox ?? false) {
             HeaderAction(systemName: "person.crop.circle.badge.plus", label: "共享") { model.sharingProjectId = id }
         }
@@ -495,7 +502,7 @@ struct TaskRow: View {
         let isViewer = model.isViewer(projectId: task.projectId)
         if inTrash {
             if !isViewer {
-                Button("還原", systemImage: "arrow.uturn.backward") { Task { await model.perform { try await $0.restoreTask(id: id) } } }
+                Button("還原", systemImage: "arrow.uturn.backward") { Task { await model.restoreTask(id: id) } }
                 Button("永久刪除", systemImage: "trash", role: .destructive) { Task { await model.purgeTask(id: id) } }
             }
         } else if !isViewer {
@@ -516,10 +523,7 @@ struct TaskRow: View {
                 Button("清除日期") { model.updateTask(id) { $0.schedule = .clear } }
             }
             Button("刪除", systemImage: "trash", role: .destructive) {
-                Task {
-                    await model.perform { try await $0.deleteTask(id: id) }
-                    if model.selectedTaskId == id { model.selectedTaskId = nil }
-                }
+                Task { await model.deleteTask(id: id) }
             }
         }
     }
@@ -531,7 +535,8 @@ struct TaskRow: View {
 
     func setDay(_ d: LocalDay) {
         let s = task.schedule?.moved(to: d) ?? .allDay(d)
-        model.updateTask(task.id) { $0.schedule = .set(s) }
+        let task = task
+        Task { await model.moveTask(task, to: s) }
     }
 }
 
@@ -561,7 +566,7 @@ struct EmptyState: View {
 
     var message: String {
         switch scope {
-        case .smart(.today): "今天沒有待辦。按右上角 ＋ 新增一項。"
+        case .smart(.today): "今天沒有待辦。按右下角 ＋ 新增一項。"
         case .smart(.trash): "垃圾桶是空的"
         case .smart(.completed): "還沒有完成的任務"
         default: "這裡還沒有任務"

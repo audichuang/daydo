@@ -192,6 +192,9 @@ struct RootView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rootWidth = $0 }
         .sensoryFeedback(.success, trigger: model.completionHapticTrigger)
         .sensoryFeedback(.impact(weight: .light), trigger: model.uncompletionHapticTrigger)
+        .sensoryFeedback(.impact(weight: .medium), trigger: model.deleteHapticTrigger)
+        .sensoryFeedback(.impact(weight: .light), trigger: model.postponeHapticTrigger)
+        .sensoryFeedback(.impact(weight: .light), trigger: model.restoreHapticTrigger)
         .sensoryFeedback(.selection, trigger: model.tab) { _, _ in model.ready && model.isSignedIn }
     }
 }

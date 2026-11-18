@@ -1512,4 +1512,108 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(downloadsAfterCancel, 2)
         XCTAssertEqual(model.projects.filter { $0.name == "確認登出清單 副本" }.count, 1)
     }
+
+    func testDeleteRestoreAndPurgeIncrementHapticTriggers() async throws {
+        let (model, store) = try await makeModel()
+        let api = store.api
+        let project = try await api.createProject(CreateProjectInput(name: "測試清單"))
+        let task = try await api.createTask(CreateTaskInput(
+            projectId: project.id,
+            title: "要刪除的任務",
+            start: model.today.description,
+            allDay: true
+        ))
+        await model.reloadData()
+        model.selectedTaskId = task.id
+
+        XCTAssertEqual(model.deleteHapticTrigger, 0)
+        XCTAssertEqual(model.restoreHapticTrigger, 0)
+
+        let deletedMissing = await model.deleteTask(id: "missing-task-id")
+        XCTAssertFalse(deletedMissing)
+        XCTAssertEqual(model.deleteHapticTrigger, 0)
+        XCTAssertEqual(model.selectedTaskId, task.id)
+
+        let deleted = await model.deleteTask(id: task.id)
+        XCTAssertTrue(deleted)
+        XCTAssertEqual(model.deleteHapticTrigger, 1)
+        XCTAssertNil(model.selectedTaskId)
+
+        let restoredMissing = await model.restoreTask(id: "missing-task-id")
+        XCTAssertFalse(restoredMissing)
+        XCTAssertEqual(model.restoreHapticTrigger, 0)
+
+        let restored = await model.restoreTask(id: task.id)
+        XCTAssertTrue(restored)
+        XCTAssertEqual(model.restoreHapticTrigger, 1)
+
+        let deletedAgain = await model.deleteTask(id: task.id)
+        XCTAssertTrue(deletedAgain)
+        XCTAssertEqual(model.deleteHapticTrigger, 2)
+
+        model.scope = .smart(.trash)
+        await model.purgeTask(id: task.id)
+        XCTAssertEqual(model.deleteHapticTrigger, 3)
+    }
+
+    func testPostponeOverdueIncrementsHapticTrigger() async throws {
+        let (model, store) = try await makeModel()
+        let api = store.api
+        let project = try await api.createProject(CreateProjectInput(name: "延期測試"))
+        let yesterday = model.today.adding(days: -1)
+        let overdue = try await api.createTask(CreateTaskInput(
+            projectId: project.id,
+            title: "逾期任務",
+            start: yesterday.description,
+            allDay: true
+        ))
+        let future = try await api.createTask(CreateTaskInput(
+            projectId: project.id,
+            title: "未來任務",
+            start: model.today.adding(days: 2).description,
+            allDay: true
+        ))
+        await model.reloadData()
+
+        XCTAssertEqual(model.postponeHapticTrigger, 0)
+
+        let revBefore = model.revision
+        model.postponeOverdue(tasks: [overdue])
+        for _ in 0..<40 where model.revision == revBefore {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertEqual(model.postponeHapticTrigger, 1)
+
+        // Postponing a non-overdue task yields count 0 and must not fire haptic.
+        let revBeforeNoop = model.revision
+        model.postponeOverdue(tasks: [future])
+        for _ in 0..<40 where model.revision == revBeforeNoop {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertEqual(model.postponeHapticTrigger, 1)
+    }
+
+    func testMoveTaskToLaterDayIncrementsPostponeHaptic() async throws {
+        let (model, store) = try await makeModel()
+        let api = store.api
+        let project = try await api.createProject(CreateProjectInput(name: "單筆延期"))
+        let yesterday = model.today.adding(days: -1)
+        let created = try await api.createTask(CreateTaskInput(
+            projectId: project.id,
+            title: "逾期任務",
+            start: yesterday.description,
+            allDay: true
+        ))
+        let task = try await api.getTask(id: created.id)
+        let schedule = try XCTUnwrap(task.schedule)
+
+        await model.moveTask(task, to: schedule.moved(to: model.today.adding(days: 1)))
+        XCTAssertEqual(model.postponeHapticTrigger, 1)
+        let moved = try await api.getTask(id: task.id)
+        XCTAssertEqual(moved.schedule?.startDay, model.today.adding(days: 1))
+
+        // Moving earlier is not a postpone.
+        await model.moveTask(moved, to: schedule.moved(to: model.today))
+        XCTAssertEqual(model.postponeHapticTrigger, 1)
+    }
 }
