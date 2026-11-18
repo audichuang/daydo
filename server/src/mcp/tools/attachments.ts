@@ -1,4 +1,5 @@
 // Attachment tools (spec/mcp.md 8): upload_attachment, get_attachment.
+import { canReadAttachment } from '../../attachments/access';
 import { attachmentObjectKey, MAX_ATTACHMENT_BYTES } from '../../attachments/r2';
 import { uuidv7 } from '../../domain/uuid';
 import { isNil } from '../../serverops/values';
@@ -287,7 +288,11 @@ export function attachmentTools(): ToolDef[] {
         properties: {
           project_id: { type: 'string', description: 'Project id from list_projects.' },
           task_id: { type: 'string', description: 'Task id; the task must belong to `project_id`.' },
-          attachment_id: { type: 'string', description: 'Attachment id from get_task.' },
+          attachment_id: {
+            type: 'string',
+            description:
+              'Attachment id from get_task (pass include_deleted: true to get_task for trashed tasks or tasks in archived lists).',
+          },
         },
       },
       run: async (args, ctx) => {
@@ -297,48 +302,57 @@ export function attachmentTools(): ToolDef[] {
 
         const { snapshot } = await openSession(ctx);
         const project = snapshot.findRow('project', projectId);
-        if (!project || !snapshot.memberships.has(projectId)) {
-          throw new Error(`Unknown project_id '${projectId}'; call list_projects first`);
-        }
-        if (!isNil(project.row.purgedAt)) {
-          throw new Error(`Project '${projectId}' was permanently deleted`);
-        }
         const task = snapshot.findRow('task', taskId);
-        if (!task) {
-          throw new Error(`Unknown task_id '${taskId}'`);
-        }
-        if (!isNil(task.row.purgedAt)) {
-          throw new Error(`Task '${taskId}' was permanently deleted`);
-        }
-        if (task.row.projectId !== projectId) {
-          throw new Error(`Task '${taskId}' is not in project '${projectId}' (it is in '${String(task.row.projectId)}')`);
-        }
         const att = snapshot.findRow('attachment', attachmentId);
-        if (!att) {
-          throw new Error(`Unknown attachment_id '${attachmentId}'`);
+        const denial = canReadAttachment({
+          role: project ? (snapshot.memberships.get(projectId) ?? null) : null,
+          projectPurged: project ? !isNil(project.row.purgedAt) : false,
+          task: task ? { projectId: String(task.row.projectId ?? ''), purgedAt: task.row.purgedAt } : null,
+          attachment: att
+            ? { taskId: String(att.row.taskId ?? ''), deletedAt: att.row.deletedAt, purgedAt: att.row.purgedAt }
+            : null,
+          expectedProjectId: projectId,
+          expectedTaskId: taskId,
+        });
+        if (denial !== null) {
+          switch (denial) {
+            case 'not-member':
+              throw new Error(`Unknown project_id '${projectId}'; call list_projects first`);
+            case 'project-purged':
+              throw new Error(`Project '${projectId}' was permanently deleted`);
+            case 'task-missing':
+              throw new Error(`Unknown task_id '${taskId}'`);
+            case 'task-purged':
+              throw new Error(`Task '${taskId}' was permanently deleted`);
+            case 'task-wrong-project':
+              throw new Error(
+                `Task '${taskId}' is not in project '${projectId}' (it is in '${String(task!.row.projectId)}')`,
+              );
+            case 'attachment-missing':
+              throw new Error(`Unknown attachment_id '${attachmentId}'`);
+            case 'attachment-wrong-task':
+              throw new Error(`Attachment '${attachmentId}' does not belong to task '${taskId}'`);
+            case 'attachment-deleted':
+              throw new Error(`Attachment '${attachmentId}' has been deleted`);
+          }
         }
-        if (att.row.taskId !== taskId) {
-          throw new Error(`Attachment '${attachmentId}' does not belong to task '${taskId}'`);
-        }
-        if (!isNil(att.row.deletedAt) || !isNil(att.row.purgedAt)) {
-          throw new Error(`Attachment '${attachmentId}' has been deleted`);
-        }
+        const attRow = att!;
 
         const storage = ctx.services?.storage;
         if (!storage) {
           throw new Error('Attachment storage is not configured');
         }
 
-        const rawMime = String(att.row.mimeType ?? '').trim() || 'application/octet-stream';
+        const rawMime = String(attRow.row.mimeType ?? '').trim() || 'application/octet-stream';
         const normalizedMime = normalizeMime(rawMime);
-        const declaredSize = Number(att.row.size ?? 0);
+        const declaredSize = Number(attRow.row.size ?? 0);
         const meta = {
-          id: String(att.row.id),
-          task_id: String(att.row.taskId),
-          file_name: String(att.row.fileName ?? ''),
+          id: String(attRow.row.id),
+          task_id: String(attRow.row.taskId),
+          file_name: String(attRow.row.fileName ?? ''),
           size: declaredSize,
           mime_type: rawMime,
-          created_at: Number(att.row.createdAt ?? 0),
+          created_at: Number(attRow.row.createdAt ?? 0),
         };
 
         const notUploaded = () => ({

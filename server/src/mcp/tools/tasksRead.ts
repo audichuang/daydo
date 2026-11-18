@@ -170,17 +170,45 @@ export function taskReadTools(): ToolDef[] {
     {
       name: 'get_task',
       description:
-        'Fetch the full record for a single task (including full content, checklist items and attachments). List/search tools return summaries only (content cut to 100 characters, checklist and attachments as counts); call this for the rest. Errors when the task is not in the given project.',
+        'Fetch the full record for a single task (including full content, checklist items and attachments). List/search tools return summaries only (content cut to 100 characters, checklist and attachments as counts); call this for the rest. Set include_deleted to true to also read trashed tasks or tasks in archived lists (marked with deleted: true and/or archived: true); purged tasks/lists and non-member lists remain inaccessible. Errors when the task is not in the given project.',
       inputSchema: {
         type: 'object',
         required: ['project_id', 'task_id'],
-        properties: { project_id: PROJECT_ID, task_id: TASK_ID },
+        properties: {
+          project_id: PROJECT_ID,
+          task_id: TASK_ID,
+          include_deleted: {
+            type: 'boolean',
+            description:
+              'Allow fetching trashed tasks or tasks in archived lists (marked deleted: true / archived: true); still excludes purged tasks/lists and non-member lists. Default false.',
+          },
+        },
       },
       run: async (args, ctx) => {
         const projectId = requireStr(args, 'project_id');
         const taskId = requireStr(args, 'task_id');
+        const includeDeleted = optionalBool(args, 'include_deleted');
         const { snapshot } = await openSession(ctx);
-        return formatTask(snapshot, taskIn(snapshot, taskId, projectId));
+        if (!includeDeleted) {
+          return formatTask(snapshot, taskIn(snapshot, taskId, projectId));
+        }
+        const task = snapshot.findRow('task', taskId);
+        if (!task || task.row.purgedAt != null) {
+          throw new Error(`Unknown task_id '${taskId}'`);
+        }
+        const pid = String(task.row.projectId ?? '');
+        const project = snapshot.findRow('project', pid);
+        if (!project || project.row.purgedAt != null || !snapshot.memberships.has(pid)) {
+          throw new Error(`Unknown task_id '${taskId}'`);
+        }
+        if (pid !== projectId) {
+          throw new Error(`Task '${taskId}' is not in project '${projectId}' (it is in '${pid}')`);
+        }
+        return {
+          ...formatTask(snapshot, task),
+          ...(task.row.deletedAt != null && { deleted: true }),
+          ...(project.row.archivedAt != null && { archived: true }),
+        };
       },
     },
     {

@@ -322,4 +322,16 @@ describe('architecture guards', () => {
     expect(specNames.length).toBeGreaterThan(0);
     expect(specNames).toEqual(TOOL_DEFS.map((t) => t.name).sort());
   });
+
+  it('src/mcp/tools/attachments.ts and src/attachments/content.ts share canReadAttachment', () => {
+    const accessMod = readFileSync(path.join(serverDir, 'src/attachments/access.ts'), 'utf8');
+    expect(accessMod).toMatch(/export function canReadAttachment\b/);
+    for (const rel of ['src/attachments/content.ts', 'src/mcp/tools/attachments.ts']) {
+      const src = readFileSync(path.join(serverDir, rel), 'utf8');
+      expect(src, `${rel} must import canReadAttachment`).toMatch(
+        /import\s*\{[^}]*\bcanReadAttachment\b[^}]*\}\s*from\s*['"][^'"]*attachments\/access['"]|import\s*\{[^}]*\bcanReadAttachment\b[^}]*\}\s*from\s*['"]\.\/access['"]/,
+      );
+      expect(src, `${rel} must call canReadAttachment`).toMatch(/\bcanReadAttachment\(/);
+    }
+  });
 });

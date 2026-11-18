@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { acceptInvite, createInvite } from '../src/sharing';
+import { attachmentObjectKey } from '../src/attachments/r2';
+import { acceptInvite, createInvite, removeProjectMember } from '../src/sharing';
 import {
   HINTS,
   TOOL_DEFS,
@@ -263,5 +264,150 @@ describe('M11a get_task and summaries', () => {
       expect(t5.items, name).toBe(1);
       expect(t5.attachments, name).toBe(2);
     }
+  });
+
+  it('get_task include_deleted reads trashed tasks and archived-list tasks for members, blocks removed members and purged tasks, and keeps default unchanged', async () => {
+    const h = createServerHarness();
+    await seedShared(h, 'viewer');
+
+    // Share an archived list p-arch with viewer u-b as well.
+    await h.devicePush('u-a', [deviceOp(h, 'project', projectRow('p-arch'))]);
+    const invArch = await createInvite(h.db, { userId: 'u-a', projectId: 'p-arch', role: 'viewer', nowMs: NOW_ISH });
+    await acceptInvite(h.db, {
+      code: invArch.code,
+      userId: 'u-b',
+      getScopeStub: (s) => h.deps('u-b').getScopeStub(s),
+      nowMs: NOW_ISH,
+    });
+
+    await h.devicePush('u-a', [
+      deviceOp(h, 'project', projectRow('p-purged')),
+      deviceOp(h, 'task', taskRow('t-trash', 'p1', { title: 'findme trash', deletedAt: NOW_ISH })),
+      deviceOp(h, 'task', taskRow('t-arch-live', 'p-arch', { title: 'findme arch live' })),
+      deviceOp(h, 'task', taskRow('t-arch-del', 'p-arch', { title: 'findme arch del', deletedAt: NOW_ISH })),
+      deviceOp(h, 'task', taskRow('t-purged', 'p1', { title: 'findme purged', deletedAt: NOW_ISH })),
+      deviceOp(h, 'task', taskRow('t-in-purged', 'p-purged', { title: 'findme in purged' })),
+      deviceOp(h, 'attachment', {
+        id: 'att-trash',
+        taskId: 't-trash',
+        fileName: 'trash.txt',
+        size: 11,
+        mimeType: 'text/plain',
+        createdAt: NOW_ISH,
+        updatedAt: NOW_ISH,
+      }),
+      deviceOp(h, 'attachment', {
+        id: 'att-arch-live',
+        taskId: 't-arch-live',
+        fileName: 'arch-live.txt',
+        size: 9,
+        mimeType: 'text/plain',
+        createdAt: NOW_ISH,
+        updatedAt: NOW_ISH,
+      }),
+      deviceOp(h, 'attachment', {
+        id: 'att-arch-del',
+        taskId: 't-arch-del',
+        fileName: 'arch-del.txt',
+        size: 8,
+        mimeType: 'text/plain',
+        createdAt: NOW_ISH,
+        updatedAt: NOW_ISH,
+      }),
+    ]);
+    await h.storage.put(attachmentObjectKey('t-trash', 'att-trash'), new TextEncoder().encode('trash-bytes'));
+    await h.storage.put(attachmentObjectKey('t-arch-live', 'att-arch-live'), new TextEncoder().encode('arch-live'));
+    await h.storage.put(attachmentObjectKey('t-arch-del', 'att-arch-del'), new TextEncoder().encode('arch-del'));
+
+    // Archive p-arch and purge t-purged / p-purged.
+    await h.devicePush('u-a', [
+      { ...deviceOp(h, 'project', { id: 'p-arch', archivedAt: NOW_ISH }), fields: ['archivedAt'] },
+      { opId: 'purge-t', hlc: h.deviceHlc(), entity: 'task', entityId: 't-purged', op: 'delete', fields: [], row: {} },
+      { opId: 'purge-p', hlc: h.deviceHlc(), entity: 'project', entityId: 'p-purged', op: 'delete', fields: [], row: {} },
+    ]);
+
+    // Default get_task (without include_deleted) still returns Unknown task for trashed and archived tasks.
+    const defTrash = await call(h, 'u-b', 'get_task', { project_id: 'p1', task_id: 't-trash' });
+    expect(defTrash.isError).toBe(true);
+    expect(defTrash.text).toContain('Unknown task_id');
+    const defArch = await call(h, 'u-b', 'get_task', { project_id: 'p-arch', task_id: 't-arch-live' });
+    expect(defArch.isError).toBe(true);
+    expect(defArch.text).toContain('Unknown task_id');
+
+    // Flow 1 (viewer): search_tasks(include_deleted) -> get_task(include_deleted) -> get_attachment for trashed task.
+    const found = await call(h, 'u-b', 'search_tasks', { query: 'findme', include_deleted: true });
+    expect(found.json.map((t: any) => t.id)).toEqual(expect.arrayContaining(['t-trash', 't-arch-del']));
+
+    const gotTrash = await call(h, 'u-b', 'get_task', { project_id: 'p1', task_id: 't-trash', include_deleted: true });
+    expect(gotTrash.isError, gotTrash.text).toBe(false);
+    expect(gotTrash.json).toMatchObject({ id: 't-trash', deleted: true });
+    expect(gotTrash.json.archived).toBeUndefined();
+    const trashAttId = gotTrash.json.attachments[0].id as string;
+
+    const readTrashAtt = await call(h, 'u-b', 'get_attachment', {
+      project_id: 'p1',
+      task_id: 't-trash',
+      attachment_id: trashAttId,
+    });
+    expect(readTrashAtt.isError, readTrashAtt.text).toBe(false);
+    expect(readTrashAtt.json.content).toBe('trash-bytes');
+
+    // Flow 2 (viewer): archived list (both deleted task via search_tasks and non-deleted task via get_task).
+    const gotArchDel = await call(h, 'u-b', 'get_task', {
+      project_id: 'p-arch',
+      task_id: 't-arch-del',
+      include_deleted: true,
+    });
+    expect(gotArchDel.isError, gotArchDel.text).toBe(false);
+    expect(gotArchDel.json).toMatchObject({ id: 't-arch-del', deleted: true, archived: true });
+    const readArchDelAtt = await call(h, 'u-b', 'get_attachment', {
+      project_id: 'p-arch',
+      task_id: 't-arch-del',
+      attachment_id: gotArchDel.json.attachments[0].id,
+    });
+    expect(readArchDelAtt.isError, readArchDelAtt.text).toBe(false);
+    expect(readArchDelAtt.json.content).toBe('arch-del');
+
+    const gotArchLive = await call(h, 'u-b', 'get_task', {
+      project_id: 'p-arch',
+      task_id: 't-arch-live',
+      include_deleted: true,
+    });
+    expect(gotArchLive.isError, gotArchLive.text).toBe(false);
+    expect(gotArchLive.json).toMatchObject({ id: 't-arch-live', archived: true });
+    expect(gotArchLive.json.deleted).toBeUndefined();
+    const readArchLiveAtt = await call(h, 'u-b', 'get_attachment', {
+      project_id: 'p-arch',
+      task_id: 't-arch-live',
+      attachment_id: gotArchLive.json.attachments[0].id,
+    });
+    expect(readArchLiveAtt.isError, readArchLiveAtt.text).toBe(false);
+    expect(readArchLiveAtt.json.content).toBe('arch-live');
+
+    // Purged task, purged list, and wrong project remain blocked even with include_deleted: true.
+    expect((await call(h, 'u-a', 'get_task', { project_id: 'p1', task_id: 't-purged', include_deleted: true })).isError).toBe(true);
+    expect((await call(h, 'u-a', 'get_task', { project_id: 'p-purged', task_id: 't-in-purged', include_deleted: true })).isError).toBe(true);
+    expect((await call(h, 'u-a', 'get_task', { project_id: 'p-arch', task_id: 't-trash', include_deleted: true })).isError).toBe(true);
+
+    // Removed member is blocked on all three steps (search_tasks, get_task, get_attachment) for both lists.
+    await removeProjectMember(h.db, {
+      projectId: 'p1',
+      targetUserId: 'u-b',
+      requesterUserId: 'u-a',
+      getScopeStub: h.getScopeStub,
+    });
+    await removeProjectMember(h.db, {
+      projectId: 'p-arch',
+      targetUserId: 'u-b',
+      requesterUserId: 'u-a',
+      getScopeStub: h.getScopeStub,
+    });
+
+    const removedSearch = await call(h, 'u-b', 'search_tasks', { query: 'findme', include_deleted: true });
+    expect(removedSearch.json).toEqual([]);
+    expect((await call(h, 'u-b', 'get_task', { project_id: 'p1', task_id: 't-trash', include_deleted: true })).isError).toBe(true);
+    expect((await call(h, 'u-b', 'get_attachment', { project_id: 'p1', task_id: 't-trash', attachment_id: 'att-trash' })).isError).toBe(true);
+    expect((await call(h, 'u-b', 'get_task', { project_id: 'p-arch', task_id: 't-arch-del', include_deleted: true })).isError).toBe(true);
+    expect((await call(h, 'u-b', 'get_attachment', { project_id: 'p-arch', task_id: 't-arch-del', attachment_id: 'att-arch-del' })).isError).toBe(true);
   });
 });

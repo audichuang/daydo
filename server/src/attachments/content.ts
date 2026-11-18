@@ -5,6 +5,7 @@ import { loadProjectAccess, requesterRoleOf } from '../membership';
 import type { ScopeStub } from '../scope/api';
 import { listWriteDenial } from '../sync/access';
 import type { AppDb } from '../sync/push';
+import { canReadAttachment } from './access';
 import { attachmentObjectKey, MAX_ATTACHMENT_BYTES } from './r2';
 
 const NO_PURGED: ReadonlySet<string> = new Set();
@@ -184,16 +185,16 @@ export async function downloadAttachmentContent(
   if (!loaded) return jsonError(404, 'attachment-not-found');
 
   const { info, access } = loaded;
-  if (!requesterRoleOf(access)) {
+  const denial = canReadAttachment({
+    role: requesterRoleOf(access),
+    projectPurged: access.purged,
+    task: { projectId: info.projectId, purgedAt: info.taskPurgedAt },
+    attachment: { taskId: info.taskId, deletedAt: info.deletedAt, purgedAt: info.purgedAt },
+  });
+  if (denial === 'not-member') {
     return jsonError(403, 'Forbidden');
   }
-
-  if (
-    access.purged ||
-    info.deletedAt !== null ||
-    info.purgedAt !== null ||
-    info.taskPurgedAt !== null
-  ) {
+  if (denial !== null) {
     return jsonError(404, 'attachment-not-found');
   }
 
