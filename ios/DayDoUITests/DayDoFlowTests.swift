@@ -1609,16 +1609,45 @@ final class DayDoFlowTests: XCTestCase {
         return (s, e)
     }
 
-    private func ensureVisibleInGrid(_ element: XCUIElement, scrollView: XCUIElement, maxSwipes: Int = 6) {
-        if element.exists && element.isHittable { return }
-        for _ in 0..<maxSwipes {
-            if element.exists && element.isHittable { return }
-            scrollView.swipeUp()
+    private func isVisibleInGrid(_ element: XCUIElement, scrollView: XCUIElement) -> Bool {
+        guard element.exists && element.isHittable else { return false }
+        let f = element.frame
+        let s = scrollView.frame
+        // Keep clear of the top edge and bottom floating nav bar so taps/drags land cleanly.
+        return f.minY >= s.minY + 8 && f.maxY <= s.maxY - 96
+    }
+
+    private func ensureVisibleInGrid(
+        _ element: XCUIElement,
+        scrollView: XCUIElement,
+        maxSwipes: Int = 8,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        if isVisibleInGrid(element, scrollView: scrollView) { return }
+        let preferDownFirst = element.exists && element.frame.minY < scrollView.frame.minY + 8
+        let directions: [() -> Void] = preferDownFirst
+            ? [{ scrollView.swipeDown() }, { scrollView.swipeUp() }]
+            : [{ scrollView.swipeUp() }, { scrollView.swipeDown() }]
+        for swipe in directions {
+            for _ in 0..<maxSwipes {
+                if isVisibleInGrid(element, scrollView: scrollView) { return }
+                swipe()
+            }
         }
-        for _ in 0..<maxSwipes {
-            if element.exists && element.isHittable { return }
-            scrollView.swipeDown()
+        XCTFail(
+            "Target element not visible in timeGridScroll (exists=\(element.exists), hittable=\(element.isHittable), frame=\(element.frame), scrollFrame=\(scrollView.frame))",
+            file: file,
+            line: line
+        )
+    }
+
+    private func scrollGridToTop(_ gridScroll: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        let hour01 = app.staticTexts["01"].firstMatch
+        for _ in 0..<8 where !isVisibleInGrid(hour01, scrollView: gridScroll) {
+            gridScroll.swipeDown()
         }
+        XCTAssertTrue(isVisibleInGrid(hour01, scrollView: gridScroll), "Expected 01:00 label visible after scrolling to top", file: file, line: line)
     }
 
     @MainActor
@@ -1633,11 +1662,16 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(dayModeBtn.waitForExistence(timeout: 5), app.debugDescription)
         sleep(1)
 
+        let gridScroll = app.scrollViews["timeGridScroll"]
+        XCTAssertTrue(gridScroll.waitForExistence(timeout: 3), app.debugDescription)
         let brief = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '準備週一產品會議簡報'")).firstMatch
-        let gridScroll = app.scrollViews.firstMatch
         XCTAssertTrue(brief.waitForExistence(timeout: 3), app.debugDescription)
+
+        // Start from 00:00 (18:00 task off-screen) so the test does not depend on wall-clock launch time.
+        scrollGridToTop(gridScroll)
+        XCTAssertFalse(brief.isHittable, "18:00 task should not be visible when scrolled to 00:00")
+
         ensureVisibleInGrid(brief, scrollView: gridScroll)
-        XCTAssertTrue(brief.isHittable, app.debugDescription)
         XCTAssertTrue(brief.label.contains("18:00 – 18:30"), brief.label)
 
         // 1. Tap opens task detail.
@@ -1717,7 +1751,8 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(todayHeader.waitForExistence(timeout: 3), "Quick horizontal swipe back should return to current week")
 
         let brief = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '準備週一產品會議簡報'")).firstMatch
-        let gridScroll = app.scrollViews.firstMatch
+        let gridScroll = app.scrollViews["timeGridScroll"]
+        XCTAssertTrue(gridScroll.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertTrue(brief.waitForExistence(timeout: 3), app.debugDescription)
         ensureVisibleInGrid(brief, scrollView: gridScroll)
         XCTAssertTrue(brief.isHittable, app.debugDescription)
@@ -1759,37 +1794,53 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(dayModeBtn.waitForExistence(timeout: 5), app.debugDescription)
         sleep(1)
 
-        // Scroll up to morning/afternoon where today has no timed tasks (before 18:00).
-        let gridScroll = app.scrollViews.firstMatch
+        let gridScroll = app.scrollViews["timeGridScroll"]
+        XCTAssertTrue(gridScroll.waitForExistence(timeout: 3), app.debugDescription)
+        let brief = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '準備週一產品會議簡報'")).firstMatch
+        XCTAssertTrue(brief.waitForExistence(timeout: 3), app.debugDescription)
+
+        // Start from 00:00 (18:00 task off-screen) so scrolling to 10:00–12:00 does not depend on launch time.
+        scrollGridToTop(gridScroll)
+        XCTAssertFalse(brief.isHittable, "18:00 task should not be visible when scrolled to 00:00")
+
+        // Today has no timed demo tasks before 18:00; bring 10:00–12:00 cleanly into view.
+        let hour10 = app.staticTexts["10"].firstMatch
         let hour12 = app.staticTexts["12"].firstMatch
-        for _ in 0..<4 where !hour12.isHittable { gridScroll.swipeDown() }
+        ensureVisibleInGrid(hour12, scrollView: gridScroll)
+        ensureVisibleInGrid(hour10, scrollView: gridScroll)
+        XCTAssertTrue(isVisibleInGrid(hour12, scrollView: gridScroll), "Expected 12:00 label visible alongside 10:00")
 
         let emptySlot = app.descendants(matching: .any).matching(NSPredicate(format: "label ENDSWITH '空白時段，點兩下新增'")).firstMatch
         XCTAssertTrue(emptySlot.waitForExistence(timeout: 3), app.debugDescription)
 
-        let window = app.windows.firstMatch
-        let emptyCoord = window.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.38))
+        let slotX = (hour10.frame.maxX + gridScroll.frame.maxX) / 2
+        let startCoord = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: slotX, dy: hour10.frame.midY))
+        let endCoord = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: slotX, dy: hour12.frame.midY))
 
-        // 1. Tap empty slot opens composer with default 60-minute range.
-        emptyCoord.tap()
+        // 1. Tap 10:00 empty slot opens composer with ~10:00 start and default 60-minute duration.
+        startCoord.tap()
         let composerTitle = app.descendants(matching: .any)["composerTitle"]
         XCTAssertTrue(composerTitle.waitForExistence(timeout: 3), app.debugDescription)
         let composerDate = app.buttons["composerDate"]
         XCTAssertTrue(composerDate.waitForExistence(timeout: 3), app.debugDescription)
         let tapRange = try XCTUnwrap(parseTimeRangeMinutes(composerDate.label), composerDate.label)
+        XCTAssertTrue(tapRange.0 >= 9 * 60 + 30 && tapRange.0 <= 10 * 60 + 30,
+                      "Expected tap start around 10:00 (within 09:30–10:30), got \(composerDate.label)")
         XCTAssertEqual(tapRange.1 - tapRange.0, 60, "Tap should create default 60m duration: \(composerDate.label)")
 
         app.buttons["composerMore"].tap()
         app.buttons["關閉"].tap()
         XCTAssertTrue(composerTitle.waitForNonExistence(timeout: 3))
 
-        // 2. Long-press + drag down ~112pt (~120m) opens composer with dragged range.
-        emptyCoord.press(forDuration: 0.45, thenDragTo: emptyCoord.withOffset(CGVector(dx: 0, dy: 112)))
+        // 2. Long-press at 10:00 and drag down to 12:00 opens composer with ~10:00–12:00 (15m snap tolerance).
+        startCoord.press(forDuration: 0.45, thenDragTo: endCoord)
         XCTAssertTrue(composerTitle.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertTrue(composerDate.waitForExistence(timeout: 3), app.debugDescription)
         let dragRange = try XCTUnwrap(parseTimeRangeMinutes(composerDate.label), composerDate.label)
-        let dur = dragRange.1 - dragRange.0
-        XCTAssertTrue(dur >= 90 && dur <= 150, "Expected ~120m dragged duration (within 90..150m), got \(dur) from \(composerDate.label)")
+        XCTAssertTrue(dragRange.0 >= 9 * 60 + 45 && dragRange.0 <= 10 * 60 + 15,
+                      "Expected drag start around 10:00 (±15m), got \(composerDate.label)")
+        XCTAssertTrue(dragRange.1 >= 11 * 60 + 45 && dragRange.1 <= 12 * 60 + 15,
+                      "Expected drag end around 12:00 (±15m), got \(composerDate.label)")
         shot("timegrid-drag-create")
     }
 }

@@ -1283,6 +1283,7 @@ struct TimeGrid: View {
                         .padding(.top, 8)
                         .padding(.bottom, isRegular ? 24 : 160)
                     }
+                    .accessibilityIdentifier("timeGridScroll")
                     .scrollDisabled(dragMode != nil)
                     .defaultScrollAnchor(UnitPoint(x: 0, y: min(1, CGFloat(initialHour) * hourH / 900)), for: .initialOffset)
                     .scrollIndicators(.hidden)
