@@ -25,7 +25,7 @@ struct TaskListScreen: View {
     }
 
     private var showComposeFAB: Bool {
-        scope != .smart(.trash) && scope != .smart(.completed) && !isViewerScope
+        model.canCompose(in: scope)
     }
 
     var body: some View {

@@ -143,6 +143,11 @@ final class AppModel {
 
     var canComposeForCurrentScope: Bool {
         guard tab == .tasks else { return true }
+        return canCompose(in: scope)
+    }
+
+    /// Whether a task list showing `scope` may create tasks (shared by the list FAB and ⌘N).
+    func canCompose(in scope: TaskScope) -> Bool {
         switch scope {
         case .smart(.trash), .smart(.completed):
             return false
