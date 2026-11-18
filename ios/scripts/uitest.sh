@@ -8,7 +8,7 @@
 #   ios/scripts/uitest.sh down [iphone|ipad|"DD <name>"]   # drop your lease, shut down if nobody else uses it
 #   ios/scripts/uitest.sh park [iphone|ipad]               # archive a resident device to the NAS
 #
-# Every mode except build first takes the DayDo lock, a flock on a fixed file (not $TMPDIR:
+# Every mode first takes the DayDo lock (build just needs no sim-vault), a flock on a fixed file (not $TMPDIR:
 # sessions have different ones). The fd is inherited by xcodebuild, so the lock lasts while
 # any test process is alive, even if this shell is killed. test and build then also wait for
 # every xcodebuild on the Mac to finish (two at once fail with "Failed to send signal 19";
@@ -228,13 +228,15 @@ finish() {
     : >"$hs/done"
     local waited=0 pid
     pid=$(recorder_pid)
-    until [[ -e "$hs/stopped" ]] || { [[ -n "$pid" ]] && ! alive "$pid"; } \
-        || (( waited >= handshake_wait * 10 )); do
+    until [[ -e "$hs/stopped" ]] || { [[ -n "$pid" ]] && ! alive "$pid"; }; do
+      if (( waited >= handshake_wait * 10 )); then
+        echo "錄影器 ${handshake_wait} 秒內沒有回報 stopped，照樣交回 lease" >&2
+        break
+      fi
       sleep 0.1
       waited=$((waited + 1))
       [[ -n "$pid" ]] || pid=$(recorder_pid)
     done
-    [[ -e "$hs/stopped" ]] || echo "錄影器沒有回報 stopped，照樣交回 lease" >&2
   fi
   sim-vault release "$name" --lease "$test_owner" || rc=$?
   exit "$rc"

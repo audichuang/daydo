@@ -241,11 +241,22 @@ count_lines() { grep -cE -- "$1" "$S/events.log" || true; }
 last_line() { tail -n 1 "$1"; }
 
 # ---------------------------------------------------------------- tests
-t_stubs_on_path() {
-  local out
+# Gate: refuse to run anything unless every tool the scripts call resolves to a stub.
+check_stubs() {
+  local T="$WORK/gate" S="$WORK/gate" out
+  mkdir -p "$T"
+  set_env "$STUB"
   out="$("${ENVCMD[@]}" bash --noprofile --norc -c 'command -v sim-vault xcrun xcodebuild pgrep ps python3')"
-  eq "$(printf '%s\n' "$out" | grep -vc "^$STUB/")" 0 "every tool resolves to a stub: $out"
+  if [[ "$(printf '%s\n' "$out" | grep -c "^$STUB/")" != 6 ]]; then
+    echo "stub PATH check failed, not running tests:"; echo "$out"; exit 1
+  fi
+  set_env "$STUB_NOVAULT"
+  out="$("${ENVCMD[@]}" bash --noprofile --norc -c 'command -v sim-vault xcrun xcodebuild pgrep ps python3')"
+  if [[ "$(printf '%s\n' "$out" | grep -c "^$STUB_NOVAULT/")" != 5 ]] || [[ "$out" == *sim-vault* ]]; then
+    echo "no-vault PATH check failed, not running tests:"; echo "$out"; exit 1
+  fi
 }
+check_stubs
 
 t_test_run_basic() {
   run -- iphone -only-testing:DayDoUITests/X
@@ -498,6 +509,19 @@ t_record_handshake() {
   eq "$(find "$T/tmp" -maxdepth 1 -name 'dd-record.*' | wc -l | tr -d ' ')" 0 "handshake dir removed"
 }
 
+t_test_failure_rc() {
+  echo 65 >"$S/rc.xcodebuild"
+  run -- iphone
+  eq "$RC" 65 "xcodebuild's rc passed on"
+  has "$S/events.log" "sim-vault release DD iPhone 18 Pro --lease dd:uitest" "lease released after a failed run"
+  eq "$(cat "$S/leases")" "" "no lease left"
+  : >"$S/events.log"
+  run_record
+  eq "$RC" 65 "record passes the test's rc on"
+  before "rec-stopped" "sim-vault release .*dd:uitest" "lease released after recording stopped"
+  hasnt "$T/rec/cal.log" "沒有回報 stopped" "no false 'no stopped' warning"
+}
+
 t_record_recorder_fails() {
   : >"$S/rec.fail"
   local start=$SECONDS
@@ -523,12 +547,12 @@ t_never_bypasses_sim_vault() {
   return 0
 }
 
-ALL="t_stubs_on_path t_test_run_basic t_park_first_test_waits t_test_first_park_waits
+ALL="t_test_run_basic t_park_first_test_waits t_test_first_park_waits
 t_sigkill_shell_child_keeps_lock t_up_twice_same_worktree t_test_allows_own_up_lease
 t_test_refuses_foreign_lease t_down_releases_and_shuts_down t_down_interleaved_lease
 t_down_missing_device t_park_transition_guard t_park_rc_passthrough t_park_lock_timeout
 t_old_sim_vault t_no_sim_vault t_temp_device_missing t_test_waits_for_other_xcodebuild
-t_record_handshake t_record_recorder_fails t_record_test_refused t_never_bypasses_sim_vault"
+t_record_handshake t_test_failure_rc t_record_recorder_fails t_record_test_refused t_never_bypasses_sim_vault"
 SELECTED="${*:-$ALL}"
 total=0
 for CURRENT in $SELECTED; do
