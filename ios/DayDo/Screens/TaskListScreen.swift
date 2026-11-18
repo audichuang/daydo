@@ -285,8 +285,10 @@ struct SectionCard: View {
 
     /// Inside a single list the title already names it; rows skip the list label.
     var isProjectScope: Bool {
-        if case .project = scope { return true }
-        return false
+        switch scope {
+        case .project, .smart(.inbox): return true
+        default: return false
+        }
     }
 
     var body: some View {

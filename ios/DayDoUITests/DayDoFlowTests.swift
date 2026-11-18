@@ -89,6 +89,23 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(brief.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertFalse(brief.label.contains("工作"), brief.label)
         shot("04-list-work")
+
+        // 未來 7 天 groups by day; rows under a day header show only the time.
+        app.buttons["開啟清單抽屜"].tap()
+        let next7 = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '未來 7 天'")).firstMatch
+        XCTAssertTrue(next7.waitForExistence(timeout: 3), app.debugDescription)
+        next7.tap()
+        let weeklyNext7 = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '週會' AND label CONTAINS '10:00'")).firstMatch
+        XCTAssertTrue(weeklyNext7.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(weeklyNext7.label.contains("明天"), weeklyNext7.label)
+        shot("04b-next7")
+
+        app.buttons["開啟清單抽屜"].tap()
+        let inbox = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '收件匣'")).firstMatch
+        XCTAssertTrue(inbox.waitForExistence(timeout: 3), app.debugDescription)
+        inbox.tap()
+        XCTAssertTrue(app.staticTexts["收件匣"].waitForExistence(timeout: 3), app.debugDescription)
+        shot("04c-inbox")
     }
 
     @MainActor
@@ -147,7 +164,7 @@ final class DayDoFlowTests: XCTestCase {
         app.buttons["儲存"].tap()
         XCTAssertTrue(app.buttons["確定"].waitForExistence(timeout: 3))
         app.buttons["確定"].tap()
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS '明天 19:00 – 19:30'")).firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報' AND label CONTAINS '19:00 – 19:30'")).firstMatch.waitForExistence(timeout: 3))
         shot("10-detail-after-date")
     }
 
@@ -200,6 +217,12 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertFalse(brief.label.contains(todayText), brief.label)
         XCTAssertTrue(brief.label.contains("工作"), brief.label)
         shot("agenda-card-all-lists")
+
+        app.buttons["切換為時間軸清單"].tap()
+        XCTAssertTrue(app.buttons["切換為卡片清單"].waitForExistence(timeout: 3), app.debugDescription)
+        shot("agenda-timeline-all-lists")
+        app.buttons["切換為卡片清單"].tap()
+        XCTAssertTrue(app.buttons["切換為時間軸清單"].waitForExistence(timeout: 3), app.debugDescription)
 
         app.buttons["更多選項"].tap()
         let filterMenu = app.buttons["清單篩選"]
