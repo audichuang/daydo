@@ -611,6 +611,17 @@ final class AppModel {
         Task { await perform { try await $0.updateTask(input) } }
     }
 
+    /// Moves a task to another day; a successful move to a later day counts as postponing.
+    func moveTask(_ task: TodoTask, to schedule: Schedule) async {
+        let postponed = task.schedule.map { schedule.startDay > $0.startDay } ?? false
+        var input = UpdateTaskInput(taskId: task.id)
+        input.schedule = .set(schedule)
+        let request = input
+        if await perform({ try await $0.updateTask(request) }) != nil, postponed {
+            postponeHapticTrigger += 1
+        }
+    }
+
     /// Completes or uncompletes a task while preventing double-tap re-entry.
     func toggleComplete(_ task: TodoTask) {
         guard task.deletedAt == nil, !isViewer(projectId: task.projectId) else { return }

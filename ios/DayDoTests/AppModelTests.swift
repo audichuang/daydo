@@ -1592,4 +1592,28 @@ final class AppModelTests: XCTestCase {
         }
         XCTAssertEqual(model.postponeHapticTrigger, 1)
     }
+
+    func testMoveTaskToLaterDayIncrementsPostponeHaptic() async throws {
+        let (model, store) = try await makeModel()
+        let api = store.api
+        let project = try await api.createProject(CreateProjectInput(name: "單筆延期"))
+        let yesterday = model.today.adding(days: -1)
+        let created = try await api.createTask(CreateTaskInput(
+            projectId: project.id,
+            title: "逾期任務",
+            start: yesterday.description,
+            allDay: true
+        ))
+        let task = try await api.getTask(id: created.id)
+        let schedule = try XCTUnwrap(task.schedule)
+
+        await model.moveTask(task, to: schedule.moved(to: model.today.adding(days: 1)))
+        XCTAssertEqual(model.postponeHapticTrigger, 1)
+        let moved = try await api.getTask(id: task.id)
+        XCTAssertEqual(moved.schedule?.startDay, model.today.adding(days: 1))
+
+        // Moving earlier is not a postpone.
+        await model.moveTask(moved, to: schedule.moved(to: model.today))
+        XCTAssertEqual(model.postponeHapticTrigger, 1)
+    }
 }

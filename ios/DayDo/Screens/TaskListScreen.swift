@@ -78,7 +78,7 @@ struct TaskListScreen: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, isRegular ? 12 : 60)
-                    .padding(.bottom, isRegular ? (showComposeFAB ? 96 : 32) : 140)
+                    .padding(.bottom, isRegular ? (showComposeFAB ? 96 : 32) : 170)
                 }
                 .scrollIndicators(.hidden)
 
@@ -493,7 +493,8 @@ struct TaskRow: View {
 
     func setDay(_ d: LocalDay) {
         let s = task.schedule?.moved(to: d) ?? .allDay(d)
-        model.updateTask(task.id) { $0.schedule = .set(s) }
+        let task = task
+        Task { await model.moveTask(task, to: s) }
     }
 }
 
