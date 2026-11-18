@@ -95,6 +95,7 @@ export function ensureScopeSchema(sql: SqlStorage): void {
         repeatRule TEXT,
         tags TEXT NOT NULL DEFAULT '[]',
         assigneeId TEXT,
+        countdown INTEGER NOT NULL DEFAULT 0,
         sortKey TEXT NOT NULL,
         completedAt INTEGER,
         sourceRaw TEXT,
@@ -203,4 +204,12 @@ export function ensureScopeSchema(sql: SqlStorage): void {
         purgedAt INTEGER NOT NULL
       );
     `);
+
+  const taskCols = sql
+    .exec('PRAGMA table_info(task)')
+    .toArray()
+    .map((r) => String(r.name));
+  if (!taskCols.includes('countdown')) {
+    sql.exec('ALTER TABLE task ADD COLUMN countdown INTEGER NOT NULL DEFAULT 0;');
+  }
 }

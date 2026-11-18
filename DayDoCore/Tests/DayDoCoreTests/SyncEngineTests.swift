@@ -3672,11 +3672,13 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
                 viewMode: "list", kind: "TASK", isInbox: true, ownerId: meId, sortKey: "a0",
                 showInSmart: "all", notifyMode: "all", archivedAt: nil, createdAt: nowMs, updatedAt: nowMs
             ).insert(db)
-            try TaskRecord(
-                id: taskId, projectId: projectId, title: "舊附件任務", content: "",
-                priority: 0, status: 0, reminders: [], tags: [], sortKey: "a0",
-                createdAt: nowMs, updatedAt: nowMs
-            ).insert(db)
+            try db.execute(
+                sql: """
+                    INSERT INTO task (id, projectId, title, content, priority, status, reminders, tags, sortKey, createdAt, updatedAt)
+                    VALUES (?, ?, '舊附件任務', '', 0, 0, '[]', '[]', 'a0', ?, ?)
+                    """,
+                arguments: [taskId, projectId, nowMs, nowMs]
+            )
             try db.execute(
                 sql: """
                     INSERT INTO attachment (id, taskId, fileName, size, mimeType, localPath, originalPath, createdAt, updatedAt)
@@ -5643,6 +5645,89 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         #expect(putPaths == [a, b, a, b, a])
         let uploadedB = try await db.writer.read { db in try AttachmentRecord.fetchOne(db, key: attB.id)?.fileUploadedAt }
         #expect(uploadedB == nowMs)
+    }
+
+    @Test func v9MigrationClearsPullCursorAndRepullsCountdownTrue() async throws {
+        var config = Configuration()
+        config.foreignKeysEnabled = true
+        let queue = try DatabaseQueue(configuration: config)
+        try AppDatabase.migrator.migrate(queue, upTo: "v8")
+
+        let nowMs = noon.epochMillis
+        let meId = ID.make()
+        let projectId = ID.make()
+        let taskId = ID.make()
+        let serverHLC = HLC(ms: nowMs + 1000, counter: 0, deviceId: "other-dev").description
+
+        try await queue.write { db in
+            try db.execute(
+                sql: "INSERT INTO member (id, name, initial, color, isMe, createdAt, updatedAt) VALUES (?, '我', '我', '#6FA8FF', 1, ?, ?)",
+                arguments: [meId, nowMs, nowMs]
+            )
+            try db.execute(
+                sql: "INSERT INTO project (id, name, viewMode, kind, isInbox, ownerId, sortKey, showInSmart, notifyMode, createdAt, updatedAt) VALUES (?, '收件匣', 'list', 'TASK', 1, ?, 'a0', 'all', 'all', ?, ?)",
+                arguments: [projectId, meId, nowMs, nowMs]
+            )
+            try db.execute(
+                sql: "INSERT INTO task (id, projectId, title, content, priority, status, startDay, reminders, tags, sortKey, createdAt, updatedAt) VALUES (?, ?, '跨年倒數', '', 0, 0, '2026-12-31', '[]', '[]', 'a0', ?, ?)",
+                arguments: [taskId, projectId, nowMs, nowMs]
+            )
+            try db.execute(
+                sql: "INSERT INTO meta (key, value) VALUES (?, ?), (?, 'user-1')",
+                arguments: [SyncEngine.pullCursorsMetaKey, #"{"u:user-1":10}"#, SyncEngine.signedInUserIdMetaKey]
+            )
+        }
+
+        let appDB = try AppDatabase(queue)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-v9-sync-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let api = LocalDayDoAPI(database: appDB, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        #expect(try await api.getTask(id: taskId).countdown == false)
+
+        let pullBodies = PullBodyRecorder()
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/sync/push" {
+                return try jsonResponse(200, ["results": [], "serverTime": serverHLC])
+            }
+            await pullBodies.append(try decodeBodyObject(req.body))
+            return try jsonResponse(200, [
+                "scopes": [[
+                    "scope": "u:user-1",
+                    "rows": [[
+                        "entity": "task",
+                        "row": [
+                            "id": taskId,
+                            "projectId": projectId,
+                            "title": "跨年倒數",
+                            "content": "",
+                            "priority": 0,
+                            "status": 0,
+                            "startDay": "2026-12-31",
+                            "reminders": [],
+                            "tags": [],
+                            "countdown": true,
+                            "sortKey": "a0",
+                            "createdAt": nowMs,
+                            "updatedAt": nowMs,
+                        ],
+                        "clocks": ["title": serverHLC, "countdown": serverHLC],
+                        "serverSeq": 5,
+                    ]],
+                    "cursor": 5,
+                    "hasMore": false,
+                ]],
+                "memberships": [],
+                "members": [],
+            ])
+        }
+        let tokens = InMemorySyncTokenStore(accessToken: "acc-v9", refreshToken: "ref-v9")
+        let engine = SyncEngine(database: appDB, transport: transport, tokenStore: tokens, clock: .fixed(noon, timeZone: taipei))
+
+        _ = try await engine.syncNow()
+
+        let sentCursors = await pullBodies.bodies.first?["cursors"]?.objectValue ?? [:]
+        #expect(sentCursors.isEmpty)
+        #expect(try await api.getTask(id: taskId).countdown == true)
     }
 }
 

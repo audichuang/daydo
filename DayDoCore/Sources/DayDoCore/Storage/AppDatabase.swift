@@ -297,6 +297,16 @@ final class AppDatabase: Sendable {
                 t.add(column: "fileUploadFailed", .boolean).notNull().defaults(to: false)
             }
         }
+        m.registerMigration("v9") { db in
+            try db.alter(table: "task") { t in
+                t.add(column: "countdown", .boolean).notNull().defaults(to: false)
+            }
+            // Reset pull cursors so tasks synced before v9 re-pull their countdown flag.
+            try db.execute(
+                sql: "DELETE FROM meta WHERE key = ?",
+                arguments: [SyncEngine.pullCursorsMetaKey]
+            )
+        }
         return m
     }
 }

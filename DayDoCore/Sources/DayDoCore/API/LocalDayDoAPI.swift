@@ -135,7 +135,7 @@ final class LocalDayDoAPI: DayDoAPI, @unchecked Sendable {
                     Attachment(id: $0.id, fileName: $0.fileName, size: $0.size, mimeType: $0.mimeType, localPath: $0.localPath, originalPath: $0.originalPath, createdAt: $0.createdAt)
                 },
                 commentCount: counts[r.id] ?? 0, sourceRaw: r.sourceRaw, importNote: r.importNote,
-                ownerId: resolvedOwnerIds[r.id] ?? "")
+                countdown: r.countdown, ownerId: resolvedOwnerIds[r.id] ?? "")
         }
     }
 
@@ -1070,6 +1070,7 @@ extension LocalDayDoAPI {
             var t = TaskRecord(id: ID.make(), projectId: pid, title: title, content: input.content ?? "",
                                priority: (input.priority ?? .none).rawValue, status: 0,
                                reminders: reminders, repeatRule: rrule, tags: tags, assigneeId: input.assigneeId,
+                               countdown: input.countdown ?? false,
                                sortKey: SortKey.before(first), completedAt: nil,
                                sourceRaw: input.sourceRaw, importNote: input.importNote,
                                createdAt: now, updatedAt: now)
@@ -1151,6 +1152,7 @@ extension LocalDayDoAPI {
                 guard try MemberRecord.fetchOne(db, key: a) != nil else { throw DayDoError.notFound("member", a) }
                 t.assigneeId = a
             }
+            if let countdown = input.countdown { t.countdown = countdown }
             t.updatedAt = now
             try self.saveTask(db, t)
             if let subs = input.subtasks {

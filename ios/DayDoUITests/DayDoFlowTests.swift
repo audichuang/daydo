@@ -25,7 +25,14 @@ final class DayDoFlowTests: XCTestCase {
         a.lifetime = .keepAlways
         add(a)
         if let dir = ProcessInfo.processInfo.environment["DAYDO_SHOTS"] {
-            try? s.pngRepresentation.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name).png"))
+            // The directory is caller-supplied and often does not exist yet; a silent skip here once
+            // left a whole run without screenshots.
+            do {
+                try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                try s.pngRepresentation.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name).png"))
+            } catch {
+                XCTFail("DAYDO_SHOTS: could not write \(name).png to \(dir): \(error)")
+            }
         }
     }
 
@@ -1937,5 +1944,67 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(dragRange.1 >= 11 * 60 + 45 && dragRange.1 <= 12 * 60 + 15,
                       "Expected drag end around 12:00 (±15m), got \(composerDate.label)")
         shot("timegrid-drag-create")
+    }
+
+    @MainActor
+    func testTaskCountdownBadgeToggleAndListDisplay() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        // Navigate to 工作 list which has future task 交 Q4 報告 (+5 days) and other tasks without countdown.
+        app.buttons["開啟清單抽屜"].tap()
+        let folder = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '工作與學習'")).firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 3))
+        folder.tap()
+        let work = app.buttons["drawer.list.工作"]
+        XCTAssertTrue(work.waitForExistence(timeout: 3))
+        work.tap()
+        XCTAssertTrue(app.staticTexts["工作"].waitForExistence(timeout: 3))
+
+        // Before enabling countdown, no countdown badge should be shown.
+        XCTAssertEqual(
+            app.buttons.matching(NSPredicate(format: "label CONTAINS '還有 5 天'")).count,
+            0
+        )
+
+        // Open future task 交 Q4 報告 (+5 days) and turn on 倒數.
+        let futureRow = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS '交 Q4 報告' AND NOT (label BEGINSWITH '完成：')")
+        ).firstMatch
+        XCTAssertTrue(futureRow.waitForExistence(timeout: 3), app.debugDescription)
+        futureRow.tap()
+
+        XCTAssertTrue(app.buttons["儲存"].waitForExistence(timeout: 3), app.debugDescription)
+        let toggle = app.switches["countdownToggle"].firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertEqual(toggle.value as? String, "0")
+        sleep(1)
+        toggle.tap()
+        XCTAssertEqual(toggle.value as? String, "1")
+
+        // Dismiss detail sheet and verify badge appears only on 交 Q4 報告.
+        let headerBtn = app.buttons["展開為全屏"]
+        let dragStart = headerBtn.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        dragStart.press(forDuration: 0.05, thenDragTo: dragStart.withOffset(CGVector(dx: 0, dy: 420)))
+        XCTAssertTrue(headerBtn.waitForNonExistence(timeout: 3))
+
+        let updatedRow = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS '交 Q4 報告' AND label CONTAINS '還有 5 天'")
+        ).firstMatch
+        XCTAssertTrue(updatedRow.waitForExistence(timeout: 3), app.debugDescription)
+        let otherRow = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS '週會' AND NOT (label BEGINSWITH '完成：')")
+        ).firstMatch
+        XCTAssertTrue(otherRow.exists, app.debugDescription)
+        XCTAssertFalse(otherRow.label.contains("明天、"), otherRow.label)
+        XCTAssertFalse(otherRow.label.contains("還有"), otherRow.label)
+
+        let todayRow = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS '準備週一產品會議簡報' AND NOT (label BEGINSWITH '完成：')")
+        ).firstMatch
+        XCTAssertTrue(todayRow.exists, app.debugDescription)
+        XCTAssertFalse(todayRow.label.contains("今天"), todayRow.label)
+
+        shot("countdown-list")
     }
 }

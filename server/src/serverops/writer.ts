@@ -9,9 +9,8 @@ import { MAX_ATTACHMENT_BYTES } from '../attachments/r2';
 import {
   SCHEDULE_FIELDS,
   SCHEDULE_FIELD_SET,
-  hasAllRequiredFields,
   isTaskChildEntity,
-  ENTITY_FIELDS,
+  missingRequiredFields,
 } from '../sync/entities';
 import {
   SERVER_HLC_DEVICE_ID,
@@ -312,10 +311,8 @@ function planOps(
     } else {
       Object.assign(row, set);
       fields = Object.keys(row).filter((f) => f !== key);
-      if (!hasAllRequiredFields(entity, [key, ...fields])) {
-        const missing = Object.entries(ENTITY_FIELDS[entity])
-          .filter(([f, spec]) => !spec.nullable && f !== key && !fields.includes(f))
-          .map(([f]) => f);
+      const missing = missingRequiredFields(entity, [key, ...fields]);
+      if (missing.length > 0) {
         throw new WriteValidationError(
           missing[0] ?? key,
           `New ${entity} ${entityId} is missing required fields: ${missing.join(', ')}`,

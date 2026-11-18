@@ -754,4 +754,89 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         #expect(rowObj["fileUploadedAt"] == nil)
         #expect(rowObj["fileUploadFailed"] == nil)
     }
+
+    @Test func countdownPersistsAndUpdatesWithoutTouchingScheduleOrZone() async throws {
+        let api = try await makeAPI()
+        let defaultTask = try await api.createTask(CreateTaskInput(
+            title: "預設關閉",
+            start: "2026-11-20T09:00:00+09:00",
+            timeZone: "Asia/Tokyo"
+        ))
+        #expect(defaultTask.countdown == false)
+
+        let enabledOnCreate = try await api.createTask(CreateTaskInput(
+            title: "建立開啟",
+            start: "2026-11-25",
+            allDay: true,
+            countdown: true
+        ))
+        #expect(enabledOnCreate.countdown == true)
+
+        let seqBefore = (try await api.pendingChanges(limit: 500).last?.seq) ?? 0
+        var patch = UpdateTaskInput(taskId: defaultTask.id)
+        patch.countdown = true
+        let updated = try await api.updateTask(patch)
+        #expect(updated.countdown == true)
+        #expect(updated.timeZone == "Asia/Tokyo")
+        #expect(updated.schedule?.startMinute == 8 * 60)
+
+        let newChanges = try await api.pendingChanges(limit: 500).filter { ($0.seq ?? 0) > seqBefore }
+        #expect(newChanges.count == 1)
+        #expect(newChanges[0].fields == ["countdown"])
+    }
+
+    @Test func migratesV8DatabaseAddingCountdownDefaultFalse() async throws {
+        var config = Configuration()
+        config.foreignKeysEnabled = true
+        let queue = try DatabaseQueue(configuration: config)
+        try AppDatabase.migrator.migrate(queue, upTo: "v8")
+
+        let nowMs: EpochMillis = 1_700_000_000_000
+        let meId = ID.make()
+        let projectId = ID.make()
+        let taskId = ID.make()
+        let opId = ID.make()
+        try await queue.write { db in
+            try db.execute(
+                sql: "INSERT INTO member (id, name, initial, color, isMe, createdAt, updatedAt) VALUES (?, '我', '我', '#6FA8FF', 1, ?, ?)",
+                arguments: [meId, nowMs, nowMs]
+            )
+            try db.execute(
+                sql: "INSERT INTO project (id, name, viewMode, kind, isInbox, ownerId, sortKey, showInSmart, notifyMode, createdAt, updatedAt) VALUES (?, '收件匣', 'list', 'TASK', 1, ?, 'a0', 'all', 'all', ?, ?)",
+                arguments: [projectId, meId, nowMs, nowMs]
+            )
+            try db.execute(
+                sql: "INSERT INTO task (id, projectId, title, content, priority, status, reminders, tags, sortKey, createdAt, updatedAt) VALUES (?, ?, '舊任務', '', 0, 0, '[]', '[]', 'a0', ?, ?)",
+                arguments: [taskId, projectId, nowMs, nowMs]
+            )
+            try db.execute(
+                sql: "INSERT INTO meta (key, value) VALUES (?, ?), (?, 'user-v8')",
+                arguments: [SyncEngine.pullCursorsMetaKey, #"{"u:user-1":42}"#, SyncEngine.signedInUserIdMetaKey]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO change (entity, entityId, op, fields, row, at, opId, hlc, ackedAt, result)
+                    VALUES ('task', ?, 'upsert', '["title"]', '{"id":"\(taskId)","title":"舊任務"}', ?, ?, '1700000000000:0000:dev-v8', NULL, NULL)
+                    """,
+                arguments: [taskId, nowMs, opId]
+            )
+        }
+
+        let appDB = try AppDatabase(queue)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-v9-mig-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let api = LocalDayDoAPI(database: appDB, clock: .fixed(Date(), timeZone: taipei), attachmentsDirectory: dir)
+        let task = try await api.getTask(id: taskId)
+        #expect(task.countdown == false)
+
+        let (pullCursor, signedInUser, pendingOpIds) = try await appDB.writer.read { db in
+            let cursor = try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [SyncEngine.pullCursorsMetaKey])
+            let uid = try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [SyncEngine.signedInUserIdMetaKey])
+            let ops = try String.fetchAll(db, sql: "SELECT opId FROM change WHERE ackedAt IS NULL")
+            return (cursor, uid, ops)
+        }
+        #expect(pullCursor == nil)
+        #expect(signedInUser == "user-v8")
+        #expect(pendingOpIds == [opId])
+    }
 }

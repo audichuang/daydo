@@ -192,6 +192,9 @@ struct TaskDetailContent: View {
                             .disabled(readOnly)
                             .accessibilityIdentifier("taskTitleField")
                         tagsRow(task, readOnly: readOnly)
+                        if task.schedule != nil {
+                            countdownRow(task, readOnly: readOnly)
+                        }
                         VStack(alignment: .leading, spacing: 6) {
                             Text("描述").txt(12, .semibold).foregroundStyle(Palette.textTertiary)
                             TextField("新增描述", text: $content, axis: .vertical)
@@ -336,6 +339,46 @@ struct TaskDetailContent: View {
             .accessibilityLabel("優先級：\(task.priority.label)")
         }
         .padding(.leading, -12)
+    }
+
+    func countdownRow(_ task: TodoTask, readOnly: Bool) -> some View {
+        let disabled = readOnly || task.deletedAt != nil
+        return HStack(spacing: 12) {
+            Image(systemName: "timer")
+                .font(.system(size: 16))
+                .foregroundStyle(Palette.textSecondary)
+                .frame(width: 24)
+            Text("倒數")
+                .txt(15, .medium)
+                .foregroundStyle(Palette.text)
+            Spacer()
+            Toggle("倒數", isOn: Binding(
+                get: { task.countdown },
+                set: { newValue in
+                    let previousValue = task.countdown
+                    var updated = task
+                    updated.countdown = newValue
+                    self.task = updated
+                    var input = UpdateTaskInput(taskId: task.id)
+                    input.countdown = newValue
+                    let finalInput = input
+                    Task {
+                        if await model.perform({ try await $0.updateTask(finalInput) }) == nil,
+                           self.task?.id == finalInput.taskId,
+                           self.task?.countdown == newValue {
+                            self.task?.countdown = previousValue
+                        }
+                    }
+                }
+            ))
+            .labelsHidden()
+            .tint(accent.color)
+            .disabled(disabled)
+            .accessibilityIdentifier("countdownToggle")
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 44)
+        .card(14, color: Palette.raised)
     }
 
     func tagsRow(_ task: TodoTask, readOnly: Bool) -> some View {
@@ -610,7 +653,7 @@ struct TaskDetailContent: View {
     func duplicate(_ task: TodoTask) {
         let input = CreateTaskInput(projectId: task.projectId, title: task.title, content: task.content, priority: task.priority,
                                     schedule: task.schedule, reminders: task.reminders, repeat: task.repeat,
-                                    subtasks: task.items.map(\.title), tags: task.tags)
+                                    subtasks: task.items.map(\.title), tags: task.tags, countdown: task.countdown)
         Task {
             guard let copy = await model.perform({ try await $0.createTask(input) }) else { return }
             await model.revealCreatedTaskInAll(copy)

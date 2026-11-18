@@ -39,6 +39,8 @@ export interface FieldSpec {
   kind: FieldKind;
   nullable: boolean;
   defaultValue?: unknown;
+  /** Non-nullable fields added after v1 may be omitted by older clients and default on create. */
+  optional?: boolean;
 }
 
 export const ENTITY_FIELDS: Record<EntityName, Record<string, FieldSpec>> = {
@@ -111,6 +113,7 @@ export const ENTITY_FIELDS: Record<EntityName, Record<string, FieldSpec>> = {
     repeatRule: { kind: 'string', nullable: true },
     tags: { kind: 'stringArray', nullable: false, defaultValue: [] },
     assigneeId: { kind: 'string', nullable: true },
+    countdown: { kind: 'bool', nullable: false, defaultValue: false, optional: true },
     sortKey: { kind: 'string', nullable: false, defaultValue: '' },
     completedAt: { kind: 'int', nullable: true },
     sourceRaw: { kind: 'string', nullable: true },
@@ -171,14 +174,18 @@ const REQUIRED_FIELDS_BY_ENTITY: Record<EntityName, string[]> = Object.fromEntri
   ENTITY_NAMES.map((entity) => [
     entity,
     Object.entries(ENTITY_FIELDS[entity])
-      .filter(([, spec]) => !spec.nullable)
+      .filter(([, spec]) => !spec.nullable && !spec.optional)
       .map(([field]) => field),
   ]),
 ) as Record<EntityName, string[]>;
 
-export function hasAllRequiredFields(entity: EntityName, fields: readonly string[]): boolean {
+export function missingRequiredFields(entity: EntityName, fields: readonly string[]): string[] {
   const fieldSet = new Set(fields);
-  return REQUIRED_FIELDS_BY_ENTITY[entity].every((req) => fieldSet.has(req));
+  return REQUIRED_FIELDS_BY_ENTITY[entity].filter((req) => !fieldSet.has(req));
+}
+
+export function hasAllRequiredFields(entity: EntityName, fields: readonly string[]): boolean {
+  return missingRequiredFields(entity, fields).length === 0;
 }
 
 export interface ValidatedOp {

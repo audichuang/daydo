@@ -65,13 +65,14 @@ public struct CreateTaskInput: Codable, Hashable, Sendable {
     public var subtasks: [String]?
     public var tags: [String]?
     public var assigneeId: String?
+    public var countdown: Bool?
     public var sourceRaw: String?
     public var importNote: String?
 
     /// JSON uses `timezone` like ticktick-mcp.
     enum CodingKeys: String, CodingKey {
         case projectId, title, content, priority, start, due, allDay, schedule, reminders, reminder, `repeat`
-        case subtasks, tags, assigneeId, sourceRaw, importNote
+        case subtasks, tags, assigneeId, countdown, sourceRaw, importNote
         case timeZone = "timezone"
     }
 
@@ -79,11 +80,12 @@ public struct CreateTaskInput: Codable, Hashable, Sendable {
                 start: String? = nil, due: String? = nil, allDay: Bool? = nil, timeZone: String? = nil,
                 schedule: Schedule? = nil, reminders: [String]? = nil, reminder: String? = nil, repeat: String? = nil,
                 subtasks: [String]? = nil, tags: [String]? = nil, assigneeId: String? = nil,
+                countdown: Bool? = nil,
                 sourceRaw: String? = nil, importNote: String? = nil) {
         self.projectId = projectId; self.title = title; self.content = content; self.priority = priority
         self.start = start; self.due = due; self.allDay = allDay; self.timeZone = timeZone; self.schedule = schedule
         self.reminders = reminders; self.reminder = reminder; self.repeat = `repeat`; self.subtasks = subtasks
-        self.tags = tags; self.assigneeId = assigneeId; self.sourceRaw = sourceRaw; self.importNote = importNote
+        self.tags = tags; self.assigneeId = assigneeId; self.countdown = countdown; self.sourceRaw = sourceRaw; self.importNote = importNote
     }
 }
 
@@ -109,13 +111,14 @@ public struct UpdateTaskInput: Codable, Hashable, Sendable {
     public var subtasks: [String]?
     public var tags: [String]?
     public var assigneeId: Patch<String> = .unset
+    public var countdown: Bool?
 
     public init(taskId: String) { self.taskId = taskId }
 
     enum CodingKeys: String, CodingKey {
         case taskId, projectId, title, content, priority, start, due, allDay, schedule
         case timeZone = "timezone"
-        case reminders, reminder, `repeat`, subtasks, tags, assigneeId
+        case reminders, reminder, `repeat`, subtasks, tags, assigneeId, countdown
     }
 
     public init(from decoder: Decoder) throws {
@@ -136,6 +139,7 @@ public struct UpdateTaskInput: Codable, Hashable, Sendable {
         subtasks = try c.decodeIfPresent([String].self, forKey: .subtasks)
         tags = try c.decodeIfPresent([String].self, forKey: .tags)
         assigneeId = try c.decode(Patch<String>.self, forKey: .assigneeId)
+        countdown = try c.decodeIfPresent(Bool.self, forKey: .countdown)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -156,6 +160,7 @@ public struct UpdateTaskInput: Codable, Hashable, Sendable {
         try c.encodeIfPresent(subtasks, forKey: .subtasks)
         try c.encodeIfPresent(tags, forKey: .tags)
         try c.encode(assigneeId, forKey: .assigneeId)
+        try c.encodeIfPresent(countdown, forKey: .countdown)
     }
 }
 

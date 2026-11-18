@@ -96,6 +96,7 @@
 - ICS 任務被移到使用者看不到的清單時，該 mapping 每輪記一次錯誤，不重建。
 - ICS 的 `CATEGORIES` 不轉成標籤。
 - ICS 來源暫時回傳較舊版本的重複系列（SEQUENCE 倒退）時，只有舊版仍有場次落在時間窗內、與已匯入的場次重疊，才認得出是舊版並保留任務；若舊版的場次全在時間窗外，已匯入的場次會被當成移除、任務移到垃圾桶，新版回來後以新 id 重建（完成狀態與備註留在垃圾桶那筆）。要正常來源回退快取才會發生。
+- 部署期間新版 Worker 與舊版 Scope DO 短暫混跑時，舊 DO 可能略過不認得的 `countdown` 欄位卻回 `applied`（MCP `create_task` 會回錯誤、重試可能多建一筆）；正常部署只有幾分鐘，不加機制。發 App 前先部署伺服器、伺服器不要回滾到不認得 `countdown` 的版本。同一段混跑期間，MCP `complete_task` 若要從垃圾桶重建舊 DO 寫入、沒有 `countdown` 的完成副本，會送出 `countdown: null` 而被驗證拒絕，原任務停在原場次；新 DO 的 ALTER 把舊列補成 0 後就不會發生。
 
 ## 線上格式（App 與 Worker 共用，兩邊各自實作前先以這裡為準）
 
@@ -109,6 +110,7 @@
 - **合併的欄位群組**：task 的 `startDay`、`startMinute`、`endDay`、`endMinute`、`timeZone` 是同一個時間設定，合併時視為一組，共用 `clocks["schedule"]`：只要 `fields` 含其中任何一個，就整組一起比 HLC、一起寫入（缺的欄位依上一條視為 null）。否則一台改日期、另一台改時區，合併後會變成兩邊都沒設定過的時間。
 - **不同步的欄位**：`member.isMe`（每台裝置、每個使用者各自不同；Worker 不存，回傳時依請求的使用者算出來：使用者第一個帶 `isMe: true` 推上來的 member 綁定為他自己）、`attachment.localPath`、`attachment.originalPath`、`attachment.fileUploadedAt` 與 `attachment.fileUploadFailed`（裝置上的檔案路徑與上傳狀態；後兩者不寫進 outbox）。App 套用伺服器資料列時，這些欄位**一律保留本機的值**，不套用「欄位不出現＝null」的規則；`isMe` 在第一次登入的 id 對應完成前也不能拿伺服器的值蓋掉。
 - **tombstone**：伺服器回傳的資料列可能帶 `purgedAt`（硬刪除的時間）。App 收到帶 `purgedAt` 的列，要在本機硬刪除這一列（子列由外鍵連帶刪除），不寫 outbox，也不能把它當一般資料列存回去。對已硬刪除的 id 再送 upsert，伺服器回 `applied`，但不會套用，回傳的仍是 tombstone。
+- **後加的非 null 欄位**（例如 `task.countdown`，預設 `false`）：伺服器端標為 optional，舊 App 新建時 `fields` 沒帶它也算涵蓋必填欄位，以預設值建立；App 套用伺服器資料列時，舊伺服器的 `row` 沒有這個欄位就保留本機的值（本機沒有這一列時用預設值），不套用「欄位不出現＝null」的規則。舊伺服器（Scope DO）不認得新欄位，帶了它的 op 會被 `Unknown field` 永久 `rejected`，所以**先部署伺服器、再發帶新欄位的 App**。
 - **push 回應與 pull 的資料列格式**：每筆是並列的 `row` 與 `clocks`（不是把 `clocks` 放進 `row` 裡）。`row` 只含上面的同步欄位，加上 `purgedAt`（只有 tombstone 才有）和 member 的 `isMe`。pull 回應頂層的 `members` 列則另帶 `userId`（供成員管理 API 使用）與可為 null 的 `avatarUrl`（頭像 HTTPS URL；scope 內的 `member` 列不帶這兩欄）。
 - **HLC 字串**：`<13 位數 epoch ms，前面補 0>:<4 位數計數，前面補 0>:<deviceId 小寫>`。計數到 9999 時，ms 加 1、計數歸 0。
 - **fixture**：App 端測試會產出一份真實編碼的 op 範例 `spec/fixtures/sync-ops.json`，Worker 端的測試直接讀這份檔案。格式有爭議時，以這份檔案和本節為準。

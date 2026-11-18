@@ -95,6 +95,7 @@ struct TaskRecord: Codable, Hashable, Sendable, FetchableRecord, PersistableReco
     var repeatRule: String?
     var tags: [String]
     var assigneeId: String?
+    var countdown: Bool = false
     var sortKey: String
     var completedAt: EpochMillis?
     /// Original text when the task was imported (mail, share sheet).

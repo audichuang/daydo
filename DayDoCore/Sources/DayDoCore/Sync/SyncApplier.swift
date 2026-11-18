@@ -126,6 +126,7 @@ enum SyncApplier {
                 FieldSpec("repeatRule"),
                 FieldSpec("tags", default: .array([])),
                 FieldSpec("assigneeId"),
+                FieldSpec("countdown", default: .bool(false)),
                 FieldSpec("sortKey", default: .string("")),
                 FieldSpec("completedAt"),
                 FieldSpec("sourceRaw"),
@@ -411,8 +412,14 @@ enum SyncApplier {
                 let serverClock = clocks[name].flatMap(HLC.init)
                 if existingDict != nil && shouldKeepLocal(localHLC: localHLC, serverClock: serverClock) {
                     chosen = existingDict?[name]
+                } else if let serverVal = nonNullValue(serverRow[name]) {
+                    chosen = serverVal
+                } else if existingDict == nil {
+                    chosen = fieldSpec.defaultValue
+                } else if serverRow[name] == nil, let defaultValue = fieldSpec.defaultValue {
+                    chosen = existingDict?[name] ?? defaultValue
                 } else {
-                    chosen = nonNullValue(serverRow[name]) ?? (existingDict == nil ? fieldSpec.defaultValue : nil)
+                    chosen = nil
                 }
             }
 

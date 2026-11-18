@@ -45,10 +45,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturePath = path.resolve(__dirname, '../../spec/fixtures/sync-ops.json');
 const FIXTURE = JSON.parse(readFileSync(fixturePath, 'utf8')) as { ops: Array<Record<string, any>> };
 const FIX_NOW = 1794715200000; // 2026-11-15 12:00 Asia/Taipei, the App's clock when it wrote the fixture
-const FIX_TASK_ID = '01a1dd5b-fc89-75e1-b4c4-fb62891e2107';
-const FIX_COPY_ID = 'cc64dbd5-1983-5448-8442-0fba63492416';
-const FIX_ITEM_COPY_ID = '9295d8c6-ba7b-5466-a4b7-0a5a17b4e573';
-const FIX_MEMBER_ID = '01a1dd5b-fc85-7f74-88e6-a04f8baa6fc6';
+const FIX_PROJECT_ID = '01a1ef06-b334-77f8-87b9-bde8242af560';
+const FIX_TASK_ID = '01a1ef06-b34a-7d85-86a8-d4f2b004f094';
+const FIX_COPY_ID = '90507cf8-1026-5591-aa81-b3335371de82';
+const FIX_ITEM_ID = '01a1ef06-b34a-79dc-be0e-4f3db4f50359';
+const FIX_ITEM_COPY_ID = '43c56c93-c1b9-59ae-aa1c-2d7e93f0f211';
+const FIX_MEMBER_ID = '01a1ef06-b325-7b4b-a977-cd79561b2f45';
 
 /** The fixture op that writes `entityId`, the n-th one when it is written several times. */
 function fixtureOp(entityId: string, nth = 0): Record<string, any> {
@@ -136,9 +138,9 @@ describe('M12 complete_task, repeating tasks', () => {
   // App alignment (push order, fixture ops, ids, catch-up) is in task-writes.test.ts.
   it('returns the completed copy with its checklist copy for the App fixture', async () => {
     const h = createHarness();
-    const project = fixtureOp('01a1dd5b-fc88-7f98-9743-8bbff3400c35').row;
+    const project = fixtureOp(FIX_PROJECT_ID).row;
     const task = fixtureOp(FIX_TASK_ID).row;
-    const item = fixtureOp('01a1dd5b-fc8a-7648-b8cc-9f08d7e42a43').row;
+    const item = fixtureOp(FIX_ITEM_ID).row;
     await seedUser(h, 'u-a', FIX_MEMBER_ID);
     const seeded = await h.devicePush('u-a', [
       deviceOp(h, 'project', project),

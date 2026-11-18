@@ -667,3 +667,48 @@ describe('restore_task', () => {
     expect(h.calls).toEqual([]);
   });
 });
+
+describe('M11b countdown', () => {
+  it('defaults countdown to false and creates/updates countdown without rewriting schedule', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+
+    const createdDefault = await call(h, 'u-a', 'create_task', {
+      project_id: 'p1',
+      title: 'Default off',
+      start: '2026-12-01T09:00:00+09:00',
+      due: '2026-12-01T10:00:00+09:00',
+    });
+    expect(createdDefault.isError, createdDefault.text).toBe(false);
+    expect(createdDefault.json.countdown).toBe(false);
+
+    const createdOn = await call(h, 'u-a', 'create_task', {
+      project_id: 'p1',
+      title: 'Countdown on',
+      start: '2026-12-05',
+      countdown: true,
+    });
+    expect(createdOn.isError, createdOn.text).toBe(false);
+    expect(createdOn.json.countdown).toBe(true);
+
+    const got = await call(h, 'u-a', 'get_task', { project_id: 'p1', task_id: createdOn.json.id });
+    expect(got.json.countdown).toBe(true);
+
+    const listed = await call(h, 'u-a', 'list_tasks', { project_id: 'p1' });
+    const found = (listed.json as Array<Record<string, unknown>>).find((t) => t.id === createdOn.json.id);
+    expect(found?.countdown).toBe(true);
+
+    h.calls.length = 0;
+    const updated = await call(h, 'u-a', 'update_task', {
+      project_id: 'p1',
+      task_id: createdDefault.json.id,
+      countdown: true,
+    });
+    expect(updated.isError, updated.text).toBe(false);
+    expect(updated.json.countdown).toBe(true);
+    expect(updated.json.timezone).toBe('Asia/Tokyo');
+    const ops = mcpOps(h);
+    expect(ops).toHaveLength(1);
+    expect(ops[0]!.fields).toEqual(['countdown', 'updatedAt']);
+  });
+});

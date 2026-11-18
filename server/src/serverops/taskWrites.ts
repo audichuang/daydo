@@ -157,6 +157,7 @@ export interface NewTask {
   subtasks: readonly string[];
   schedule: Schedule | null;
   repeatRule: string | null;
+  countdown?: boolean;
 }
 
 /** The new task first in its list, then its tag rows and its checklist. */
@@ -172,6 +173,7 @@ export function newTaskIntents(snapshot: Snapshot, userId: string, id: string, t
   };
   return [
     createTaskIntent(id, columns, {
+      ...(task.countdown !== undefined && { countdown: task.countdown }),
       ...(task.repeatRule !== null && { repeatRule: task.repeatRule }),
       ...(task.schedule !== null && scheduleColumns(task.schedule)),
     }),
@@ -193,6 +195,7 @@ export interface TaskPatch {
   repeatRule?: string | null;
   tags?: readonly NormalizedTag[];
   subtasks?: readonly string[];
+  countdown?: boolean;
 }
 
 /**
@@ -218,6 +221,7 @@ export function patchTaskIntents(
     ...(next !== undefined && !sameSchedule(next, cur) && scheduleColumns(next)),
     ...(patch.reminders !== undefined && { reminders: patch.reminders }),
     ...(patch.repeatRule !== undefined && { repeatRule: patch.repeatRule }),
+    ...(patch.countdown !== undefined && { countdown: patch.countdown }),
     ...(next === null && cur !== null && { reminders: [], repeatRule: null }),
   };
   const extra: WriteIntent[] = [];

@@ -52,6 +52,8 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         #expect(s.occurs(on: day("2026-11-16")))
         #expect(!s.occurs(on: day("2026-11-17")))
         #expect(DateText.taskLine(s, today: day("2026-11-15")) == "全天・第 3/4 天")
+        #expect(DateText.taskLine(s, today: day("2026-11-10")) == "11 月 13 日 起・4 天")
+        #expect(DateText.taskLine(s, on: day("2026-11-13"), today: day("2026-11-10")) == "全天・第 1/4 天")
     }
 
     @Test func crossMidnightBlock() {
@@ -79,6 +81,55 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         #expect(DateText.taskLine(.timed(today.adding(days: -1), start: 1020, end: nil), today: today) == "昨天 17:00")
         #expect(DateText.taskLine(.allDay(today), today: today) == "")
         #expect(DateText.taskLine(.allDay(today), on: today, today: today) == "全天")
+    }
+
+    @Test func countdownLabels() {
+        let today = day("2026-11-18")
+        // Future start
+        #expect(DateText.countdownLabel(.allDay(today.adding(days: 1)), today: today) == "明天")
+        #expect(DateText.countdownLabel(.timed(today.adding(days: 1), start: 540, end: 600), today: today) == "明天")
+        #expect(DateText.countdownLabel(.allDay(today.adding(days: 5)), today: today) == "還有 5 天")
+        #expect(DateText.countdownLabel(.allDay(today.adding(days: 5), through: today.adding(days: 8)), today: today) == "還有 5 天")
+
+        // Today single-day (all-day & timed)
+        #expect(DateText.countdownLabel(.allDay(today), today: today) == "今天")
+        #expect(DateText.countdownLabel(.timed(today, start: 60, end: 120), today: today) == "今天")
+        #expect(DateText.countdownLabel(.timed(today, start: 1380, end: nil), today: today) == "今天")
+
+        // Cross-midnight timed block (23:00–01:00 next day): not an all-day multi-day trip
+        let crossMidnight = Schedule.timed(today, start: 23 * 60, end: 1 * 60)
+        #expect(DateText.countdownLabel(crossMidnight, today: today.adding(days: -1)) == "明天")
+        #expect(DateText.countdownLabel(crossMidnight, today: today) == "今天")
+        #expect(DateText.countdownLabel(crossMidnight, today: today.adding(days: 1)) == "今天")
+        #expect(DateText.countdownLabel(crossMidnight, today: today.adding(days: 2)) == nil)
+
+        // Multi-day ongoing (5-day trip: Nov 16 .. Nov 20)
+        let trip = Schedule.allDay(day("2026-11-16"), through: day("2026-11-20"))
+        #expect(DateText.countdownLabel(trip, today: day("2026-11-16")) == "還剩 5 天")
+        #expect(DateText.countdownLabel(trip, today: day("2026-11-18")) == "還剩 3 天")
+        #expect(DateText.countdownLabel(trip, today: day("2026-11-19")) == "還剩 2 天")
+        #expect(DateText.countdownLabel(trip, today: day("2026-11-20")) == "最後一天")
+
+        // Past
+        #expect(DateText.countdownLabel(.allDay(today.adding(days: -1)), today: today) == nil)
+        #expect(DateText.countdownLabel(trip, today: day("2026-11-21")) == nil)
+
+        // Task wrapper checks countdown, completion, deletedAt, schedule, and repeating current schedule
+        func makeTask(status: Int = 0, schedule: Schedule? = .allDay(today.adding(days: 3)), countdown: Bool = true, deletedAt: EpochMillis? = nil, repeatRule: String? = "RRULE:FREQ=WEEKLY") -> TodoTask {
+            TodoTask(
+                id: "t1", projectId: "p1", title: "Test", content: "", priority: .none, status: status,
+                schedule: schedule, start: nil, due: nil, allDay: schedule?.isAllDay ?? false, timeZone: nil,
+                reminders: [], repeat: repeatRule, tags: [], items: [], assigneeId: nil,
+                sortKey: "a0", completedAt: status == 2 ? 1000 : nil, createdAt: 1000, updatedAt: 1000,
+                deletedAt: deletedAt, attachments: [], commentCount: 0, sourceRaw: nil, importNote: nil,
+                countdown: countdown
+            )
+        }
+        #expect(DateText.countdownLabel(for: makeTask(), today: today) == "還有 3 天")
+        #expect(DateText.countdownLabel(for: makeTask(countdown: false), today: today) == nil)
+        #expect(DateText.countdownLabel(for: makeTask(status: 2), today: today) == nil)
+        #expect(DateText.countdownLabel(for: makeTask(deletedAt: 2000), today: today) == nil)
+        #expect(DateText.countdownLabel(for: makeTask(schedule: nil), today: today) == nil)
     }
 }
 
