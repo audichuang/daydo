@@ -25,7 +25,14 @@ final class DayDoFlowTests: XCTestCase {
         a.lifetime = .keepAlways
         add(a)
         if let dir = ProcessInfo.processInfo.environment["DAYDO_SHOTS"] {
-            try? s.pngRepresentation.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name).png"))
+            // The directory is caller-supplied and often does not exist yet; a silent skip here once
+            // left a whole run without screenshots.
+            do {
+                try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                try s.pngRepresentation.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name).png"))
+            } catch {
+                XCTFail("DAYDO_SHOTS: could not write \(name).png to \(dir): \(error)")
+            }
         }
     }
 

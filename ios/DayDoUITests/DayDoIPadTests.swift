@@ -33,8 +33,12 @@ final class DayDoIPadTests: XCTestCase {
         a.lifetime = .keepAlways
         add(a)
         if let dir = ProcessInfo.processInfo.environment["DAYDO_SHOTS"] {
-            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-            try? s.pngRepresentation.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name).png"))
+            do {
+                try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                try s.pngRepresentation.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name).png"))
+            } catch {
+                XCTFail("DAYDO_SHOTS: could not write \(name).png to \(dir): \(error)")
+            }
         }
     }
 
