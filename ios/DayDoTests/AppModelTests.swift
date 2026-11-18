@@ -926,4 +926,160 @@ final class AppModelTests: XCTestCase {
         await model.revealCreatedTaskInAll(mine)
         XCTAssertNil(model.allMemberFilter)
     }
+
+    func testDuplicateProjectIgnoresReentryWhileInFlight() async throws {
+        actor SlowAttachmentTransport: SyncTransport {
+            private let projId = "slow-dup-proj-1"
+            private let taskId = "slow-dup-task-1"
+            private let attId = "slow-dup-att-1"
+            private var downloadStartedCont: CheckedContinuation<Void, Never>?
+            private var downloadStarted = false
+            private var allowFinishCont: CheckedContinuation<Void, Never>?
+            private var allowFinish = false
+            private(set) var downloadCount = 0
+
+            func waitForDownloadStart() async {
+                if downloadStarted { return }
+                await withCheckedContinuation { downloadStartedCont = $0 }
+            }
+
+            func allowDownloadFinish() {
+                allowFinish = true
+                allowFinishCont?.resume()
+                allowFinishCont = nil
+            }
+
+            func send(method: String, path: String, headers: [String: String], body: Data?) async throws -> SyncHTTPResponse {
+                let nowMs = EpochMillis(Date().timeIntervalSince1970 * 1000)
+                let serverHLC = HLC(ms: nowMs, counter: 0, deviceId: "srv").description
+
+                if method == "POST" && path == "/auth/apple" {
+                    return try jsonResponse(200, [
+                        "accessToken": "acc",
+                        "refreshToken": "ref",
+                        "user": ["id": "u-dup"],
+                        "isNewAccount": true,
+                        "hasData": false,
+                        "meMemberId": NSNull(),
+                        "inboxProjectId": NSNull(),
+                    ])
+                }
+                if method == "POST" && path == "/sync/push" {
+                    var results: [[String: Any]] = []
+                    if let body,
+                       let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                       let ops = payload["ops"] as? [[String: Any]] {
+                        for op in ops {
+                            if let opId = op["opId"] as? String {
+                                results.append(["opId": opId, "status": "applied"])
+                            }
+                        }
+                    }
+                    return try jsonResponse(200, ["results": results, "serverTime": serverHLC])
+                }
+                if method == "POST" && path == "/sync/pull" {
+                    return try jsonResponse(200, [
+                        "scopes": [[
+                            "scope": "u:u-dup",
+                            "rows": [
+                                [
+                                    "entity": "project",
+                                    "row": [
+                                        "id": projId,
+                                        "name": "待複製清單",
+                                        "viewMode": "list",
+                                        "kind": "TASK",
+                                        "isInbox": false,
+                                        "ownerId": "m-1",
+                                        "sortKey": "z1",
+                                        "showInSmart": "all",
+                                        "notifyMode": "all",
+                                        "createdAt": nowMs,
+                                        "updatedAt": nowMs,
+                                    ],
+                                    "clocks": ["name": serverHLC],
+                                    "serverSeq": 1,
+                                ],
+                                [
+                                    "entity": "task",
+                                    "row": [
+                                        "id": taskId,
+                                        "projectId": projId,
+                                        "title": "含遠端附件",
+                                        "content": "",
+                                        "priority": 0,
+                                        "status": 0,
+                                        "reminders": [],
+                                        "tags": [],
+                                        "sortKey": "a0",
+                                        "createdAt": nowMs,
+                                        "updatedAt": nowMs,
+                                    ],
+                                    "clocks": ["title": serverHLC],
+                                    "serverSeq": 2,
+                                ],
+                                [
+                                    "entity": "attachment",
+                                    "row": [
+                                        "id": attId,
+                                        "taskId": taskId,
+                                        "fileName": "doc.txt",
+                                        "size": 4,
+                                        "mimeType": "text/plain",
+                                        "createdAt": nowMs,
+                                        "updatedAt": nowMs,
+                                    ],
+                                    "clocks": ["fileName": serverHLC],
+                                    "serverSeq": 3,
+                                ],
+                            ],
+                            "cursor": 3,
+                            "hasMore": false,
+                        ]],
+                        "members": [],
+                    ])
+                }
+                if method == "GET" && path == "/attachments/\(attId)/content" {
+                    downloadCount += 1
+                    downloadStarted = true
+                    downloadStartedCont?.resume()
+                    downloadStartedCont = nil
+                    if !allowFinish {
+                        await withCheckedContinuation { allowFinishCont = $0 }
+                    }
+                    return SyncHTTPResponse(status: 200, body: Data("test".utf8))
+                }
+                return try jsonResponse(404, ["error": "Not found"])
+            }
+
+            private func jsonResponse(_ status: Int, _ object: Any) throws -> SyncHTTPResponse {
+                SyncHTTPResponse(status: status, body: try JSONSerialization.data(withJSONObject: object))
+            }
+        }
+
+        let suiteName = "daydo-tests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let transport = SlowAttachmentTransport()
+        let (model, _) = try await makeModel(syncEnabled: true, transport: transport)
+        model.scope = .project("slow-dup-proj-1")
+
+        model.duplicateProject(id: "slow-dup-proj-1")
+        XCTAssertTrue(model.isDuplicatingProject("slow-dup-proj-1"))
+        await transport.waitForDownloadStart()
+
+        // Second trigger while in-flight must be ignored.
+        model.duplicateProject(id: "slow-dup-proj-1")
+        await transport.allowDownloadFinish()
+        await model.waitForProjectDuplications()
+
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(model.isDuplicatingProject("slow-dup-proj-1"))
+        let downloadCount = await transport.downloadCount
+        XCTAssertEqual(downloadCount, 1)
+        let copies = model.projects.filter { $0.name == "待複製清單 副本" }
+        XCTAssertEqual(copies.count, 1)
+        XCTAssertEqual(model.scope, .project(try XCTUnwrap(copies.first?.id)))
+    }
 }

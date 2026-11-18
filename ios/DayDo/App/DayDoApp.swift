@@ -883,11 +883,13 @@ actor DebugStubTransport: SyncTransport {
         }
 
         if method == "GET" && path == "/attachments/debug-remote-att-1/content" {
-            if ProcessInfo.processInfo.arguments.contains("-DayDoDebugRemoteAttachmentFailOnce") && !didFailAttachmentOnce {
+            let args = ProcessInfo.processInfo.arguments
+            if args.contains("-DayDoDebugRemoteAttachmentFailOnce") && !didFailAttachmentOnce {
                 didFailAttachmentOnce = true
                 return try jsonResponse(500, ["error": "Temporary failure"])
             }
-            try await Task.sleep(for: .milliseconds(250))
+            let delayMs = args.contains("-DayDoDebugRemoteAttachmentSlow") ? 10000 : 250
+            try await Task.sleep(for: .milliseconds(delayMs))
             return SyncHTTPResponse(status: 200, body: Data("hello remote".utf8))
         }
 

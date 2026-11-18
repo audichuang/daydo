@@ -191,6 +191,16 @@ private let guards: [Guard] = [
             "if model.members.count > 1 {",
         ]
     ),
+    Guard(
+        name: "screens duplicate lists through AppModel.duplicateProject (in-progress guard)",
+        directories: ["ios/DayDo/Screens"],
+        pattern: #"(?:\$0|api)\.duplicateProject\s*\("#,
+        allow: [],
+        bad: [
+            "await model.perform { try await $0.duplicateProject(id: id) }",
+            "try await model.api.duplicateProject(id: id)",
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {
@@ -249,5 +259,13 @@ private let guards: [Guard] = [
             if creates > reveals { offenders.append(rel) }
         }
         #expect(offenders.isEmpty, "createTask without revealCreatedTaskInAll in \(offenders)")
+    }
+
+    @Test func attachmentSyncStaysDecoupledFromTaskSyncLoopAndBackoff() throws {
+        let code = try codeLines("DayDoCore/Sources/DayDoCore/Sync/SyncEngine.swift")
+        let retryableCalls = code.components(separatedBy: "nextRetryableError(").count - 1
+        #expect(retryableCalls == 4, "Expected 1 definition + 3 task-sync/refresh call sites for nextRetryableError(, found \(retryableCalls)")
+        #expect(!code.contains("await uploadPendingAttachments("), "Attachment upload must not be awaited in the sync loop")
+        #expect(!code.contains("maxAttachmentUploadsPerCycle"), "Per-cycle upload cap must stay removed")
     }
 }

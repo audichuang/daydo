@@ -1539,11 +1539,59 @@ final class DayDoFlowTests: XCTestCase {
         attRow.tap()
         let retryLabel = app.staticTexts["下載失敗，點一下重試"]
         XCTAssertTrue(retryLabel.waitForExistence(timeout: 5), app.debugDescription)
+        shot("remote-attachment-retry")
 
         // Second tap downloads and opens QuickLook preview.
         attRow.tap()
         // QuickLook titles the bar with the file name without its extension.
         let qlNav = app.navigationBars.matching(NSPredicate(format: "identifier BEGINSWITH 'notes'")).firstMatch
         XCTAssertTrue(qlNav.waitForExistence(timeout: 5), app.debugDescription)
+    }
+
+    @MainActor
+    func testDuplicateProjectShowsProgressAndPreventsDuplicateTap() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        app.terminate()
+        app.launchArguments = [
+            "-DayDoReset",
+            "-DayDoDebugStub",
+            "-DayDoDebugRemoteAttachment",
+            "-DayDoDebugRemoteAttachmentSlow",
+        ]
+        app.launch()
+        dismissNotificationPrompt()
+
+        app.buttons["開啟清單抽屜"].tap()
+        let sourceList = app.buttons["drawer.list.附件測試清單"]
+        XCTAssertTrue(sourceList.waitForExistence(timeout: 5), app.debugDescription)
+        sourceList.tap()
+
+        app.buttons["更多選項"].tap()
+        XCTAssertTrue(app.buttons["更多"].waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["更多"].tap()
+        XCTAssertTrue(app.buttons["複製清單"].waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["複製清單"].tap()
+
+        let status = app.staticTexts["複製中…"]
+        XCTAssertTrue(status.waitForExistence(timeout: 3), app.debugDescription)
+        shot("duplicate-list-in-progress")
+
+        // Re-opening the menu while duplicating shows the disabled "複製中…" item and does not create a second copy.
+        app.buttons["更多選項"].tap()
+        XCTAssertTrue(app.buttons["更多"].waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["更多"].tap()
+        let disabledDuplicateItem = app.buttons["複製中…"]
+        XCTAssertTrue(disabledDuplicateItem.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(disabledDuplicateItem.isEnabled)
+        XCTAssertFalse(app.buttons["複製清單"].exists)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85)).tap()
+
+        XCTAssertTrue(app.staticTexts["附件測試清單 副本"].waitForExistence(timeout: 12), app.debugDescription)
+        XCTAssertTrue(status.waitForNonExistence(timeout: 3), app.debugDescription)
+
+        app.buttons["開啟清單抽屜"].tap()
+        let copyRows = app.buttons.matching(NSPredicate(format: "identifier == 'drawer.list.附件測試清單 副本'"))
+        XCTAssertTrue(copyRows.firstMatch.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertEqual(copyRows.count, 1)
     }
 }

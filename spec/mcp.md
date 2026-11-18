@@ -1,6 +1,6 @@
 # DayDo 第三階段：遠端 MCP 與 ICS 訂閱同步
 
-> 狀態：設計定稿（第二版，已納入審查意見），尚未實作。這份文件是 `spec/mcp.md`。改協議或兩端行為時，先改這份與 `spec/sync.md`。
+> 狀態：已上線（mcp.daydoapp.com）。設計定稿（第二版，已納入審查意見）。這份文件是 `spec/mcp.md`。改協議或兩端行為時，先改這份與 `spec/sync.md`。
 > 參考實作 `_ref/ticktick-mcp`（以下簡稱 REF）是單人 TickTick 代理。本設計只借它的協定層、工具名與 ICS 語意。REF 唯讀，不修改。
 > 審查意見逐條的採納與否決理由見第 15 節。
 

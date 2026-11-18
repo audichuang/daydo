@@ -3714,6 +3714,7 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         )
 
         _ = try await engine.syncNow()
+        await engine.waitForAttachmentUploads()
 
         let putReqs = await transport.capturedRequests().filter { $0.method == "PUT" && $0.path == "/attachments/\(attId)/content" }
         #expect(putReqs.count == 1)
@@ -3845,8 +3846,9 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
             attachmentsDirectory: dir
         )
 
-        // Round 1: uploads 204/401/400/403/410/413 across capped cycles, then stops at 404 without failing syncNow().
+        // Round 1: uploads 204/401/400/403/410/413 in the background worker, then stops at 404 without failing syncNow().
         _ = try await engine.syncNow()
+        await engine.waitForAttachmentUploads()
 
         let r1Records = try await db.writer.read { db in
             try Dictionary(uniqueKeysWithValues: AttachmentRecord.fetchAll(db).map { ($0.id, $0) })
@@ -3865,10 +3867,11 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         }
         #expect(try await api.pendingChanges(limit: 500).isEmpty)
 
-        // Subsequent rounds: each temporary error (404, 500, URLError) stops without rerun until resolved.
+        // Subsequent rounds: each temporary error (404, 500, URLError) stops without tight retry until next syncNow().
         for nextRound in 1...3 {
             await round.set(nextRound)
             _ = try await engine.syncNow()
+        await engine.waitForAttachmentUploads()
         }
 
         let finalRecords = try await db.writer.read { db in
@@ -4247,9 +4250,9 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         let notifications = await engine.changeNotifications()
         var notifIter = notifications.makeAsyncIterator()
 
-        let syncTask = Task {
-            try await engine.syncNow()
-        }
+        // syncNow() finishes without awaiting the background PUT.
+        let summary = try await engine.syncNow()
+        #expect(summary.pulledCount == 1)
 
         // Wait until PUT has started and is blocked on allowPutFinish.
         await putStarted.wait()
@@ -4268,7 +4271,7 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         #expect(pullIdx < putIdx)
 
         await allowPutFinish.open()
-        _ = try await syncTask.value
+        await engine.waitForAttachmentUploads()
 
         let uploaded = try await db.writer.read { db in
             try AttachmentRecord.fetchOne(db, key: att.id)
@@ -4340,15 +4343,15 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         #expect(try await api.unsyncedChangeCount() == 2)
     }
 
-    @Test func attachmentUploadCapsAt3PerCycleRerunsForRemainingAndPushesInterRoundEdits() async throws {
+    @Test func backgroundUploadWorkerUploadsAll5CandidatesWithoutExtraSyncCycles() async throws {
         let nowMs = noon.epochMillis
         let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
         let db = try AppDatabase.inMemory()
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-att-cap-\(UUID().uuidString)")
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-att-all5-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
         try await api.bootstrap()
-        let task = try await api.createTask(CreateTaskInput(title: "分批補傳任務"))
+        let task = try await api.createTask(CreateTaskInput(title: "背景全數補傳任務"))
 
         var atts: [DayDoCore.Attachment] = []
         for i in 1...5 {
@@ -4359,23 +4362,11 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         }
         try await ackAllChanges(in: db)
 
-        let pushedTitles = PushOpRecorder()
-        let didCreateInterRoundEdit = CounterBox()
         let transport = FakeSyncTransport { req, _ in
             if req.path == "/sync/push" {
-                let ops = try decodePushOps(req.body)
-                await pushedTitles.append(ops)
-                return try jsonResponse(200, [
-                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "applied"] },
-                    "serverTime": serverHLC,
-                ])
+                return try jsonResponse(200, ["results": [], "serverTime": serverHLC])
             }
             if req.method == "PUT" {
-                if await didCreateInterRoundEdit.get() == 0 {
-                    await didCreateInterRoundEdit.set(1)
-                    // Simulate a user edit arriving between cycle 1 and cycle 2.
-                    _ = try await api.createTask(CreateTaskInput(title: "兩輪之間新編輯"))
-                }
                 return SyncHTTPResponse(status: 204, body: Data())
             }
             return try jsonResponse(200, ["scopes": [], "members": []])
@@ -4389,27 +4380,15 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
             attachmentsDirectory: dir
         )
 
-        let summary = try await engine.syncNow()
-        #expect(summary.pushedCount == 1)
+        _ = try await engine.syncNow()
+        await engine.waitForAttachmentUploads()
 
         let captured = await transport.capturedRequests()
-        let pullIndices = captured.enumerated().compactMap { $0.element.path == "/sync/pull" ? $0.offset : nil }
-        let putIndices = captured.enumerated().compactMap { $0.element.method == "PUT" ? $0.offset : nil }
-        let pushWithOpsIndex = try #require(captured.firstIndex {
-            $0.path == "/sync/push" && ((try? decodePushOps($0.body).isEmpty) == false)
-        })
+        let pullCount = captured.filter { $0.path == "/sync/pull" }.count
+        let putPaths = captured.filter { $0.method == "PUT" }.map(\.path)
 
-        // 5 attachments -> Cycle 1 pulls then uploads 3; rerun pushes inter-round edit, pulls, then uploads 2.
-        #expect(pullIndices.count == 2)
-        #expect(putIndices.count == 5)
-        #expect(putIndices[0] < pullIndices[1])
-        #expect(putIndices[2] < pullIndices[1])
-        #expect(pullIndices[1] < putIndices[3])
-        #expect(putIndices[2] < pushWithOpsIndex)
-        #expect(pushWithOpsIndex < putIndices[3])
-
-        let pushedOps = await pushedTitles.ops
-        #expect(pushedOps.contains { $0["entity"]?.stringValue == "task" && $0["row"]?.objectValue?["title"]?.stringValue == "兩輪之間新編輯" })
+        #expect(pullCount == 1)
+        #expect(putPaths == atts.map { "/attachments/\($0.id)/content" })
 
         let finalRecords = try await db.writer.read { db in
             try Dictionary(uniqueKeysWithValues: AttachmentRecord.fetchAll(db).map { ($0.id, $0) })
@@ -4419,7 +4398,109 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         }
     }
 
-    @Test func attachmentUploadTemporaryFailureStopsCycleWithoutRerun() async throws {
+    @Test func syncNowReturnsWhileUploadBlockedAndSubsequentEditsPushAndPullNormally() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-att-unblocked-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+        let inbox = try #require(try await api.listProjects(includeArchived: false).first(where: \.isInbox))
+        let task = try await api.createTask(CreateTaskInput(projectId: inbox.id, title: "阻塞上傳任務"))
+        let att = try await api.uploadAttachment(
+            taskId: task.id, fileName: "slow.bin", data: Data("slow".utf8), mimeType: "application/octet-stream", originalPath: nil
+        )
+        try await ackAllChanges(in: db)
+
+        let putStarted = AsyncGate()
+        let allowPutFinish = AsyncGate()
+        let pullRound = CounterBox()
+        let pushedOps = PushOpRecorder()
+        let remoteTaskId = ID.make()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/sync/push" {
+                let ops = try decodePushOps(req.body)
+                await pushedOps.append(ops)
+                return try jsonResponse(200, [
+                    "results": ops.map { ["opId": $0["opId"]?.stringValue ?? "", "status": "applied"] },
+                    "serverTime": serverHLC,
+                ])
+            }
+            if req.path == "/sync/pull" {
+                let current = await pullRound.get()
+                await pullRound.set(current + 1)
+                if current == 1 {
+                    return try jsonResponse(200, [
+                        "scopes": [[
+                            "scope": "u:user-1",
+                            "rows": [[
+                                "entity": "task",
+                                "row": [
+                                    "id": remoteTaskId,
+                                    "projectId": inbox.id,
+                                    "title": "上傳中拉到的遠端任務",
+                                    "content": "",
+                                    "priority": 0,
+                                    "status": 0,
+                                    "reminders": [],
+                                    "tags": [],
+                                    "sortKey": "z1",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["title": serverHLC],
+                                "serverSeq": 1,
+                            ]],
+                            "cursor": 1,
+                            "hasMore": false,
+                        ]],
+                        "members": [],
+                    ])
+                }
+                return try jsonResponse(200, ["scopes": [], "members": []])
+            }
+            if req.method == "PUT" && req.path == "/attachments/\(att.id)/content" {
+                await putStarted.open()
+                await allowPutFinish.wait()
+                return SyncHTTPResponse(status: 204, body: Data())
+            }
+            return try jsonResponse(404, ["error": "not-found"])
+        }
+
+        let engine = SyncEngine(
+            database: db,
+            transport: transport,
+            tokenStore: InMemorySyncTokenStore(accessToken: "acc", refreshToken: "ref"),
+            clock: .fixed(noon, timeZone: taipei),
+            attachmentsDirectory: dir
+        )
+
+        // 1. syncNow returns while PUT is still blocked.
+        _ = try await engine.syncNow()
+        await putStarted.wait()
+        #expect(await allowPutFinish.isOpen == false)
+
+        // 2. While PUT is paused, new local edits still push and new remote updates still pull.
+        _ = try await api.createTask(CreateTaskInput(projectId: inbox.id, title: "上傳中本機新編輯"))
+        let summary2 = try await engine.syncNow()
+        #expect(summary2.pushedCount == 1)
+        #expect(summary2.pulledCount == 1)
+        #expect((try await api.getTask(id: remoteTaskId)).title == "上傳中拉到的遠端任務")
+        let recordedOps = await pushedOps.ops
+        #expect(recordedOps.contains { $0["entity"]?.stringValue == "task" && $0["row"]?.objectValue?["title"]?.stringValue == "上傳中本機新編輯" })
+
+        // 3. Unblock PUT and verify only one PUT ran and completed cleanly.
+        await allowPutFinish.open()
+        await engine.waitForAttachmentUploads()
+        let putReqs = await transport.capturedRequests().filter { $0.method == "PUT" }
+        #expect(putReqs.count == 1)
+        let rec = try await db.writer.read { db in try AttachmentRecord.fetchOne(db, key: att.id) }
+        #expect(rec?.fileUploadedAt == nowMs)
+    }
+
+    @Test func attachmentUploadTemporaryFailureStopsAndResumesOnNextSync() async throws {
         let nowMs = noon.epochMillis
         let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
         let db = try AppDatabase.inMemory()
@@ -4439,12 +4520,14 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         try await ackAllChanges(in: db)
 
         let firstAttId = atts[0].id
+        let allowRemaining = CounterBox()
         let transport = FakeSyncTransport { req, _ in
             if req.path == "/sync/push" {
                 return try jsonResponse(200, ["results": [], "serverTime": serverHLC])
             }
             if req.method == "PUT" {
-                if req.path == "/attachments/\(firstAttId)/content" {
+                let allow = await allowRemaining.get()
+                if req.path == "/attachments/\(firstAttId)/content" || allow == 1 {
                     return SyncHTTPResponse(status: 204, body: Data())
                 }
                 return try jsonResponse(429, ["error": "rate-limited"])
@@ -4461,6 +4544,7 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
         )
 
         _ = try await engine.syncNow()
+        await engine.waitForAttachmentUploads()
 
         let captured = await transport.capturedRequests()
         let pullCount = captured.filter { $0.path == "/sync/pull" }.count
@@ -4479,6 +4563,292 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
             #expect(records[att.id]?.fileUploadedAt == nil)
             #expect(records[att.id]?.fileUploadFailed == false)
         }
+
+        // Next successful sync wakes the upload worker and finishes the rest.
+        await allowRemaining.set(1)
+        _ = try await engine.syncNow()
+        await engine.waitForAttachmentUploads()
+
+        let afterResume = try await db.writer.read { db in
+            try Dictionary(uniqueKeysWithValues: AttachmentRecord.fetchAll(db).map { ($0.id, $0) })
+        }
+        for att in atts {
+            #expect(afterResume[att.id]?.fileUploadedAt == nowMs)
+        }
+    }
+
+    @Test func signOutCancelsAttachmentUploadAndPreventsLocalWrites() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-att-signout-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+        let task = try await api.createTask(CreateTaskInput(title: "登出取消上傳"))
+        let att1 = try await api.uploadAttachment(
+            taskId: task.id, fileName: "a1.txt", data: Data("a1".utf8), mimeType: "text/plain", originalPath: nil
+        )
+        let att2 = try await api.uploadAttachment(
+            taskId: task.id, fileName: "a2.txt", data: Data("a2".utf8), mimeType: "text/plain", originalPath: nil
+        )
+        try await ackAllChanges(in: db)
+
+        let putStarted = AsyncGate()
+        let allowPutFinish = AsyncGate()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/sync/push" {
+                return try jsonResponse(200, ["results": [], "serverTime": serverHLC])
+            }
+            if req.method == "PUT" && req.path == "/attachments/\(att1.id)/content" {
+                await putStarted.open()
+                await allowPutFinish.wait()
+                return SyncHTTPResponse(status: 204, body: Data())
+            }
+            if req.method == "PUT" {
+                return SyncHTTPResponse(status: 204, body: Data())
+            }
+            return try jsonResponse(200, ["scopes": [], "members": []])
+        }
+
+        let tokens = InMemorySyncTokenStore(accessToken: "acc", refreshToken: "ref")
+        let engine = SyncEngine(
+            database: db,
+            transport: transport,
+            tokenStore: tokens,
+            clock: .fixed(noon, timeZone: taipei),
+            attachmentsDirectory: dir
+        )
+
+        _ = try await engine.syncNow()
+        await putStarted.wait()
+
+        // signOut returns without waiting on the blocked PUT, cancels the worker, and wipes local rows.
+        try await engine.signOut()
+        #expect(tokens.accessToken == nil)
+        #expect(tokens.refreshToken == nil)
+
+        // Even after PUT resolves with 204, the cancelled worker stops without uploading att2 or writing to DB.
+        await allowPutFinish.open()
+        await engine.waitForAttachmentUploads()
+
+        let putPaths = await transport.capturedRequests().filter { $0.method == "PUT" }.map(\.path)
+        #expect(putPaths == ["/attachments/\(att1.id)/content"])
+        #expect(putPaths.contains("/attachments/\(att2.id)/content") == false)
+        let remainingAttachments = try await db.writer.read { db in try AttachmentRecord.fetchCount(db) }
+        #expect(remainingAttachments == 0)
+    }
+
+    @Test func attachmentDownloadFailuresDoNotIncreaseTaskSyncBackoff() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-dl-backoff-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        let remoteAttId = ID.make()
+        let taskId = ID.make()
+        let projectId = ID.make()
+        let downloadMode = CounterBox()
+        let pushFailMode = CounterBox()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/auth/apple" {
+                return try jsonResponse(200, [
+                    "accessToken": "acc-dl",
+                    "refreshToken": "ref-dl",
+                    "user": ["id": "u-dl"],
+                    "isNewAccount": false,
+                    "hasData": true,
+                    "meMemberId": NSNull(),
+                    "inboxProjectId": NSNull(),
+                ])
+            }
+            if req.path == "/sync/push" {
+                if await pushFailMode.get() == 1 {
+                    return try jsonResponse(500, ["error": "push-unavailable"])
+                }
+                return try jsonResponse(200, ["results": [], "serverTime": serverHLC])
+            }
+            if req.path == "/sync/pull" {
+                return try jsonResponse(200, [
+                    "scopes": [[
+                        "scope": "u:u-dl",
+                        "rows": [
+                            [
+                                "entity": "project",
+                                "row": [
+                                    "id": projectId,
+                                    "name": "收件匣",
+                                    "viewMode": "list",
+                                    "kind": "TASK",
+                                    "isInbox": true,
+                                    "ownerId": "m-1",
+                                    "sortKey": "a0",
+                                    "showInSmart": "all",
+                                    "notifyMode": "all",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["name": serverHLC],
+                                "serverSeq": 1,
+                            ],
+                            [
+                                "entity": "task",
+                                "row": [
+                                    "id": taskId,
+                                    "projectId": projectId,
+                                    "title": "遠端任務",
+                                    "content": "",
+                                    "priority": 0,
+                                    "status": 0,
+                                    "reminders": [],
+                                    "tags": [],
+                                    "sortKey": "a0",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["title": serverHLC],
+                                "serverSeq": 2,
+                            ],
+                            [
+                                "entity": "attachment",
+                                "row": [
+                                    "id": remoteAttId,
+                                    "taskId": taskId,
+                                    "fileName": "report.pdf",
+                                    "size": 100,
+                                    "mimeType": "application/pdf",
+                                    "createdAt": nowMs,
+                                    "updatedAt": nowMs,
+                                ],
+                                "clocks": ["fileName": serverHLC],
+                                "serverSeq": 3,
+                            ],
+                        ],
+                        "cursor": 3,
+                        "hasMore": false,
+                    ]],
+                    "members": [],
+                ])
+            }
+            if req.method == "GET" && req.path == "/attachments/\(remoteAttId)/content" {
+                switch await downloadMode.get() {
+                case 0: return try jsonResponse(500, ["error": "server-error"])
+                case 1: return try jsonResponse(429, ["error": "rate-limit"])
+                default: throw URLError(.timedOut)
+                }
+            }
+            return try jsonResponse(404, ["error": "not-found"])
+        }
+
+        let engine = SyncEngine(
+            database: db,
+            transport: transport,
+            tokenStore: InMemorySyncTokenStore(),
+            clock: .fixed(noon, timeZone: taipei),
+            baseBackoffSeconds: 2.0,
+            maxBackoffSeconds: 16.0,
+            attachmentsDirectory: dir
+        )
+        api.setSyncEngine(engine)
+        _ = try await engine.signIn(with: .apple(identityToken: "tok", nonce: "n"))
+
+        let remoteAtt = try #require((try await api.getTask(id: taskId)).attachments.first)
+
+        // Hit 500, 429, URLError, 500 on attachment downloads.
+        for mode in [0, 1, 2, 0] {
+            await downloadMode.set(mode)
+            do {
+                _ = try await api.attachmentFile(remoteAtt)
+                Issue.record("Expected attachment download error")
+            } catch {
+                // Expected direct failure.
+            }
+        }
+
+        // First task sync failure must still start at initial baseBackoffSeconds (2.0s).
+        await pushFailMode.set(1)
+        _ = try await api.createTask(CreateTaskInput(title: "測試退避初始值"))
+        do {
+            _ = try await engine.syncNow()
+            Issue.record("Expected retryable sync error")
+        } catch let SyncError.retryable(retryAfter, statusCode, _) {
+            #expect(statusCode == 500)
+            #expect(retryAfter == 2.0)
+        }
+    }
+
+    @Test func concurrentSyncNowCallsRunSingleUploadWorkerAndPutEachAttachmentOnce() async throws {
+        let nowMs = noon.epochMillis
+        let serverHLC = HLC(ms: nowMs + 100, counter: 0, deviceId: "srv").description
+        let db = try AppDatabase.inMemory()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-att-single-worker-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let api = LocalDayDoAPI(database: db, clock: .fixed(noon, timeZone: taipei), attachmentsDirectory: dir)
+        try await api.bootstrap()
+        let task = try await api.createTask(CreateTaskInput(title: "單一上傳工作任務"))
+        let att1 = try await api.uploadAttachment(
+            taskId: task.id, fileName: "one.txt", data: Data("1".utf8), mimeType: "text/plain", originalPath: nil
+        )
+        let att2 = try await api.uploadAttachment(
+            taskId: task.id, fileName: "two.txt", data: Data("2".utf8), mimeType: "text/plain", originalPath: nil
+        )
+        try await ackAllChanges(in: db)
+
+        let pullStarted = AsyncGate()
+        let allowPullFinish = AsyncGate()
+        let putStarted = AsyncGate()
+        let allowPutFinish = AsyncGate()
+
+        let transport = FakeSyncTransport { req, _ in
+            if req.path == "/sync/push" {
+                return try jsonResponse(200, ["results": [], "serverTime": serverHLC])
+            }
+            if req.path == "/sync/pull" {
+                await pullStarted.open()
+                await allowPullFinish.wait()
+                return try jsonResponse(200, ["scopes": [], "members": []])
+            }
+            if req.method == "PUT" && req.path == "/attachments/\(att1.id)/content" {
+                await putStarted.open()
+                await allowPutFinish.wait()
+                return SyncHTTPResponse(status: 204, body: Data())
+            }
+            if req.method == "PUT" {
+                return SyncHTTPResponse(status: 204, body: Data())
+            }
+            return try jsonResponse(200, ["scopes": [], "members": []])
+        }
+
+        let engine = SyncEngine(
+            database: db,
+            transport: transport,
+            tokenStore: InMemorySyncTokenStore(accessToken: "acc", refreshToken: "ref"),
+            clock: .fixed(noon, timeZone: taipei),
+            attachmentsDirectory: dir
+        )
+
+        let t1 = Task { try await engine.syncNow() }
+        await pullStarted.wait()
+        let t2 = Task { try await engine.syncNow() }
+        try await Task.sleep(for: .milliseconds(20))
+        await allowPullFinish.open()
+        _ = try await (t1.value, t2.value)
+
+        // Also trigger another syncNow while att1's PUT is still in-flight.
+        await putStarted.wait()
+        _ = try await engine.syncNow()
+
+        await allowPutFinish.open()
+        await engine.waitForAttachmentUploads()
+
+        let putPaths = await transport.capturedRequests().filter { $0.method == "PUT" }.map(\.path)
+        #expect(putPaths == [
+            "/attachments/\(att1.id)/content",
+            "/attachments/\(att2.id)/content",
+        ])
     }
 
     @Test func duplicateProjectDownloadsRemoteAttachmentsOutsideTransactionAndSkipsFailures() async throws {
@@ -4652,6 +5022,7 @@ private func rowDict<R: Encodable>(_ record: R) throws -> [String: Any] {
 
         // Syncing pushes the copy's metadata and uploads the copied attachment under its new id.
         _ = try await engine.syncNow()
+        await engine.waitForAttachmentUploads()
         let putPaths = await transport.capturedRequests().filter { $0.method == "PUT" }.map(\.path)
         #expect(putPaths == ["/attachments/\(copiedAtt.id)/content"])
     }

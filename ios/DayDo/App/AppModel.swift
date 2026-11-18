@@ -67,6 +67,8 @@ final class AppModel {
     var isSignedIn = false
     var isSigningIn = false
     var isSyncing = false
+    private(set) var duplicatingProjectIds: Set<String> = []
+    private var duplicationTasks: [String: Task<Void, Never>] = [:]
     var errorMessage: String?
 
     // Invites
@@ -492,6 +494,36 @@ final class AppModel {
         }
     }
 
+    func isDuplicatingProject(_ id: String) -> Bool {
+        duplicatingProjectIds.contains(id)
+    }
+
+    /// Duplicates a list through `DayDoAPI`, ignoring re-entry for the same list until it finishes.
+    func duplicateProject(id: String) {
+        guard !duplicatingProjectIds.contains(id) else { return }
+        duplicatingProjectIds.insert(id)
+        let task = Task {
+            defer {
+                duplicatingProjectIds.remove(id)
+                duplicationTasks.removeValue(forKey: id)
+            }
+            if let copy = await perform({ try await $0.duplicateProject(id: id) }),
+               !Task.isCancelled,
+               scope == .project(id) {
+                scope = .project(copy.id)
+            }
+        }
+        duplicationTasks[id] = task
+    }
+
+    func waitForProjectDuplications() async {
+        while !duplicationTasks.isEmpty {
+            for task in Array(duplicationTasks.values) {
+                await task.value
+            }
+        }
+    }
+
     /// Convenience for partial task updates from views.
     func updateTask(_ id: String, _ edit: (inout UpdateTaskInput) -> Void) {
         var u = UpdateTaskInput(taskId: id)
@@ -740,6 +772,9 @@ final class AppModel {
         pendingInviteCode = nil
         showingMeNamePrompt = false
         allMemberFilter = nil
+        duplicationTasks.values.forEach { $0.cancel() }
+        duplicationTasks.removeAll()
+        duplicatingProjectIds.removeAll()
         isSignedIn = false
         revision += 1
         scheduleWidgetReload()

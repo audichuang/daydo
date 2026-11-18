@@ -79,7 +79,12 @@ struct TaskListScreen: View {
 
             if !isRegular {
                 ScreenHeader {
-                    EmptyView()
+                    if isDuplicatingCurrentProject {
+                        duplicatingStatusView
+                            .padding(.horizontal, 12)
+                            .frame(height: 36)
+                            .glassEffect(.regular, in: .capsule)
+                    }
                 } trailing: {
                     trailingActions
                 }
@@ -88,6 +93,11 @@ struct TaskListScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if isRegular {
+                if isDuplicatingCurrentProject {
+                    ToolbarItem(placement: .principal) {
+                        duplicatingStatusView
+                    }
+                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     trailingActions
                 }
@@ -133,10 +143,14 @@ struct TaskListScreen: View {
             }
             if case .project(let id) = scope, let proj = model.project(id), !proj.isInbox {
                 Divider()
+                let isDuplicating = model.isDuplicatingProject(id)
                 Menu("更多", systemImage: "ellipsis.circle") {
                     Button("共享協作", systemImage: "person.2") { model.sharingProjectId = id }
                     Button("分享", systemImage: "square.and.arrow.up") { shareText = projectShareText(proj) }
-                    Button("複製清單", systemImage: "doc.on.doc") { duplicate(id) }
+                    Button(isDuplicating ? "複製中…" : "複製清單", systemImage: "doc.on.doc") {
+                        model.duplicateProject(id: id)
+                    }
+                    .disabled(isDuplicating)
                 }
             }
         } label: {
@@ -210,12 +224,23 @@ struct TaskListScreen: View {
         }
     }
 
-    func duplicate(_ projectId: String) {
-        Task {
-            if let copy = await model.perform({ try await $0.duplicateProject(id: projectId) }) {
-                model.scope = .project(copy.id)
-            }
+    private var isDuplicatingCurrentProject: Bool {
+        if case .project(let id) = scope {
+            return model.isDuplicatingProject(id)
         }
+        return false
+    }
+
+    private var duplicatingStatusView: some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(Palette.textSecondary)
+            Text("複製中…")
+                .txt(13, .medium)
+                .foregroundStyle(Palette.textSecondary)
+        }
+        .accessibilityIdentifier("taskList.duplicatingStatus")
     }
 
     func projectShareText(_ project: Project) -> String {

@@ -45,6 +45,11 @@ public actor SyncEngine {
     private var inFlightRefresh: Task<String, Error>?
     private var consecutiveRetryableFailures: Int = 0
     private var sessionGeneration: UInt64 = 0
+    private var attachmentUploadTask: Task<Void, Never>?
+    private var attachmentUploadTaskID: UUID?
+    private var attachmentUploadGeneration: UInt64?
+    private var attachmentUploadWakeRequested: Bool = false
+    private var retiredAttachmentUploadTasks: [UUID: Task<Void, Never>] = [:]
     private var continuations: [UUID: AsyncStream<SyncSummary>.Continuation] = [:]
 
     private let encoder = Outbox.encoder
@@ -204,6 +209,14 @@ public actor SyncEngine {
         sessionGeneration &+= 1
         inFlightSync?.cancel()
         inFlightRefresh?.cancel()
+        if let uploadTask = attachmentUploadTask, let uploadTaskID = attachmentUploadTaskID {
+            uploadTask.cancel()
+            retiredAttachmentUploadTasks[uploadTaskID] = uploadTask
+        }
+        attachmentUploadTask = nil
+        attachmentUploadTaskID = nil
+        attachmentUploadGeneration = nil
+        attachmentUploadWakeRequested = false
         tokenStore.accessToken = nil
         tokenStore.refreshToken = nil
         consecutiveRetryableFailures = 0
@@ -342,7 +355,7 @@ public actor SyncEngine {
             emitChange(summary)
         }
 
-        await uploadPendingAttachments(generation: generation)
+        triggerAttachmentUpload(generation: generation)
 
         return summary
     }
@@ -822,111 +835,138 @@ public actor SyncEngine {
 
     // MARK: - Attachments
 
-    static let maxAttachmentUploadsPerCycle = 3
-
-    /// Uploads up to `maxAttachmentUploadsPerCycle` local attachment files whose metadata row
-    /// is already synced (`ackedAt != nil` / no unacked outbox entries). Stops early without
-    /// requesting a rerun on temporary failures, and requests a rerun when more candidates remain.
+    /// Triggers the background attachment upload worker and awaits its completion (for tests).
     func uploadPendingAttachments() async {
-        await uploadPendingAttachments(generation: sessionGeneration)
+        triggerAttachmentUpload(generation: sessionGeneration)
+        await waitForAttachmentUploads()
     }
 
-    private func uploadPendingAttachments(generation: UInt64) async {
-        guard let attachmentsDirectory, generation == sessionGeneration, !Task.isCancelled else {
+    /// Awaits any active or cancelled background attachment upload worker (for tests).
+    func waitForAttachmentUploads() async {
+        while let task = attachmentUploadTask ?? retiredAttachmentUploadTasks.values.first {
+            await task.value
+        }
+    }
+
+    private func triggerAttachmentUpload(generation: UInt64) {
+        guard attachmentsDirectory != nil, generation == sessionGeneration else {
             return
         }
-        let candidates: [AttachmentRecord]
-        do {
-            candidates = try await database.writer.read { db in
-                try AttachmentRecord.fetchAll(db, sql: """
-                    SELECT * FROM attachment
-                    WHERE \(AttachmentRecord.pendingUploadWhereClause)
-                    ORDER BY createdAt ASC, id ASC
-                    """)
+        if attachmentUploadTask != nil {
+            if attachmentUploadGeneration == generation {
+                attachmentUploadWakeRequested = true
             }
-        } catch {
             return
         }
+        let taskID = UUID()
+        attachmentUploadTaskID = taskID
+        attachmentUploadGeneration = generation
+        attachmentUploadWakeRequested = false
+        attachmentUploadTask = Task {
+            await self.runAttachmentUploadLoop(generation: generation, taskID: taskID)
+        }
+    }
 
-        var uploadsAttempted = 0
-        var hasMoreCandidates = false
-        var hitTemporaryFailure = false
-
-        for att in candidates {
-            guard generation == sessionGeneration, !Task.isCancelled else { return }
-            guard let rel = att.localPath, !rel.isEmpty else { continue }
-            let fileURL = attachmentsDirectory.appendingPathComponent(rel)
-            guard FileManager.default.fileExists(atPath: fileURL.path) else { continue }
-
-            if uploadsAttempted >= Self.maxAttachmentUploadsPerCycle {
-                hasMoreCandidates = true
-                break
+    private func runAttachmentUploadLoop(generation: UInt64, taskID: UUID) async {
+        defer {
+            if self.attachmentUploadTaskID == taskID {
+                self.attachmentUploadTask = nil
+                self.attachmentUploadTaskID = nil
+                self.attachmentUploadGeneration = nil
+                self.attachmentUploadWakeRequested = false
             }
-            uploadsAttempted += 1
+            self.retiredAttachmentUploadTasks.removeValue(forKey: taskID)
+        }
 
-            let encodedId = Self.percentEncodePathComponent(att.id)
-            let mime = att.mimeType.isEmpty ? "application/octet-stream" : att.mimeType
+        guard let attachmentsDirectory else { return }
+
+        while generation == sessionGeneration, !Task.isCancelled {
+            attachmentUploadWakeRequested = false
+
+            let candidates: [AttachmentRecord]
             do {
-                let response = try await sendAuthorizedRequest { token in
-                    try await self.transport.upload(
-                        path: "/attachments/\(encodedId)/content",
-                        headers: [
-                            "Authorization": "Bearer \(token)",
-                            "Content-Type": mime,
-                        ],
-                        fileURL: fileURL
-                    )
-                }
-                guard generation == sessionGeneration, !Task.isCancelled else { return }
-
-                switch response.status {
-                case 200...299:
-                    let uploadedAt = clock.now().epochMillis
-                    try await database.writer.write { db in
-                        try db.execute(
-                            sql: "UPDATE attachment SET fileUploadedAt = ? WHERE id = ?",
-                            arguments: [uploadedAt, att.id]
-                        )
-                    }
-                case 400, 403, 410, 413:
-                    try await database.writer.write { db in
-                        try db.execute(
-                            sql: "UPDATE attachment SET fileUploadFailed = 1 WHERE id = ?",
-                            arguments: [att.id]
-                        )
-                    }
-                default:
-                    // 404 (row not yet visible), 429, 5xx, etc.: stop this cycle and retry on next sync.
-                    hitTemporaryFailure = true
-                    break
+                candidates = try await database.writer.read { db in
+                    try AttachmentRecord.fetchAll(db, sql: """
+                        SELECT * FROM attachment
+                        WHERE \(AttachmentRecord.pendingUploadWhereClause)
+                        ORDER BY createdAt ASC, id ASC
+                        """)
                 }
             } catch {
-                // Network or token errors stop this cycle without requesting a rerun.
-                hitTemporaryFailure = true
+                return
             }
-            if hitTemporaryFailure {
-                break
-            }
-        }
 
-        if !hitTemporaryFailure && hasMoreCandidates && generation == sessionGeneration && !Task.isCancelled {
-            rerunRequested = true
+            if candidates.isEmpty {
+                if attachmentUploadWakeRequested {
+                    continue
+                }
+                return
+            }
+
+            var didAttemptAny = false
+            for att in candidates {
+                guard generation == sessionGeneration, !Task.isCancelled else { return }
+                guard let rel = att.localPath, !rel.isEmpty else { continue }
+                let fileURL = attachmentsDirectory.appendingPathComponent(rel)
+                guard FileManager.default.fileExists(atPath: fileURL.path) else { continue }
+                didAttemptAny = true
+
+                let encodedId = Self.percentEncodePathComponent(att.id)
+                let mime = att.mimeType.isEmpty ? "application/octet-stream" : att.mimeType
+                do {
+                    let response = try await sendAuthorizedRequest { token in
+                        try await self.transport.upload(
+                            path: "/attachments/\(encodedId)/content",
+                            headers: [
+                                "Authorization": "Bearer \(token)",
+                                "Content-Type": mime,
+                            ],
+                            fileURL: fileURL
+                        )
+                    }
+                    guard generation == sessionGeneration, !Task.isCancelled else { return }
+
+                    switch response.status {
+                    case 200...299:
+                        let uploadedAt = clock.now().epochMillis
+                        try await database.writer.write { db in
+                            guard !Task.isCancelled else { return }
+                            try db.execute(
+                                sql: "UPDATE attachment SET fileUploadedAt = ? WHERE id = ?",
+                                arguments: [uploadedAt, att.id]
+                            )
+                        }
+                    case 400, 403, 410, 413:
+                        try await database.writer.write { db in
+                            guard !Task.isCancelled else { return }
+                            try db.execute(
+                                sql: "UPDATE attachment SET fileUploadFailed = 1 WHERE id = ?",
+                                arguments: [att.id]
+                            )
+                        }
+                    default:
+                        // 404 (row not yet visible), 429, 5xx, etc.: stop until next successful sync.
+                        return
+                    }
+                } catch {
+                    // Network or token errors stop without tight retries; next successful sync wakes it.
+                    return
+                }
+            }
+
+            if !didAttemptAny && !attachmentUploadWakeRequested {
+                return
+            }
         }
     }
 
     func downloadAttachmentContent(id: String) async throws -> Data {
         let encodedId = Self.percentEncodePathComponent(id)
         let response = try await sendAuthorizedRequest { token in
-            do {
-                return try await self.transport.download(
-                    path: "/attachments/\(encodedId)/content",
-                    headers: ["Authorization": "Bearer \(token)"]
-                )
-            } catch let error as SyncError {
-                throw error
-            } catch {
-                throw self.nextRetryableError(statusCode: nil, message: error.localizedDescription)
-            }
+            try await self.transport.download(
+                path: "/attachments/\(encodedId)/content",
+                headers: ["Authorization": "Bearer \(token)"]
+            )
         }
         switch response.status {
         case 200...299:
@@ -937,7 +977,7 @@ public actor SyncEngine {
             throw DayDoError.attachmentNotUploaded
         case 429, 500...599:
             let bodyText = String(data: response.body, encoding: .utf8) ?? ""
-            throw nextRetryableError(statusCode: response.status, message: bodyText)
+            throw SyncError.retryable(retryAfter: baseBackoffSeconds, statusCode: response.status, message: bodyText)
         default:
             let bodyText = String(data: response.body, encoding: .utf8) ?? ""
             throw SyncError.protocolError("HTTP \(response.status): \(bodyText)")
@@ -1035,6 +1075,7 @@ public actor SyncEngine {
 
         let data = try validateHTTPResponse(response)
         let decoded = try decode(AuthRefreshResponse.self, from: data)
+        guard !Task.isCancelled else { throw SyncError.signedOut }
 
         // Persist the rotated refresh token before exposing/using the new access token.
         tokenStore.refreshToken = decoded.refreshToken
