@@ -222,4 +222,8 @@ Extra checks: `npm run e2e:ics` (ICS sync and cron) and `npm run e2e:mcp` (OAuth
 
 - Claude (claude.ai or desktop): Settings, Connectors, Add custom connector, URL `https://mcp.daydoapp.com/`; leave client id/secret empty (dynamic client registration via `/register`), then sign in with Apple or Google in the opened page.
 - ChatGPT: Settings, Connectors (Developer mode), create a connector with MCP server URL `https://mcp.daydoapp.com/`, authentication OAuth, then sign in.
+- Hermes Agent (verified 2026-11-18): add `mcp_servers.daydo` with `url: https://mcp.daydoapp.com/` and `auth: oauth` to its `config.yaml`, then run `hermes mcp login daydo`. Tools appear as `mcp__daydo__<tool>`.
+- mcporter (verified 2026-11-18; for scripts that call tools without a model): add `"daydo": {"baseUrl": "https://mcp.daydoapp.com/"}` under `mcpServers` in `~/.mcporter/mcporter.json`, run `mcporter auth daydo` once, then call `mcporter call daydo.<tool> --no-oauth --output json`.
+- Each client signs in on its own. Refresh tokens rotate and reusing an old one revokes the whole family (OAuth spec, `spec/mcp.md` 4.5), so two programs must never share one token file.
+- When mcporter is not signed in, it reports `HTTP 200 (SSE error: Invalid content type, expected "text/event-stream")` instead of 401: the tool call gets 401, and the `GET /` that mcporter falls back to returns the 200 JSON metadata (`spec/mcp.md` 2). Treat that error as "not signed in".
 - Writes made through MCP show up in the App after its next pull (no push notification).
