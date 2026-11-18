@@ -837,7 +837,6 @@ struct AgendaRow: View {
                     HStack(spacing: 8) {
                         Text(AgendaText.line(task, today: model.today)).txt(14, .medium).foregroundStyle(AgendaText.color(task, today: model.today, accent: accent))
                         Spacer(minLength: 4)
-                        if let project, project.isShared { AvatarStack(members: model.members.filter { project.memberIds.contains($0.id) }) }
                         Text(project?.name ?? "").txt(14).foregroundStyle(Palette.textTertiary).lineLimit(1)
                     }
                 }

@@ -418,9 +418,6 @@ struct TaskRow: View {
                 Image(systemName: "repeat").font(.system(size: 11)).foregroundStyle(Palette.textTertiary)
             }
             Spacer(minLength: 0)
-            if let project, project.isShared {
-                AvatarStack(members: model.members.filter { project.memberIds.contains($0.id) })
-            }
             if let project {
                 HStack(spacing: 5) {
                     ListDot(color: project.color)
