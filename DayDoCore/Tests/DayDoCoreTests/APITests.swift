@@ -795,6 +795,7 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         let meId = ID.make()
         let projectId = ID.make()
         let taskId = ID.make()
+        let opId = ID.make()
         try await queue.write { db in
             try db.execute(
                 sql: "INSERT INTO member (id, name, initial, color, isMe, createdAt, updatedAt) VALUES (?, '我', '我', '#6FA8FF', 1, ?, ?)",
@@ -808,6 +809,17 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
                 sql: "INSERT INTO task (id, projectId, title, content, priority, status, reminders, tags, sortKey, createdAt, updatedAt) VALUES (?, ?, '舊任務', '', 0, 0, '[]', '[]', 'a0', ?, ?)",
                 arguments: [taskId, projectId, nowMs, nowMs]
             )
+            try db.execute(
+                sql: "INSERT INTO meta (key, value) VALUES (?, ?), (?, 'user-v8')",
+                arguments: [SyncEngine.pullCursorsMetaKey, #"{"u:user-1":42}"#, SyncEngine.signedInUserIdMetaKey]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO change (entity, entityId, op, fields, row, at, opId, hlc, ackedAt, result)
+                    VALUES ('task', ?, 'upsert', '["title"]', '{"id":"\(taskId)","title":"舊任務"}', ?, ?, '1700000000000:0000:dev-v8', NULL, NULL)
+                    """,
+                arguments: [taskId, nowMs, opId]
+            )
         }
 
         let appDB = try AppDatabase(queue)
@@ -816,5 +828,15 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         let api = LocalDayDoAPI(database: appDB, clock: .fixed(Date(), timeZone: taipei), attachmentsDirectory: dir)
         let task = try await api.getTask(id: taskId)
         #expect(task.countdown == false)
+
+        let (pullCursor, signedInUser, pendingOpIds) = try await appDB.writer.read { db in
+            let cursor = try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [SyncEngine.pullCursorsMetaKey])
+            let uid = try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [SyncEngine.signedInUserIdMetaKey])
+            let ops = try String.fetchAll(db, sql: "SELECT opId FROM change WHERE ackedAt IS NULL")
+            return (cursor, uid, ops)
+        }
+        #expect(pullCursor == nil)
+        #expect(signedInUser == "user-v8")
+        #expect(pendingOpIds == [opId])
     }
 }

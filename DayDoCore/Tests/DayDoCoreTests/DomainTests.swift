@@ -96,6 +96,13 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         #expect(DateText.countdownLabel(.timed(today, start: 60, end: 120), today: today) == "今天")
         #expect(DateText.countdownLabel(.timed(today, start: 1380, end: nil), today: today) == "今天")
 
+        // Cross-midnight timed block (23:00–01:00 next day): not an all-day multi-day trip
+        let crossMidnight = Schedule.timed(today, start: 23 * 60, end: 1 * 60)
+        #expect(DateText.countdownLabel(crossMidnight, today: today.adding(days: -1)) == "明天")
+        #expect(DateText.countdownLabel(crossMidnight, today: today) == "今天")
+        #expect(DateText.countdownLabel(crossMidnight, today: today.adding(days: 1)) == "今天")
+        #expect(DateText.countdownLabel(crossMidnight, today: today.adding(days: 2)) == nil)
+
         // Multi-day ongoing (5-day trip: Nov 16 .. Nov 20)
         let trip = Schedule.allDay(day("2026-11-16"), through: day("2026-11-20"))
         #expect(DateText.countdownLabel(trip, today: day("2026-11-16")) == "還剩 5 天")

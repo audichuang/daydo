@@ -342,7 +342,8 @@ struct TaskDetailContent: View {
     }
 
     func countdownRow(_ task: TodoTask, readOnly: Bool) -> some View {
-        HStack(spacing: 12) {
+        let disabled = readOnly || task.deletedAt != nil
+        return HStack(spacing: 12) {
             Image(systemName: "timer")
                 .font(.system(size: 16))
                 .foregroundStyle(Palette.textSecondary)
@@ -354,15 +355,25 @@ struct TaskDetailContent: View {
             Toggle("倒數", isOn: Binding(
                 get: { task.countdown },
                 set: { newValue in
+                    let previousValue = task.countdown
                     var updated = task
                     updated.countdown = newValue
                     self.task = updated
-                    model.updateTask(task.id) { $0.countdown = newValue }
+                    var input = UpdateTaskInput(taskId: task.id)
+                    input.countdown = newValue
+                    let finalInput = input
+                    Task {
+                        if await model.perform({ try await $0.updateTask(finalInput) }) == nil,
+                           self.task?.id == finalInput.taskId,
+                           self.task?.countdown == newValue {
+                            self.task?.countdown = previousValue
+                        }
+                    }
                 }
             ))
             .labelsHidden()
             .tint(accent.color)
-            .disabled(readOnly)
+            .disabled(disabled)
             .accessibilityIdentifier("countdownToggle")
         }
         .padding(.horizontal, 14)

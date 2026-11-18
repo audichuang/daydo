@@ -200,12 +200,11 @@ public enum DateText {
         let dayPart = (viewDay == nil && !s.isMultiDay && s.startDay != today) ? relative(s.startDay, today: today) : ""
         if s.isAllDay {
             if s.isMultiDay {
-                if viewDay == nil && today < s.startDay {
-                    let n = s.startDay.days(until: s.lastDay) + 1
-                    return "\(monthDay(s.startDay)) 起・\(n) 天"
-                }
                 let probe = viewDay ?? (s.occurs(on: today) ? today : s.startDay)
                 let (i, n) = s.dayPosition(on: probe) ?? (1, s.startDay.days(until: s.lastDay) + 1)
+                if viewDay == nil && today < s.startDay {
+                    return "\(monthDay(s.startDay)) 起・\(n) 天"
+                }
                 return "全天・第 \(i)/\(n) 天"
             }
             return viewDay != nil ? "全天" : dayPart
@@ -222,7 +221,7 @@ public enum DateText {
         if daysUntilStart > 0 {
             return daysUntilStart == 1 ? "明天" : "還有 \(daysUntilStart) 天"
         }
-        if s.isMultiDay {
+        if s.isAllDay && s.isMultiDay {
             if today == s.lastDay { return "最後一天" }
             let remaining = today.days(until: s.lastDay) + 1
             return "還剩 \(remaining) 天"

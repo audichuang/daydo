@@ -301,6 +301,11 @@ final class AppDatabase: Sendable {
             try db.alter(table: "task") { t in
                 t.add(column: "countdown", .boolean).notNull().defaults(to: false)
             }
+            // Reset pull cursors so tasks synced before v9 re-pull their countdown flag.
+            try db.execute(
+                sql: "DELETE FROM meta WHERE key = ?",
+                arguments: [SyncEngine.pullCursorsMetaKey]
+            )
         }
         return m
     }
