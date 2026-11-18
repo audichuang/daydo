@@ -78,6 +78,18 @@ export function completeTaskIntent(id: string, nowMs: number): WriteIntent {
   return patchTaskIntent(id, { status: 2, completedAt: nowMs });
 }
 
+export function uncompleteTaskIntent(id: string): WriteIntent {
+  return patchTaskIntent(id, { status: 0, completedAt: null });
+}
+
+/** Restores a trashed task, optionally moving it (e.g. to the inbox when its original list is gone). */
+export function restoreTaskIntent(id: string, projectId?: string): WriteIntent {
+  return patchTaskIntent(id, {
+    deletedAt: null,
+    ...(projectId !== undefined && { projectId }),
+  });
+}
+
 /** A soft delete: the task goes to the trash, where the App can restore it. */
 export function trashTaskIntent(id: string, nowMs: number): WriteIntent {
   return patchTaskIntent(id, { deletedAt: nowMs });

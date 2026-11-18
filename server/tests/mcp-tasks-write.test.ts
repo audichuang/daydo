@@ -15,6 +15,7 @@ import {
   createServerHarness,
   deviceOp,
   NOW_ISH,
+  projectRow,
   seedBasic,
   seedUser,
   taskRow,
@@ -55,6 +56,8 @@ const mcpOps = (h: Harness) => h.calls.filter((c) => c.deviceId === 'mcp').flatM
 const WRITE_TOOLS: Record<string, string> = {
   create_task: 'write',
   update_task: 'idempotent-overwrite',
+  uncomplete_task: 'idempotent-write',
+  restore_task: 'idempotent-write',
   delete_task: 'destructive',
   move_task: 'idempotent-write',
   move_all: 'idempotent-write',
@@ -467,6 +470,179 @@ describe('M11b move_task / move_all', () => {
     h.calls.length = 0;
     const again = await call(h, 'u-a', 'move_all', { from_project_id: 'p1', to_project_id: 'inbox-u-a' });
     expect(again.json).toMatchObject({ moved: 0 });
+    expect(h.calls).toEqual([]);
+  });
+});
+
+describe('uncomplete_task', () => {
+  it('reopens a completed task, clears completed_at, and bumps updatedAt', async () => {
+    const h = createHarness({ getNow: advancingNow(NOW_ISH + 50_000) });
+    await seedBasic(h);
+    await h.devicePush('u-a', [deviceOp(h, 'task', { id: 't1', status: 2, completedAt: NOW_ISH + 1000 })]);
+    h.calls.length = 0;
+
+    const r = await call(h, 'u-a', 'uncomplete_task', { project_id: 'p1', task_id: 't1' });
+    expect(r.isError, r.text).toBe(false);
+    expect(r.json).toMatchObject({ id: 't1', status: 0, completed_at: null });
+    const row = pulled(await h.pull('u-a'), 'task', 't1')!;
+    expect(row.status).toBe(0);
+    expect(row.completedAt).toBeUndefined();
+    expect(row.updatedAt).toBe(r.json.updated_at);
+  });
+
+  it('returns an already active task unchanged without pushing', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    h.calls.length = 0;
+    const r = await call(h, 'u-a', 'uncomplete_task', { project_id: 'p1', task_id: 't1' });
+    expect(r.isError, r.text).toBe(false);
+    expect(r.json).toMatchObject({ id: 't1', status: 0, completed_at: null });
+    expect(h.calls).toEqual([]);
+  });
+
+  it('reopens a repeating task completed copy without touching the original repeating task', async () => {
+    const h = createHarness({ getNow: () => Date.parse('2026-11-15T12:00:00+08:00') });
+    await seedBasic(h);
+    await h.devicePush('u-a', [
+      deviceOp(
+        h,
+        'task',
+        taskRow('rep', 'p1', {
+          title: 'Daily standup',
+          startDay: '2026-11-15',
+          startMinute: 540,
+          timeZone: 'Asia/Taipei',
+          repeatRule: 'RRULE:FREQ=DAILY',
+        }),
+      ),
+    ]);
+    const completed = await call(h, 'u-a', 'complete_task', { project_id: 'p1', task_id: 'rep' });
+    expect(completed.isError, completed.text).toBe(false);
+    const copyId = completed.json.id as string;
+    expect(copyId).not.toBe('rep');
+    const origAfterComplete = pulled(await h.pull('u-a'), 'task', 'rep')!;
+    expect(origAfterComplete.startDay).toBe('2026-11-16');
+
+    const reopened = await call(h, 'u-a', 'uncomplete_task', { project_id: 'p1', task_id: copyId });
+    expect(reopened.isError, reopened.text).toBe(false);
+    expect(reopened.json).toMatchObject({ id: copyId, status: 0, completed_at: null, repeat: null });
+    const origAfterUncomplete = pulled(await h.pull('u-a'), 'task', 'rep')!;
+    expect(origAfterUncomplete.startDay).toBe('2026-11-16');
+    expect(origAfterUncomplete.status).toBe(0);
+  });
+
+  it('rejects wrong project, viewer, trashed task, unknown task, and no-data account', async () => {
+    const h = createHarness();
+    await seedShared(h, 'viewer');
+    await h.devicePush('u-a', [
+      deviceOp(h, 'task', taskRow('t-del', 'p1', { status: 2, completedAt: NOW_ISH, deletedAt: NOW_ISH })),
+    ]);
+    await seedUser(h, 'u-empty', null, false);
+    h.calls.length = 0;
+
+    const wrong = await call(h, 'u-a', 'uncomplete_task', { project_id: 'inbox-u-a', task_id: 't1' });
+    expect(wrong.isError).toBe(true);
+    expect(wrong.text).toContain('not in project');
+
+    const viewer = await call(h, 'u-b', 'uncomplete_task', { project_id: 'p1', task_id: 't1' });
+    expect(viewer.isError).toBe(true);
+    expect(viewer.text).toContain('read-only');
+
+    const trashed = await call(h, 'u-a', 'uncomplete_task', { project_id: 'p1', task_id: 't-del' });
+    expect(trashed.isError).toBe(true);
+
+    const missing = await call(h, 'u-a', 'uncomplete_task', { project_id: 'p1', task_id: 'nope' });
+    expect(missing.isError).toBe(true);
+
+    const noData = await call(h, 'u-empty', 'uncomplete_task', { project_id: 'p1', task_id: 't1' });
+    expect(noData.isError).toBe(true);
+    expect(noData.text).toContain('請先在 DayDo App 登入並同步一次');
+
+    expect(h.calls).toEqual([]);
+  });
+});
+
+describe('restore_task', () => {
+  it('restores a soft-deleted task in its live writable project', async () => {
+    const h = createHarness({ getNow: advancingNow(NOW_ISH + 60_000) });
+    await seedBasic(h);
+    const del = await call(h, 'u-a', 'delete_task', { project_id: 'p1', task_id: 't1' });
+    expect(del.isError, del.text).toBe(false);
+    expect((await call(h, 'u-a', 'get_task', { project_id: 'p1', task_id: 't1' })).isError).toBe(true);
+
+    // Discoverable via search_tasks(include_deleted: true) then restored.
+    const found = await call(h, 'u-a', 'search_tasks', { query: 't1', include_deleted: true });
+    expect(found.json).toEqual([expect.objectContaining({ id: 't1', deleted: true })]);
+
+    const restored = await call(h, 'u-a', 'restore_task', { task_id: 't1' });
+    expect(restored.isError, restored.text).toBe(false);
+    expect(restored.json).toMatchObject({ id: 't1', project_id: 'p1' });
+    const row = pulled(await h.pull('u-a'), 'task', 't1')!;
+    expect(row.deletedAt).toBeUndefined();
+    expect(row.projectId).toBe('p1');
+    expect((await call(h, 'u-a', 'get_task', { project_id: 'p1', task_id: 't1' })).isError).toBe(false);
+  });
+
+  it('moves a soft-deleted task to the caller inbox when its original project was deleted', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    await h.devicePush('u-a', [
+      deviceOp(h, 'project', projectRow('p-gone')),
+      deviceOp(h, 'task', taskRow('t-orphan', 'p-gone', { title: 'Orphaned' })),
+    ]);
+    const deletedProj = await call(h, 'u-a', 'delete_project', { project_id: 'p-gone' });
+    expect(deletedProj.isError, deletedProj.text).toBe(false);
+
+    const restored = await call(h, 'u-a', 'restore_task', { task_id: 't-orphan' });
+    expect(restored.isError, restored.text).toBe(false);
+    expect(restored.json).toMatchObject({ id: 't-orphan', project_id: 'inbox-u-a', title: 'Orphaned' });
+    const row = pulled(await h.pull('u-a'), 'task', 't-orphan')!;
+    expect(row.projectId).toBe('inbox-u-a');
+    expect(row.deletedAt).toBeUndefined();
+  });
+
+  it('returns a non-deleted task unchanged without pushing', async () => {
+    const h = createHarness();
+    await seedBasic(h);
+    h.calls.length = 0;
+    const r = await call(h, 'u-a', 'restore_task', { task_id: 't1', project_id: 'p1' });
+    expect(r.isError, r.text).toBe(false);
+    expect(r.json).toMatchObject({ id: 't1', project_id: 'p1' });
+    expect(h.calls).toEqual([]);
+  });
+
+  it('errors on purged tasks, mismatched project_id, viewer, unknown task, and no-data account', async () => {
+    const h = createHarness();
+    await seedShared(h, 'viewer');
+    await h.devicePush('u-a', [
+      deviceOp(h, 'task', taskRow('t-del', 'p1', { deletedAt: NOW_ISH })),
+      deviceOp(h, 'task', taskRow('t-purged', 'p1', { deletedAt: NOW_ISH })),
+    ]);
+    await h.devicePush('u-a', [
+      { opId: 'purge-t', hlc: h.deviceHlc(), entity: 'task', entityId: 't-purged', op: 'delete', fields: [], row: {} },
+    ]);
+    await seedUser(h, 'u-empty', null, false);
+    h.calls.length = 0;
+
+    const purged = await call(h, 'u-a', 'restore_task', { task_id: 't-purged' });
+    expect(purged.isError).toBe(true);
+    expect(purged.text).toContain('permanently deleted');
+
+    const wrongProj = await call(h, 'u-a', 'restore_task', { task_id: 't-del', project_id: 'inbox-u-a' });
+    expect(wrongProj.isError).toBe(true);
+    expect(wrongProj.text).toContain('not in project');
+
+    const viewer = await call(h, 'u-b', 'restore_task', { task_id: 't-del' });
+    expect(viewer.isError).toBe(true);
+    expect(viewer.text).toContain('read-only');
+
+    const unknown = await call(h, 'u-a', 'restore_task', { task_id: 'nope' });
+    expect(unknown.isError).toBe(true);
+
+    const noData = await call(h, 'u-empty', 'restore_task', { task_id: 't-del' });
+    expect(noData.isError).toBe(true);
+    expect(noData.text).toContain('請先在 DayDo App 登入並同步一次');
+
     expect(h.calls).toEqual([]);
   });
 });

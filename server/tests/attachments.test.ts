@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { downloadAttachmentContent, uploadAttachmentContent } from '../src/attachments/content';
 import { attachmentObjectKey, MAX_ATTACHMENT_BYTES } from '../src/attachments/r2';
+import { handleToolCall, HINTS } from '../src/mcp/registry';
 import { NO_DATA_MESSAGE } from '../src/serverops/writer';
 import { createInvite, acceptInvite } from '../src/sharing';
 import {
@@ -666,5 +667,230 @@ describe('MCP upload_attachment', () => {
     });
     expect(getRes.status).toBe(200);
     expect(Buffer.from(await getRes.arrayBuffer())).toEqual(payload);
+  });
+});
+
+describe('MCP get_attachment', () => {
+  it('registers get_attachment with read hint', () => {
+    expect(HINTS.get_attachment).toBe('read');
+  });
+
+  it('returns metadata + UTF-8 text for text/*, JSON, XML and CSV up to 1 MB', async () => {
+    const h = createServerHarness();
+    await seedBasic(h);
+    await shareWith(h, 'p1', 'u-viewer', 'm-viewer', 'viewer');
+
+    const samples = [
+      { id: 'att-txt', fileName: 'note.txt', mimeType: 'text/plain; charset=utf-8', text: '哈囉 DayDo\nline 2' },
+      { id: 'att-json', fileName: 'data.json', mimeType: 'application/json', text: '{"ok":true}' },
+      { id: 'att-xml', fileName: 'doc.xml', mimeType: 'application/xml', text: '<root><a>1</a></root>' },
+      { id: 'att-csv', fileName: 'table.csv', mimeType: 'text/csv', text: 'a,b\n1,2\n' },
+    ];
+
+    for (const s of samples) {
+      const bytes = new TextEncoder().encode(s.text);
+      await seedAttachment(h, s.id, 't1', bytes.byteLength, { fileName: s.fileName, mimeType: s.mimeType });
+      await h.storage.put(attachmentObjectKey('t1', s.id), bytes, { httpMetadata: { contentType: s.mimeType } });
+
+      // Viewer can read too.
+      const res = await call(h, 'u-viewer', 'get_attachment', {
+        project_id: 'p1',
+        task_id: 't1',
+        attachment_id: s.id,
+      });
+      expect(res.isError, res.text).toBe(false);
+      expect(res.json).toEqual({
+        id: s.id,
+        task_id: 't1',
+        file_name: s.fileName,
+        size: bytes.byteLength,
+        mime_type: s.mimeType,
+        created_at: NOW_ISH,
+        content: s.text,
+      });
+    }
+  });
+
+  it('returns MCP image content + metadata text for png/jpeg/gif/webp up to 3.75 MB', async () => {
+    const h = createServerHarness();
+    await seedBasic(h);
+
+    for (const [idx, mime] of ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].entries()) {
+      const id = `att-img-${idx}`;
+      // Use a 1.5 MB payload for png to verify > 1 MB images up to 3.75 MB work without stack overflow.
+      const size = mime === 'image/png' ? 1_500_000 : 128;
+      const bytes = new Uint8Array(size);
+      for (let i = 0; i < size; i += 1) bytes[i] = (i * 31 + idx) & 0xff;
+      const fileName = `pic.${mime.split('/')[1]}`;
+
+      await seedAttachment(h, id, 't1', size, { fileName, mimeType: mime });
+      await h.storage.put(attachmentObjectKey('t1', id), bytes, { httpMetadata: { contentType: mime } });
+
+      const raw = await handleToolCall(
+        'get_attachment',
+        { project_id: 'p1', task_id: 't1', attachment_id: id },
+        h.toolContext('u-a'),
+      );
+      expect(raw.isError).toBeUndefined();
+      const textPart = raw.content.find((c) => c.type === 'text');
+      const imgPart = raw.content.find((c) => c.type === 'image');
+      expect(textPart).toBeDefined();
+      expect(imgPart).toBeDefined();
+      expect(JSON.parse(textPart!.text)).toEqual({
+        id,
+        task_id: 't1',
+        file_name: fileName,
+        size,
+        mime_type: mime,
+        created_at: NOW_ISH,
+      });
+      expect(imgPart).toEqual({
+        type: 'image',
+        data: Buffer.from(bytes).toString('base64'),
+        mimeType: mime,
+      });
+    }
+  });
+
+  it('returns metadata + content_base64 for other binary types up to 1 MB', async () => {
+    const h = createServerHarness();
+    await seedBasic(h);
+    const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x00, 0xff]);
+    await seedAttachment(h, 'att-pdf', 't1', bytes.byteLength, { fileName: 'doc.pdf', mimeType: 'application/pdf' });
+    await h.storage.put(attachmentObjectKey('t1', 'att-pdf'), bytes, { httpMetadata: { contentType: 'application/pdf' } });
+
+    const res = await call(h, 'u-a', 'get_attachment', {
+      project_id: 'p1',
+      task_id: 't1',
+      attachment_id: 'att-pdf',
+    });
+    expect(res.isError, res.text).toBe(false);
+    expect(res.json).toEqual({
+      id: 'att-pdf',
+      task_id: 't1',
+      file_name: 'doc.pdf',
+      size: bytes.byteLength,
+      mime_type: 'application/pdf',
+      created_at: NOW_ISH,
+      content_base64: Buffer.from(bytes).toString('base64'),
+    });
+  });
+
+  it('returns metadata without error when file exceeds the size limit (> 1 MB text/binary, > 3.75 MB image)', async () => {
+    const h = createServerHarness();
+    await seedBasic(h);
+
+    const bigTextSize = 1024 * 1024 + 1;
+    const bigText = new Uint8Array(bigTextSize).fill(65);
+    await seedAttachment(h, 'att-big-txt', 't1', bigTextSize, { fileName: 'big.txt', mimeType: 'text/plain' });
+    await h.storage.put(attachmentObjectKey('t1', 'att-big-txt'), bigText, { httpMetadata: { contentType: 'text/plain' } });
+
+    const bigImgSize = 3_750_001;
+    const bigImg = new Uint8Array(bigImgSize).fill(1);
+    await seedAttachment(h, 'att-big-img', 't1', bigImgSize, { fileName: 'big.png', mimeType: 'image/png' });
+    await h.storage.put(attachmentObjectKey('t1', 'att-big-img'), bigImg, { httpMetadata: { contentType: 'image/png' } });
+
+    const getSpy = vi.spyOn(h.storage, 'get');
+    try {
+      const rTxt = await call(h, 'u-a', 'get_attachment', {
+        project_id: 'p1',
+        task_id: 't1',
+        attachment_id: 'att-big-txt',
+      });
+      expect(rTxt.isError).toBe(false);
+      expect(rTxt.json).toMatchObject({
+        id: 'att-big-txt',
+        file_name: 'big.txt',
+        size: bigTextSize,
+        too_large: true,
+      });
+      expect(rTxt.json.content).toBeUndefined();
+      expect(rTxt.json.message).toMatch(/too large/i);
+
+      const rImg = await call(h, 'u-a', 'get_attachment', {
+        project_id: 'p1',
+        task_id: 't1',
+        attachment_id: 'att-big-img',
+      });
+      expect(rImg.isError).toBe(false);
+      expect(rImg.json).toMatchObject({
+        id: 'att-big-img',
+        file_name: 'big.png',
+        size: bigImgSize,
+        too_large: true,
+      });
+      expect(rImg.json.message).toMatch(/too large/i);
+      expect(getSpy).not.toHaveBeenCalled();
+    } finally {
+      getSpy.mockRestore();
+    }
+  });
+
+  it('returns available:false without error when the file has not been uploaded to R2 yet', async () => {
+    const h = createServerHarness();
+    await seedBasic(h);
+    await seedAttachment(h, 'att-pending', 't1', 512, { fileName: 'photo.jpg', mimeType: 'image/jpeg' });
+    await seedAttachment(h, 'att-pending-big', 't1', 2 * 1024 * 1024, { fileName: 'big.pdf', mimeType: 'application/pdf' });
+
+    for (const [id, fileName, size] of [
+      ['att-pending', 'photo.jpg', 512],
+      ['att-pending-big', 'big.pdf', 2 * 1024 * 1024],
+    ] as const) {
+      const res = await call(h, 'u-a', 'get_attachment', {
+        project_id: 'p1',
+        task_id: 't1',
+        attachment_id: id,
+      });
+      expect(res.isError).toBe(false);
+      expect(res.json).toMatchObject({
+        id,
+        task_id: 't1',
+        file_name: fileName,
+        size,
+        available: false,
+      });
+      expect(res.json.message).toContain('檔案還沒上傳');
+    }
+  });
+
+  it('errors for non-members, wrong project, wrong task, deleted attachment, and deleted task', async () => {
+    const h = createServerHarness();
+    await seedBasic(h);
+    await seedUser(h, 'u-stranger', 'm-stranger');
+    await h.devicePush('u-a', [
+      deviceOp(h, 'project', projectRow('p2')),
+      deviceOp(h, 'task', taskRow('t2', 'p1')),
+      deviceOp(h, 'task', taskRow('t-del', 'p1', { deletedAt: NOW_ISH })),
+    ]);
+    await seedAttachment(h, 'att-1', 't1', 2, { mimeType: 'text/plain' });
+    await seedAttachment(h, 'att-del', 't1', 2, { mimeType: 'text/plain', deletedAt: NOW_ISH });
+    await seedAttachment(h, 'att-tdel', 't-del', 2, { mimeType: 'text/plain' });
+    await h.storage.put(attachmentObjectKey('t1', 'att-1'), new Uint8Array([1, 2]));
+
+    expect(
+      (await call(h, 'u-stranger', 'get_attachment', { project_id: 'p1', task_id: 't1', attachment_id: 'att-1' })).isError,
+    ).toBe(true);
+    expect(
+      (await call(h, 'u-a', 'get_attachment', { project_id: 'p2', task_id: 't1', attachment_id: 'att-1' })).isError,
+    ).toBe(true);
+    const wrongTask = await call(h, 'u-a', 'get_attachment', {
+      project_id: 'p1',
+      task_id: 't2',
+      attachment_id: 'att-1',
+    });
+    expect(wrongTask.isError).toBe(true);
+    expect(wrongTask.text).toContain('does not belong to task');
+
+    const delAtt = await call(h, 'u-a', 'get_attachment', {
+      project_id: 'p1',
+      task_id: 't1',
+      attachment_id: 'att-del',
+    });
+    expect(delAtt.isError).toBe(true);
+    expect(delAtt.text).toContain('deleted');
+
+    expect(
+      (await call(h, 'u-a', 'get_attachment', { project_id: 'p1', task_id: 't-del', attachment_id: 'att-tdel' })).isError,
+    ).toBe(true);
   });
 });

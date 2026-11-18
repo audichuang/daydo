@@ -1,7 +1,5 @@
-// Task tools (spec/mcp.md 8).
-// Read: list_recent_tasks, list_tasks, search_tasks, get_task, get_completed_tasks.
-// Write: create_task, update_task, complete_task, delete_task, move_task, move_all.
-// Visibility comes from snapshot.liveTasks(): no trashed tasks, nothing in trashed or archived lists.
+// Task write tools (spec/mcp.md 8): create_task, update_task, complete_task, uncomplete_task,
+// restore_task, delete_task, move_task, move_all. Read tools live in tasksRead.ts.
 import { parseRecurrence, validateRepeat } from '../../domain/recurrence';
 import { parseReminderCsv } from '../../domain/reminders';
 import {
@@ -11,191 +9,27 @@ import {
   type Schedule,
   type ScheduleContext,
 } from '../../domain/schedule';
-import { normalizeTagLabels, normalizeTags } from '../../domain/tags';
+import { normalizeTagLabels } from '../../domain/tags';
 import { uuidv7 } from '../../domain/uuid';
-import { withCreated, type Snapshot, type SnapshotRow } from '../../serverops/snapshot';
+import { withCreated } from '../../serverops/snapshot';
 import {
   completeOccurrence,
   completeTaskIntent,
   moveTaskIntent,
   newTaskIntents,
   patchTaskIntents,
+  restoreTaskIntent,
   trashTaskIntent,
+  uncompleteTaskIntent,
 } from '../../serverops/taskWrites';
-import { bySortKey, compareKeys, isNil, rowSchedule } from '../../serverops/values';
+import { isNil, rowSchedule } from '../../serverops/values';
 import { assertHasData, writeOrThrow } from '../../serverops/writer';
-import { formatTask, openTasksOf, summarizeTask } from '../format';
+import { formatTask, openTasksOf } from '../format';
 import { nowOf, requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
 import { openSession, requireWritableList } from './projects';
+import { idOf, num, PROJECT_ID, requireLiveProject, TASK_ID, taskIn } from './tasksRead';
 
-export const SEARCH_LIMIT = 200;
-const DEFAULT_RECENT_LIMIT = 10;
-
-const num = (t: SnapshotRow, field: string) => Number(t.row[field] ?? 0);
-const isOpen = (t: SnapshotRow) => num(t, 'status') === 0;
-const idOf = (t: SnapshotRow) => String(t.row.id);
-const byUpdatedDesc = (a: SnapshotRow, b: SnapshotRow) => num(b, 'updatedAt') - num(a, 'updatedAt') || compareKeys(idOf(a), idOf(b));
-
-function requireLiveProject(snapshot: Snapshot, id: string): void {
-  if (!snapshot.liveProjects().some((p) => String(p.row.id) === id)) {
-    throw new Error(`Unknown project_id '${id}'; call list_projects first`);
-  }
-}
-
-function optionalProject(snapshot: Snapshot, args: Record<string, unknown>): string | undefined {
-  const raw = args.project_id;
-  if (raw === undefined || raw === null || raw === '') return undefined;
-  const id = String(raw);
-  requireLiveProject(snapshot, id);
-  return id;
-}
-
-function optionalBool(args: Record<string, unknown>, field: string): boolean {
-  const v = args[field];
-  if (v === undefined || v === null) return false;
-  if (typeof v !== 'boolean') throw new ToolValidationError(field, `Argument '${field}' must be a boolean`);
-  return v;
-}
-
-function parseLimit(v: unknown): number {
-  if (v === undefined || v === null || v === '') return DEFAULT_RECENT_LIMIT;
-  const n = typeof v === 'string' && /^\d+$/.test(v.trim()) ? Number(v) : v;
-  if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) {
-    throw new ToolValidationError('limit', "Argument 'limit' must be a positive integer");
-  }
-  return n;
-}
-
-/** A live task that must sit in `projectId`. */
-export function taskIn(snapshot: Snapshot, taskId: string, projectId: string): SnapshotRow {
-  const task = snapshot.liveTasks().find((t) => idOf(t) === taskId);
-  if (!task) throw new Error(`Unknown task_id '${taskId}'`);
-  if (task.row.projectId !== projectId) {
-    throw new Error(`Task '${taskId}' is not in project '${projectId}' (it is in '${String(task.row.projectId)}')`);
-  }
-  return task;
-}
-
-function checklistTitles(snapshot: Snapshot, taskId: string): string[] {
-  return snapshot
-    .rows('checklistItem')
-    .filter((c) => c.row.taskId === taskId && c.row.deletedAt == null && c.row.purgedAt == null)
-    .map((c) => String(c.row.title ?? '').toLowerCase());
-}
-
-const PROJECT_ID = { type: 'string', description: 'Project id from list_projects.' };
-const TASK_ID = { type: 'string', description: 'The task `id` field returned by the list, search and get tools.' };
-const OPTIONAL_PROJECT = { type: 'string', description: 'Optional. Restrict to this project; omit for all projects.' };
-
-export function taskReadTools(): ToolDef[] {
-  return [
-    {
-      name: 'list_recent_tasks',
-      description:
-        'List recent tasks in a project (newest update first), including completed ones by default, so it also finds a finished task with the same title or intent. Each task carries status: 0 active or 2 completed. Returns task summaries (content cut to 100 characters, items as a count; see get_task).',
-      inputSchema: {
-        type: 'object',
-        required: ['project_id'],
-        properties: {
-          project_id: PROJECT_ID,
-          limit: { type: 'integer', description: 'Maximum number of tasks. Default 10.' },
-          active_only: { type: 'boolean', description: 'Exclude completed tasks.' },
-          tag: { type: 'string', description: 'Filter by tag name.' },
-        },
-      },
-      run: async (args, ctx) => {
-        const projectId = requireStr(args, 'project_id');
-        const limit = parseLimit(args.limit);
-        const activeOnly = optionalBool(args, 'active_only');
-        const tag = typeof args.tag === 'string' ? normalizeTags([args.tag])[0] : undefined;
-        const { snapshot } = await openSession(ctx);
-        requireLiveProject(snapshot, projectId);
-        return snapshot
-          .liveTasks()
-          .filter((t) => t.row.projectId === projectId)
-          .filter((t) => !activeOnly || isOpen(t))
-          .filter((t) => tag === undefined || (Array.isArray(t.row.tags) && (t.row.tags as unknown[]).includes(tag)))
-          .sort(byUpdatedDesc)
-          .slice(0, limit)
-          .map((t) => summarizeTask(snapshot, t));
-      },
-    },
-    {
-      name: 'list_tasks',
-      description:
-        'List active (incomplete) tasks across all your projects, optionally filtered to a single project, in list order. Unlike list_recent_tasks, this never includes completed tasks and is not limited to recent ones. Returns task summaries (see get_task).',
-      inputSchema: { type: 'object', properties: { project_id: OPTIONAL_PROJECT } },
-      run: async (args, ctx) => {
-        const { snapshot } = await openSession(ctx);
-        const projectId = optionalProject(snapshot, args);
-        return snapshot
-          .liveTasks()
-          .filter((t) => isOpen(t) && (projectId === undefined || t.row.projectId === projectId))
-          .sort(bySortKey)
-          .map((t) => summarizeTask(snapshot, t));
-      },
-    },
-    {
-      name: 'search_tasks',
-      description: `Case-insensitive substring search across task titles, content, tags and checklist item titles. The query is matched as one string (not split into words), so search one keyword at a time. By default includes completed tasks; set active_only to restrict to pending. Active tasks come first, newest update first; at most ${SEARCH_LIMIT} results. Returns task summaries (see get_task).`,
-      inputSchema: {
-        type: 'object',
-        required: ['query'],
-        properties: { query: { type: 'string', description: 'Text to look for (one substring, case-insensitive).' }, active_only: { type: 'boolean', description: 'Exclude completed tasks.' } },
-      },
-      run: async (args, ctx) => {
-        const query = requireStr(args, 'query').trim().toLowerCase();
-        const activeOnly = optionalBool(args, 'active_only');
-        const { snapshot } = await openSession(ctx);
-        return snapshot
-          .liveTasks()
-          .filter((t) => !activeOnly || isOpen(t))
-          .filter((t) => {
-            const tags = Array.isArray(t.row.tags) ? (t.row.tags as unknown[]).map((x) => String(x).toLowerCase()) : [];
-            return (
-              [String(t.row.title ?? ''), String(t.row.content ?? '')].some((s) => s.toLowerCase().includes(query)) ||
-              tags.some((s) => s.includes(query)) ||
-              checklistTitles(snapshot, idOf(t)).some((s) => s.includes(query))
-            );
-          })
-          .sort((a, b) => num(a, 'status') - num(b, 'status') || byUpdatedDesc(a, b))
-          .slice(0, SEARCH_LIMIT)
-          .map((t) => summarizeTask(snapshot, t));
-      },
-    },
-    {
-      name: 'get_task',
-      description:
-        'Fetch the full record for a single task. List/search tools return summaries only (content cut to 100 characters, checklist as a count); call this for the rest. Errors when the task is not in the given project.',
-      inputSchema: {
-        type: 'object',
-        required: ['project_id', 'task_id'],
-        properties: { project_id: PROJECT_ID, task_id: TASK_ID },
-      },
-      run: async (args, ctx) => {
-        const projectId = requireStr(args, 'project_id');
-        const taskId = requireStr(args, 'task_id');
-        const { snapshot } = await openSession(ctx);
-        return formatTask(snapshot, taskIn(snapshot, taskId, projectId));
-      },
-    },
-    {
-      name: 'get_completed_tasks',
-      description:
-        'List completed tasks, most recently completed first, optionally filtered to one project. Returns every completed task with no limit, so pass project_id when you only need one list. Returns task summaries (see get_task).',
-      inputSchema: { type: 'object', properties: { project_id: OPTIONAL_PROJECT } },
-      run: async (args, ctx) => {
-        const { snapshot } = await openSession(ctx);
-        const projectId = optionalProject(snapshot, args);
-        return snapshot
-          .liveTasks()
-          .filter((t) => num(t, 'status') === 2 && (projectId === undefined || t.row.projectId === projectId))
-          .sort((a, b) => num(b, 'completedAt') - num(a, 'completedAt') || compareKeys(idOf(a), idOf(b)))
-          .map((t) => summarizeTask(snapshot, t));
-      },
-    },
-  ];
-}
+export { SEARCH_LIMIT, taskIn, taskReadTools } from './tasksRead';
 
 // MARK: - Write tools
 
@@ -443,6 +277,77 @@ export function taskWriteTools(): ToolDef[] {
         }
         const now = nowOf(ctx);
         await writeOrThrow(deps, snapshot, [completeTaskIntent(taskId, now)], { nowMs: now });
+        return formatTask(snapshot, snapshot.findRow('task', taskId)!);
+      },
+    },
+    {
+      name: 'uncomplete_task',
+      description:
+        'Reopen a completed task (sets status to 0 and clears completed_at). Returns an already active task unchanged. Reopening a completed copy of a repeating task only reopens that copy without affecting the original repeating task. Errors when the task is not in that project; the project must be writable.',
+      inputSchema: {
+        type: 'object',
+        required: ['project_id', 'task_id'],
+        properties: { project_id: PROJECT_ID, task_id: TASK_ID },
+      },
+      run: async (args, ctx) => {
+        const projectId = requireStr(args, 'project_id');
+        const taskId = requireStr(args, 'task_id');
+        const { snapshot, deps } = await openSession(ctx);
+        assertHasData(snapshot);
+        const task = taskIn(snapshot, taskId, projectId);
+        requireWritableList(snapshot, projectId);
+        if (num(task, 'status') === 0) return formatTask(snapshot, task);
+        const now = nowOf(ctx);
+        await writeOrThrow(deps, snapshot, [uncompleteTaskIntent(taskId)], { nowMs: now });
+        return formatTask(snapshot, snapshot.findRow('task', taskId)!);
+      },
+    },
+    {
+      name: 'restore_task',
+      description:
+        'Restore a soft-deleted task from the trash. If its original project still exists and is writable, restores in place; if its original project was deleted or is missing, moves the task to your inbox (which must be writable) and restores it. Returns an un-deleted task unchanged; errors if permanently deleted (purged) or if project_id is given and does not match. If search_tasks cannot find the task, it may be in the trash—call search_tasks with include_deleted: true to find its task_id.',
+      inputSchema: {
+        type: 'object',
+        required: ['task_id'],
+        properties: {
+          task_id: TASK_ID,
+          project_id: {
+            type: 'string',
+            description: 'Optional. Expected current project id of the task; errors if it belongs to a different project.',
+          },
+        },
+      },
+      run: async (args, ctx) => {
+        const taskId = requireStr(args, 'task_id');
+        const expectedProjectId = nonBlank(optString(args, 'project_id'));
+        const { snapshot, deps } = await openSession(ctx);
+        assertHasData(snapshot);
+        const task = snapshot.findRow('task', taskId);
+        if (!task) throw new Error(`Unknown task_id '${taskId}'`);
+        if (!isNil(task.row.purgedAt)) {
+          throw new Error(`Task '${taskId}' was permanently deleted and cannot be restored`);
+        }
+        const origProjectId = String(task.row.projectId ?? '');
+        if (expectedProjectId !== undefined && origProjectId !== expectedProjectId) {
+          throw new Error(`Task '${taskId}' is not in project '${expectedProjectId}' (it is in '${origProjectId}')`);
+        }
+        const origProject = snapshot.findRow('project', origProjectId);
+        const origAlive =
+          origProject !== undefined && isNil(origProject.row.deletedAt) && isNil(origProject.row.purgedAt);
+        if (origProject !== undefined && isNil(origProject.row.purgedAt) && !snapshot.canWrite(origProjectId)) {
+          throw new Error(
+            `Project '${origProjectId}' is read-only for you (role: ${snapshot.memberships.get(origProjectId) ?? 'none'})`,
+          );
+        }
+        if (isNil(task.row.deletedAt)) return formatTask(snapshot, task);
+        let targetProjectId: string | undefined;
+        if (!origAlive) {
+          const inboxId = snapshot.inboxProjectId!;
+          requireWritableList(snapshot, inboxId);
+          targetProjectId = inboxId;
+        }
+        const now = nowOf(ctx);
+        await writeOrThrow(deps, snapshot, [restoreTaskIntent(taskId, targetProjectId)], { nowMs: now });
         return formatTask(snapshot, snapshot.findRow('task', taskId)!);
       },
     },

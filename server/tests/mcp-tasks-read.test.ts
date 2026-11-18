@@ -153,6 +153,39 @@ describe('M11a search_tasks', () => {
     expect(active.json.map((t: any) => t.id)).toEqual(['s-content', 's-tag', 's-item', 's-title']);
   });
 
+  it('include_deleted returns trashed tasks (including in deleted projects) marked deleted:true, hiding purged and archived', async () => {
+    const h = createServerHarness();
+    await seedBasic(h);
+    await h.devicePush('u-a', [
+      deviceOp(h, 'project', projectRow('p-trash', { deletedAt: NOW_ISH })),
+      deviceOp(h, 'project', projectRow('p-arch', { archivedAt: NOW_ISH })),
+      deviceOp(h, 'task', taskRow('live', 'p1', { title: 'needle live', updatedAt: NOW_ISH + 30 })),
+      deviceOp(h, 'task', taskRow('del-open', 'p1', { title: 'needle del open', deletedAt: NOW_ISH, updatedAt: NOW_ISH + 20 })),
+      deviceOp(h, 'task', taskRow('del-done', 'p1', { title: 'needle del done', status: 2, completedAt: NOW_ISH, deletedAt: NOW_ISH, updatedAt: NOW_ISH + 40 })),
+      deviceOp(h, 'task', taskRow('del-proj', 'p-trash', { title: 'needle del proj', deletedAt: NOW_ISH, updatedAt: NOW_ISH + 10 })),
+      deviceOp(h, 'task', taskRow('arch', 'p-arch', { title: 'needle arch', deletedAt: NOW_ISH, updatedAt: NOW_ISH + 50 })),
+      deviceOp(h, 'task', taskRow('purged', 'p1', { title: 'needle purged', deletedAt: NOW_ISH })),
+    ]);
+    await h.devicePush('u-a', [
+      { opId: 'purge-1', hlc: h.deviceHlc(), entity: 'task', entityId: 'purged', op: 'delete', fields: [], row: {} },
+    ]);
+
+    const def = await call(h, 'u-a', 'search_tasks', { query: 'needle' });
+    expect(def.json.map((t: any) => t.id)).toEqual(['live']);
+    expect(def.json[0].deleted).toBeUndefined();
+
+    const withDel = await call(h, 'u-a', 'search_tasks', { query: 'needle', include_deleted: true });
+    expect(withDel.json.map((t: any) => [t.id, t.deleted ?? false])).toEqual([
+      ['live', false],
+      ['del-open', true],
+      ['del-proj', true],
+      ['del-done', true],
+    ]);
+
+    const activeDel = await call(h, 'u-a', 'search_tasks', { query: 'needle', include_deleted: true, active_only: true });
+    expect(activeDel.json.map((t: any) => t.id)).toEqual(['live', 'del-open', 'del-proj']);
+  });
+
   it('caps results at 200', async () => {
     const h = createServerHarness();
     await seedBasic(h);
@@ -165,38 +198,51 @@ describe('M11a search_tasks', () => {
 });
 
 describe('M11a get_task and summaries', () => {
-  it('returns the full record, and errors when project_id does not match', async () => {
+  it('returns the full record including sorted non-deleted attachments, and errors when project_id does not match', async () => {
     const h = createServerHarness();
     await seedBasic(h);
     await h.devicePush('u-a', [
       deviceOp(h, 'project', projectRow('p2')),
       deviceOp(h, 'task', taskRow('t5', 'p1', { content: 'x'.repeat(150) })),
       deviceOp(h, 'checklistItem', { id: 'c1', taskId: 't5', title: 'one', status: 0, sortKey: 'a', createdAt: NOW_ISH, updatedAt: NOW_ISH }),
+      deviceOp(h, 'attachment', { id: 'a2', taskId: 't5', fileName: 'b.txt', size: 20, mimeType: 'text/plain', createdAt: NOW_ISH + 20, updatedAt: NOW_ISH + 20 }),
+      deviceOp(h, 'attachment', { id: 'a1', taskId: 't5', fileName: 'a.png', size: 10, mimeType: 'image/png', createdAt: NOW_ISH + 10, updatedAt: NOW_ISH + 10 }),
+      deviceOp(h, 'attachment', { id: 'a-del', taskId: 't5', fileName: 'gone.txt', size: 5, mimeType: 'text/plain', createdAt: NOW_ISH, updatedAt: NOW_ISH, deletedAt: NOW_ISH }),
     ]);
     const ok = await call(h, 'u-a', 'get_task', { project_id: 'p1', task_id: 't5' });
     expect(ok.json.content).toBe('x'.repeat(150));
     expect(ok.json.items).toEqual([expect.objectContaining({ id: 'c1', title: 'one' })]);
+    expect(ok.json.attachments).toEqual([
+      { id: 'a1', file_name: 'a.png', size: 10, mime_type: 'image/png', created_at: NOW_ISH + 10 },
+      { id: 'a2', file_name: 'b.txt', size: 20, mime_type: 'text/plain', created_at: NOW_ISH + 20 },
+    ]);
     const bad = await call(h, 'u-a', 'get_task', { project_id: 'p2', task_id: 't5' });
     expect(bad.isError).toBe(true);
     expect((await call(h, 'u-a', 'get_task', { project_id: 'p1', task_id: 'nope' })).isError).toBe(true);
   });
 
-  it('list tools cut content to 100 characters and turn items into a count', async () => {
+  it('list tools cut content to 100 characters and turn items and attachments into counts', async () => {
     const h = createServerHarness();
     await seedBasic(h);
     await h.devicePush('u-a', [
       deviceOp(h, 'task', taskRow('t5', 'p1', { content: 'y'.repeat(150), updatedAt: NOW_ISH + 5 })),
       deviceOp(h, 'checklistItem', { id: 'c1', taskId: 't5', title: 'one', status: 0, sortKey: 'a', createdAt: NOW_ISH, updatedAt: NOW_ISH }),
+      deviceOp(h, 'attachment', { id: 'a1', taskId: 't5', fileName: 'a.txt', size: 10, mimeType: 'text/plain', createdAt: NOW_ISH, updatedAt: NOW_ISH }),
+      deviceOp(h, 'attachment', { id: 'a2', taskId: 't5', fileName: 'b.txt', size: 10, mimeType: 'text/plain', createdAt: NOW_ISH + 1, updatedAt: NOW_ISH + 1 }),
+      deviceOp(h, 'attachment', { id: 'a-del', taskId: 't5', fileName: 'c.txt', size: 10, mimeType: 'text/plain', createdAt: NOW_ISH + 2, updatedAt: NOW_ISH + 2, deletedAt: NOW_ISH }),
     ]);
     for (const [name, args] of [
       ['list_recent_tasks', { project_id: 'p1' }],
       ['list_tasks', {}],
       ['search_tasks', { query: 't5' }],
+      ['get_project_data', { project_id: 'p1' }],
     ] as const) {
       const r = await call(h, 'u-a', name, args);
-      const t5 = r.json.find((t: any) => t.id === 't5');
+      const list = name === 'get_project_data' ? r.json.tasks : r.json;
+      const t5 = list.find((t: any) => t.id === 't5');
       expect(t5.content, name).toBe(`${'y'.repeat(100)}...`);
       expect(t5.items, name).toBe(1);
+      expect(t5.attachments, name).toBe(2);
     }
   });
 });

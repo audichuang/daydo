@@ -77,7 +77,8 @@ async function seedUser(h: Harness, userId: string, memberId: string | null) {
 
 async function call(h: Harness, userId: string, name: string, args: Record<string, unknown> = {}) {
   const res = await handleToolCall(name, args, h.ctx(userId));
-  const text = res.content[0]!.text;
+  const textBlock = res.content.find((c) => c.type === 'text');
+  const text = textBlock?.text ?? '';
   return { isError: res.isError === true, text, json: res.isError ? null : (JSON.parse(text) as unknown) };
 }
 

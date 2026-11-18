@@ -12,7 +12,7 @@ import {
   validateArgs,
   type Hint,
 } from '../src/mcp/registry';
-import { requireInt, requireStr, ToolValidationError, type ToolDef, type ToolSchema } from '../src/mcp/toolkit';
+import { mcpResult, requireInt, requireStr, ToolValidationError, type ToolDef, type ToolSchema } from '../src/mcp/toolkit';
 import { signMcpAccessToken } from '../src/oauth/tokens';
 import { createTestD1 } from './sqliteD1';
 
@@ -157,6 +157,34 @@ describe('handleMcpPost transport', () => {
     };
     const out = await handleToolCall('echo', { a: 'v' }, CTX, [tool]);
     expect(out).toEqual({ content: [{ type: 'text', text: '{"got":"v"}' }] });
+  });
+
+  it('mcpResult passes a multi-content array (e.g. text + image) through untouched, while plain objects with content are still JSON-wrapped', async () => {
+    const multi: ToolDef = {
+      name: 'img',
+      description: 'd',
+      inputSchema: { type: 'object', properties: {} },
+      run: async () =>
+        mcpResult([
+          { type: 'text', text: '{"id":"a1"}' },
+          { type: 'image', data: 'AQID', mimeType: 'image/png' },
+        ]),
+    };
+    const plain: ToolDef = {
+      name: 'plain',
+      description: 'd',
+      inputSchema: { type: 'object', properties: {} },
+      run: async () => ({ content: [{ type: 'fake' }] }),
+    };
+    expect(await handleToolCall('img', {}, CTX, [multi])).toEqual({
+      content: [
+        { type: 'text', text: '{"id":"a1"}' },
+        { type: 'image', data: 'AQID', mimeType: 'image/png' },
+      ],
+    });
+    expect(await handleToolCall('plain', {}, CTX, [plain])).toEqual({
+      content: [{ type: 'text', text: '{"content":[{"type":"fake"}]}' }],
+    });
   });
 });
 

@@ -41,6 +41,28 @@ export interface ToolContext {
   services?: ToolServices;
 }
 
+export type ToolContent =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string };
+
+export interface ToolResult {
+  content: ToolContent[];
+  isError?: boolean;
+}
+
+const mcpResults = new WeakSet<object>();
+
+/** Marks a pre-built MCP content array so handleToolCall returns it directly without JSON-wrapping. */
+export function mcpResult(content: ToolContent[]): ToolResult {
+  const result: ToolResult = { content };
+  mcpResults.add(result);
+  return result;
+}
+
+export function isMcpResult(value: unknown): value is ToolResult {
+  return typeof value === 'object' && value !== null && mcpResults.has(value);
+}
+
 export interface ToolDef {
   name: string;
   description: string;

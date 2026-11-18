@@ -1,7 +1,7 @@
 // Output shapes for MCP tools (spec/mcp.md 8): snake_case project, task and tag objects.
 import { scheduleToAPI, type Schedule } from '../domain/schedule';
 import type { Snapshot, SnapshotRow } from '../serverops/snapshot';
-import { bySortKey } from '../serverops/values';
+import { bySortKey, compareKeys } from '../serverops/values';
 
 export const CONTENT_SUMMARY_LIMIT = 100;
 
@@ -62,6 +62,24 @@ function checklistOf(snapshot: Snapshot, taskId: string) {
     }));
 }
 
+function attachmentsOf(snapshot: Snapshot, taskId: string) {
+  return snapshot
+    .rows('attachment')
+    .filter((a) => a.row.taskId === taskId && absent(a.row, 'deletedAt', 'purgedAt'))
+    .sort(
+      (a, b) =>
+        Number(a.row.createdAt ?? 0) - Number(b.row.createdAt ?? 0) ||
+        compareKeys(String(a.row.id), String(b.row.id)),
+    )
+    .map((a) => ({
+      id: String(a.row.id),
+      file_name: String(a.row.fileName ?? ''),
+      size: Number(a.row.size ?? 0),
+      mime_type: String(a.row.mimeType ?? ''),
+      created_at: Number(a.row.createdAt ?? 0),
+    }));
+}
+
 /** Full task (get_task shape). */
 export function formatTask(snapshot: Snapshot, t: SnapshotRow) {
   const r = t.row;
@@ -82,6 +100,7 @@ export function formatTask(snapshot: Snapshot, t: SnapshotRow) {
     repeat: nil(r.repeatRule as string | null | undefined),
     tags: Array.isArray(r.tags) ? (r.tags as string[]) : [],
     items: checklistOf(snapshot, String(r.id)),
+    attachments: attachmentsOf(snapshot, String(r.id)),
     completed_at: nil(r.completedAt as number | null | undefined),
     created_at: nil(r.createdAt as number | null | undefined),
     updated_at: nil(r.updatedAt as number | null | undefined),
@@ -89,13 +108,14 @@ export function formatTask(snapshot: Snapshot, t: SnapshotRow) {
   };
 }
 
-/** List-tool shape: `content` cut to 100 characters, `items` reduced to a count. */
+/** List-tool shape: `content` cut to 100 characters, `items` and `attachments` reduced to counts. */
 export function summarizeTask(snapshot: Snapshot, t: SnapshotRow) {
-  const { content, items, ...rest } = formatTask(snapshot, t);
+  const { content, items, attachments, ...rest } = formatTask(snapshot, t);
   return {
     ...rest,
     content: [...content].length > CONTENT_SUMMARY_LIMIT ? `${[...content].slice(0, CONTENT_SUMMARY_LIMIT).join('')}...` : content,
     items: items.length,
+    attachments: attachments.length,
   };
 }
 

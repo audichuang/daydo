@@ -5,7 +5,18 @@ import { icsTools } from './tools/ics';
 import { projectTools } from './tools/projects';
 import { tagTools } from './tools/tags';
 import { taskReadTools, taskWriteTools } from './tools/tasks';
-import { isEmpty, ToolValidationError, type ToolContext, type ToolDef, type ToolSchema } from './toolkit';
+import {
+  isEmpty,
+  isMcpResult,
+  ToolValidationError,
+  type ToolContent,
+  type ToolContext,
+  type ToolDef,
+  type ToolResult,
+  type ToolSchema,
+} from './toolkit';
+
+export type { ToolContent, ToolResult };
 
 export type Hint = 'read' | 'write' | 'idempotent-write' | 'idempotent-overwrite' | 'destructive';
 
@@ -27,10 +38,13 @@ export const HINTS: Record<string, Hint> = {
   create_task: 'write',
   update_task: 'idempotent-overwrite',
   complete_task: 'idempotent-write',
+  uncomplete_task: 'idempotent-write',
+  restore_task: 'idempotent-write',
   delete_task: 'destructive',
   move_task: 'idempotent-write',
   move_all: 'idempotent-write',
   upload_attachment: 'write',
+  get_attachment: 'read',
   add_ics_source: 'write',
   list_ics_sources: 'read',
   remove_ics_source: 'destructive',
@@ -125,11 +139,6 @@ export function validateArgs(
   }
 }
 
-export interface ToolResult {
-  content: { type: 'text'; text: string }[];
-  isError?: boolean;
-}
-
 /** Validates, runs and wraps a tool call; tool-level failures become isError results. */
 export async function handleToolCall(
   name: string,
@@ -142,6 +151,7 @@ export async function handleToolCall(
     if (!def) throw new Error(`Unknown tool '${name}'`);
     validateArgs(name, def.inputSchema, args);
     const result = await def.run(args, ctx);
+    if (isMcpResult(result)) return result;
     return { content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result) }] };
   } catch (e) {
     return { content: [{ type: 'text', text: `Error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };

@@ -4,7 +4,7 @@ info:
   version: 0.1.0
   description: |
     NOTE: the MCP tool list is defined by spec/mcp.md (section 8), not by this file.
-    Operations here that are not yet ported to MCP: uncomplete_task, restore_task,
+    Operations here that are not yet ported to MCP:
     purge_task, add/update/delete_checklist_item, folder operations, move_project,
     duplicate_project, transfer_project_owner, member and invite operations,
     list_sections, smart_counts, postpone_overdue, tag update/delete, delete_attachment,

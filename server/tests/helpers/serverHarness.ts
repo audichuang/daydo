@@ -124,7 +124,8 @@ export async function call(
   args: Record<string, unknown> = {},
 ) {
   const res = await handleToolCall(name, args, h.toolContext(userId));
-  const text = res.content[0]!.text;
+  const textBlock = res.content.find((c) => c.type === 'text');
+  const text = textBlock?.text ?? '';
   return { isError: res.isError === true, text, json: res.isError ? null : (JSON.parse(text) as any) };
 }
 

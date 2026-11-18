@@ -87,7 +87,7 @@ export function projectTools(): ToolDef[] {
     {
       name: 'get_project_data',
       description:
-        'Fetch a project together with its open (not completed) tasks in one call. Returns { project, tasks } with task summaries (content cut to 100 characters, items as a count).',
+        'Fetch a project together with its open (not completed) tasks in one call. Returns { project, tasks } with task summaries (content cut to 100 characters, items and attachments as counts).',
       inputSchema: { type: 'object', required: ['project_id'], properties: { project_id: PROJECT_ID } },
       run: async (args, ctx) => {
         const { snapshot } = await openSession(ctx);

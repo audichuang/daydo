@@ -152,6 +152,39 @@ async function main() {
     assert.equal(uploadedAtt.size, attPayload.byteLength);
     assert.equal(uploadedAtt.mime_type, 'text/plain');
 
+    const fetchedTaskRes = await callTool(mcpBase, accessToken, 'get_task', {
+      project_id: inboxId,
+      task_id: createdTask.id,
+    });
+    assert.notEqual(fetchedTaskRes.isError, true, toolText(fetchedTaskRes));
+    const fetchedTask = JSON.parse(toolText(fetchedTaskRes));
+    assert.deepEqual(fetchedTask.attachments, [
+      {
+        id: uploadedAtt.id,
+        file_name: 'docs_mcp-note.txt',
+        size: attPayload.byteLength,
+        mime_type: 'text/plain',
+        created_at: uploadedAtt.created_at,
+      },
+    ]);
+
+    const fetchedAttRes = await callTool(mcpBase, accessToken, 'get_attachment', {
+      project_id: inboxId,
+      task_id: createdTask.id,
+      attachment_id: uploadedAtt.id,
+    });
+    assert.notEqual(fetchedAttRes.isError, true, toolText(fetchedAttRes));
+    const fetchedAtt = JSON.parse(toolText(fetchedAttRes));
+    assert.deepEqual(fetchedAtt, {
+      id: uploadedAtt.id,
+      task_id: createdTask.id,
+      file_name: 'docs_mcp-note.txt',
+      size: attPayload.byteLength,
+      mime_type: 'text/plain',
+      created_at: uploadedAtt.created_at,
+      content: attPayload.toString('utf8'),
+    });
+
     // Second device: App token on the API host pulls the task + attachment and downloads content.
     const device2 = await appLogin(apiBase, providers, sub);
     assert.equal(device2.isNewAccount, false);
