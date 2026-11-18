@@ -84,10 +84,52 @@ import Testing
         let late = TimeGridDrag.moveSchedule(s, sourceColumnDay: d0, targetColumnDay: d0, minuteDelta: 900)
         #expect(late == .init(startDay: d0, startMinute: 1425, endOffsetMinutes: 1515))
 
-        // 3-hour block moved to 23:45 caps end at TimeBlockEditor.maxEnd (26:00)
+        // 3-hour block moved to 23:45 preserves full duration (ends next day 02:45, no truncation)
         let long = Schedule.timed(d0, start: 600, end: 780, timeZone: "Asia/Taipei")
-        let capped = TimeGridDrag.moveSchedule(long, sourceColumnDay: d0, targetColumnDay: d0, minuteDelta: 900)
-        #expect(capped == .init(startDay: d0, startMinute: 1425, endOffsetMinutes: 1560))
+        let movedLong = TimeGridDrag.moveSchedule(long, sourceColumnDay: d0, targetColumnDay: d0, minuteDelta: 900)
+        #expect(movedLong == .init(startDay: d0, startMinute: 1425, endOffsetMinutes: 1605))
+
+        // 18:00–23:00 moved to 22:00 keeps 300m duration (22:00–next day 03:00)
+        let evening = Schedule.timed(d0, start: 1080, end: 1380, timeZone: "Asia/Taipei")
+        let movedEvening = TimeGridDrag.moveSchedule(evening, sourceColumnDay: d0, targetColumnDay: d0, minuteDelta: 240)
+        #expect(movedEvening == .init(startDay: d0, startMinute: 1320, endOffsetMinutes: 1620))
+
+        // 20:00–next day 03:00 dragged down 30m -> 20:30–next day 03:30
+        let overnightLong = Schedule.timed(d0, start: 1200, end: 180, timeZone: "Asia/Taipei")
+        let movedOvernightLong = TimeGridDrag.moveSchedule(overnightLong, sourceColumnDay: d0, targetColumnDay: d0, minuteDelta: 30)
+        #expect(movedOvernightLong == .init(startDay: d0, startMinute: 1230, endOffsetMinutes: 1650))
+    }
+
+    @Test func moveZeroDeltaAndPureHorizontalPreserveUnclampedMinute() {
+        let d0 = day("2026-11-18")
+        let d1 = day("2026-11-19")
+
+        // 23:50–next day 00:30 zero-delta drop leaves schedule identical and produces .unset update
+        let lateBlock = Schedule.timed(d0, start: 1430, end: 30, timeZone: "Asia/Taipei")
+        let zeroBlock = TimeGridDrag.moveSchedule(lateBlock, sourceColumnDay: d0, targetColumnDay: d0, minuteDelta: 0)!
+        #expect(zeroBlock == .init(startDay: d0, startMinute: 1430, endOffsetMinutes: 1470))
+        let blockTask = timedTask("late-block", lateBlock)
+        let blockInput = zeroBlock.applied(to: blockTask).updateInput(for: blockTask)
+        if case .unset = blockInput.schedule {} else {
+            Issue.record("Expected zero-delta 23:50–00:30 drop to leave schedule .unset")
+        }
+
+        // 23:50 point-in-time zero-delta drop leaves schedule identical
+        let latePoint = Schedule.timed(d0, start: 1430, end: nil, timeZone: "Asia/Taipei")
+        let zeroPoint = TimeGridDrag.moveSchedule(latePoint, sourceColumnDay: d0, targetColumnDay: d0, minuteDelta: 0)!
+        #expect(zeroPoint == .init(startDay: d0, startMinute: 1430, endOffsetMinutes: 1430))
+        let pointTask = timedTask("late-point", latePoint)
+        let pointInput = zeroPoint.applied(to: pointTask).updateInput(for: pointTask)
+        if case .unset = pointInput.schedule {} else {
+            Issue.record("Expected zero-delta 23:50 point drop to leave schedule .unset")
+        }
+
+        // 23:50 pure horizontal move to next day keeps 23:50
+        let horizPoint = TimeGridDrag.moveSchedule(latePoint, sourceColumnDay: d0, targetColumnDay: d1, minuteDelta: 0)!
+        #expect(horizPoint == .init(startDay: d1, startMinute: 1430, endOffsetMinutes: 1430))
+
+        let horizBlock = TimeGridDrag.moveSchedule(lateBlock, sourceColumnDay: d0, targetColumnDay: d1, minuteDelta: 0)!
+        #expect(horizBlock == .init(startDay: d1, startMinute: 1430, endOffsetMinutes: 1470))
     }
 
     @Test func moveCrossMidnightFromDay1AndDay2Segments() {
@@ -112,6 +154,18 @@ import Testing
         // Drag Day 2 segment down +120m -> Nov 19 01:00 – Nov 19 03:00
         let fromDay2Down120 = TimeGridDrag.moveSchedule(s, sourceColumnDay: d1, targetColumnDay: d1, minuteDelta: 120)
         #expect(fromDay2Down120 == .init(startDay: d1, startMinute: 60, endOffsetMinutes: 180))
+
+        // Drag Day 2 segment up -15m -> Nov 18 22:45 – Nov 19 00:45
+        let fromDay2Up15 = TimeGridDrag.moveSchedule(s, sourceColumnDay: d1, targetColumnDay: d1, minuteDelta: -15)
+        #expect(fromDay2Up15 == .init(startDay: d0, startMinute: 1365, endOffsetMinutes: 1485))
+
+        // Drag Day 2 segment up -120m -> Nov 18 21:00 – Nov 18 23:00
+        let fromDay2Up120 = TimeGridDrag.moveSchedule(s, sourceColumnDay: d1, targetColumnDay: d1, minuteDelta: -120)
+        #expect(fromDay2Up120 == .init(startDay: d0, startMinute: 1260, endOffsetMinutes: 1380))
+
+        // Drag Day 2 segment all the way to previous day 00:00 (clamped there)
+        let fromDay2UpEarly = TimeGridDrag.moveSchedule(s, sourceColumnDay: d1, targetColumnDay: d1, minuteDelta: -1500)
+        #expect(fromDay2UpEarly == .init(startDay: d0, startMinute: 0, endOffsetMinutes: 120))
 
         // No movement from Day 2 produces unchanged DateDraft -> unset schedule in UpdateTaskInput
         let unchanged = TimeGridDrag.moveSchedule(s, sourceColumnDay: d1, targetColumnDay: d1, minuteDelta: 0)!

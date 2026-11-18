@@ -1649,10 +1649,13 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(titleField.waitForNonExistence(timeout: 3))
 
         // 2. Quick vertical drag scrolls without moving the task.
+        // Since brief sits at 18:00 (~1008pt down), ScrollView always has >=350pt of room above it.
         ensureVisibleInGrid(brief, scrollView: gridScroll)
+        let yBeforeQuickScroll = brief.frame.minY
         let quickStart = brief.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        quickStart.press(forDuration: 0.05, thenDragTo: quickStart.withOffset(CGVector(dx: 0, dy: -80)))
+        quickStart.press(forDuration: 0.05, thenDragTo: quickStart.withOffset(CGVector(dx: 0, dy: 120)))
         XCTAssertTrue(brief.label.contains("18:00 – 18:30"), "Quick drag should scroll, not move task: \(brief.label)")
+        XCTAssertGreaterThan(brief.frame.minY - yBeforeQuickScroll, 20, "Quick vertical drag should scroll the time grid")
 
         // 3. Long-press + drag down moves the task later (~18:00 -> ~19:00, 15m snap tolerance).
         ensureVisibleInGrid(brief, scrollView: gridScroll)
@@ -1666,6 +1669,23 @@ final class DayDoFlowTests: XCTestCase {
         let exp = XCTNSPredicateExpectation(predicate: moved, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [exp], timeout: 3), .completed, "Expected task around 19:00–19:30, got: \(brief.label)")
         shot("timegrid-drag-moved")
+
+        // Verify persisted schedule in TaskDetailSheet (independent of pendingMove optimistic state).
+        brief.tap()
+        let dateBtn = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '設定日期與時間'")).firstMatch
+        XCTAssertTrue(dateBtn.waitForExistence(timeout: 3), app.debugDescription)
+        let persistedRange = try XCTUnwrap(parseTimeRangeMinutes(dateBtn.label), dateBtn.label)
+        XCTAssertTrue(persistedRange.0 >= 18 * 60 + 45 && persistedRange.0 <= 19 * 60 + 15 && (persistedRange.1 - persistedRange.0) == 30,
+                      "Expected persisted detail time around 19:00–19:30, got: \(dateBtn.label)")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap()
+        XCTAssertTrue(dateBtn.waitForNonExistence(timeout: 3))
+
+        // Verify scroll lock is released after drag ends.
+        ensureVisibleInGrid(brief, scrollView: gridScroll)
+        let yBeforePostScroll = brief.frame.minY
+        let postStart = brief.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        postStart.press(forDuration: 0.05, thenDragTo: postStart.withOffset(CGVector(dx: 0, dy: 120)))
+        XCTAssertGreaterThan(brief.frame.minY - yBeforePostScroll, 20, "Time grid should remain scrollable after drag ends")
     }
 
     @MainActor

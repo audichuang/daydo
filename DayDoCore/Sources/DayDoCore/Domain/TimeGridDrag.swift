@@ -4,8 +4,6 @@ import Foundation
 /// dragging timed blocks and creating ranges on the calendar time grid.
 public enum TimeGridDrag {
     public static let stepMinutes = 15
-    /// Matches `TimeBlockEditor.maxEnd` (next day 02:00).
-    public static let maxEndMinutes = 26 * 60
     public static let maxStartMinute = 24 * 60 - stepMinutes
     public static let minBlockHeight = 18.0
 
@@ -39,19 +37,6 @@ public enum TimeGridDrag {
             draft.start = startMinute
             draft.end = endOffsetMinutes
             return draft
-        }
-
-        public func previewSchedule(timeZone: String?) -> Schedule {
-            if endOffsetMinutes <= startMinute {
-                return Schedule(startDay: startDay, startMinute: startMinute, timeZone: timeZone)
-            }
-            return Schedule(
-                startDay: startDay,
-                startMinute: startMinute,
-                endDay: startDay.adding(days: endOffsetMinutes / 1440),
-                endMinute: endOffsetMinutes % 1440,
-                timeZone: timeZone
-            )
         }
     }
 
@@ -114,18 +99,18 @@ public enum TimeGridDrag {
         let origDuration = schedule.durationMinutes ?? 0
         let sourceOffset = schedule.startDay.days(until: sourceColumnDay) * 1440
         let relativeStart0 = origStart - sourceOffset
-        let minRelativeStart = min(0, relativeStart0)
-        let clampedRelative = max(minRelativeStart, min(maxStartMinute, relativeStart0 + minuteDelta))
+        let clampedRelative: Int
+        if minuteDelta == 0 {
+            clampedRelative = relativeStart0
+        } else {
+            let minRelativeStart = -min(1440, max(0, sourceOffset))
+            let maxRelativeStart = max(maxStartMinute, relativeStart0)
+            clampedRelative = max(minRelativeStart, min(maxRelativeStart, relativeStart0 + minuteDelta))
+        }
         let dayShift = clampedRelative < 0 ? Int(floor(Double(clampedRelative) / 1440.0)) : 0
         let newStartDay = targetColumnDay.adding(days: dayShift)
         let newStartMinute = clampedRelative - dayShift * 1440
-        let newEndOffset: Int
-        if origDuration <= 0 {
-            newEndOffset = newStartMinute
-        } else {
-            let cap = max(maxEndMinutes, origStart + origDuration)
-            newEndOffset = min(newStartMinute + origDuration, cap)
-        }
+        let newEndOffset = origDuration <= 0 ? newStartMinute : newStartMinute + origDuration
         return MoveResult(startDay: newStartDay, startMinute: newStartMinute, endOffsetMinutes: newEndOffset)
     }
 

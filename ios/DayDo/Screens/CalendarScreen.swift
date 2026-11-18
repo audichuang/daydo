@@ -1497,44 +1497,45 @@ struct TimeGrid: View {
     private func dragPreview(_ mode: DragMode, colW: CGFloat) -> some View {
         switch mode {
         case .move(let task, _, _, let targetColIdx, let moveResult):
-            let previewSchedule = moveResult.previewSchedule(timeZone: task.schedule?.timeZone)
-            let previewTask: TodoTask = {
-                var copy = task
-                copy.schedule = previewSchedule
-                return copy
-            }()
-            let color = Palette.listColor(model.project(task.projectId)?.color)
-            let owner = partnerOwner(for: task, show: showOwnerAvatars, members: model.members)
-            let segments: [(Int, DayLayout.Block)] = days.enumerated().flatMap { colIdx, d in
-                DayLayout.blocks(for: [previewTask], on: d).map { (colIdx, $0) }
-            }
-            let primarySegment = segments.first(where: { $0.0 == targetColIdx }) ?? segments.first
-            ZStack(alignment: .topLeading) {
-                ForEach(Array(segments.enumerated()), id: \.offset) { _, entry in
-                    let (colIdx, seg) = entry
-                    let w = colW - 2
-                    let h = max(CGFloat(seg.end - seg.start) / 60 * hourH - 2, CGFloat(TimeGridDrag.minBlockHeight))
-                    let x = gutter + colW * CGFloat(colIdx) + 1
-                    let y = CGFloat(seg.start) / 60 * hourH
-                    blockContent(task: previewTask, schedule: previewSchedule, color: color, owner: owner, width: w, height: h)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(color.opacity(0.42)))
-                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(color, lineWidth: 1.5))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .shadow(color: Palette.navShadow, radius: 6, y: 3)
-                        .scaleEffect(reduceMotion ? 1 : 1.03)
-                        .animation(reduceMotion ? nil : Motion.press(reduceMotion), value: moveResult)
-                        .offset(x: x, y: y)
+            if let previewSchedule = moveResult.applied(to: task).schedule {
+                let previewTask: TodoTask = {
+                    var copy = task
+                    copy.schedule = previewSchedule
+                    return copy
+                }()
+                let color = Palette.listColor(model.project(task.projectId)?.color)
+                let owner = partnerOwner(for: task, show: showOwnerAvatars, members: model.members)
+                let segments: [(Int, DayLayout.Block)] = days.enumerated().flatMap { colIdx, d in
+                    DayLayout.blocks(for: [previewTask], on: d).map { (colIdx, $0) }
                 }
-                if let (colIdx, seg) = primarySegment {
-                    let w = colW - 2
-                    let h = max(CGFloat(seg.end - seg.start) / 60 * hourH - 2, CGFloat(TimeGridDrag.minBlockHeight))
-                    let x = gutter + colW * CGFloat(colIdx) + 1
-                    let y = CGFloat(seg.start) / 60 * hourH
-                    previewTimePill(DateText.range(previewSchedule), blockX: x, blockY: y, blockW: w, blockH: h, colW: colW)
+                let primarySegment = segments.first(where: { $0.0 == targetColIdx }) ?? segments.first
+                ZStack(alignment: .topLeading) {
+                    ForEach(Array(segments.enumerated()), id: \.offset) { _, entry in
+                        let (colIdx, seg) = entry
+                        let w = colW - 2
+                        let h = max(CGFloat(seg.end - seg.start) / 60 * hourH - 2, CGFloat(TimeGridDrag.minBlockHeight))
+                        let x = gutter + colW * CGFloat(colIdx) + 1
+                        let y = CGFloat(seg.start) / 60 * hourH
+                        blockContent(task: previewTask, schedule: previewSchedule, color: color, owner: owner, width: w, height: h)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(color.opacity(0.42)))
+                            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(color, lineWidth: 1.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .shadow(color: Palette.navShadow, radius: 6, y: 3)
+                            .scaleEffect(reduceMotion ? 1 : 1.03)
+                            .animation(reduceMotion ? nil : Motion.press(reduceMotion), value: moveResult)
+                            .offset(x: x, y: y)
+                    }
+                    if let (colIdx, seg) = primarySegment {
+                        let w = colW - 2
+                        let h = max(CGFloat(seg.end - seg.start) / 60 * hourH - 2, CGFloat(TimeGridDrag.minBlockHeight))
+                        let x = gutter + colW * CGFloat(colIdx) + 1
+                        let y = CGFloat(seg.start) / 60 * hourH
+                        previewTimePill(DateText.range(previewSchedule), blockX: x, blockY: y, blockW: w, blockH: h, colW: colW)
+                    }
                 }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
 
         case .create(_, let colIdx, _, let range):
             let x = gutter + colW * CGFloat(colIdx) + 1
