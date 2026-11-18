@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Tears down what a verify run created; evidence in <state>/<run>/ is never touched.
 #   bash cleanup.sh [--keep-probe] [--keep-session]
-#   1. soft-deletes live "verify-probe*" tasks in verify-seed (device op, LWW-safe)   [--keep-probe skips]
+#   1. permanently deletes (purges, op=delete) all "verify-probe*" tasks and their R2 attachment
+#      prefixes; GET 404 after purge does not prove R2 deletion (purged tasks return 404 before
+#      reading R2), so cleanup does not claim R2 deletion is verified           [--keep-probe skips]
 #   2. `claude mcp logout daydo-verify` in the temp dir, then checks the keychain entry is gone
 #   3. removes the temp dir recorded in <state>/claude-dir (only daydo-verify-claude.* paths)
 #   4. kills the private tmux socket daydo-verify (never other tmux servers)
@@ -29,10 +31,10 @@ rc=0
 
 if [ "$keep_probe" = 0 ]; then
   if [ -n "$(js 'import("node:fs").then((fs) => console.log(fs.existsSync(L.sessionFile()) ? 1 : ""))')" ]; then
-    node "$HERE/device.mjs" delete-probes || rc=1
+    node "$HERE/device.mjs" purge-probes && rm -f "$STATE/attachment-probe.json" || rc=1
     node "$HERE/device.mjs" pull --label after-cleanup >/dev/null || rc=1
   else
-    echo "skip  delete-probes: no device session"
+    echo "skip  purge-probes: no device session"
   fi
 fi
 

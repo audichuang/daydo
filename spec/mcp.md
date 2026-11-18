@@ -45,7 +45,7 @@ server/
   routes/.well-known/oauth-protected-resource.ts
   crons/ics-sync.ts
   src/oauth/     tokens、metadata、cors、register、codes、refresh、token、authorize、webIdentity、googleCallback、pages、cleanup
-  src/mcp/       protocol（JSON-RPC）、auth（Bearer）、registry（validateArgs、HINTS）、toolkit（工具共用的參數驗證與型別，tools 不 import registry）、log、format、tools/{projects,tags,tasks,attachments,ics}.ts
+  src/mcp/       protocol（JSON-RPC）、auth（Bearer）、registry（validateArgs、HINTS）、toolkit（工具共用的參數驗證與型別，tools 不 import registry）、log、format、tools/{projects,tags,tasks,tasksRead,attachments,ics}.ts
   src/serverops/ snapshot（讀）、writer（寫）、values（schedule 欄位與比較）、taskWrites（與 App 對齊的任務寫入）
   src/domain/    uuid、sortKey、tags、reminders、schedule、recurrence（Swift 邏輯的 TS 移植）
   src/ics/       types、parser、filters、store、fetch、engine、cron
@@ -71,7 +71,7 @@ server/
   - `/authorize`，以及 `/authorize/` 底下的路徑
   - `/.well-known/oauth-authorization-server`、`/.well-known/oauth-protected-resource`
   - 這個主機上的 `OPTIONS` preflight 由閘門直接回 204，並帶 CORS 標頭。
-- **其他主機（daydo-api）**：上面這些 MCP 路徑一律 404，其餘照舊交給 Access。
+- **其他主機（`api.daydoapp.com`）**：上面這些 MCP 路徑一律 404，其餘照舊交給 Access。
 - `createAccessMiddleware` 遇到 MCP 主機時直接 `next()`。其他主機的行為完全不變，正式環境仍然要求 `Cf-Access-Jwt-Assertion`。
 - `/__void/*` 由 Void wrapper 在 app 中介層之前處理，兩個主機都會收到。其中只有 `/__void/ready` 公開，其餘都有 token 把關，不另外處理。
 - e2e 不改 Vite 設定：
@@ -561,7 +561,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 - `JWT_SECRET` 沿用；MCP 的 access 金鑰與 refresh 金鑰都由它經 HKDF 衍生。
 - 正式環境唯一新增的 secret 是 `GOOGLE_WEB_CLIENT_SECRET`；信箱登入只新增 `EMAIL` binding，不是 secret。
 
-**E1 spike 結果（Void 1.8.0，`EMAIL` binding）**：Void 的 `CloudflareConfig` 型別有 `send_email`，`void.config.ts` 的 `cloudflare.send_email: [{ name: 'EMAIL' }]` 會原樣帶進 `vite build` 產物：`dist/ssr/wrangler.json` 有 `send_email`，`.cloudflare/output/v0/workers/default/worker.config.json` 的 `env.EMAIL` 是 `{type: 'send-email'}`；`void prepare` 也自動產生 `.void/bindings.d.ts`，讓 `c.env.EMAIL` 的型別是 `SendEmail`，`env.ts` 不用改。不需要退回 REST API。Void 內建的 `void/email` 的 `sendEmail` 讀的是名為 `SEND_EMAIL` 的 binding，所以不用它，由 `src/mail/mailer.ts` 直接呼叫 `env.EMAIL.send({from, to, subject, text, html})`（寄件人用物件形式 `{name:'DayDo', email:'no-reply@daydoapp.com'}`）；`send` 不 throw，失敗只記 `mail.send` 與 Cloudflare 的錯誤代碼（`E_*`），不記主旨與內文。開發建置一律用模組層級的記憶體 mailer（每個收件人留最後一封），Void dev server 是單一 isolate，`npm run e2e` 驗證了一個請求寄出的信，下一個請求能從 `GET /test/mail?to=` 讀到。正式建置不含 `/test/mail`。實際寄送沒有測過：寄給任意收件人需要 Workers Paid，且寄件網域（現為 `daydoapp.com`）要先完成 Email Sending 的設定（SPF／DKIM），這是部署前的前置作業。另外 dev server 與 `vite build` 會依設定改寫 `void.lock.json` 的 `send_email`，部署時一起 commit。
+**E1 spike 結果（Void 1.8.0，`EMAIL` binding）**：Void 的 `CloudflareConfig` 型別有 `send_email`，`void.config.ts` 的 `cloudflare.send_email: [{ name: 'EMAIL' }]` 會原樣帶進 `vite build` 產物：`dist/ssr/wrangler.json` 有 `send_email`，`.cloudflare/output/v0/workers/default/worker.config.json` 的 `env.EMAIL` 是 `{type: 'send-email'}`；`void prepare` 也自動產生 `.void/bindings.d.ts`，讓 `c.env.EMAIL` 的型別是 `SendEmail`，`env.ts` 不用改。不需要退回 REST API。Void 內建的 `void/email` 的 `sendEmail` 讀的是名為 `SEND_EMAIL` 的 binding，所以不用它，由 `src/mail/mailer.ts` 直接呼叫 `env.EMAIL.send({from, to, subject, text, html})`（寄件人用物件形式 `{name:'DayDo', email:'no-reply@daydoapp.com'}`）；`send` 不 throw，失敗只記 `mail.send` 與 Cloudflare 的錯誤代碼（`E_*`），不記主旨與內文。開發建置一律用模組層級的記憶體 mailer（每個收件人留最後一封），Void dev server 是單一 isolate，`npm run e2e` 驗證了一個請求寄出的信，下一個請求能從 `GET /test/mail?to=` 讀到。正式建置不含 `/test/mail`。正式環境已接通 Cloudflare Email Sending（Workers Paid，寄件網域 `daydoapp.com` 完成 SPF／DKIM 設定）。另外 dev server 與 `vite build` 會依設定改寫 `void.lock.json` 的 `send_email`，部署時一起 commit。
 
 ## 11. 測試策略
 
@@ -599,19 +599,9 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
     - 改 fixture 後用 `/__void/scheduled` 觸發 cron → 任務更新。
     - 刪除事件 → 任務進垃圾桶。
 
-## 12. 加進 `spec/sync.md`「已知限制」
+## 12. 已知限制
 
-- refresh 寬限期內，後繼已被使用之後，另一個 client 又拿舊 token 來換，會讓整個 family 被撤銷，需要重新授權（需要異常的 client）。
-- 沒用到的 DCR client 不清理（分不出沒用過與很久前用過）；過期的 pending、code、refresh 列由每小時的清理刪除（4.8）。`opApplied` 會隨 ICS 長期增長（家庭用量下可以接受）。
-- DCR 與 `/authorize` 依 IP 限速（IPv6 依 /64），攻擊者換很多 IP 或很多 /64 仍可灌入 client 與 pending 列（只會讓表變大，不影響已連線的使用者；pending 一天後會被清掉）。`/token` 沒有限速：code 是 256-bit 隨機值。
-- refresh 列在到期 30 天後刪除，之後再送那個舊 token 只會得到 `Unknown refresh token`，不會撤銷 family。
-- MCP 與 ICS 寫入要等 App 下次 pull 才看得到（沒有推播）。
-- 重複任務的副本與原任務若落在不同範圍（共享清單），兩邊的更新不是原子的，與 App 相同。
-- 在同一份來源中重新定義重複系列（改 FREQ、BYDAY、DTSTART，或單一事件改成重複）時，ICS 不寫入該 UID，每輪記一次錯誤，需要人工處理；同一來源的其他事件照常同步。只改結尾時刪掉的 slot 會移到垃圾桶。
-- ICS 任務被移到使用者看不到的清單時，該 mapping 每輪記一次錯誤，不重建。
-- ICS 的 `CATEGORIES` 不轉成標籤。
-- iOS App 還沒有信箱登入畫面；信箱驗證碼只能經 API 與 MCP 授權頁使用，且同信箱不會與 Google／Apple 帳號合併。
-- 知道某人信箱的人可以故意用完他每小時的寄碼額度，或猜錯 10 次觸發 24 小時鎖定（阻斷服務，不會登入他的帳號）。
+見 [`spec/sync.md`](./sync.md)「已知限制」，只維護那一份。
 
 ## 13. 合併後手動步驟（不在票內）
 

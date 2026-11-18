@@ -114,7 +114,7 @@ npm run check:fast
 Individual e2e suites:
 
 - `npm run e2e` (`scripts/e2e.mjs`): auth and session e2e
-- `npm run e2e:sync` (`scripts/e2e-sync.mjs`): sync e2e, or run a single scenario (`fixture`, `lww`, `concurrency`, `replay`, `paging`, `auth`, `id_race`, `unknown_row`, `move_task`, `child_task_id`, `two_device`, `sharing`, `move_with_child`):
+- `npm run e2e:sync` (`scripts/e2e-sync.mjs`): sync e2e, or run a single scenario (`fixture`, `lww`, `concurrency`, `replay`, `paging`, `auth`, `id_race`, `unknown_row`, `move_task`, `child_task_id`, `two_device`, `sharing`, `move_with_child`, `attachment`):
   ```bash
   npm run e2e:sync
   node scripts/e2e-sync.mjs --only concurrency
@@ -149,7 +149,7 @@ npx void connect --platform cloudflare
 
 Production secrets are already set on the Worker. To change one, use `void secret put <NAME>` (reads stdin) or `void secret sync <file outside the repo> --yes`. Required: `JWT_SECRET`, `GOOGLE_AUDIENCE`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`.
 
-R2 object storage (`STORAGE` binding via `void/storage`) is inferred from `src/deps.ts` and `void.config.ts`. During `npx void deploy --platform cloudflare`, Void automatically creates or adopts the R2 bucket `daydo-api-storage` and records it in `void.lock.json` (to create it manually beforehand, run `CLOUDFLARE_ACCOUNT_ID=<account_id from void.lock.json> cf r2 buckets create --name daydo-api-storage` from a temp directory). Locally, `vite` / `void dev` runs an in-process R2 simulator.
+R2 object storage (`STORAGE` binding via `void/storage`) is inferred from `src/deps.ts` and `void.config.ts`. During `npx void deploy --platform cloudflare`, Void automatically creates or adopts the R2 bucket `daydo-api-storage` and records it in `void.lock.json` (only needed when recreating the environment: run `CLOUDFLARE_ACCOUNT_ID=<account_id from void.lock.json> cf r2 buckets create --name daydo-api-storage` from a temp directory). Locally, `vite` / `void dev` runs an in-process R2 simulator.
 
 Worker ↔ Durable Object RPC changes (for example `ScopePushInput` in `src/scope/api.ts`) must be forward and backward compatible: a deploy rolls out Workers and DOs independently, so old and new versions call each other for a while. Add optional fields instead of reshaping existing ones; `tests/scope-rpc-compat.test.ts` pins the push RPC against the 701de08 Scope DO.
 
@@ -169,13 +169,11 @@ Verify the deployed Worker with the smoke test:
 CF_ACCESS_CLIENT_ID=... CF_ACCESS_CLIENT_SECRET=... npm run smoke:prod
 ```
 
-After deploying attachment R2 support, also verify on `api.daydoapp.com`:
-- Push an `attachment` row, `PUT /attachments/<id>/content` with Access + Bearer token returns `204`, and `GET /attachments/<id>/content` returns `200` with the uploaded bytes and `Content-Type`.
-- `GET https://mcp.daydoapp.com/attachments/<id>/content` returns `404`.
+Attachment R2 upload/download verification is covered in [`.claude/skills/verify/features/attachments.md`](./.claude/skills/verify/features/attachments.md).
 
 ## MCP Server (`mcp.daydoapp.com`)
 
-The same Worker also serves the remote MCP server (OAuth 2.1 + JSON-RPC tools + ICS subscription sync). Design: [`../spec/mcp.md`](../spec/mcp.md). The hostname gate (`middleware/00.host.ts`, `MCP_HOST`, default `mcp.daydoapp.com`) runs before Access: on the MCP host only `/`, `/register`, `/token`, `/authorize*` and the two `/.well-known/oauth-*` documents are served (everything else is 404); on `daydo-api` those MCP paths are 404.
+The same Worker also serves the remote MCP server (OAuth 2.1 + JSON-RPC tools + ICS subscription sync). Design: [`../spec/mcp.md`](../spec/mcp.md). The hostname gate (`middleware/00.host.ts`, `MCP_HOST`, default `mcp.daydoapp.com`) runs before Access: on the MCP host only `/`, `/register`, `/token`, `/authorize*` and the two `/.well-known/oauth-*` documents are served (everything else is 404); on `api.daydoapp.com` those MCP paths are 404.
 
 Extra checks: `npm run e2e:ics` (ICS sync and cron) and `npm run e2e:mcp` (OAuth flow, tools, hostname gate). Both are part of `npm run check`.
 
@@ -192,19 +190,19 @@ Extra checks: `npm run e2e:ics` (ICS sync and cron) and `npm run e2e:mcp` (OAuth
 
 `JWT_SECRET` is reused (MCP access and refresh keys are derived from it with HKDF). The only new production secret is `GOOGLE_WEB_CLIENT_SECRET`.
 
-### Post-merge manual steps (not done by any ticket; do not deploy before the user says so)
+### Production setup（已完成；換網域或重建時照做）
 
 1. Secret: `void secret put GOOGLE_WEB_CLIENT_SECRET` (reads stdin). The value lives in 1Password vault `Agent`, item "DayDo Google Web OAuth client (MCP)" (read it with the `claude-agent` service account token).
 2. Google Cloud Console: the web client must list the redirect URIs `https://mcp.daydoapp.com/authorize/google/callback` and `http://localhost:5173/authorize/google/callback`.
 3. Apple Developer: Services ID `com.audichuang.daydo.web`, grouped under App ID `com.audichuang.daydo`; domain `mcp.daydoapp.com`; Return URL `https://mcp.daydoapp.com/authorize/apple/callback`.
-4. DNS / custom domain: add `mcp.daydoapp.com` as a second `custom_domain` route on the same Worker in `void.config.ts` (`routes` next to `api.daydoapp.com`), refresh `void.lock.json` with the Void command, then deploy once the user approves. Leave Cloudflare Access untouched: the Access application is bound to `daydo-api` only, and the MCP host skips Access by hostname.
+4. DNS / custom domain: `void.config.ts` (`routes`) and `void.lock.json` define both `custom_domain` routes (`api.daydoapp.com` and `mcp.daydoapp.com`) on the same Worker. Leave Cloudflare Access bound to `api.daydoapp.com` only; the MCP host skips Access by hostname.
 5. Workers plan: the Free plan (10 ms CPU per invocation) is not enough for ICS parsing or MCP snapshot reads. Use Paid, set `worker.limits.cpu_ms` in `void.config.ts` if needed, and check the plan's subrequest limit per invocation (reduce sources per cron run if necessary).
 6. Email: `daydoapp.com` is enabled as a sending domain in Cloudflare Email Sending (DNS status `ready`). Its onboarding added `_dmarc` with `p=reject` for the whole domain, and the root domain has no SPF, so any other service that sends as `@daydoapp.com` must be added to SPF/DKIM first or its mail is rejected.
 
 ### After deploy (only when the user asks to deploy)
 
 - Connect Claude, ChatGPT and Codex to `https://mcp.daydoapp.com/` and sign in with a real Apple account in both Safari and Chrome. Confirm: the web Apple `sub` equals the App's `sub` (same account); the Apple `form_post` callback receives the `SameSite=None` cookie; all three clients send `client_id` on `/token`. Repeat once with a Google account.
-- `npm run smoke:prod` against `daydo-api`: Access must still reject requests without a token.
+- `npm run smoke:prod` against `api.daydoapp.com`: Access must still reject requests without a token.
 - `POST https://mcp.daydoapp.com/sync/pull` must return 404.
 - If the change touches the cron or ICS wiring: production cron cannot run locally. Wait past the next 5-minute mark, then check the cron invocations since the deploy with the `cf` CLI (not wrangler; Workers Logs are off, so query the invocations dataset). Every row must be `success`:
 

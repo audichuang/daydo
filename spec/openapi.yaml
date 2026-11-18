@@ -9,12 +9,14 @@ info:
     duplicate_project, transfer_project_owner, member and invite operations,
     list_sections, smart_counts, postpone_overdue, tag update/delete, delete_attachment,
     list_members and update_me.
-    MCP-only tools (ICS, move_all, list_recent_tasks) are not in this file.
+    MCP-only tools (ICS, move_all, list_recent_tasks, get_attachment) are not in this file.
 
     HTTP contract of `DayDoAPI` (DayDoCore/Sources/DayDoCore/API/DayDoAPI.swift).
     The iOS app implements it locally (`LocalDayDoAPI`); the phase-2 Cloudflare
     Worker serves it over HTTP, and the MCP server maps one tool per operation
-    (operationId = MCP tool name, aligned with ticktick-mcp).
+    (operationId = MCP tool name, aligned with ticktick-mcp), except
+    `/attachments/{attachment_id}/content`, whose two operations are Worker
+    HTTP endpoints only and do not map to MCP tools.
 
     Conventions
     - JSON keys are snake_case.

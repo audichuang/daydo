@@ -19,7 +19,7 @@
 | 刪除帳號 | 刪除這個人的整個範圍，包括他在別人共享清單裡建立的任務（他建立的共享清單也一起刪除，照永久刪除清單的規則通知其他範圍）；其他成員下次同步時這些資料會消失。上架前必須做。 |
 | 之後 | iPad 原生版面、macOS 版（方向已定，這一階段不做）。 |
 
-框架：程式在 `server/`，用 Void（Cloudflare 的框架，底層 Hono），固定 void 1.8.0（npm 設定只裝發布滿 3 天的版本）。不用 KV 存任務資料或 op 去重：KV 是最終一致，剛寫入的值可能讀不到。
+框架：程式在 `server/`，用 Void（Cloudflare 的框架，底層 Hono），版本釘在 `server/package.json`（安裝規則見 `server/AGENTS.md`）。不用 KV 存任務資料或 op 去重：KV 是最終一致，剛寫入的值可能讀不到。
 
 ## 流程
 
@@ -71,28 +71,25 @@
 
 - 「全部」與日曆的成員篩選按「指派人，沒指派就看清單擁有者」算歸屬，收件匣一律算自己的：收件匣不能共享，所以對方的收件匣不會同步過來；若異常 client 共享了收件匣，裡面的任務會被算成自己的。
 - 把成員移出清單不會清掉他在那份清單的指派，那些任務仍算他的。成員篩選只列「自己＋還跟你共用未封存清單的人」，所以把對方移出最後一份共享清單後，整排篩選會消失，「全部」會連同仍指派給他的任務一起顯示；要再分得出來，先把那些任務改指派或取消指派。
-- iOS App 還沒有信箱登入畫面；信箱驗證碼目前只能透過 API 與 MCP 授權頁使用。
+- iOS App 還沒有信箱登入畫面；信箱驗證碼目前只能透過 API 與 MCP 授權頁使用，且同信箱不會與 Google／Apple 帳號合併。
 - 知道某人信箱的人可以故意用完他每小時 5 次的寄碼額度，或猜錯 10 次觸發 24 小時鎖定，讓他暫時無法用信箱登入（阻斷服務，不會因此登入他的帳號）；Google／Apple 登入不受影響。
 - 同一個子項目 id 同時指向兩個不同任務、兩個請求又同時送出時，路由可能被清掉（需異常 client）。
 - 共享清單的 editor 能把清單的 `isInbox` 改成 true（App 不會這樣送）。
 - 兩台舊版手機在同一瞬間第一次登入，可能各自上傳一個收件匣。
 - 收件匣只有異常 client 才能送進垃圾桶（App 與 MCP 都不允許刪收件匣，push 驗證也不另外擋）。這時登入回 `hasData:false`，MCP 也視為無資料帳號、拒絕寫入。
 - Worker 重啟後回傳的 `serverTime` 可能比之前回過的小；只影響時鐘不準的裝置。
-- 附件檔案經 `PUT /attachments/{id}/content` 與 `GET /attachments/{id}/content` 存放在 R2（單檔上限 20 MB）；附件軟刪除（`deletedAt`）不刪 R2 檔案，任務永久刪除（purge）時才清除該任務前綴的 R2 物件（失敗只記 log，不影響 push 回應）。
 - `task` 的 `op=delete` R2 清理以 push 結果 `applied` 為準；異常 client 重用 `opId` 重送時可能誤刪（正常 App 不會）。
 - `PUT /attachments/{id}/content` 先檢查權限再讀檔，讀檔期間被撤權或任務被搬走／永久刪除時，該次上傳仍會寫入 R2；任務或附件永久刪除後殘留的物件下載不到。
-- 整份清單永久刪除（`purgeProject`）不清 R2 檔案；目前 App 沒有這個入口。
-- 部署期間新 Worker 可能呼叫尚未更新的 Scope DO，沒有 getAttachmentInfo 時附件端點回 5xx，App 視為暫時錯誤下次重試。
 - MCP `upload_attachment` 檢查任務所屬清單與寫入之間若任務被搬到另一份呼叫者也能寫的清單，附件會跟著任務到新清單。
 - MCP `upload_attachment` 上傳結果不明時重送會建立第二筆附件（呼叫端可先用 `get_task` 的 `attachments` 確認是否已上傳）。
 - 登入 token 已被清除（換發被拒）但任務同步還沒回報登出時複製清單，缺檔附件的下載會被當成單檔失敗略過，副本少了那些附件。
 - token 換發的連線卡住時，登出要等複製清單結束才顯示確認，期間沒有進度提示（換發逾時後就會出現）。
 - 附件上傳收到 403 後標記永久失敗，之後恢復編輯權也不會自動補傳。
 - refresh token 的 10 分鐘寬限：換發後 10 分鐘內、手機還沒用新 token 之前，持有舊 refresh token 的人能搶先換到新 session（要先偷到 Keychain 裡的 token）；真手機下次 refresh 時整條鏈會被撤銷。這是為了避免訊號差時回應遺失就被登出所接受的取捨。
-- 永久刪除清單在 App 還沒有入口；之後加入時，擁有者的其他裝置要另外收到清除通知（目前 pull 不再回傳那份清單，其他裝置會留著）。
+- 永久刪除清單（`purgeProject`）在 App 還沒有入口；之後加入時，要一併清除該清單在 R2 的附件，且擁有者的其他裝置要另外收到清除通知（目前 pull 不再回傳那份清單，其他裝置會留著）。
 - refresh 寬限期內，後繼已被使用之後，另一個 client 又拿舊 token 來換，會讓整個 family 被撤銷，需要重新授權（需要異常的 client）。（MCP）
-- 過期的 OAuth 列由 cron 每小時清理（見 `spec/mcp.md`）；`opApplied` 會隨 ICS 長期增長（家庭用量下可以接受）。
-- DCR 與 `/authorize` 依 IP（IPv6 以 /64）限速，攻擊者換很多 IP 仍可灌入列（只會讓表變大）。`/token` 沒有限速：code 與 refresh 都是 256-bit 隨機值。
+- 沒用到的 DCR client 不清理（分不出沒用過與很久前用過）；過期的 pending（1 天）、code（1 天）、refresh（到期 30 天後刪除；之後再送舊 token 只回 `Unknown refresh token`，不會撤銷 family）與 emailCode（1 天）列由 cron 每小時清理（見 `spec/mcp.md`）；`opApplied` 會隨 ICS 長期增長（家庭用量下可以接受）。
+- DCR 與 `/authorize` 依 IP（IPv6 以 /64）限速，攻擊者換很多 IP 仍可灌入列（只會讓表變大，不影響已連線的使用者；pending 一天後會被清掉）。`/token` 沒有限速：code 與 refresh 都是 256-bit 隨機值。
 - MCP 與 ICS 寫入要等 App 下次 pull 才看得到（沒有推播）。
 - 重複任務的副本與原任務若落在不同範圍（共享清單），兩邊的更新不是原子的，與 App 相同。
 - 在同一份來源中重新定義重複系列（改 FREQ、BYDAY、DTSTART，或單一事件改成重複）時，ICS 不寫入該 UID，每輪記一次錯誤，需要人工處理；同一來源的其他事件照常同步。只改結尾時刪掉的 slot 會移到垃圾桶。
@@ -229,5 +226,5 @@
 4. ✓ T5b Worker：`serverTime`、登入回應的 `hasData`／`meMemberId`／`inboxProjectId`、兩台裝置的 e2e。T7 從這裡開始。
 5. ✓ T5c Worker：成員與邀請 API、權限矩陣、成員投影、`listScopes` 與多範圍 pull、`gone` 與離開紀錄、加入時的 backfill、共享清單的 members 與 folderId 規則、永久刪除清單的通知。
 6. ✓ T6：Access 驗證、部署到 `daydo-api.audichuang.app`（2026-11-18 起主網址改為 `api.daydoapp.com`）、對公開網址跑冒煙測試（`npm run smoke:prod`：Access 擋未帶 token 的請求、假 token 登入被拒）。完整登入與同步要真的 Apple／Google token，留到 T8 在手機上驗。
-7. T7 App：✓ T7a 同步引擎與兩台裝置收斂測試；✓ T7b 登入、登出與第一次登入；✓ T7c 共享清單。✓ T8 App：登入畫面、同步觸發、設定帳號區、邀請連結（分享、貼上加入、確認畫面）。
+7. T7 App：✓ T7a 同步引擎與兩台裝置收斂測試；✓ T7b 登入、登出與第一次登入；✓ T7c 共享清單。✓ T8 App：登入畫面、同步觸發、設定帳號區、邀請連結（分享、點 `daydo://invite` 連結進確認畫面）。
 8. WebSocket 通知；✓ MCP（OAuth、工具、ICS 訂閱同步，見 `spec/mcp.md`）。

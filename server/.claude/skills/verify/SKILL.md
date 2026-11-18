@@ -83,11 +83,15 @@ Run the steps in order. Each prints one JSON line and exits non-zero with `FAIL:
 node $S/device.mjs login          # 1. POST /auth/email/start → code from Gmail → /auth/email/verify; saves session
 node $S/device.mjs bootstrap      # 2. App first login: me member + 收件匣 inbox, only if missing; asserts hasData + meMemberId
 node $S/device.mjs seed --n 60    # 3. project "verify-seed" with N tasks; prints counts; skipped when it already exists
-node $S/mcp-login.mjs             # 4. temp dir + .mcp.json + trust, `claude mcp login daydo-verify --no-browser` in tmux,
+node $S/device.mjs attach --empty --png-no-type  # 4. inbox attachment probe: PUT/GET bytes + 401 + MCP host 404; saves <state>/attachment-probe.json
+node $S/mcp-login.mjs             # 5. temp dir + .mcp.json + trust, `claude mcp login daydo-verify --no-browser` in tmux,
                                   #    authorize page in ego-browser (email → code → 同意), `claude mcp list` ✔ Connected
-node $S/claude-assert.mjs read    # 5a. list_projects + get_project_data: task count == device active count
-node $S/claude-assert.mjs write   # 5b. create_task "verify-probe <UTC>" → device pull finds it, status 0
-node $S/claude-assert.mjs complete  # 5c. complete_task → device pull shows status 2 + completedAt
+node $S/claude-assert.mjs read          # 6a. list_projects + get_project_data: task count == device active count
+node $S/claude-assert.mjs write         # 6b. create_task "verify-probe <UTC>" → device pull finds it, status 0
+node $S/claude-assert.mjs complete      # 6c. complete_task → device pull shows status 2 + completedAt
+node $S/claude-assert.mjs attachment    # 6d. get_task + get_attachment (text/0B/PNG) + upload_attachment + device GET check
+node $S/claude-assert.mjs uncomplete    # 6e. complete_task → uncomplete_task → device task-status shows status 0
+node $S/claude-assert.mjs trash-restore # 6f. device trash → search_tasks(include_deleted) → get_task(include_deleted) → restore_task → device deletedAt null
 ```
 
 Helpers you can run on their own:
@@ -95,10 +99,14 @@ Helpers you can run on their own:
 ```bash
 node $S/device.mjs status                       # session summary (never tokens)
 node $S/device.mjs pull --label <name>          # verify-seed summary → <run>/pull-<name>.json
-node $S/device.mjs find --title "<t>" --status 2  # exit 0 only if that task exists with that status
-node $S/device.mjs delete-probes                # soft-delete live verify-probe* tasks
+node $S/device.mjs find --title "<t>" --status 2  # exit 0 only if that task exists in any visible list with that status
+node $S/device.mjs task-status --id <taskId>     # inspect one task row by id (status, completedAt, deletedAt, purgedAt)
+node $S/device.mjs trash --id <taskId>           # soft-delete one task with an HLC newer than existing clocks
+node $S/device.mjs get-attachment --id <attId> [--expect-base64 <b64>] [--expect-type <mime>]
+node $S/device.mjs delete-probes                # soft-delete live verify-probe* tasks across all visible lists
+node $S/device.mjs purge-probes                 # permanently delete (op=delete) all unpurged verify-probe* tasks
 node $S/mail-code.mjs --since <epoch ms> [--timeout 120]   # prints the newest code mailed after <since>
-node $S/claude-assert.mjs all --model haiku     # 5a-5c in one go (haiku is the default; ~US$0.01 per full run)
+node $S/claude-assert.mjs all --model haiku     # runs read, write, complete, uncomplete, trash-restore in order (attachment stays separate because it needs device.mjs attach first)
 ```
 
 Notes:
@@ -109,7 +117,8 @@ Notes:
   - `--strict-mcp-config --mcp-config .mcp.json`;
   - `--setting-sources project,local`, so no user hooks or plugins load;
   - `--no-session-persistence`.
-- It asserts on the `tool_result` JSON in the stream, never on the model's reply.
+- It asserts on the `tool_result` JSON (and image content blocks) in the stream, never on the model's reply.
+- App 端（iOS HTTPSyncTransport）的真實傳輸這支驗不到，因為 App 只有 Apple／Google 登入。
 
 ## Evidence
 
@@ -118,7 +127,7 @@ Everything goes to `$DAYDO_VERIFY_STATE/<UTC run id>/` (production default `~/.l
 | File | What it proves |
 |---|---|
 | `device.log` | email start 202, verify result (userId, isNewAccount, hasData, meMemberId, inboxProjectId), bootstrap ops, find results |
-| `seed.json`, `pull-*.json` | pushed counts and the device's independent read-back (tasks, active, completed, repeating, all-day, timed, checklist items, probes) |
+| `seed.json`, `pull-*.json`, `attach.json` | pushed counts, attachment upload/download checks, and the device's independent read-back (tasks, active, completed, repeating, all-day, timed, checklist items, probes) |
 | `authorize-login.png`, `authorize-code.png`, `authorize-consent.png`, `authorize-callback.png` | the user-facing OAuth pages (the code page is captured before the code is typed) |
 | `mcp-trust.pane.txt`, `mcp-login.pane.txt`, `mcp-list.txt` | the CLI side of the connection, ending in `✔ Connected` |
 | `credential-store.json` | which store holds the MCP token (key names, server URL and has-token flags only) |
@@ -138,7 +147,7 @@ bash $S/cleanup.sh [--keep-probe] [--keep-session]
 ```
 
 Cleanup runs in this order:
-1. Soft-deletes the live `verify-probe*` tasks through the device. The HLC is newer than the MCP-written clocks, and the result is checked on the returned `deletedAt`.
+1. Permanently deletes (`purge-probes`, `op: 'delete'`) every unpurged `verify-probe*` task across all lists through the device, which also triggers server-side R2 prefix deletion for each purged task, and removes `<state>/attachment-probe.json`. Note that a 404 from `GET /attachments/{id}/content` after purge does not prove R2 removal (the endpoint rejects purged tasks before reading R2), so cleanup does not claim R2 deletion is verified.
 2. Runs `claude mcp logout daydo-verify` in the temp dir and checks that no token is left for the MCP URL, in the keychain item or in `$CLAUDE_CONFIG_DIR/.credentials.json`. It first compares the current `CLAUDE_CONFIG_DIR` with the one `mcp-login.mjs` recorded in `<state>/claude-config-dir`.
 3. Removes the recorded `daydo-verify-claude.*` temp dir. If the config dir differs, logout fails, or a token remains, it keeps the temp dir and both pointers and exits 1, so the cleanup can be retried.
 4. Kills only tmux socket `daydo-verify`.
@@ -154,7 +163,7 @@ It never deletes `verify-seed` or the account: there is no delete-account endpoi
 | `scripts/lib.mjs` | config, state and evidence paths, Access headers via `op read` in a child bash, redaction, UUIDv7/HLC, Claude credential-store inspection (key names only) |
 | `scripts/ego.mjs` | runs ego-browser scripts in one persisted TaskSpace (`<state>/ego-space.json`); results come back on `__RESULT__` lines, which ego-browser prints on **stderr** |
 | `scripts/mail-code.mjs` | newest code after a timestamp (Gmail via ego-browser, or the dev mailbox) |
-| `scripts/device.mjs` | the device: login, bootstrap, seed, pull, find, delete-probes, status, forget |
+| `scripts/device.mjs` | the device: login, bootstrap, seed, pull, find, task-status, trash, attach, get-attachment, delete-probes, purge-probes, status, forget |
 | `scripts/mcp-login.mjs` | the Claude Code connection: trust, login, authorize, approve, confirm |
 | `scripts/claude-assert.mjs` | `claude -p` steps and their assertions |
 | `scripts/doctor.sh`, `scripts/cleanup.sh`, `scripts/devserver.sh` | as above |

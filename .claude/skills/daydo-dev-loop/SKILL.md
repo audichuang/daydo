@@ -16,8 +16,8 @@ description: DayDo 的開發與優化迴圈：agy 實作、Codex 審查、Claude
 ## 流程
 
 1. 開 worktree。派給 agy 的 prompt 寫明：只在這個 worktree 改、驗收條件、UI 測試只用 `ios/scripts/uitest.sh`（DD 模擬器）、不 commit 不上傳。
-2. agy 完成後讀 `git diff`，照 AGENTS.md「指令」自己重跑受影響部分的測試（新 worktree 的 server 要先 `npm ci`），動到畫面就設 `TEST_RUNNER_DAYDO_SHOTS` 看截圖；動到動畫或手勢改用 `ios/scripts/record-uitest.sh` 錄影逐格看，截圖拍不到過渡。agy 順手改到的 `DayDoCore/Package.resolved` 不在任務範圍，還原。iPad 全套偶發「App animations complete notification not received」（等不到 App 靜止，每步卡 60 秒，改版前就有）：回報出現次數，因此失敗的測試單獨重跑並註明；根因見 `docs/backlog.md`，不要憑幾套結果下結論。有問題用 agy 的 `--continue` 交回同一個對話修。
-3. 優化或修 bug 類：Codex 審（動到互動或狀態時，另開一個 Opus 子代理平行獨立審，不給它 Codex 的結論）→ 轉述原文並篩選 → agy 修 → Claude 審 diff 與自測 → Codex 再審。最多 3 輪；第 3 輪結束仍有 Act on 就不修、不開第 4 輪，也不進步驟 4，照 review-gate 的 stalled-loop 把診斷交給使用者決定，其餘 finding 列進回報不修。
+2. agy 完成後讀 `git diff`，照 AGENTS.md「指令」自己重跑受影響部分的測試（新 worktree 的 server 要先 `npm ci`）；UI 全套只測凍結的樹——commit 之後、派下一輪修正之前才跑。動到畫面就設 `TEST_RUNNER_DAYDO_SHOTS` 看截圖；動到動畫或手勢改用 `ios/scripts/record-uitest.sh` 錄影逐格看，截圖拍不到過渡。agy 順手改到的 `DayDoCore/Package.resolved` 不在任務範圍，還原。iPad 全套偶發「App animations complete notification not received」（等不到 App 靜止，每步卡 60 秒，改版前就有）：回報出現次數，因此失敗的測試單獨重跑並註明；根因見 `docs/backlog.md`，不要憑幾套結果下結論。有問題用 agy 的 `--continue` 交回同一個對話修。
+3. 優化或修 bug 類：Codex 審（動到互動或狀態時，另開一個 Opus 子代理平行獨立審，不給它 Codex 的結論）→ 轉述原文並篩選 → agy 修（派工 prompt 固定寫「不跑裸 xcodebuild（編譯檢查用 `ios/scripts/uitest.sh build`）、不 down／park」）→ Claude 審 diff 與自測 → Codex 再審。最多 3 輪；第 3 輪結束仍有 Act on 就不修、不開第 4 輪，也不進步驟 4，照 review-gate 的 stalled-loop 把診斷交給使用者決定，其餘 finding 列進回報不修。
 4. 併入最新 main 並重跑測試，合併、push，照 `ios/RELEASE.md` 出 TestFlight 給「自己」，`tf verify` 到 `RESULT READY`。之後用 `ios/scripts/uitest.sh park` 把用過的 DD 常駐機收進 NAS（AGENTS.md「模擬器」）。
 
 ## 回報

@@ -1,6 +1,6 @@
 # DayDo server + MCP verification map
 
-This directory is the maintained source for verifying the user-facing behavior of the DayDo Worker. That covers the App API (`api.daydoapp.com`, as a device) and the remote MCP server (`daydo-mcp`, as Claude Code). Read this index first, then use the matching feature file as the recipe. `S` is `server/.claude/skills/verify/scripts`, and every command is in `../SKILL.md`.
+This directory is the maintained source for verifying the user-facing behavior of the DayDo Worker. That covers the App API (`api.daydoapp.com`, as a device) and the remote MCP server (`mcp.daydoapp.com`, as Claude Code). Read this index first, then use the matching feature file as the recipe. `S` is `server/.claude/skills/verify/scripts`, and every command is in `../SKILL.md`.
 
 ## Baseline preconditions
 
@@ -40,5 +40,6 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Email sign-in (device)](./email-sign-in.md) covers email code sign-up/login on the API host, refresh, and the rate limits.
 - [Device sync: bootstrap, seed, read-back](./device-sync.md) covers the first-login data, bulk task seeding over `/sync/push`, `/sync/pull` summaries and the soft delete.
 - [Connect Claude Code to DayDo MCP](./mcp-connect.md) covers DCR + `/authorize` with the email code, consent, the localhost callback, token storage and logout.
-- [MCP read tools](./mcp-read.md) covers `list_projects` and `get_project_data` against the seeded data.
-- [MCP write tools](./mcp-write.md) covers `create_task` and `complete_task`, with device read-back.
+- [MCP read tools](./mcp-read.md) covers `list_projects`, `get_project_data`, `search_tasks(include_deleted)`, and `get_task(include_deleted)` against the seeded and probe data.
+- [MCP write tools](./mcp-write.md) covers `create_task`, `complete_task`, `uncomplete_task`, and `restore_task`, with device read-back.
+- [Task attachments](./attachments.md) covers `PUT`/`GET /attachments/{id}/content` (including 0-byte and untyped PNGs), host gating, MCP `get_task`/`get_attachment`/`upload_attachment`, and purge cleanup.

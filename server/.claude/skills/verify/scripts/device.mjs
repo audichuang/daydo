@@ -4,13 +4,20 @@
 //   node device.mjs bootstrap        first-login data like the App: me member + inbox (skips if present)
 //   node device.mjs seed [--n 60]    project "verify-seed" with N tasks; skipped if it already exists
 //   node device.mjs pull [--label x] summary of verify-seed (+ evidence pull-<label>.json)
-//   node device.mjs find --title <t> [--status 0|2]   exit 0 only if the task exists (with that status)
-//   node device.mjs delete-probes    soft-deletes live "verify-probe*" tasks in verify-seed
-//   node device.mjs status           session summary without tokens
+//   node device.mjs find --title <t> [--status 0|2]   exit 0 only if the task exists in a visible list (with that status)
+//   node device.mjs task-status --id <taskId>        inspect one task row by id (including deleted/purged)
+//   node device.mjs trash --id <taskId>              soft-delete one task with an HLC newer than existing clocks
+//   node device.mjs attach [--empty] [--png-no-type] create inbox probe task, PUT/GET attachment content, check 401/404
+//   node device.mjs get-attachment --id <attId> [--expect-base64 <b64>] [--expect-type <mime>]
+//   node device.mjs delete-probes                    soft-delete live "verify-probe*" tasks across all visible lists
+//   node device.mjs purge-probes                     permanently delete (op=delete) all unpurged "verify-probe*" tasks
+//   node device.mjs status                           session summary without tokens
 // Session (tokens, deviceId) lives in <stateDir>/session.<host>.json (0600); evidence in the run dir.
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import { getCode } from './mail-code.mjs';
 import {
+  accessHeaders,
   apiRequest,
   cfg,
   die,
@@ -21,6 +28,7 @@ import {
   readJson,
   saveEvidence,
   sessionFile,
+  statePath,
   uuidv7,
   writeJson,
 } from './lib.mjs';
@@ -62,6 +70,24 @@ async function call(s, route, body) {
     res = await apiRequest('POST', route, body, s.accessToken);
   }
   return res;
+}
+
+/** Authenticated raw binary request against cfg.api; refreshes once on 401 or near expiry. */
+async function rawCall(s, method, route, { body, headers: extraHeaders = {} } = {}) {
+  if (!s.accessToken || Date.now() - (s.accessIssuedAt ?? 0) > 50 * 60_000) await refresh(s);
+  const run = () =>
+    fetch(`${cfg.api}${route}`, {
+      method,
+      headers: { ...accessHeaders(), Authorization: `Bearer ${s.accessToken}`, ...extraHeaders },
+      body,
+      redirect: 'manual',
+    });
+  let res = await run();
+  if (res.status === 401) {
+    await refresh(s);
+    res = await run();
+  }
+  return { status: res.status, headers: res.headers, body: Buffer.from(await res.arrayBuffer()) };
 }
 
 async function login() {
@@ -145,15 +171,20 @@ const absent = (row, ...f) => f.every((k) => row[k] === undefined || row[k] === 
 function view(pulled) {
   const live = (e) => pulled.rows.filter((r) => !r.gone && r.entity === e).map((r) => ({ ...r.row, _clocks: r.clocks }));
   const projects = live('project').filter((p) => absent(p, 'deletedAt', 'purgedAt', 'archivedAt'));
+  const liveProjectIds = new Set(projects.map((p) => p.id));
   const seed = projects.find((p) => p.name === cfg.seedProject) ?? null;
   const inbox = projects.find((p) => p.isInbox === true) ?? null;
-  const allTasks = live('task').filter((t) => seed && t.projectId === seed.id);
+  const allTasksRaw = live('task');
+  const allLiveTasks = allTasksRaw.filter((t) => liveProjectIds.has(t.projectId) && absent(t, 'deletedAt', 'purgedAt'));
+  const allTasks = allTasksRaw.filter((t) => seed && t.projectId === seed.id);
   const liveTasks = allTasks.filter((t) => absent(t, 'deletedAt', 'purgedAt'));
   const items = live('checklistItem').filter((c) => liveTasks.some((t) => t.id === c.taskId) && absent(c, 'deletedAt', 'purgedAt'));
   return {
     seed,
     inbox,
     liveTasks,
+    allLiveTasks,
+    allTasksRaw,
     summary: {
       projectId: seed?.id ?? null,
       inboxProjectId: inbox?.id ?? null,
@@ -166,7 +197,7 @@ function view(pulled) {
       allDay: liveTasks.filter((t) => t.startDay && absent(t, 'startMinute')).length,
       timed: liveTasks.filter((t) => !absent(t, 'startMinute')).length,
       checklistItems: items.length,
-      probes: liveTasks.filter((t) => String(t.title).startsWith(cfg.probePrefix)).map((t) => ({ id: t.id, title: t.title, status: t.status })),
+      probes: allLiveTasks.filter((t) => String(t.title).startsWith(cfg.probePrefix)).map((t) => ({ id: t.id, title: t.title, status: t.status })),
     },
   };
 }
@@ -329,7 +360,7 @@ async function pullSummary(label) {
 async function find(title, status) {
   const s = loadSession();
   const v = view(await pullAll(s));
-  const t = v.liveTasks.find((x) => x.title === title);
+  const t = v.allLiveTasks.find((x) => x.title === title);
   const out = t
     ? { found: true, id: t.id, title: t.title, projectId: t.projectId, status: t.status, completedAt: t.completedAt ?? null, updatedAt: t.updatedAt }
     : { found: false, title };
@@ -340,27 +371,256 @@ async function find(title, status) {
   if (Number(status) === 2 && !t.completedAt) die('status 2 without completedAt');
 }
 
-async function deleteProbes() {
+async function taskStatus(id) {
   const s = loadSession();
   const v = view(await pullAll(s));
-  const probes = v.liveTasks.filter((t) => String(t.title).startsWith(cfg.probePrefix));
-  if (!probes.length) {
-    console.log(JSON.stringify({ step: 'delete-probes', deleted: 0 }));
-    return;
-  }
+  const t = v.allTasksRaw.find((x) => x.id === id);
+  const out = t
+    ? {
+        found: true,
+        id: t.id,
+        projectId: t.projectId,
+        title: t.title,
+        status: t.status,
+        completedAt: t.completedAt ?? null,
+        deletedAt: t.deletedAt ?? null,
+        purgedAt: t.purgedAt ?? null,
+        updatedAt: t.updatedAt,
+      }
+    : { found: false, id };
+  evidence('device.log', { step: 'task-status', ...out });
+  console.log(JSON.stringify(out));
+  if (!t) process.exit(1);
+}
+
+function softDeleteOps(s, tasks) {
   const now = Date.now();
-  const ops = probes.map((t) => {
+  return tasks.map((t) => {
     // Win LWW: the HLC must be newer than every clock on the row (MCP writes use server clocks).
     const maxMs = Math.max(0, ...Object.values(t._clocks ?? {}).map((c) => Number(String(c).slice(0, 13))));
     const row = { ...stripClocks(t), deletedAt: now, updatedAt: Math.max(now, Number(t.updatedAt ?? 0) + 1) };
     return op(s, 'task', row, { fields: ['deletedAt', 'updatedAt'], minMs: maxMs + 1 });
   });
-  const results = await push(s, ops);
+}
+
+async function trash(id) {
+  const s = loadSession();
+  const v = view(await pullAll(s));
+  const t = v.allTasksRaw.find((x) => x.id === id && absent(x, 'purgedAt'));
+  if (!t) die(`task not found or purged: ${id}`);
+  const results = await push(s, softDeleteOps(s, [t]));
+  const deletedAt = results[0]?.result?.row?.deletedAt ?? null;
+  const out = { step: 'trash', id, deletedAt };
+  evidence('device.log', out);
+  console.log(JSON.stringify(out));
+  if (!deletedAt) process.exit(1);
+}
+
+async function deleteProbes() {
+  const s = loadSession();
+  const v = view(await pullAll(s));
+  const probes = v.allLiveTasks.filter((t) => String(t.title).startsWith(cfg.probePrefix));
+  if (!probes.length) {
+    console.log(JSON.stringify({ step: 'delete-probes', deleted: 0 }));
+    return;
+  }
+  const results = await push(s, softDeleteOps(s, probes));
   const notApplied = results.filter((r) => !r.result.row?.deletedAt).map((r) => r.op.entityId);
   const out = { step: 'delete-probes', deleted: results.length - notApplied.length, notApplied };
   evidence('device.log', out);
   console.log(JSON.stringify(out));
   if (notApplied.length) process.exit(1);
+}
+
+async function purgeProbes() {
+  const s = loadSession();
+  const v = view(await pullAll(s));
+  const probes = v.allTasksRaw.filter((t) => absent(t, 'purgedAt') && String(t.title ?? '').startsWith(cfg.probePrefix));
+  if (!probes.length) {
+    console.log(JSON.stringify({ step: 'purge-probes', purged: 0 }));
+    return;
+  }
+  const ops = probes.map((t) => {
+    const maxMs = Math.max(0, ...Object.values(t._clocks ?? {}).map((c) => Number(String(c).slice(0, 13))));
+    return {
+      opId: uuidv7(),
+      hlc: nextHlc(s, maxMs + 1),
+      entity: 'task',
+      entityId: t.id,
+      op: 'delete',
+      fields: [],
+      row: {},
+    };
+  });
+  const results = await push(s, ops);
+  const notApplied = results.filter((r) => !r.result.row?.purgedAt).map((r) => r.op.entityId);
+  const out = { step: 'purge-probes', purged: results.length - notApplied.length, notApplied };
+  evidence('device.log', out);
+  console.log(JSON.stringify(out));
+  if (notApplied.length) process.exit(1);
+}
+
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(zlib.crc32(body) >>> 0, 0);
+  return Buffer.concat([len, body, crc]);
+}
+
+function makeTinyPng() {
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(2, 0);
+  ihdr.writeUInt32BE(2, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // RGB
+  const raw = Buffer.from([0, 255, 0, 0, 0, 255, 0, 0, 0, 0, 255, 255, 255, 0]);
+  const idat = zlib.deflateSync(raw);
+  return Buffer.concat([sig, pngChunk('IHDR', ihdr), pngChunk('IDAT', idat), pngChunk('IEND', Buffer.alloc(0))]);
+}
+
+async function attach({ empty, pngNoType }) {
+  const s = loadSession();
+  if (!s.meMemberId) die('no me member yet; run: node device.mjs bootstrap', 2);
+  let inboxId = s.inboxProjectId;
+  if (!inboxId) {
+    const v = view(await pullAll(s));
+    inboxId = v.inbox?.id ?? null;
+  }
+  if (!inboxId) die('no inbox project yet; run: node device.mjs bootstrap', 2);
+
+  const now = Date.now();
+  const taskId = uuidv7();
+  const title = `${cfg.probePrefix} attachment ${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}`;
+  const taskRow = {
+    id: taskId,
+    projectId: inboxId,
+    title,
+    content: '',
+    priority: 0,
+    status: 0,
+    reminders: [],
+    tags: [],
+    sortKey: 'i',
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const specs = [
+    {
+      kind: 'text',
+      id: uuidv7(),
+      fileName: 'verify-note.txt',
+      mimeType: 'text/plain',
+      bytes: Buffer.from('DayDo 附件驗證：中文內容與換行\n第二行 UTF-8\n', 'utf8'),
+    },
+  ];
+  if (empty) {
+    specs.push({
+      kind: 'empty',
+      id: uuidv7(),
+      fileName: 'empty.txt',
+      mimeType: 'text/plain',
+      bytes: Buffer.alloc(0),
+    });
+  }
+  if (pngNoType) {
+    specs.push({
+      kind: 'png-no-type',
+      id: uuidv7(),
+      fileName: 'probe-image.bin',
+      mimeType: 'application/octet-stream',
+      bytes: makeTinyPng(),
+    });
+  }
+
+  const attOps = specs.map((sp) =>
+    op(s, 'attachment', {
+      id: sp.id,
+      taskId,
+      fileName: sp.fileName,
+      size: sp.bytes.byteLength,
+      mimeType: sp.mimeType,
+      createdAt: now,
+      updatedAt: now,
+    }),
+  );
+  await push(s, [op(s, 'task', taskRow), ...attOps]);
+
+  const attResults = [];
+  for (const sp of specs) {
+    const route = `/attachments/${sp.id}/content`;
+    const putRes = await rawCall(s, 'PUT', route, {
+      body: sp.bytes,
+      headers: { 'Content-Type': sp.mimeType, 'Content-Length': String(sp.bytes.byteLength) },
+    });
+    const getRes = await rawCall(s, 'GET', route);
+    const getContentType = (getRes.headers.get('content-type') ?? '').split(';', 1)[0].trim();
+    const sameBytes = Buffer.compare(getRes.body, sp.bytes) === 0;
+    const contentTypeMatches = getContentType === sp.mimeType;
+    attResults.push({
+      kind: sp.kind,
+      id: sp.id,
+      fileName: sp.fileName,
+      mimeType: sp.mimeType,
+      size: sp.bytes.byteLength,
+      putStatus: putRes.status,
+      getStatus: getRes.status,
+      getContentType,
+      contentTypeMatches,
+      sameBytes,
+    });
+  }
+
+  const firstRoute = `/attachments/${specs[0].id}/content`;
+  const unauthRes = await fetch(`${cfg.api}${firstRoute}`, { headers: accessHeaders(), redirect: 'manual' });
+  const mcpRes = await fetch(`${new URL(cfg.mcp).origin}${firstRoute}`, {
+    headers: { Authorization: `Bearer ${s.accessToken}` },
+    redirect: 'manual',
+  });
+  const unauthGetStatus = unauthRes.status;
+  const mcpHostGetStatus = mcpRes.status;
+
+  const ok =
+    attResults.every((r) => r.putStatus === 204 && r.getStatus === 200 && r.contentTypeMatches && r.sameBytes) &&
+    unauthGetStatus === 401 &&
+    mcpHostGetStatus === 404;
+
+  writeJson(statePath('attachment-probe.json'), {
+    taskId,
+    projectId: inboxId,
+    title,
+    attachments: specs.map((sp) => ({
+      kind: sp.kind,
+      id: sp.id,
+      fileName: sp.fileName,
+      mimeType: sp.mimeType,
+      size: sp.bytes.byteLength,
+      ...(sp.kind !== 'png-no-type' && { expectedText: sp.bytes.toString('utf8') }),
+    })),
+  });
+
+  const out = { step: 'attach', ok, taskId, projectId: inboxId, title, attachments: attResults, unauthGetStatus, mcpHostGetStatus };
+  evidence('device.log', out);
+  saveEvidence('attach.json', out);
+  console.log(JSON.stringify(out));
+  if (!ok) process.exit(1);
+}
+
+async function getAttachment(id, expectBase64, expectType) {
+  const s = loadSession();
+  const res = await rawCall(s, 'GET', `/attachments/${id}/content`);
+  const contentType = (res.headers.get('content-type') ?? '').split(';', 1)[0].trim();
+  const expected = expectBase64 !== undefined ? Buffer.from(expectBase64, 'base64') : null;
+  const sameBytes = expected === null ? null : Buffer.compare(res.body, expected) === 0;
+  const typeMatches = expectType === undefined ? null : contentType === expectType;
+  const ok = res.status === 200 && (sameBytes === null || sameBytes) && (typeMatches === null || typeMatches);
+  const out = { step: 'get-attachment', ok, id, status: res.status, contentType, size: res.body.byteLength, sameBytes, typeMatches };
+  evidence('device.log', out);
+  console.log(JSON.stringify(out));
+  if (!ok) process.exit(1);
 }
 
 function status() {
@@ -380,12 +640,17 @@ try {
   else if (cmd === 'seed') await seed(Number(a.n ?? 60));
   else if (cmd === 'pull') await pullSummary(a.label ?? 'latest');
   else if (cmd === 'find') await find(a.title ?? die('--title required', 2), a.status);
+  else if (cmd === 'task-status') await taskStatus(a.id ?? die('--id required', 2));
+  else if (cmd === 'trash') await trash(a.id ?? die('--id required', 2));
+  else if (cmd === 'attach') await attach({ empty: Boolean(a.empty), pngNoType: Boolean(a['png-no-type']) });
+  else if (cmd === 'get-attachment') await getAttachment(a.id ?? die('--id required', 2), a['expect-base64'], a['expect-type']);
   else if (cmd === 'delete-probes') await deleteProbes();
+  else if (cmd === 'purge-probes') await purgeProbes();
   else if (cmd === 'status') status();
   else if (cmd === 'forget') {
     fs.rmSync(sessionFile(), { force: true });
     console.log(JSON.stringify({ forgot: sessionFile() }));
-  } else die('usage: device.mjs login|bootstrap|seed [--n N]|pull [--label L]|find --title T [--status S]|delete-probes|status|forget', 2);
+  } else die('usage: device.mjs login|bootstrap|seed [--n N]|pull [--label L]|find --title T [--status S]|task-status --id ID|trash --id ID|attach [--empty] [--png-no-type]|get-attachment --id ID [--expect-base64 B64] [--expect-type MIME]|delete-probes|purge-probes|status|forget', 2);
 } catch (e) {
   die(e.stack ?? String(e));
 }

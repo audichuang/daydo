@@ -2,6 +2,7 @@
 # Run DayDo UI tests on a DD simulator, one xcodebuild at a time.
 #
 #   ios/scripts/uitest.sh [iphone|ipad|"DD <full simulator name>"] [extra xcodebuild args...]
+#   ios/scripts/uitest.sh build [extra xcodebuild args...]  # build-for-testing (no simulator needed)
 #   ios/scripts/uitest.sh ipad -only-testing:DayDoUITests/DayDoFlowTests/testCalendar
 #   ios/scripts/uitest.sh down [iphone|ipad|"DD <name>"]   # shut down once the batch is done
 #   ios/scripts/uitest.sh park [iphone|ipad]               # archive a resident device to the NAS
@@ -18,20 +19,7 @@
 set -euo pipefail
 
 mode=test
-case "${1:-}" in down|park|up) mode=$1; shift ;; esac
-target="${1:-iphone}"
-[[ $# -gt 0 ]] && shift
-resident=1
-case "$target" in
-  iphone) name="DD iPhone 18 Pro" ;;
-  ipad) name="DD iPad Pro 11" ;;
-  "DD "*) name="$target"; resident=0 ;;
-  *) echo "usage: $0 [down|park|up] [iphone|ipad|\"DD <name>\"] [xcodebuild args...]" >&2; exit 2 ;;
-esac
-if [[ "$mode" == park && $resident == 0 ]]; then
-  echo "park 只收常駐機（iphone／ipad）；臨時機用完直接 xcrun simctl delete" >&2
-  exit 2
-fi
+case "${1:-}" in build|down|park|up) mode=$1; shift ;; esac
 
 # Prints the UDID, "MISSING" when no device has the name, or "" when several do.
 lookup() {
@@ -42,16 +30,6 @@ ids = [d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds 
 print(ids[0] if len(ids) == 1 else ("MISSING" if not ids else ""))
 ' "$name"
 }
-udid=$(lookup)
-if [[ "$udid" == MISSING && $resident == 1 && ( "$mode" == down || "$mode" == park ) ]]; then
-  echo "「${name}」不在本機（可能已收進 NAS），不用處理" >&2
-  exit 0
-fi
-if [[ -z "$udid" || ( "$udid" == MISSING && $resident == 0 ) ]]; then
-  echo "找不到唯一一台名為「${name}」的模擬器（xcrun simctl list devices）" >&2
-  exit 2
-fi
-
 boot() {
   xcrun simctl boot "$udid" 2>/dev/null || true
   xcrun simctl bootstatus "$udid" -b >/dev/null
@@ -62,18 +40,44 @@ need_sim_vault() {
   exit 127
 }
 
-# A parked resident device is restored by sim-vault, which holds its own device lock, so
-# this needs no xcodebuild lock. --wait matches the 30 min this script waits for its own lock:
-# restoring a 6 GB archive takes minutes. 3 (no archive) and 4 (runtime of the archive not
-# installed: install it, no need to recreate) stop here; ask the user, never create it here.
-if [[ "$udid" == MISSING ]]; then
-  need_sim_vault
-  udid=$(sim-vault ensure "$name" --wait 1800)
-fi
-if [[ "$mode" == up ]]; then
-  boot
-  printf '%s\n' "$udid"
-  exit 0
+if [[ "$mode" != build ]]; then
+  target="${1:-iphone}"
+  [[ $# -gt 0 ]] && shift
+  resident=1
+  case "$target" in
+    iphone) name="DD iPhone 18 Pro" ;;
+    ipad) name="DD iPad Pro 11" ;;
+    "DD "*) name="$target"; resident=0 ;;
+    *) echo "usage: $0 {build [xcodebuild args...] | [down|park|up] [iphone|ipad|\"DD <name>\"] [xcodebuild args...]}" >&2; exit 2 ;;
+  esac
+  if [[ "$mode" == park && $resident == 0 ]]; then
+    echo "park 只收常駐機（iphone／ipad）；臨時機用完直接 xcrun simctl delete" >&2
+    exit 2
+  fi
+
+  udid=$(lookup)
+  if [[ "$udid" == MISSING && $resident == 1 && ( "$mode" == down || "$mode" == park ) ]]; then
+    echo "「${name}」不在本機（可能已收進 NAS），不用處理" >&2
+    exit 0
+  fi
+  if [[ -z "$udid" || ( "$udid" == MISSING && $resident == 0 ) ]]; then
+    echo "找不到唯一一台名為「${name}」的模擬器（xcrun simctl list devices）" >&2
+    exit 2
+  fi
+
+  # A parked resident device is restored by sim-vault, which holds its own device lock, so
+  # this needs no xcodebuild lock. --wait matches the 30 min this script waits for its own lock:
+  # restoring a 6 GB archive takes minutes. 3 (no archive) and 4 (runtime of the archive not
+  # installed: install it, no need to recreate) stop here; ask the user, never create it here.
+  if [[ "$udid" == MISSING ]]; then
+    need_sim_vault
+    udid=$(sim-vault ensure "$name" --wait 1800)
+  fi
+  if [[ "$mode" == up ]]; then
+    boot
+    printf '%s\n' "$udid"
+    exit 0
+  fi
 fi
 
 # Match the process name exactly: `pgrep -f` also matches shells whose command line mentions xcodebuild.
@@ -122,6 +126,15 @@ if [[ "$mode" == down ]]; then
   echo "關機：${name} (${udid})" >&2
   xcrun simctl shutdown "$udid" 2>/dev/null || true
   exit 0
+fi
+
+if [[ "$mode" == build ]]; then
+  cd "$(dirname "$0")/.."
+  echo "編譯測試標的：generic/platform=iOS Simulator" >&2
+  xcodebuild build-for-testing -project DayDo.xcodeproj -scheme DayDo \
+    -destination "generic/platform=iOS Simulator" \
+    CODE_SIGNING_ALLOWED=NO "$@"
+  exit
 fi
 
 cd "$(dirname "$0")/.."

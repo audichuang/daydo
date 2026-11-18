@@ -5,8 +5,9 @@ An AI client connected to DayDo can list the user's lists and read a list with i
 ## Sub-features
 
 - `list-projects` returns visible lists including `verify-seed` (and 收件匣), with `can_write: true` for the owner.
-- `get-project-data` returns the open tasks of one list, with summaries (content cut to 100 characters, `items` as a count).
-- Not driven yet: `get_project`, `list_tasks`, `list_recent_tasks`, `search_tasks`, `get_task`, `get_completed_tasks`, `list_tags` and the ICS tools (spec/mcp.md section 8).
+- `get-project-data` returns the open tasks of one list, with summaries (content cut to 100 characters, `items` and `attachments` as counts).
+- `search_tasks(include_deleted: true)` and `get_task(include_deleted: true)` are driven by the `trash-restore` step in [MCP write tools](./mcp-write.md); `get_task` attachments are also driven in [Task attachments](./attachments.md).
+- Not driven yet: `get_project`, `list_tasks`, `list_recent_tasks`, `get_completed_tasks`, `list_tags`, `list_ics_sources`, `get_ics_sync_status` (spec/mcp.md section 8).
 
 ## How to get to it (user POV)
 
