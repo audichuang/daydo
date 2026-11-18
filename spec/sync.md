@@ -96,7 +96,7 @@
 - ICS 任務被移到使用者看不到的清單時，該 mapping 每輪記一次錯誤，不重建。
 - ICS 的 `CATEGORIES` 不轉成標籤。
 - ICS 來源暫時回傳較舊版本的重複系列（SEQUENCE 倒退）時，只有舊版仍有場次落在時間窗內、與已匯入的場次重疊，才認得出是舊版並保留任務；若舊版的場次全在時間窗外，已匯入的場次會被當成移除、任務移到垃圾桶，新版回來後以新 id 重建（完成狀態與備註留在垃圾桶那筆）。要正常來源回退快取才會發生。
-- 部署期間新版 Worker 與舊版 Scope DO 短暫混跑時，舊 DO 可能略過不認得的 `countdown` 欄位卻回 `applied`（MCP `create_task` 會回錯誤、重試可能多建一筆）；正常部署只有幾分鐘，不加機制。發 App 前先部署伺服器、伺服器不要回滾到不認得 `countdown` 的版本。
+- 部署期間新版 Worker 與舊版 Scope DO 短暫混跑時，舊 DO 可能略過不認得的 `countdown` 欄位卻回 `applied`（MCP `create_task` 會回錯誤、重試可能多建一筆）；正常部署只有幾分鐘，不加機制。發 App 前先部署伺服器、伺服器不要回滾到不認得 `countdown` 的版本。同一段混跑期間，MCP `complete_task` 若要從垃圾桶重建舊 DO 寫入、沒有 `countdown` 的完成副本，會送出 `countdown: null` 而被驗證拒絕，原任務停在原場次；新 DO 的 ALTER 把舊列補成 0 後就不會發生。
 
 ## 線上格式（App 與 Worker 共用，兩邊各自實作前先以這裡為準）
 

@@ -179,9 +179,13 @@ const REQUIRED_FIELDS_BY_ENTITY: Record<EntityName, string[]> = Object.fromEntri
   ]),
 ) as Record<EntityName, string[]>;
 
-export function hasAllRequiredFields(entity: EntityName, fields: readonly string[]): boolean {
+export function missingRequiredFields(entity: EntityName, fields: readonly string[]): string[] {
   const fieldSet = new Set(fields);
-  return REQUIRED_FIELDS_BY_ENTITY[entity].every((req) => fieldSet.has(req));
+  return REQUIRED_FIELDS_BY_ENTITY[entity].filter((req) => !fieldSet.has(req));
+}
+
+export function hasAllRequiredFields(entity: EntityName, fields: readonly string[]): boolean {
+  return missingRequiredFields(entity, fields).length === 0;
 }
 
 export interface ValidatedOp {
