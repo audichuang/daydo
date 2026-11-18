@@ -211,6 +211,13 @@ Extra checks: `npm run e2e:ics` (ICS sync and cron) and `npm run e2e:mcp` (OAuth
     "SELECT status, count() AS n, APPROX_MAX(timestamp) AS last FROM events.workersInvocations WHERE scriptName = 'daydo-api' AND invocationType = 'cron' GROUP BY status"
   ```
 
+  `cf sql` needs cf 1.x (`cf --version`; 0.x has no `sql`). A `success` invocation does not prove ICS ran: the engine records source errors and still returns. When any source exists, also confirm that `icsSource.lastSyncAt` advanced on its own and that `lastStatus` is `success` (read-only; `CLOUDFLARE_ACCOUNT_ID` set):
+
+  ```bash
+  cf d1 query <database_id from void.lock.json> --sql \
+    "SELECT id, datetime(lastSyncAt/1000,'unixepoch') AS lastSyncUtc, lastStatus, lastStats FROM icsSource"
+  ```
+
 ### Adding the connector
 
 - Claude (claude.ai or desktop): Settings, Connectors, Add custom connector, URL `https://mcp.daydoapp.com/`; leave client id/secret empty (dynamic client registration via `/register`), then sign in with Apple or Google in the opened page.

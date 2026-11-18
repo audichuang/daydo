@@ -49,6 +49,12 @@ final class DayDoFlowTests: XCTestCase {
         dismissNotificationPrompt()
         let row = app.buttons["完成：去全聯買菜"]
         XCTAssertTrue(row.waitForExistence(timeout: 5))
+        let todayBrief = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報' AND NOT (label BEGINSWITH '完成：')")).firstMatch
+        XCTAssertTrue(todayBrief.label.contains("工作"), "Mixed-list views keep the list name: \(todayBrief.label)")
+        // Under the 明天 header a row shows only its time, not "明天" again.
+        let weekly = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '週會' AND label CONTAINS '10:00'")).firstMatch
+        XCTAssertTrue(weekly.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(weekly.label.contains("明天"), weekly.label)
         shot("01-today")
         row.tap()
         // The row leaves 今天 and goes to the (collapsed) 已完成 section.
@@ -78,7 +84,28 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(work.waitForExistence(timeout: 3))
         work.tap()
         XCTAssertTrue(app.staticTexts["工作"].waitForExistence(timeout: 3))
+        // Rows inside a single list don't repeat the list name the title already shows.
+        let brief = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報' AND NOT (label BEGINSWITH '完成：')")).firstMatch
+        XCTAssertTrue(brief.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(brief.label.contains("工作"), brief.label)
         shot("04-list-work")
+
+        // 未來 7 天 groups by day; rows under a day header show only the time.
+        app.buttons["開啟清單抽屜"].tap()
+        let next7 = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '未來 7 天'")).firstMatch
+        XCTAssertTrue(next7.waitForExistence(timeout: 3), app.debugDescription)
+        next7.tap()
+        let weeklyNext7 = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '週會' AND label CONTAINS '10:00'")).firstMatch
+        XCTAssertTrue(weeklyNext7.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(weeklyNext7.label.contains("明天"), weeklyNext7.label)
+        shot("04b-next7")
+
+        app.buttons["開啟清單抽屜"].tap()
+        let inbox = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '收件匣'")).firstMatch
+        XCTAssertTrue(inbox.waitForExistence(timeout: 3), app.debugDescription)
+        inbox.tap()
+        XCTAssertTrue(app.staticTexts["收件匣"].waitForExistence(timeout: 3), app.debugDescription)
+        shot("04c-inbox")
     }
 
     @MainActor
@@ -137,7 +164,7 @@ final class DayDoFlowTests: XCTestCase {
         app.buttons["儲存"].tap()
         XCTAssertTrue(app.buttons["確定"].waitForExistence(timeout: 3))
         app.buttons["確定"].tap()
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS '明天 19:00 – 19:30'")).firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報' AND label CONTAINS '19:00 – 19:30'")).firstMatch.waitForExistence(timeout: 3))
         shot("10-detail-after-date")
     }
 
@@ -172,6 +199,51 @@ final class DayDoFlowTests: XCTestCase {
             }
             shot(shotName)
         }
+    }
+
+    @MainActor
+    func testCalendarAgendaRowsSkipDayAndListAlreadyShown() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+        app.buttons["日曆"].tap()
+        XCTAssertTrue(app.buttons["calendarTitle"].waitForExistence(timeout: 3), app.debugDescription)
+
+        let now = Calendar.current.dateComponents([.month, .day], from: Date())
+        let todayText = "\(now.month!)月\(now.day!)日"
+        let brief = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報' AND NOT (label BEGINSWITH '完成：')")).firstMatch
+        XCTAssertTrue(brief.waitForExistence(timeout: 5), app.debugDescription)
+        // The card header already names the day: rows show only the time, plus the list while unfiltered.
+        XCTAssertTrue(brief.label.contains("18:00"), brief.label)
+        XCTAssertFalse(brief.label.contains(todayText), brief.label)
+        XCTAssertTrue(brief.label.contains("工作"), brief.label)
+        shot("agenda-card-all-lists")
+
+        app.buttons["切換為時間軸清單"].tap()
+        XCTAssertTrue(app.buttons["切換為卡片清單"].waitForExistence(timeout: 3), app.debugDescription)
+        shot("agenda-timeline-all-lists")
+        app.buttons["切換為卡片清單"].tap()
+        XCTAssertTrue(app.buttons["切換為時間軸清單"].waitForExistence(timeout: 3), app.debugDescription)
+
+        app.buttons["更多選項"].tap()
+        let filterMenu = app.buttons["清單篩選"]
+        XCTAssertTrue(filterMenu.waitForExistence(timeout: 3), app.debugDescription)
+        filterMenu.tap()
+        let work = app.buttons["工作"].firstMatch
+        XCTAssertTrue(work.waitForExistence(timeout: 3), app.debugDescription)
+        work.tap()
+        XCTAssertTrue(app.buttons["移除清單篩選：工作"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(brief.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(brief.label.contains("工作"), brief.label)
+        shot("agenda-card-list-filter")
+
+        let timeline = app.buttons["切換為時間軸清單"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 3), app.debugDescription)
+        timeline.tap()
+        XCTAssertTrue(app.buttons["切換為卡片清單"].waitForExistence(timeout: 3), app.debugDescription)
+        let mmdd = String(format: "%02d-%02d", now.month!, now.day!)
+        XCTAssertFalse(app.staticTexts[mmdd].exists, "Timeline rows should not repeat the day under its header")
+        shot("agenda-timeline")
+        app.buttons["切換為卡片清單"].tap()
     }
 
     @MainActor

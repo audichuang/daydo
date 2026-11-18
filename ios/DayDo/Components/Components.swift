@@ -211,19 +211,6 @@ struct AvatarView: View {
     }
 }
 
-struct AvatarStack: View {
-    var members: [Member]
-    var size: CGFloat = 18
-    var body: some View {
-        HStack(spacing: -4) {
-            ForEach(members) { m in
-                AvatarView(member: m, size: size)
-                    .overlay(Circle().stroke(Palette.card, lineWidth: 1.5))
-            }
-        }
-    }
-}
-
 struct TagChip: View {
     var name: String
     var label: String
