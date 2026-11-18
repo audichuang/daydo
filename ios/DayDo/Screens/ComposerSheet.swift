@@ -103,7 +103,7 @@ struct ComposerSheet: View {
                 if let m = request.minute {
                     draft.allDay = false
                     draft.start = m
-                    draft.end = m + 60
+                    draft.end = request.endMinute ?? (m + 60)
                     draft.timeZone = TimeZone.current.identifier
                 }
             }

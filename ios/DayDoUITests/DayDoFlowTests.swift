@@ -1594,4 +1594,182 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(copyRows.firstMatch.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertEqual(copyRows.count, 1)
     }
+
+    private func parseTimeRangeMinutes(_ text: String) -> (Int, Int)? {
+        let regex = try! NSRegularExpression(pattern: #"(\d{2}):(\d{2})"#)
+        let ns = text as NSString
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: ns.length))
+        guard matches.count >= 2 else { return nil }
+        func mins(_ m: NSTextCheckingResult) -> Int {
+            Int(ns.substring(with: m.range(at: 1)))! * 60 + Int(ns.substring(with: m.range(at: 2)))!
+        }
+        let s = mins(matches[0])
+        var e = mins(matches[1])
+        if e <= s { e += 1440 }
+        return (s, e)
+    }
+
+    private func ensureVisibleInGrid(_ element: XCUIElement, scrollView: XCUIElement, maxSwipes: Int = 6) {
+        if element.exists && element.isHittable { return }
+        for _ in 0..<maxSwipes {
+            if element.exists && element.isHittable { return }
+            scrollView.swipeUp()
+        }
+        for _ in 0..<maxSwipes {
+            if element.exists && element.isHittable { return }
+            scrollView.swipeDown()
+        }
+    }
+
+    @MainActor
+    func testTimeGridDragMoveScrollAndTap() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDemo", "-DayDoSkipLogin", "-DayDoScreen", "day"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        let dayModeBtn = app.buttons["切換檢視：目前日"]
+        XCTAssertTrue(dayModeBtn.waitForExistence(timeout: 5), app.debugDescription)
+        sleep(1)
+
+        let brief = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '準備週一產品會議簡報'")).firstMatch
+        let gridScroll = app.scrollViews.firstMatch
+        XCTAssertTrue(brief.waitForExistence(timeout: 3), app.debugDescription)
+        ensureVisibleInGrid(brief, scrollView: gridScroll)
+        XCTAssertTrue(brief.isHittable, app.debugDescription)
+        XCTAssertTrue(brief.label.contains("18:00 – 18:30"), brief.label)
+
+        // 1. Tap opens task detail.
+        brief.tap()
+        let titleField = app.descendants(matching: .any)["taskTitleField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertEqual(titleField.value as? String, "準備週一產品會議簡報")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap()
+        XCTAssertTrue(titleField.waitForNonExistence(timeout: 3))
+
+        // 2. Quick vertical drag scrolls without moving the task.
+        ensureVisibleInGrid(brief, scrollView: gridScroll)
+        let quickStart = brief.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        quickStart.press(forDuration: 0.05, thenDragTo: quickStart.withOffset(CGVector(dx: 0, dy: -80)))
+        XCTAssertTrue(brief.label.contains("18:00 – 18:30"), "Quick drag should scroll, not move task: \(brief.label)")
+
+        // 3. Long-press + drag down moves the task later (~18:00 -> ~19:00, 15m snap tolerance).
+        ensureVisibleInGrid(brief, scrollView: gridScroll)
+        let dragStart = brief.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        dragStart.press(forDuration: 0.45, thenDragTo: dragStart.withOffset(CGVector(dx: 0, dy: 56)))
+
+        let moved = NSPredicate { _, _ in
+            guard brief.exists, let (s, e) = self.parseTimeRangeMinutes(brief.label) else { return false }
+            return s >= 18 * 60 + 45 && s <= 19 * 60 + 15 && (e - s) == 30
+        }
+        let exp = XCTNSPredicateExpectation(predicate: moved, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [exp], timeout: 3), .completed, "Expected task around 19:00–19:30, got: \(brief.label)")
+        shot("timegrid-drag-moved")
+    }
+
+    @MainActor
+    func testTimeGridDragAcrossColumnsDoesNotPage() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDemo", "-DayDoSkipLogin", "-DayDoScreen", "week"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        let weekModeBtn = app.buttons["切換檢視：目前週"]
+        XCTAssertTrue(weekModeBtn.waitForExistence(timeout: 5), app.debugDescription)
+        sleep(1)
+
+        let titleBtn = app.buttons["calendarTitle"]
+        let initialTitle = titleBtn.label
+        let todayComps = Calendar.current.dateComponents([.month, .day], from: Date())
+        let todayHeaderPrefix = "\(todayComps.month!) 月 \(todayComps.day!) 日"
+        let todayHeader = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", todayHeaderPrefix)).firstMatch
+        XCTAssertTrue(todayHeader.waitForExistence(timeout: 3), app.debugDescription)
+
+        // Quick horizontal swipe without long-press still pages the week.
+        let window = app.windows.firstMatch
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.45))
+            .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.45)))
+        XCTAssertTrue(todayHeader.waitForNonExistence(timeout: 3), "Quick horizontal swipe should page week")
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.45))
+            .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.45)))
+        XCTAssertTrue(todayHeader.waitForExistence(timeout: 3), "Quick horizontal swipe back should return to current week")
+
+        let brief = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '準備週一產品會議簡報'")).firstMatch
+        let gridScroll = app.scrollViews.firstMatch
+        XCTAssertTrue(brief.waitForExistence(timeout: 3), app.debugDescription)
+        ensureVisibleInGrid(brief, scrollView: gridScroll)
+        XCTAssertTrue(brief.isHittable, app.debugDescription)
+
+        let weekday = Calendar.current.component(.weekday, from: Date()) - 1 // 0 = Sun ... 6 = Sat
+        let colW = brief.frame.width
+        let dx = weekday < 6 ? colW : -colW
+        let expectedDayToken = weekday < 6 ? "明天" : "昨天"
+        let startMidX = brief.frame.midX
+
+        let dragStart = brief.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        dragStart.press(forDuration: 0.45, thenDragTo: dragStart.withOffset(CGVector(dx: dx, dy: 0)))
+
+        let shifted = NSPredicate { _, _ in
+            brief.exists && abs((brief.frame.midX - startMidX) - dx) < colW * 0.45
+        }
+        let exp = XCTNSPredicateExpectation(predicate: shifted, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [exp], timeout: 3), .completed, "Expected block to move across column without paging")
+        XCTAssertEqual(titleBtn.label, initialTitle, "Dragging block horizontally must not flip week")
+        XCTAssertTrue(todayHeader.exists, "Dragging block horizontally must stay on the same week")
+
+        // Verify persisted day changed by opening task detail.
+        brief.tap()
+        let dateBtn = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '設定日期與時間'")).firstMatch
+        XCTAssertTrue(dateBtn.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(dateBtn.label.contains(expectedDayToken), "Expected \(expectedDayToken) in \(dateBtn.label)")
+        shot("timegrid-drag-column")
+    }
+
+    @MainActor
+    func testTimeGridEmptyTapAndDragCreate() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDemo", "-DayDoSkipLogin", "-DayDoScreen", "day"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        let dayModeBtn = app.buttons["切換檢視：目前日"]
+        XCTAssertTrue(dayModeBtn.waitForExistence(timeout: 5), app.debugDescription)
+        sleep(1)
+
+        // Scroll up to morning/afternoon where today has no timed tasks (before 18:00).
+        let gridScroll = app.scrollViews.firstMatch
+        let hour12 = app.staticTexts["12"].firstMatch
+        for _ in 0..<4 where !hour12.isHittable { gridScroll.swipeDown() }
+
+        let emptySlot = app.descendants(matching: .any).matching(NSPredicate(format: "label ENDSWITH '空白時段，點兩下新增'")).firstMatch
+        XCTAssertTrue(emptySlot.waitForExistence(timeout: 3), app.debugDescription)
+
+        let window = app.windows.firstMatch
+        let emptyCoord = window.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.38))
+
+        // 1. Tap empty slot opens composer with default 60-minute range.
+        emptyCoord.tap()
+        let composerTitle = app.descendants(matching: .any)["composerTitle"]
+        XCTAssertTrue(composerTitle.waitForExistence(timeout: 3), app.debugDescription)
+        let composerDate = app.buttons["composerDate"]
+        XCTAssertTrue(composerDate.waitForExistence(timeout: 3), app.debugDescription)
+        let tapRange = try XCTUnwrap(parseTimeRangeMinutes(composerDate.label), composerDate.label)
+        XCTAssertEqual(tapRange.1 - tapRange.0, 60, "Tap should create default 60m duration: \(composerDate.label)")
+
+        app.buttons["composerMore"].tap()
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(composerTitle.waitForNonExistence(timeout: 3))
+
+        // 2. Long-press + drag down ~112pt (~120m) opens composer with dragged range.
+        emptyCoord.press(forDuration: 0.45, thenDragTo: emptyCoord.withOffset(CGVector(dx: 0, dy: 112)))
+        XCTAssertTrue(composerTitle.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(composerDate.waitForExistence(timeout: 3), app.debugDescription)
+        let dragRange = try XCTUnwrap(parseTimeRangeMinutes(composerDate.label), composerDate.label)
+        let dur = dragRange.1 - dragRange.0
+        XCTAssertTrue(dur >= 90 && dur <= 150, "Expected ~120m dragged duration (within 90..150m), got \(dur) from \(composerDate.label)")
+        shot("timegrid-drag-create")
+    }
 }

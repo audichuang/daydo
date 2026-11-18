@@ -1087,5 +1087,7 @@ struct ComposeRequest: Identifiable {
     var day: LocalDay?
     /// Start minute when created from a time slot in the week/day grid.
     var minute: Int?
+    /// Optional end minute (minutes from `day` 00:00) when dragged on the time grid.
+    var endMinute: Int?
     var tag: String?
 }
