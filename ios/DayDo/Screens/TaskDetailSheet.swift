@@ -272,7 +272,7 @@ struct TaskDetailContent: View {
                         let id = task.id
                         isDeleting = true
                         Task {
-                            let deleted = await model.perform { try await $0.deleteTask(id: id) } != nil
+                            let deleted = await model.deleteTask(id: id)
                             if deleted {
                                 onClose()
                             } else {

@@ -187,12 +187,30 @@ final class AppModel {
                     selectedTaskId = nil
                 }
             } else if !isViewer(projectId: task.projectId) {
-                await perform { try await $0.deleteTask(id: id) }
-                if selectedTaskId == id {
-                    selectedTaskId = nil
-                }
+                await deleteTask(id: id)
             }
         }
+    }
+
+    @discardableResult
+    func deleteTask(id: String) async -> Bool {
+        let deleted = await perform { try await $0.deleteTask(id: id) } != nil
+        if deleted {
+            deleteHapticTrigger += 1
+            if selectedTaskId == id {
+                selectedTaskId = nil
+            }
+        }
+        return deleted
+    }
+
+    @discardableResult
+    func restoreTask(id: String) async -> Bool {
+        let restored = await perform { try await $0.restoreTask(id: id) } != nil
+        if restored {
+            restoreHapticTrigger += 1
+        }
+        return restored
     }
 
     func purgeTask(id: String) async {
@@ -201,7 +219,9 @@ final class AppModel {
               scope == .smart(.trash),
               !isViewer(projectId: task.projectId),
               task.deletedAt != nil else { return }
-        await perform { try await $0.purgeTask(id: id) }
+        if await perform({ try await $0.purgeTask(id: id) }) != nil {
+            deleteHapticTrigger += 1
+        }
         if selectedTaskId == id {
             selectedTaskId = nil
         }
@@ -287,6 +307,9 @@ final class AppModel {
     private var completionTasks: [UUID: Task<Void, Never>] = [:]
     var completionHapticTrigger = 0
     var uncompletionHapticTrigger = 0
+    var deleteHapticTrigger = 0
+    var postponeHapticTrigger = 0
+    var restoreHapticTrigger = 0
 
     func displaysCompleted(_ task: TodoTask) -> Bool {
         task.isCompleted || isCompleting(task)
@@ -406,7 +429,11 @@ final class AppModel {
     func postponeOverdue(tasks: [TodoTask]) {
         let ids = editableTaskIds(in: tasks)
         guard !ids.isEmpty else { return }
-        Task { await perform { try await $0.postponeOverdue(taskIds: ids) } }
+        Task {
+            if let count = await perform({ try await $0.postponeOverdue(taskIds: ids) }), count > 0 {
+                postponeHapticTrigger += 1
+            }
+        }
     }
     var inbox: Project? { projects.first(where: \.isInbox) }
 

@@ -62,6 +62,34 @@ struct GlassIconButton: View {
     }
 }
 
+/// Bottom-right floating action button used to open the task composer.
+struct ComposeFAB: View {
+    @Environment(\.accent) private var accent
+    @Environment(\.isRegularWindow) private var isRegular
+    @State private var tapHaptic = 0
+    var action: () -> Void
+
+    var body: some View {
+        Button {
+            tapHaptic += 1
+            action()
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(accent.onAccent)
+                .frame(width: 60, height: 60)
+                .background(Circle().fill(accent.color))
+                .shadow(color: Palette.fabShadow, radius: 10, y: 6)
+        }
+        .buttonStyle(.press(scale: 0.94, opacity: 0.9))
+        .hoverEffect(.lift)
+        .padding(.trailing, isRegular ? 24 : 18)
+        .padding(.bottom, isRegular ? 24 : 92)
+        .accessibilityLabel("新增任務")
+        .sensoryFeedback(.impact(weight: .light), trigger: tapHaptic)
+    }
+}
+
 /// The 20pt square checkbox with priority-colored outline (1b).
 struct TaskCheckbox: View {
     @Environment(\.accent) private var accent
