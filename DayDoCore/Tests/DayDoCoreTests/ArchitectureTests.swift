@@ -264,7 +264,9 @@ private let guards: [Guard] = [
     @Test func attachmentSyncStaysDecoupledFromTaskSyncLoopAndBackoff() throws {
         let code = try codeLines("DayDoCore/Sources/DayDoCore/Sync/SyncEngine.swift")
         let retryableCalls = code.components(separatedBy: "nextRetryableError(").count - 1
-        #expect(retryableCalls == 4, "Expected 1 definition + 3 task-sync/refresh call sites for nextRetryableError(, found \(retryableCalls)")
+        #expect(retryableCalls == 2, "Expected 1 definition + 1 task-sync boundary call site in performSyncCycle for nextRetryableError(, found \(retryableCalls)")
+        let backoffIncrements = code.components(separatedBy: "consecutiveRetryableFailures +=").count - 1
+        #expect(backoffIncrements == 1, "Expected consecutiveRetryableFailures += only inside nextRetryableError")
         #expect(!code.contains("await uploadPendingAttachments("), "Attachment upload must not be awaited in the sync loop")
         #expect(!code.contains("maxAttachmentUploadsPerCycle"), "Per-cycle upload cap must stay removed")
     }

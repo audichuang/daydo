@@ -43,6 +43,8 @@ public actor SyncEngine {
     private var inFlightSync: Task<SyncSummary, Error>?
     private var rerunRequested: Bool = false
     private var inFlightRefresh: Task<String, Error>?
+    private var inFlightRefreshID: UUID?
+    private var inFlightRefreshGeneration: UInt64?
     private var consecutiveRetryableFailures: Int = 0
     private var sessionGeneration: UInt64 = 0
     private var attachmentUploadTask: Task<Void, Never>?
@@ -209,6 +211,9 @@ public actor SyncEngine {
         sessionGeneration &+= 1
         inFlightSync?.cancel()
         inFlightRefresh?.cancel()
+        inFlightRefresh = nil
+        inFlightRefreshID = nil
+        inFlightRefreshGeneration = nil
         if let uploadTask = attachmentUploadTask, let uploadTaskID = attachmentUploadTaskID {
             uploadTask.cancel()
             retiredAttachmentUploadTasks[uploadTaskID] = uploadTask
@@ -269,7 +274,7 @@ public actor SyncEngine {
     public func updateMeAvatar(_ avatarUrl: String) async throws -> String {
         let generation = sessionGeneration
         let body = try encoder.encode(UpdateMeAvatarRequest(avatarUrl: avatarUrl))
-        let data = try await sendAuthorized(method: "PUT", path: "/me/avatar", body: body)
+        let data = try await sendAuthorized(method: "PUT", path: "/me/avatar", body: body, generation: generation)
         let decoded = try decode(UpdateMeAvatarResponse.self, from: data)
         guard generation == sessionGeneration else {
             throw SyncError.signedOut
@@ -345,8 +350,15 @@ public actor SyncEngine {
             }
         }
 
-        try await performPush(&pushProgress, generation: generation)
-        try await performPull(&pullProgress, generation: generation)
+        do {
+            try await performPush(&pushProgress, generation: generation)
+            try await performPull(&pullProgress, generation: generation)
+        } catch let SyncError.retryable(_, statusCode, message) {
+            guard generation == sessionGeneration, !Task.isCancelled else {
+                throw CancellationError()
+            }
+            throw nextRetryableError(statusCode: statusCode, message: message)
+        }
 
         consecutiveRetryableFailures = 0
         let summary = makeSummary(push: pushProgress, pull: pullProgress)
@@ -418,7 +430,7 @@ public actor SyncEngine {
             }
 
             let requestData = try encoder.encode(SyncPushRequest(deviceId: deviceId, ops: ops))
-            let responseData = try await sendAuthorized(method: "POST", path: "/sync/push", body: requestData)
+            let responseData = try await sendAuthorized(method: "POST", path: "/sync/push", body: requestData, generation: generation)
             guard generation == sessionGeneration else {
                 throw SyncError.signedOut
             }
@@ -524,7 +536,7 @@ public actor SyncEngine {
                 throw SyncError.signedOut
             }
             let requestData = try encoder.encode(SyncPullRequest(cursors: cursors, limit: pullLimit))
-            let responseData = try await sendAuthorized(method: "POST", path: "/sync/pull", body: requestData)
+            let responseData = try await sendAuthorized(method: "POST", path: "/sync/pull", body: requestData, generation: generation)
             guard generation == sessionGeneration else {
                 throw SyncError.signedOut
             }
@@ -579,7 +591,7 @@ public actor SyncEngine {
                 let requestData = try encoder.encode(
                     SyncPullRequest(cursors: backfillCursors, limit: pullLimit, backfill: pendingBackfill)
                 )
-                let responseData = try await sendAuthorized(method: "POST", path: "/sync/pull", body: requestData)
+                let responseData = try await sendAuthorized(method: "POST", path: "/sync/pull", body: requestData, generation: generation)
                 guard generation == sessionGeneration else {
                     throw SyncError.signedOut
                 }
@@ -880,12 +892,14 @@ public actor SyncEngine {
 
         guard let attachmentsDirectory else { return }
 
+        var temporarilyFailedIds: Set<String> = []
+
         while generation == sessionGeneration, !Task.isCancelled {
             attachmentUploadWakeRequested = false
 
-            let candidates: [AttachmentRecord]
+            let rawCandidates: [AttachmentRecord]
             do {
-                candidates = try await database.writer.read { db in
+                rawCandidates = try await database.writer.read { db in
                     try AttachmentRecord.fetchAll(db, sql: """
                         SELECT * FROM attachment
                         WHERE \(AttachmentRecord.pendingUploadWhereClause)
@@ -896,14 +910,20 @@ public actor SyncEngine {
                 return
             }
 
-            if candidates.isEmpty {
+            if rawCandidates.isEmpty {
                 if attachmentUploadWakeRequested {
                     continue
                 }
                 return
             }
 
+            // Try untried candidates before items that already hit a temporary failure in this run,
+            // so a failing upload cannot starve newly woken attachments.
+            let candidates = rawCandidates.filter { !temporarilyFailedIds.contains($0.id) }
+                + rawCandidates.filter { temporarilyFailedIds.contains($0.id) }
+
             var didAttemptAny = false
+            var hitTemporaryFailure = false
             for att in candidates {
                 guard generation == sessionGeneration, !Task.isCancelled else { return }
                 guard let rel = att.localPath, !rel.isEmpty else { continue }
@@ -914,7 +934,7 @@ public actor SyncEngine {
                 let encodedId = Self.percentEncodePathComponent(att.id)
                 let mime = att.mimeType.isEmpty ? "application/octet-stream" : att.mimeType
                 do {
-                    let response = try await sendAuthorizedRequest { token in
+                    let response = try await sendAuthorizedRequest(generation: generation) { token in
                         try await self.transport.upload(
                             path: "/attachments/\(encodedId)/content",
                             headers: [
@@ -928,6 +948,7 @@ public actor SyncEngine {
 
                     switch response.status {
                     case 200...299:
+                        temporarilyFailedIds.remove(att.id)
                         let uploadedAt = clock.now().epochMillis
                         try await database.writer.write { db in
                             guard !Task.isCancelled else { return }
@@ -937,6 +958,7 @@ public actor SyncEngine {
                             )
                         }
                     case 400, 403, 410, 413:
+                        temporarilyFailedIds.remove(att.id)
                         try await database.writer.write { db in
                             guard !Task.isCancelled else { return }
                             try db.execute(
@@ -945,15 +967,31 @@ public actor SyncEngine {
                             )
                         }
                     default:
-                        // 404 (row not yet visible), 429, 5xx, etc.: stop until next successful sync.
-                        return
+                        // 404 (row not yet visible), 429, 5xx, etc.: stop unless a new sync woke us.
+                        temporarilyFailedIds.insert(att.id)
+                        hitTemporaryFailure = true
                     }
-                } catch {
-                    // Network or token errors stop without tight retries; next successful sync wakes it.
+                } catch is CancellationError {
                     return
+                } catch SyncError.signedOut {
+                    return
+                } catch {
+                    // Network or temporary token errors stop without tight retries unless woken.
+                    temporarilyFailedIds.insert(att.id)
+                    hitTemporaryFailure = true
+                }
+                if hitTemporaryFailure {
+                    break
                 }
             }
 
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+            if hitTemporaryFailure {
+                if attachmentUploadWakeRequested {
+                    continue
+                }
+                return
+            }
             if !didAttemptAny && !attachmentUploadWakeRequested {
                 return
             }
@@ -992,39 +1030,77 @@ public actor SyncEngine {
 
     // MARK: - Authorized HTTP + Refresh
 
-    private func sendAuthorized(method: String, path: String, body: Data?) async throws -> Data {
-        let response = try await sendAuthorizedResponse(method: method, path: path, body: body)
+    private func sendAuthorized(method: String, path: String, body: Data?, generation: UInt64? = nil) async throws -> Data {
+        let response = try await sendAuthorizedResponse(method: method, path: path, body: body, generation: generation)
         return try validateHTTPResponse(response)
     }
 
-    func sendAuthorizedResponse(method: String, path: String, body: Data?) async throws -> SyncHTTPResponse {
-        try await sendAuthorizedRequest { token in
+    func sendAuthorizedResponse(method: String, path: String, body: Data?, generation: UInt64? = nil) async throws -> SyncHTTPResponse {
+        let expectedGeneration = generation ?? sessionGeneration
+        return try await sendAuthorizedRequest(generation: expectedGeneration) { token in
             try await self.sendWithNetworkRetryable(
                 method: method,
                 path: path,
                 headers: ["Authorization": "Bearer \(token)"],
-                body: body
+                body: body,
+                generation: expectedGeneration
             )
         }
     }
 
     private func sendAuthorizedRequest(
+        generation: UInt64? = nil,
         _ perform: (String) async throws -> SyncHTTPResponse
     ) async throws -> SyncHTTPResponse {
+        let expectedGeneration = generation ?? sessionGeneration
+        guard expectedGeneration == sessionGeneration, !Task.isCancelled else {
+            throw CancellationError()
+        }
+
         let initialToken: String
         if let access = tokenStore.accessToken, !access.isEmpty {
             initialToken = access
         } else if let refresh = tokenStore.refreshToken, !refresh.isEmpty {
-            initialToken = try await refreshAccessToken(failedAccessToken: nil)
+            initialToken = try await refreshAccessToken(failedAccessToken: nil, generation: expectedGeneration)
         } else {
             throw SyncError.signedOut
         }
 
-        let firstResponse = try await perform(initialToken)
+        guard expectedGeneration == sessionGeneration, !Task.isCancelled else {
+            throw CancellationError()
+        }
+
+        let firstResponse: SyncHTTPResponse
+        do {
+            firstResponse = try await perform(initialToken)
+        } catch {
+            guard expectedGeneration == sessionGeneration, !Task.isCancelled else {
+                throw CancellationError()
+            }
+            throw error
+        }
+
+        guard expectedGeneration == sessionGeneration, !Task.isCancelled else {
+            throw CancellationError()
+        }
 
         if firstResponse.status == 401 {
-            let newAccess = try await refreshAccessToken(failedAccessToken: initialToken)
-            let retryResponse = try await perform(newAccess)
+            let newAccess = try await refreshAccessToken(failedAccessToken: initialToken, generation: expectedGeneration)
+            guard expectedGeneration == sessionGeneration, !Task.isCancelled else {
+                throw CancellationError()
+            }
+            let retryResponse: SyncHTTPResponse
+            do {
+                retryResponse = try await perform(newAccess)
+            } catch {
+                guard expectedGeneration == sessionGeneration, !Task.isCancelled else {
+                    throw CancellationError()
+                }
+                throw error
+            }
+            guard expectedGeneration == sessionGeneration, !Task.isCancelled else {
+                throw CancellationError()
+            }
             if retryResponse.status == 401 {
                 tokenStore.accessToken = nil
                 tokenStore.refreshToken = nil
@@ -1036,24 +1112,47 @@ public actor SyncEngine {
         return firstResponse
     }
 
-    private func refreshAccessToken(failedAccessToken: String?) async throws -> String {
+    private func refreshAccessToken(failedAccessToken: String?, generation: UInt64) async throws -> String {
+        guard generation == sessionGeneration, !Task.isCancelled else {
+            throw CancellationError()
+        }
         if let current = tokenStore.accessToken, !current.isEmpty,
            let failedAccessToken, current != failedAccessToken {
             return current
         }
-        if let existing = inFlightRefresh {
-            return try await existing.value
+        if let existing = inFlightRefresh, inFlightRefreshGeneration == generation {
+            let token = try await existing.value
+            guard generation == sessionGeneration, !Task.isCancelled else {
+                throw CancellationError()
+            }
+            return token
         }
 
+        let refreshID = UUID()
         let task = Task {
-            try await self.performTokenRefresh()
+            try await self.performTokenRefresh(generation: generation)
         }
         inFlightRefresh = task
-        defer { inFlightRefresh = nil }
-        return try await task.value
+        inFlightRefreshID = refreshID
+        inFlightRefreshGeneration = generation
+        defer {
+            if self.inFlightRefreshID == refreshID {
+                self.inFlightRefresh = nil
+                self.inFlightRefreshID = nil
+                self.inFlightRefreshGeneration = nil
+            }
+        }
+        let token = try await task.value
+        guard generation == sessionGeneration, !Task.isCancelled else {
+            throw CancellationError()
+        }
+        return token
     }
 
-    private func performTokenRefresh() async throws -> String {
+    private func performTokenRefresh(generation: UInt64) async throws -> String {
+        guard generation == sessionGeneration, !Task.isCancelled else {
+            throw CancellationError()
+        }
         guard let refreshToken = tokenStore.refreshToken, !refreshToken.isEmpty else {
             tokenStore.accessToken = nil
             throw SyncError.signedOut
@@ -1064,8 +1163,13 @@ public actor SyncEngine {
             method: "POST",
             path: "/auth/refresh",
             headers: [:],
-            body: requestBody
+            body: requestBody,
+            generation: generation
         )
+
+        guard generation == sessionGeneration, !Task.isCancelled else {
+            throw CancellationError()
+        }
 
         if response.status == 400 || response.status == 401 || response.status == 403 {
             tokenStore.accessToken = nil
@@ -1075,15 +1179,21 @@ public actor SyncEngine {
 
         let data = try validateHTTPResponse(response)
         let decoded = try decode(AuthRefreshResponse.self, from: data)
-        guard !Task.isCancelled else { throw SyncError.signedOut }
+        guard generation == sessionGeneration, !Task.isCancelled else {
+            throw CancellationError()
+        }
 
         // Persist the rotated refresh token before exposing/using the new access token.
         tokenStore.refreshToken = decoded.refreshToken
         tokenStore.accessToken = decoded.accessToken
         if let avatarUrl = decoded.avatarUrl, !avatarUrl.isEmpty {
             _ = try? await database.writer.write { db in
+                guard !Task.isCancelled else { return }
                 try Self.saveMeAvatarUrl(avatarUrl, in: db)
             }
+        }
+        guard generation == sessionGeneration, !Task.isCancelled else {
+            throw CancellationError()
         }
         return decoded.accessToken
     }
@@ -1092,14 +1202,25 @@ public actor SyncEngine {
         method: String,
         path: String,
         headers: [String: String],
-        body: Data?
+        body: Data?,
+        generation: UInt64? = nil
     ) async throws -> SyncHTTPResponse {
+        let expectedGeneration = generation ?? sessionGeneration
         do {
-            return try await transport.send(method: method, path: path, headers: headers, body: body)
+            let response = try await transport.send(method: method, path: path, headers: headers, body: body)
+            guard expectedGeneration == sessionGeneration, !Task.isCancelled else {
+                throw CancellationError()
+            }
+            return response
+        } catch let error as CancellationError {
+            throw error
         } catch let error as SyncError {
             throw error
         } catch {
-            throw nextRetryableError(statusCode: nil, message: error.localizedDescription)
+            guard expectedGeneration == sessionGeneration, !Task.isCancelled else {
+                throw CancellationError()
+            }
+            throw SyncError.retryable(retryAfter: baseBackoffSeconds, statusCode: nil, message: error.localizedDescription)
         }
     }
 
@@ -1109,13 +1230,13 @@ public actor SyncEngine {
         }
         let bodyText = String(data: response.body, encoding: .utf8) ?? ""
         if response.status == 429 || (500...599).contains(response.status) {
-            throw nextRetryableError(statusCode: response.status, message: bodyText)
+            throw SyncError.retryable(retryAfter: baseBackoffSeconds, statusCode: response.status, message: bodyText)
         }
         throw SyncError.protocolError("HTTP \(response.status): \(bodyText)")
     }
 
     func recordRetryableFailure(statusCode: Int?, message: String) -> SyncError {
-        nextRetryableError(statusCode: statusCode, message: message)
+        .retryable(retryAfter: baseBackoffSeconds, statusCode: statusCode, message: message)
     }
 
     private func nextRetryableError(statusCode: Int?, message: String) -> SyncError {

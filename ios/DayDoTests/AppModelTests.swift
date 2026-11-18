@@ -1082,4 +1082,285 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(copies.count, 1)
         XCTAssertEqual(model.scope, .project(try XCTUnwrap(copies.first?.id)))
     }
+
+    func testDuplicateProjectCancelledOnSignOutLeavesNoErrorOrLock() async throws {
+        actor GateTransport: SyncTransport {
+            private let projId = "cancel-dup-proj-1"
+            private let taskId = "cancel-dup-task-1"
+            private let attId = "cancel-dup-att-1"
+            private var started = false
+            private var startedCont: CheckedContinuation<Void, Never>?
+            private var allowFinish = false
+            private var finishCont: CheckedContinuation<Void, Never>?
+
+            func waitForDownloadStart() async {
+                if started { return }
+                await withCheckedContinuation { startedCont = $0 }
+            }
+
+            func allowDownloadFinish() {
+                allowFinish = true
+                finishCont?.resume()
+                finishCont = nil
+            }
+
+            func send(method: String, path: String, headers: [String: String], body: Data?) async throws -> SyncHTTPResponse {
+                let nowMs = EpochMillis(Date().timeIntervalSince1970 * 1000)
+                let serverHLC = HLC(ms: nowMs, counter: 0, deviceId: "srv").description
+                if method == "POST" && path == "/auth/apple" {
+                    return try jsonResponse(200, [
+                        "accessToken": "acc",
+                        "refreshToken": "ref",
+                        "user": ["id": "u-cancel"],
+                        "isNewAccount": true,
+                        "hasData": false,
+                        "meMemberId": NSNull(),
+                        "inboxProjectId": NSNull(),
+                    ])
+                }
+                if method == "POST" && path == "/sync/push" {
+                    var results: [[String: Any]] = []
+                    if let body,
+                       let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                       let ops = payload["ops"] as? [[String: Any]] {
+                        for op in ops {
+                            if let opId = op["opId"] as? String {
+                                results.append(["opId": opId, "status": "applied"])
+                            }
+                        }
+                    }
+                    return try jsonResponse(200, ["results": results, "serverTime": serverHLC])
+                }
+                if method == "POST" && path == "/sync/pull" {
+                    return try jsonResponse(200, [
+                        "scopes": [[
+                            "scope": "u:u-cancel",
+                            "rows": [
+                                [
+                                    "entity": "project",
+                                    "row": [
+                                        "id": projId, "name": "待取消清單", "viewMode": "list", "kind": "TASK",
+                                        "isInbox": false, "ownerId": "m-1", "sortKey": "z1",
+                                        "showInSmart": "all", "notifyMode": "all", "createdAt": nowMs, "updatedAt": nowMs,
+                                    ],
+                                    "clocks": ["name": serverHLC], "serverSeq": 1,
+                                ],
+                                [
+                                    "entity": "task",
+                                    "row": [
+                                        "id": taskId, "projectId": projId, "title": "附件任務", "content": "",
+                                        "priority": 0, "status": 0, "reminders": [], "tags": [], "sortKey": "a0",
+                                        "createdAt": nowMs, "updatedAt": nowMs,
+                                    ],
+                                    "clocks": ["title": serverHLC], "serverSeq": 2,
+                                ],
+                                [
+                                    "entity": "attachment",
+                                    "row": [
+                                        "id": attId, "taskId": taskId, "fileName": "doc.txt", "size": 4,
+                                        "mimeType": "text/plain", "createdAt": nowMs, "updatedAt": nowMs,
+                                    ],
+                                    "clocks": ["fileName": serverHLC], "serverSeq": 3,
+                                ],
+                            ],
+                            "cursor": 3, "hasMore": false,
+                        ]],
+                        "members": [],
+                    ])
+                }
+                if method == "GET" && path == "/attachments/\(attId)/content" {
+                    started = true
+                    startedCont?.resume()
+                    startedCont = nil
+                    if !allowFinish {
+                        await withCheckedContinuation { finishCont = $0 }
+                    }
+                    return SyncHTTPResponse(status: 200, body: Data("test".utf8))
+                }
+                return try jsonResponse(404, ["error": "Not found"])
+            }
+
+            private func jsonResponse(_ status: Int, _ object: Any) throws -> SyncHTTPResponse {
+                SyncHTTPResponse(status: status, body: try JSONSerialization.data(withJSONObject: object))
+            }
+        }
+
+        let transport = GateTransport()
+        let (model, _) = try await makeModel(syncEnabled: true, transport: transport)
+        model.scope = .project("cancel-dup-proj-1")
+
+        model.duplicateProject(id: "cancel-dup-proj-1")
+        XCTAssertTrue(model.isDuplicatingProject("cancel-dup-proj-1"))
+        await transport.waitForDownloadStart()
+
+        await model.signOut()
+        XCTAssertFalse(model.isDuplicatingProject("cancel-dup-proj-1"))
+        XCTAssertNil(model.errorMessage)
+
+        await transport.allowDownloadFinish()
+        await model.waitForProjectDuplications()
+
+        XCTAssertFalse(model.isDuplicatingProject("cancel-dup-proj-1"))
+        XCTAssertNil(model.errorMessage)
+        XCTAssertTrue(model.projects.isEmpty)
+    }
+
+    func testStaleDuplicateProjectCompletionDoesNotReleaseNewAccountLock() async throws {
+        actor TwoRoundDownloadTransport: SyncTransport {
+            private let projId = "shared-dup-proj-1"
+            private let taskId = "shared-dup-task-1"
+            private let attId = "shared-dup-att-1"
+            private var callIndex = 0
+            private var firstStarted = false
+            private var firstStartedCont: CheckedContinuation<Void, Never>?
+            private var allowFirst = false
+            private var firstFinishCont: CheckedContinuation<Void, Never>?
+            private var secondStarted = false
+            private var secondStartedCont: CheckedContinuation<Void, Never>?
+            private var allowSecond = false
+            private var secondFinishCont: CheckedContinuation<Void, Never>?
+
+            func waitForFirstStart() async {
+                if firstStarted { return }
+                await withCheckedContinuation { firstStartedCont = $0 }
+            }
+
+            func allowFirstFinish() {
+                allowFirst = true
+                firstFinishCont?.resume()
+                firstFinishCont = nil
+            }
+
+            func waitForSecondStart() async {
+                if secondStarted { return }
+                await withCheckedContinuation { secondStartedCont = $0 }
+            }
+
+            func allowSecondFinish() {
+                allowSecond = true
+                secondFinishCont?.resume()
+                secondFinishCont = nil
+            }
+
+            func send(method: String, path: String, headers: [String: String], body: Data?) async throws -> SyncHTTPResponse {
+                let nowMs = EpochMillis(Date().timeIntervalSince1970 * 1000)
+                let serverHLC = HLC(ms: nowMs, counter: 0, deviceId: "srv").description
+                if method == "POST" && path == "/auth/apple" {
+                    return try jsonResponse(200, [
+                        "accessToken": "acc",
+                        "refreshToken": "ref",
+                        "user": ["id": "u-shared-dup"],
+                        "isNewAccount": true,
+                        "hasData": false,
+                        "meMemberId": NSNull(),
+                        "inboxProjectId": NSNull(),
+                    ])
+                }
+                if method == "POST" && path == "/sync/push" {
+                    var results: [[String: Any]] = []
+                    if let body,
+                       let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                       let ops = payload["ops"] as? [[String: Any]] {
+                        for op in ops {
+                            if let opId = op["opId"] as? String {
+                                results.append(["opId": opId, "status": "applied"])
+                            }
+                        }
+                    }
+                    return try jsonResponse(200, ["results": results, "serverTime": serverHLC])
+                }
+                if method == "POST" && path == "/sync/pull" {
+                    return try jsonResponse(200, [
+                        "scopes": [[
+                            "scope": "u:u-shared-dup",
+                            "rows": [
+                                [
+                                    "entity": "project",
+                                    "row": [
+                                        "id": projId, "name": "共用清單", "viewMode": "list", "kind": "TASK",
+                                        "isInbox": false, "ownerId": "m-1", "sortKey": "z1",
+                                        "showInSmart": "all", "notifyMode": "all", "createdAt": nowMs, "updatedAt": nowMs,
+                                    ],
+                                    "clocks": ["name": serverHLC], "serverSeq": 1,
+                                ],
+                                [
+                                    "entity": "task",
+                                    "row": [
+                                        "id": taskId, "projectId": projId, "title": "附件任務", "content": "",
+                                        "priority": 0, "status": 0, "reminders": [], "tags": [], "sortKey": "a0",
+                                        "createdAt": nowMs, "updatedAt": nowMs,
+                                    ],
+                                    "clocks": ["title": serverHLC], "serverSeq": 2,
+                                ],
+                                [
+                                    "entity": "attachment",
+                                    "row": [
+                                        "id": attId, "taskId": taskId, "fileName": "doc.txt", "size": 4,
+                                        "mimeType": "text/plain", "createdAt": nowMs, "updatedAt": nowMs,
+                                    ],
+                                    "clocks": ["fileName": serverHLC], "serverSeq": 3,
+                                ],
+                            ],
+                            "cursor": 3, "hasMore": false,
+                        ]],
+                        "members": [],
+                    ])
+                }
+                if method == "GET" && path == "/attachments/\(attId)/content" {
+                    callIndex += 1
+                    if callIndex == 1 {
+                        firstStarted = true
+                        firstStartedCont?.resume()
+                        firstStartedCont = nil
+                        if !allowFirst {
+                            await withCheckedContinuation { firstFinishCont = $0 }
+                        }
+                    } else {
+                        secondStarted = true
+                        secondStartedCont?.resume()
+                        secondStartedCont = nil
+                        if !allowSecond {
+                            await withCheckedContinuation { secondFinishCont = $0 }
+                        }
+                    }
+                    return SyncHTTPResponse(status: 200, body: Data("test".utf8))
+                }
+                return try jsonResponse(404, ["error": "Not found"])
+            }
+
+            private func jsonResponse(_ status: Int, _ object: Any) throws -> SyncHTTPResponse {
+                SyncHTTPResponse(status: status, body: try JSONSerialization.data(withJSONObject: object))
+            }
+        }
+
+        let transport = TwoRoundDownloadTransport()
+        let (model, _) = try await makeModel(syncEnabled: true, transport: transport)
+        model.scope = .project("shared-dup-proj-1")
+
+        // Account A starts duplicating and blocks on download #1.
+        model.duplicateProject(id: "shared-dup-proj-1")
+        await transport.waitForFirstStart()
+
+        // Sign out A, sign in B, and start duplicating the same list id on B.
+        await model.signOut()
+        try await model.signIn(with: .apple(identityToken: "tok-B", nonce: "n-B"))
+        model.scope = .project("shared-dup-proj-1")
+        model.duplicateProject(id: "shared-dup-proj-1")
+        await transport.waitForSecondStart()
+        XCTAssertTrue(model.isDuplicatingProject("shared-dup-proj-1"))
+
+        // Release A's stale download while B is still running: B's lock must stay held and no stale copy/error appears.
+        await transport.allowFirstFinish()
+        await model.waitForRetiredProjectDuplications()
+        XCTAssertTrue(model.isDuplicatingProject("shared-dup-proj-1"))
+        XCTAssertNil(model.errorMessage)
+        XCTAssertTrue(model.projects.filter { $0.name == "共用清單 副本" }.isEmpty)
+
+        // Release B's download: exactly one copy is created and B's lock releases cleanly.
+        await transport.allowSecondFinish()
+        await model.waitForProjectDuplications()
+        XCTAssertFalse(model.isDuplicatingProject("shared-dup-proj-1"))
+        XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(model.projects.filter { $0.name == "共用清單 副本" }.count, 1)
+    }
 }

@@ -67,8 +67,9 @@ final class AppModel {
     var isSignedIn = false
     var isSigningIn = false
     var isSyncing = false
-    private(set) var duplicatingProjectIds: Set<String> = []
-    private var duplicationTasks: [String: Task<Void, Never>] = [:]
+    private(set) var duplicationLocks: [String: UUID] = [:]
+    private var duplicationTasks: [UUID: Task<Void, Never>] = [:]
+    private var retiredDuplicationTasks: [UUID: Task<Void, Never>] = [:]
     var errorMessage: String?
 
     // Invites
@@ -495,33 +496,63 @@ final class AppModel {
     }
 
     func isDuplicatingProject(_ id: String) -> Bool {
-        duplicatingProjectIds.contains(id)
+        duplicationLocks[id] != nil
     }
 
     /// Duplicates a list through `DayDoAPI`, ignoring re-entry for the same list until it finishes.
     func duplicateProject(id: String) {
-        guard !duplicatingProjectIds.contains(id) else { return }
-        duplicatingProjectIds.insert(id)
+        guard duplicationLocks[id] == nil else { return }
+        let token = UUID()
+        duplicationLocks[id] = token
         let task = Task {
             defer {
-                duplicatingProjectIds.remove(id)
-                duplicationTasks.removeValue(forKey: id)
+                duplicationTasks.removeValue(forKey: token)
+                retiredDuplicationTasks.removeValue(forKey: token)
+                if duplicationLocks[id] == token {
+                    duplicationLocks.removeValue(forKey: id)
+                }
             }
-            if let copy = await perform({ try await $0.duplicateProject(id: id) }),
-               !Task.isCancelled,
-               scope == .project(id) {
-                scope = .project(copy.id)
+            do {
+                let copy = try await api.duplicateProject(id: id)
+                guard !Task.isCancelled, duplicationLocks[id] == token else { return }
+                await didWrite()
+                guard !Task.isCancelled, duplicationLocks[id] == token else { return }
+                if scope == .project(id) {
+                    scope = .project(copy.id)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, duplicationLocks[id] == token else { return }
+                errorMessage = error.localizedDescription
             }
         }
-        duplicationTasks[id] = task
+        duplicationTasks[token] = task
     }
 
     func waitForProjectDuplications() async {
-        while !duplicationTasks.isEmpty {
-            for task in Array(duplicationTasks.values) {
+        while !duplicationTasks.isEmpty || !retiredDuplicationTasks.isEmpty {
+            for task in Array(duplicationTasks.values) + Array(retiredDuplicationTasks.values) {
                 await task.value
             }
         }
+    }
+
+    func waitForRetiredProjectDuplications() async {
+        while !retiredDuplicationTasks.isEmpty {
+            for task in Array(retiredDuplicationTasks.values) {
+                await task.value
+            }
+        }
+    }
+
+    private func cancelProjectDuplications() {
+        for (token, task) in duplicationTasks {
+            task.cancel()
+            retiredDuplicationTasks[token] = task
+        }
+        duplicationTasks.removeAll()
+        duplicationLocks.removeAll()
     }
 
     /// Convenience for partial task updates from views.
@@ -724,6 +755,7 @@ final class AppModel {
     }
 
     func signOut() async {
+        cancelProjectDuplications()
         stopSyncObservers()
         GIDSignIn.sharedInstance.signOut()
         if syncEnabled {
@@ -740,6 +772,7 @@ final class AppModel {
     func replaceAccountAndSignIn(with credential: SyncAuthCredential, displayName: String? = nil, avatarUrl: String? = nil) async throws {
         isSigningIn = true
         defer { isSigningIn = false }
+        cancelProjectDuplications()
         stopSyncObservers()
         GIDSignIn.sharedInstance.signOut()
         if syncEnabled {
@@ -772,9 +805,7 @@ final class AppModel {
         pendingInviteCode = nil
         showingMeNamePrompt = false
         allMemberFilter = nil
-        duplicationTasks.values.forEach { $0.cancel() }
-        duplicationTasks.removeAll()
-        duplicatingProjectIds.removeAll()
+        cancelProjectDuplications()
         isSignedIn = false
         revision += 1
         scheduleWidgetReload()

@@ -544,11 +544,20 @@ extension LocalDayDoAPI {
             }
         }
         for att in missingAttachments {
-            _ = try? await attachmentFile(att)
+            try Task.checkCancellation()
+            do {
+                _ = try await attachmentFile(att)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Skip individual attachment download failures so the rest of the list still copies.
+            }
         }
+        try Task.checkCancellation()
 
         let now = now()
         return try await writer.write { db in
+            try Task.checkCancellation()
             let src = try self.projectRecord(db, id)
             if src.isInbox { throw DayDoError.invalid("The inbox cannot be duplicated") }
             let me = try self.me(db)
