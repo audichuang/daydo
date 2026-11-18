@@ -723,7 +723,7 @@ struct CalendarScreen: View {
             Group {
                 if items.isEmpty { emptyDay }
                 ForEach(items) { t in
-                    AgendaRow(task: t, day: sel, showOwnerAvatar: showOwnerAvatars)
+                    AgendaRow(task: t, day: sel, showOwnerAvatar: showOwnerAvatars, showProject: projectFilter == nil)
                         .transition(Motion.rowTransition(reduceMotion))
                 }
             }
@@ -804,6 +804,7 @@ struct AgendaRow: View {
     var task: TodoTask
     var day: LocalDay
     var showOwnerAvatar = false
+    var showProject = true
 
     private var isDone: Bool {
         model.displaysCompleted(task)
@@ -835,9 +836,11 @@ struct AgendaRow: View {
                         Text(task.content.split(whereSeparator: \.isNewline).first.map(String.init) ?? "").txt(14).foregroundStyle(Palette.textSecondary).lineLimit(1)
                     }
                     HStack(spacing: 8) {
-                        Text(AgendaText.line(task, today: model.today)).txt(14, .medium).foregroundStyle(AgendaText.color(task, today: model.today, accent: accent))
+                        Text(AgendaText.line(task, today: model.today, includeDay: task.schedule?.isMultiDay ?? false)).txt(14, .medium).foregroundStyle(AgendaText.color(task, today: model.today, accent: accent))
                         Spacer(minLength: 4)
-                        Text(project?.name ?? "").txt(14).foregroundStyle(Palette.textTertiary).lineLimit(1)
+                        if showProject {
+                            Text(project?.name ?? "").txt(14).foregroundStyle(Palette.textTertiary).lineLimit(1)
+                        }
                     }
                 }
                 .opacity(isDone ? 0.75 : 1)
@@ -871,9 +874,8 @@ struct TimelineAgendaRow: View {
         let owner = partnerOwner(for: task, show: showOwnerAvatar, members: model.members)
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .trailing, spacing: 0) {
-                if let s = task.schedule {
-                    Text(String(format: "%02d-%02d", s.startDay.month, s.startDay.day)).font(.system(size: 13)).foregroundStyle(Palette.textFaint)
-                    if let m = s.startMinute { Text(DateText.hm(m)).font(.system(size: 15)).foregroundStyle(Palette.textSecondary) }
+                if let m = task.schedule?.startMinute {
+                    Text(DateText.hm(m)).font(.system(size: 15)).foregroundStyle(Palette.textSecondary)
                 }
             }
             .frame(width: 48, alignment: .trailing)

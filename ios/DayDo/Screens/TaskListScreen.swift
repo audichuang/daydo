@@ -283,6 +283,12 @@ struct SectionCard: View {
         return false
     }
 
+    /// Inside a single list the title already names it; rows skip the list label.
+    var isProjectScope: Bool {
+        if case .project = scope { return true }
+        return false
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Button(action: toggle) {
@@ -316,7 +322,7 @@ struct SectionCard: View {
             if !closed {
                 VStack(spacing: 0) {
                     ForEach(Array(section.tasks.enumerated()), id: \.element.id) { i, t in
-                        TaskRow(task: t, separator: i > 0, sectionId: section.id, inTrash: scope == .smart(.trash), selectsInline: true)
+                        TaskRow(task: t, separator: i > 0, sectionId: section.id, inTrash: scope == .smart(.trash), selectsInline: true, showProject: !isProjectScope)
                             .transition(Motion.rowTransition(reduceMotion))
                     }
                 }
@@ -338,6 +344,7 @@ struct TaskRow: View {
     var sectionId: String
     var inTrash = false
     var selectsInline = false
+    var showProject = true
 
     private var usesInlineSelection: Bool {
         selectsInline && isRegularWindow
@@ -380,7 +387,7 @@ struct TaskRow: View {
                     if !compact, !task.content.isEmpty {
                         Text(firstLine(task.content)).txt(14).foregroundStyle(Palette.textSecondary).lineLimit(1)
                     }
-                    meta
+                    if hasMeta { meta }
                 }
                 .opacity(isDone ? 0.75 : 1)
                 .animation(Motion.check(reduceMotion), value: isDone)
@@ -398,8 +405,13 @@ struct TaskRow: View {
         .contextMenu { menu }
     }
 
+    private var hasMeta: Bool {
+        (!dateLine.isEmpty && !isDone) || !task.items.isEmpty || task.commentCount > 0 || !task.attachments.isEmpty
+            || (task.repeat != nil && !isDone) || (showProject && model.project(task.projectId) != nil)
+    }
+
     @ViewBuilder var meta: some View {
-        let project = model.project(task.projectId)
+        let project = showProject ? model.project(task.projectId) : nil
         let line = dateLine
         HStack(spacing: 10) {
             if !line.isEmpty && !isDone {
@@ -428,9 +440,18 @@ struct TaskRow: View {
         .frame(minHeight: 18)
     }
 
+    /// Day a single-day section stands for (明天, 未來 7 天 day groups); its header already names it.
+    private var sectionDay: LocalDay? {
+        if sectionId == "tomorrow" { return model.today.adding(days: 1) }
+        if sectionId.hasPrefix("day:") { return LocalDay(String(sectionId.dropFirst(4))) }
+        return nil
+    }
+
     var dateLine: String {
         guard let s = task.schedule else { return "" }
-        return DateText.taskLine(s, today: model.today)
+        guard let day = sectionDay else { return DateText.taskLine(s, today: model.today) }
+        if s.isAllDay && !s.isMultiDay { return "" }
+        return DateText.taskLine(s, on: day, today: model.today)
     }
 
     var dateColor: Color {
