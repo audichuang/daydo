@@ -103,7 +103,7 @@ public enum TimeGridDrag {
         if minuteDelta == 0 {
             clampedRelative = relativeStart0
         } else {
-            let minRelativeStart = -min(1440, max(0, sourceOffset))
+            let minRelativeStart = -max(0, sourceOffset)
             let maxRelativeStart = max(maxStartMinute, relativeStart0)
             clampedRelative = max(minRelativeStart, min(maxRelativeStart, relativeStart0 + minuteDelta))
         }

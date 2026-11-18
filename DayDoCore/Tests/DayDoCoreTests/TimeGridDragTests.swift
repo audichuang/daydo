@@ -176,6 +176,31 @@ import Testing
         }
     }
 
+    @Test func moveMultiDayTimedTaskFromAnyDaySegment() {
+        let d0 = day("2026-11-18")
+        let d1 = day("2026-11-19")
+        let d2 = day("2026-11-20")
+        let d3 = day("2026-11-21")
+        // 11/18 09:00 – 11/20 10:00 (2940 minutes)
+        let s = Schedule(startDay: d0, startMinute: 540, endDay: d2, endMinute: 600, timeZone: "Asia/Taipei")
+        #expect(s.durationMinutes == 2940)
+
+        for sourceDay in [d0, d1, d2] {
+            let plus15 = TimeGridDrag.moveSchedule(s, sourceColumnDay: sourceDay, targetColumnDay: sourceDay, minuteDelta: 15)!
+            #expect(plus15 == .init(startDay: d0, startMinute: 555, endOffsetMinutes: 3495))
+            #expect(plus15.endOffsetMinutes - plus15.startMinute == 2940)
+
+            let minus15 = TimeGridDrag.moveSchedule(s, sourceColumnDay: sourceDay, targetColumnDay: sourceDay, minuteDelta: -15)!
+            #expect(minus15 == .init(startDay: d0, startMinute: 525, endOffsetMinutes: 3465))
+            #expect(minus15.endOffsetMinutes - minus15.startMinute == 2940)
+        }
+
+        // Day 3 segment dragged to 11/21 +15m -> starts 11/19 09:15 (555), ends +2940m (3495)
+        let crossDay3 = TimeGridDrag.moveSchedule(s, sourceColumnDay: d2, targetColumnDay: d3, minuteDelta: 15)!
+        #expect(crossDay3 == .init(startDay: d1, startMinute: 555, endOffsetMinutes: 3495))
+        #expect(crossDay3.endOffsetMinutes - crossDay3.startMinute == 2940)
+    }
+
     @Test func movePointInTimeTaskPreservesZeroDuration() {
         let d0 = day("2026-11-18")
         let d1 = day("2026-11-19")
