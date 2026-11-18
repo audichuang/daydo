@@ -340,9 +340,6 @@ export function taskWriteTools(): ToolDef[] {
           throw new Error(`Task '${taskId}' was permanently deleted and cannot be restored`);
         }
         const origProjectId = String(task.row.projectId ?? '');
-        if (expectedProjectId !== undefined && origProjectId !== expectedProjectId) {
-          throw new Error(`Task '${taskId}' is not in project '${expectedProjectId}' (it is in '${origProjectId}')`);
-        }
         const origProject = snapshot.findRow('project', origProjectId);
         const origAlive =
           origProject !== undefined && isNil(origProject.row.deletedAt) && isNil(origProject.row.purgedAt);
@@ -352,6 +349,9 @@ export function taskWriteTools(): ToolDef[] {
           );
         }
         if (isNil(task.row.deletedAt)) return formatTask(snapshot, task);
+        if (expectedProjectId !== undefined && origProjectId !== expectedProjectId) {
+          throw new Error(`Task '${taskId}' is not in project '${expectedProjectId}' (it is in '${origProjectId}')`);
+        }
         let targetProjectId: string | undefined;
         if (!origAlive) {
           const inboxId = snapshot.inboxProjectId!;

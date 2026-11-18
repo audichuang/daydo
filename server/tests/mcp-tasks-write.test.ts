@@ -583,7 +583,7 @@ describe('restore_task', () => {
     expect((await call(h, 'u-a', 'get_task', { project_id: 'p1', task_id: 't1' })).isError).toBe(false);
   });
 
-  it('moves a soft-deleted task to the caller inbox when its original project was deleted', async () => {
+  it('moves a soft-deleted task to the caller inbox when its original project was deleted, and retrying the same request with original project_id succeeds idempotently', async () => {
     const h = createHarness();
     await seedBasic(h);
     await h.devicePush('u-a', [
@@ -593,12 +593,19 @@ describe('restore_task', () => {
     const deletedProj = await call(h, 'u-a', 'delete_project', { project_id: 'p-gone' });
     expect(deletedProj.isError, deletedProj.text).toBe(false);
 
-    const restored = await call(h, 'u-a', 'restore_task', { task_id: 't-orphan' });
+    const restored = await call(h, 'u-a', 'restore_task', { task_id: 't-orphan', project_id: 'p-gone' });
     expect(restored.isError, restored.text).toBe(false);
     expect(restored.json).toMatchObject({ id: 't-orphan', project_id: 'inbox-u-a', title: 'Orphaned' });
     const row = pulled(await h.pull('u-a'), 'task', 't-orphan')!;
     expect(row.projectId).toBe('inbox-u-a');
     expect(row.deletedAt).toBeUndefined();
+
+    // Retry the exact same request (with original project_id): must return the restored task without pushing.
+    h.calls.length = 0;
+    const retry = await call(h, 'u-a', 'restore_task', { task_id: 't-orphan', project_id: 'p-gone' });
+    expect(retry.isError, retry.text).toBe(false);
+    expect(retry.json).toMatchObject({ id: 't-orphan', project_id: 'inbox-u-a', title: 'Orphaned' });
+    expect(h.calls).toEqual([]);
   });
 
   it('returns a non-deleted task unchanged without pushing', async () => {

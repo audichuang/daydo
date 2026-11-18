@@ -402,7 +402,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 | `update_task` | idempotent-overwrite | 同上，加 `task_id*`。`repeat:""` 清除重複；`start:""` 清除排程，同時清 reminders 與 repeat；`subtasks` 整份取代（舊項目軟刪除，以新 id 重建，與 App 相同） |
 | `complete_task` | idempotent-write | 見下 |
 | `uncomplete_task` | idempotent-write | `project_id*`、`task_id*`；任務須在該清單且清單可寫；設 `status=0`、`completedAt=null`。已是未完成時原樣回傳；已完成副本直接重新開啟（不回推原重複任務） |
-| `restore_task` | idempotent-write | `task_id*`、`project_id` 可選；還原軟刪除任務：原清單仍在且可寫則清 `deletedAt`，原清單已刪除或不存在則移至收件匣再清 `deletedAt`；未被刪除時原樣回傳；已永久刪除報錯；帶 `project_id` 但不符時報錯 |
+| `restore_task` | idempotent-write | `task_id*`、`project_id` 可選；還原軟刪除任務：原清單仍在且可寫則清 `deletedAt`，原清單已刪除或不存在則移至收件匣再清 `deletedAt`；未被刪除時原樣回傳（不因帶原 `project_id` 報錯）；已永久刪除報錯；仍在垃圾桶且帶 `project_id` 不符時報錯 |
 | `delete_task` | destructive | **軟刪除**（`deletedAt`），可以從 App 垃圾桶還原；回 `{deleted:true, task_id, title}`。任務不在該清單時報錯 |
 | `move_task` | idempotent-write | `task_id*`、`from_project_id*`、`to_project_id*`；兩邊都要有寫入權 |
 | `move_all` | idempotent-write | 搬移來源清單所有未完成任務 |

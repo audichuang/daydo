@@ -111,6 +111,14 @@ function parseCharset(rawMime: string): string | null {
 }
 
 function decodeText(bytes: Uint8Array, charset: string | null): { ok: true; text: string } | { ok: false; note: string } {
+  // Check 4-byte UTF-32 BOMs before 2-byte UTF-16 BOMs (FF FE 00 00 starts with FF FE).
+  if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xfe && bytes[2] === 0x00 && bytes[3] === 0x00) {
+    return { ok: false, note: "Unsupported encoding 'UTF-32LE' (BOM); returned as base64." };
+  }
+  if (bytes.length >= 4 && bytes[0] === 0x00 && bytes[1] === 0x00 && bytes[2] === 0xfe && bytes[3] === 0xff) {
+    return { ok: false, note: "Unsupported encoding 'UTF-32BE' (BOM); returned as base64." };
+  }
+
   let encoding = charset ?? 'utf-8';
   let slice = bytes;
   let bomLabel: string | null = null;
@@ -126,6 +134,10 @@ function decodeText(bytes: Uint8Array, charset: string | null): { ok: true; text
     encoding = 'utf-16be';
     slice = bytes.subarray(2);
     bomLabel = 'UTF-16BE';
+  }
+
+  if (/^utf-?32(?:le|be)?$/i.test(encoding.trim())) {
+    return { ok: false, note: `Unsupported charset '${encoding}'; returned as base64.` };
   }
 
   try {
@@ -284,7 +296,23 @@ export function attachmentTools(): ToolDef[] {
         const attachmentId = requireStr(args, 'attachment_id');
 
         const { snapshot } = await openSession(ctx);
-        taskIn(snapshot, taskId, projectId);
+        const project = snapshot.findRow('project', projectId);
+        if (!project || !snapshot.memberships.has(projectId)) {
+          throw new Error(`Unknown project_id '${projectId}'; call list_projects first`);
+        }
+        if (!isNil(project.row.purgedAt)) {
+          throw new Error(`Project '${projectId}' was permanently deleted`);
+        }
+        const task = snapshot.findRow('task', taskId);
+        if (!task) {
+          throw new Error(`Unknown task_id '${taskId}'`);
+        }
+        if (!isNil(task.row.purgedAt)) {
+          throw new Error(`Task '${taskId}' was permanently deleted`);
+        }
+        if (task.row.projectId !== projectId) {
+          throw new Error(`Task '${taskId}' is not in project '${projectId}' (it is in '${String(task.row.projectId)}')`);
+        }
         const att = snapshot.findRow('attachment', attachmentId);
         if (!att) {
           throw new Error(`Unknown attachment_id '${attachmentId}'`);
@@ -330,7 +358,7 @@ export function attachmentTools(): ToolDef[] {
         let effectiveMime = normalizedMime;
         let preloadedBytes: Uint8Array | null = null;
 
-        if (normalizedMime === 'application/octet-stream') {
+        if (normalizedMime === 'application/octet-stream' && declaredSize > 0) {
           const headObj = await storage.get(key, { range: { offset: 0, length: 16 } });
           if (!headObj) return notUploaded();
           const header = new Uint8Array(await headObj.arrayBuffer());

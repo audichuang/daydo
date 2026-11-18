@@ -82,16 +82,23 @@ export function createMemoryR2(): MemoryR2Bucket {
       let end = fullLen;
       let hasRange = false;
       if (options?.range && !(options.range instanceof Headers)) {
+        if (fullLen === 0) {
+          throw new Error('The requested range is not satisfiable');
+        }
         hasRange = true;
         const r = options.range;
         if ('suffix' in r) {
+          if (r.suffix <= 0) throw new Error('The requested range is not satisfiable');
           start = Math.max(0, fullLen - r.suffix);
         } else {
           const offset = 'offset' in r ? (r.offset ?? 0) : 0;
           const length = 'length' in r ? r.length : undefined;
-          start = Math.max(0, offset);
+          if (offset < 0 || offset >= fullLen || (length !== undefined && length <= 0)) {
+            throw new Error('The requested range is not satisfiable');
+          }
+          start = offset;
           if (length !== undefined) {
-            end = Math.min(fullLen, start + Math.max(0, length));
+            end = Math.min(fullLen, start + length);
           }
         }
       }

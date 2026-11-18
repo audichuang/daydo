@@ -853,19 +853,51 @@ describe('MCP get_attachment', () => {
     }
   });
 
-  it('errors for non-members, wrong project, wrong task, deleted attachment, and deleted task', async () => {
+  it('allows reading non-deleted attachments on trashed tasks and archived lists, while rejecting purged tasks/lists, non-members, wrong project/task, and deleted attachments', async () => {
     const h = createServerHarness();
     await seedBasic(h);
     await seedUser(h, 'u-stranger', 'm-stranger');
     await h.devicePush('u-a', [
       deviceOp(h, 'project', projectRow('p2')),
+      deviceOp(h, 'project', projectRow('p-arch', { archivedAt: NOW_ISH })),
+      deviceOp(h, 'project', projectRow('p-purged')),
       deviceOp(h, 'task', taskRow('t2', 'p1')),
       deviceOp(h, 'task', taskRow('t-del', 'p1', { deletedAt: NOW_ISH })),
+      deviceOp(h, 'task', taskRow('t-arch', 'p-arch')),
+      deviceOp(h, 'task', taskRow('t-purged', 'p1', { deletedAt: NOW_ISH })),
+      deviceOp(h, 'task', taskRow('t-in-purged', 'p-purged')),
     ]);
     await seedAttachment(h, 'att-1', 't1', 2, { mimeType: 'text/plain' });
     await seedAttachment(h, 'att-del', 't1', 2, { mimeType: 'text/plain', deletedAt: NOW_ISH });
-    await seedAttachment(h, 'att-tdel', 't-del', 2, { mimeType: 'text/plain' });
+    await seedAttachment(h, 'att-tdel', 't-del', 5, { fileName: 'trashed.txt', mimeType: 'text/plain' });
+    await seedAttachment(h, 'att-arch', 't-arch', 6, { fileName: 'arch.txt', mimeType: 'text/plain' });
+    await seedAttachment(h, 'att-tpurged', 't-purged', 2, { mimeType: 'text/plain' });
+    await seedAttachment(h, 'att-ppurged', 't-in-purged', 2, { mimeType: 'text/plain' });
     await h.storage.put(attachmentObjectKey('t1', 'att-1'), new Uint8Array([1, 2]));
+    await h.storage.put(attachmentObjectKey('t-del', 'att-tdel'), new TextEncoder().encode('trash'));
+    await h.storage.put(attachmentObjectKey('t-arch', 'att-arch'), new TextEncoder().encode('archiv'));
+    await h.devicePush('u-a', [
+      { opId: 'purge-task', hlc: h.deviceHlc(), entity: 'task', entityId: 't-purged', op: 'delete', fields: [], row: {} },
+      { opId: 'purge-proj', hlc: h.deviceHlc(), entity: 'project', entityId: 'p-purged', op: 'delete', fields: [], row: {} },
+    ]);
+
+    // Trashed task attachment is readable by project member.
+    const rTrashed = await call(h, 'u-a', 'get_attachment', {
+      project_id: 'p1',
+      task_id: 't-del',
+      attachment_id: 'att-tdel',
+    });
+    expect(rTrashed.isError, rTrashed.text).toBe(false);
+    expect(rTrashed.json).toMatchObject({ id: 'att-tdel', task_id: 't-del', content: 'trash' });
+
+    // Archived list attachment is readable by project member.
+    const rArch = await call(h, 'u-a', 'get_attachment', {
+      project_id: 'p-arch',
+      task_id: 't-arch',
+      attachment_id: 'att-arch',
+    });
+    expect(rArch.isError, rArch.text).toBe(false);
+    expect(rArch.json).toMatchObject({ id: 'att-arch', task_id: 't-arch', content: 'archiv' });
 
     expect(
       (await call(h, 'u-stranger', 'get_attachment', { project_id: 'p1', task_id: 't1', attachment_id: 'att-1' })).isError,
@@ -890,7 +922,10 @@ describe('MCP get_attachment', () => {
     expect(delAtt.text).toContain('deleted');
 
     expect(
-      (await call(h, 'u-a', 'get_attachment', { project_id: 'p1', task_id: 't-del', attachment_id: 'att-tdel' })).isError,
+      (await call(h, 'u-a', 'get_attachment', { project_id: 'p1', task_id: 't-purged', attachment_id: 'att-tpurged' })).isError,
+    ).toBe(true);
+    expect(
+      (await call(h, 'u-a', 'get_attachment', { project_id: 'p-purged', task_id: 't-in-purged', attachment_id: 'att-ppurged' })).isError,
     ).toBe(true);
   });
 
@@ -1005,14 +1040,71 @@ describe('MCP get_attachment', () => {
     expect(rBad.json.content_base64).toBe(Buffer.from(invalidUtf8).toString('base64'));
     expect(rBad.json.encoding_note).toMatch(/UTF-8/i);
 
-    // Unsupported charset parameter -> fallback to content_base64 + encoding_note.
-    const rawBytes = new Uint8Array([0x00, 0x00, 0x00, 0x41]);
-    await seedAttachment(h, 'att-unsup', 't1', rawBytes.byteLength, { fileName: 'u32.txt', mimeType: 'text/plain; charset=utf-32' });
+    // Unsupported UTF-32 BOM (must not be misread as UTF-16LE) -> content_base64 + encoding_note.
+    const utf32leBom = new Uint8Array([0xff, 0xfe, 0x00, 0x00, 0x41, 0x00, 0x00, 0x00]);
+    await seedAttachment(h, 'att-u32-bom', 't1', utf32leBom.byteLength, { fileName: 'u32bom.txt', mimeType: 'text/plain' });
+    await h.storage.put(attachmentObjectKey('t1', 'att-u32-bom'), utf32leBom);
+    const rU32Bom = await call(h, 'u-a', 'get_attachment', { project_id: 'p1', task_id: 't1', attachment_id: 'att-u32-bom' });
+    expect(rU32Bom.isError).toBe(false);
+    expect(rU32Bom.json.content).toBeUndefined();
+    expect(rU32Bom.json.content_base64).toBe(Buffer.from(utf32leBom).toString('base64'));
+    expect(rU32Bom.json.encoding_note).toMatch(/UTF-32LE/i);
+
+    const utf32beBom = new Uint8Array([0x00, 0x00, 0xfe, 0xff, 0x00, 0x00, 0x00, 0x41]);
+    await seedAttachment(h, 'att-u32be-bom', 't1', utf32beBom.byteLength, { fileName: 'u32be.txt', mimeType: 'text/plain' });
+    await h.storage.put(attachmentObjectKey('t1', 'att-u32be-bom'), utf32beBom);
+    const rU32BeBom = await call(h, 'u-a', 'get_attachment', { project_id: 'p1', task_id: 't1', attachment_id: 'att-u32be-bom' });
+    expect(rU32BeBom.isError).toBe(false);
+    expect(rU32BeBom.json.content).toBeUndefined();
+    expect(rU32BeBom.json.content_base64).toBe(Buffer.from(utf32beBom).toString('base64'));
+    expect(rU32BeBom.json.encoding_note).toMatch(/UTF-32BE/i);
+
+    // Unsupported charset parameter without BOM (utf-32le) -> content_base64 + encoding_note.
+    const rawBytes = new Uint8Array([0x41, 0x00, 0x00, 0x00]);
+    await seedAttachment(h, 'att-unsup', 't1', rawBytes.byteLength, { fileName: 'u32.txt', mimeType: 'text/plain; charset=utf-32le' });
     await h.storage.put(attachmentObjectKey('t1', 'att-unsup'), rawBytes);
     const rUnsup = await call(h, 'u-a', 'get_attachment', { project_id: 'p1', task_id: 't1', attachment_id: 'att-unsup' });
     expect(rUnsup.isError).toBe(false);
     expect(rUnsup.json.content).toBeUndefined();
     expect(rUnsup.json.content_base64).toBe(Buffer.from(rawBytes).toString('base64'));
-    expect(rUnsup.json.encoding_note).toMatch(/utf-32/i);
+    expect(rUnsup.json.encoding_note).toMatch(/utf-32le/i);
+  });
+
+  it('handles 0-byte attachments without range read (both present and missing in R2), while memoryR2 rejects range on 0-byte objects', async () => {
+    const h = createServerHarness();
+    await seedBasic(h);
+    await seedAttachment(h, 'att-empty', 't1', 0, { fileName: 'empty.bin', mimeType: 'application/octet-stream' });
+    await seedAttachment(h, 'att-empty-missing', 't1', 0, { fileName: 'pending.bin', mimeType: 'application/octet-stream' });
+    await h.storage.put(attachmentObjectKey('t1', 'att-empty'), new Uint8Array(0));
+
+    // memoryR2 mirrors real R2 by throwing on range reads of 0-byte objects.
+    await expect(
+      h.storage.get(attachmentObjectKey('t1', 'att-empty'), { range: { offset: 0, length: 16 } }),
+    ).rejects.toThrow(/range/i);
+
+    const getSpy = vi.spyOn(h.storage, 'get');
+    try {
+      const rPresent = await call(h, 'u-a', 'get_attachment', {
+        project_id: 'p1',
+        task_id: 't1',
+        attachment_id: 'att-empty',
+      });
+      expect(rPresent.isError, rPresent.text).toBe(false);
+      expect(rPresent.json).toMatchObject({ id: 'att-empty', size: 0, content_base64: '' });
+
+      const rMissing = await call(h, 'u-a', 'get_attachment', {
+        project_id: 'p1',
+        task_id: 't1',
+        attachment_id: 'att-empty-missing',
+      });
+      expect(rMissing.isError, rMissing.text).toBe(false);
+      expect(rMissing.json).toMatchObject({ id: 'att-empty-missing', size: 0, available: false });
+
+      for (const [, opts] of getSpy.mock.calls) {
+        expect(opts).toBeUndefined();
+      }
+    } finally {
+      getSpy.mockRestore();
+    }
   });
 });
