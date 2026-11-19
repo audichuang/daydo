@@ -151,6 +151,8 @@ Production secrets are already set on the Worker. To change one, use `void secre
 
 R2 object storage (`STORAGE` binding via `void/storage`) is inferred from `src/deps.ts` and `void.config.ts`. During `npx void deploy --platform cloudflare`, Void automatically creates or adopts the R2 bucket `daydo-api-storage` and records it in `void.lock.json` (only needed when recreating the environment: run `CLOUDFLARE_ACCOUNT_ID=<account_id from void.lock.json> cf r2 buckets create --name daydo-api-storage` from a temp directory). Locally, `vite` / `void dev` runs an in-process R2 simulator.
 
+D1 read replication is on in production (`read_replication.mode: auto`, enabled by an older Void before it became opt-in). This is safe because every D1 session is opened in `src/deps.ts` as `first-primary`, so each request starts on the primary and later queries in it stay sequentially consistent. `void.config.ts` omits `database.readReplication`, which makes `void deploy` keep the current setting; to turn replicas off, set it to `false` and deploy (needs a token with D1 Edit). Check the current mode with `CLOUDFLARE_ACCOUNT_ID=<account_id from void.lock.json> cf d1 get <database_id>` from a temp directory.
+
 Worker ↔ Durable Object RPC changes (for example `ScopePushInput` in `src/scope/api.ts`) must be forward and backward compatible: a deploy rolls out Workers and DOs independently, so old and new versions call each other for a while. Add optional fields instead of reshaping existing ones; `tests/scope-rpc-compat.test.ts` pins the push RPC against the 701de08 Scope DO.
 
 Do not run `vite build` or other builds in this directory while `void deploy` is running: a non-deploy build rewrites `dist/` and the deploy refuses the output.
