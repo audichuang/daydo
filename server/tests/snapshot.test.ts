@@ -185,6 +185,11 @@ describe('M9a loadSnapshot', () => {
     expect(new Set(tasks.map((t) => t.row.id)).size).toBe(total);
     expect(snap.liveTasks()).toHaveLength(total);
 
+    // The default page size fits this account in a single round trip.
+    pulls.mockClear();
+    const single = await loadSnapshot(h.db, 'u-a', h.getScopeStub);
+    expect(pulls.mock.calls).toHaveLength(1);
+    expect(single.rows('task')).toHaveLength(total);
   }, 120_000);
 
   it('ends a page early when rows are large, so one RPC page stays under the size budget', async () => {

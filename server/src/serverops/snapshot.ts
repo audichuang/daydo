@@ -8,7 +8,13 @@ import type { AppDb } from '../sync/push';
 import { userScope } from '../sync/scopeName';
 import type { WriteOutcome } from './writer';
 
-const PULL_LIMIT = 1000;
+/**
+ * Rows per scope per page. Each page is a full D1 + Scope round trip (~0.5-1 s in production),
+ * so this fits the largest account (about 1,400 rows in 2026-11) in one page. Kept at 2000, not
+ * higher: pullScope loads up to limit+1 rows per entity before its size budget trims the page.
+ * Raise only after every Scope DO runs the budget (Workers and DOs roll out independently).
+ */
+const PULL_LIMIT = 2000;
 const NO_PURGED: ReadonlySet<string> = new Set();
 /** Safety valve: a scope that keeps reporting hasMore without advancing its cursor is a bug. */
 const MAX_PAGES = 1000;
