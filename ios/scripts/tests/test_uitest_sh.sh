@@ -446,6 +446,7 @@ t_test_refuses_foreign_lease() {
   run -- iphone
   eq "$RC" 8 "rc"
   has "$T/err" "dd:up:/somewhere/else" "names the owner"
+  has "$T/err" 'sim-vault release "DD iPhone 18 Pro" --lease <owner>.*不要清別人仍在用的' "tells how to clear an orphaned lease"
   hasnt "$S/events.log" "xcodebuild" "xcodebuild not called"
   eq "$(cat "$S/leases")" "dd:up:/somewhere/else" "no dd:uitest lease taken, foreign lease untouched"
 }
@@ -480,6 +481,7 @@ t_down_interleaved_lease() {
   eq "$RC" 8 "rc passed on"
   has "$T/err" "intruder" "owner reported"
   has "$S/events.log" "sim-vault shutdown-refused" "sim-vault refused"
+  has "$T/err" "worktree 已不存在" "orphan hint on down"
   [[ -e "$S/booted" ]] || fail "device must stay booted"
   eq "$(cat "$S/leases")" "intruder" "intruder lease untouched"
 }
@@ -531,6 +533,7 @@ t_park_rc_passthrough() {
   echo "dd:up:/other" >"$S/leases"
   run -- park iphone
   eq "$RC" 8 "foreign lease: sim-vault's 8 passed on"
+  has "$T/err" "worktree 已不存在" "orphan hint on park"
   eq "$(last_line "$T/out")" "park rc=8" "rc line"
   eq "$(cat "$S/leases")" "dd:up:/other" "foreign lease not cleared"
   hasnt "$S/events.log" "release .*dd:up:/other" "never releases someone else's lease"
@@ -649,6 +652,17 @@ run_record() {
   "${ENVCMD[@]}" bash --noprofile --norc "$RECORD" iphone Flow/testX "$T/rec/cal" >"$T/out" 2>"$T/err" || RC=$?
 }
 
+t_record_relative_path() {
+  mkdir -p "$T/cwd"
+  RC=0
+  (cd "$T/cwd" && "${ENVCMD[@]}" bash --noprofile --norc "$RECORD" iphone Flow/testX rec/cal) >"$T/out" 2>"$T/err" || RC=$?
+  eq "$RC" 0 "rc"
+  has "$S/events.log" "recordVideo .*--force /.*/cwd/rec/cal.mp4$" "recordVideo gets an absolute path"
+  [[ -e "$T/cwd/rec/cal.mp4" ]] || fail "video lands relative to the caller's directory"
+  [[ -e "$T/cwd/rec/cal.mp4.recordVideo.log" ]] && fail "recorder log removed after a good recording"
+  has "$T/err" "^video: rec/cal.mp4" "success line"
+}
+
 t_record_basic() {
   rm -f "$S/udid"; : >"$S/archive"
   run_record
@@ -733,7 +747,7 @@ t_up_stale_owner_record t_up_failure_keeps_record t_test_allows_own_up_lease
 t_test_refuses_foreign_lease t_test_foreign_lease_races_ensure t_down_releases_and_shuts_down
 t_down_interleaved_lease t_down_missing_device t_park_transition_guard t_down_transition_guard
 t_park_rc_passthrough t_park_lock_timeout t_old_sim_vault t_no_sim_vault t_temp_device_missing
-t_full_name_is_resident t_test_waits_for_other_xcodebuild t_release_failure_rc t_up_failed_ensure_keeps_owner t_record_basic t_record_recorder_dies_midway t_record_test_failure_rc
+t_full_name_is_resident t_test_waits_for_other_xcodebuild t_release_failure_rc t_up_failed_ensure_keeps_owner t_record_relative_path t_record_basic t_record_recorder_dies_midway t_record_test_failure_rc
 t_record_recorder_fails t_record_test_refused t_never_bypasses_sim_vault"
 SELECTED="${*:-$ALL}"
 total=0

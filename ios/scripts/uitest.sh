@@ -44,6 +44,12 @@ root="$(cd "$here/../.." && pwd -P)"
 state_dir="$HOME/Library/Developer/CoreSimulator/sim-vault"
 lock_file="$state_dir/project-locks/daydo-uitest.lock"
 lock_wait="${DD_UITEST_LOCK_WAIT:-1800}"
+# Relative to the caller's directory; the test run later cds into ios/.
+record="${DD_UITEST_RECORD:-}"
+case "$record" in ""|/*) ;; *) record="$PWD/$record" ;; esac
+orphan_hint() {
+  echo "若 owner 的 worktree 已不存在、或確認那個 session 已結束，可 \`sim-vault release \"${name}\" --lease <owner>\` 清掉；不要清別人仍在用的" >&2
+}
 test_owner="dd:uitest"
 sync_hint="先同步 audi-skill：aghub-cli source sync audichuang/audi-skill -g --update --yes"
 
@@ -236,6 +242,7 @@ if [[ "$mode" == down ]]; then
   sim-vault shutdown "$name" || rc=$?
   if [[ $rc == 8 ]]; then
     echo "還有別人在用「${name}」（上面列出 owner），沒有關機" >&2
+    orphan_hint
   fi
   exit "$rc"
 fi
@@ -250,6 +257,7 @@ if [[ "$mode" == park ]]; then
   [[ "${DD_PARK_TRIM:-}" == 1 ]] && trim=(--trim-posterboard)
   rc=0
   sim-vault park "$name" --shutdown --missing-ok ${trim[@]+"${trim[@]}"} || rc=$?
+  [[ $rc != 8 ]] || orphan_hint
   exit "$rc"
 fi
 
@@ -263,7 +271,6 @@ if [[ $resident == 0 ]]; then
   fi
 fi
 
-record="${DD_UITEST_RECORD:-}"
 rec_pid=""
 rec_log=""
 rec_failed=0
@@ -329,6 +336,7 @@ udid=$(sim-vault ensure "$name" --boot --lease "$test_owner" --deny-other-leases
   ${allow[@]+"${allow[@]}"} --wait 1800) || rc=$?
 if [[ $rc == 8 ]]; then
   echo "「${name}」正被別人使用或鎖住（見上面的 owner）；UI 測試的 -DayDoReset 會清掉 App 資料與 Keychain，不跑" >&2
+  orphan_hint
 fi
 [[ $rc == 0 ]] || exit "$rc"
 
