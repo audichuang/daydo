@@ -147,7 +147,7 @@ In a fresh checkout, link this directory to the Cloudflare account first (`.void
 npx void connect --platform cloudflare
 ```
 
-Production secrets are already set on the Worker. To change one, use `void secret put <NAME>` (reads stdin) or `void secret sync <file outside the repo> --yes`. Required: `JWT_SECRET`, `GOOGLE_AUDIENCE`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`.
+Production secrets are already set on the Worker. To change one, use `void secret put <NAME>` (reads stdin) or `void secret sync <file outside the repo> --yes`. Required: `JWT_SECRET`, `GOOGLE_AUDIENCE`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, and `SCOPE_PHYSICAL_NAMES` once a scope has been relocated (its value is in 1Password vault `Agent`, item "DayDo SCOPE_PHYSICAL_NAMES"; if it goes missing nothing errors, reads still work from the frozen old DO and every write gets HTTP 503).
 
 R2 object storage (`STORAGE` binding via `void/storage`) is inferred from `src/deps.ts` and `void.config.ts`. During `npx void deploy --platform cloudflare`, Void automatically creates or adopts the R2 bucket `daydo-api-storage` and records it in `void.lock.json` (only needed when recreating the environment: run `CLOUDFLARE_ACCOUNT_ID=<account_id from void.lock.json> cf r2 buckets create --name daydo-api-storage` from a temp directory). Locally, `vite` / `void dev` runs an in-process R2 simulator.
 
