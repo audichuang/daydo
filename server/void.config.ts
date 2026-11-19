@@ -13,6 +13,11 @@ export default defineConfig({
   "cloudflare": {
     "name": "daydo-api",
     "workers_dev": false,
+    // HiNet traffic from Taiwan enters Cloudflare at SJC; run fetch handlers next to the
+    // D1 primary (NRT) so each query does not cross the Pacific.
+    "placement": {
+      "region": "aws:ap-northeast-1"
+    },
     "preview_urls": false,
     "routes": [
       {
