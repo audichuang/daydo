@@ -215,6 +215,24 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         #expect(s.map(\.id) == ["overdue", "today", "tomorrow"])
         #expect(s[1].tasks.map(\.id) == ["allday", "late"])
     }
+
+    @Test func calendarDayTasksClipsCrossMidnightAndPlacesCompletedLast() {
+        let d0 = day("2026-11-15")
+        let d1 = day("2026-11-16")
+        var done = task("done", .allDay(d1))
+        done.status = 2
+        let tasks = [
+            done,
+            task("morning", .timed(d1, start: 480, end: 540)),
+            task("overnight", .timed(d0, start: 1410, end: 30)),
+            task("early", .timed(d0, start: 600, end: 630)),
+            task("allday", .allDay(d1)),
+        ]
+        #expect(TaskGrouping.calendarDayTasks(tasks, on: d0).map(\.id) == ["early", "overnight"])
+        // On d1: all-day first, then overnight continuation (00:00), then morning (08:00), then completed.
+        #expect(TaskGrouping.calendarDayTasks(tasks, on: d1).map(\.id) == ["allday", "overnight", "morning", "done"])
+        #expect(DayLayout.clippedRange(for: tasks[2].schedule!, on: d1)?.start == 0)
+    }
 }
 
 @Suite struct DayLayoutTests {

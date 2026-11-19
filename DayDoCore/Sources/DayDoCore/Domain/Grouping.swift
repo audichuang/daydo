@@ -2,11 +2,17 @@ import Foundation
 
 /// Pure functions that turn task lists into the sections the screens show.
 public enum TaskGrouping {
-    /// Ordering inside a section: timed items by start, then all-day/undated
-    /// by priority, then manual sort key.
-    public static func sortForDay(_ tasks: [TodoTask]) -> [TodoTask] {
-        tasks.sorted { a, b in
-            let am = a.schedule?.startMinute, bm = b.schedule?.startMinute
+    /// Ordering inside a section: all-day/undated first, then timed items by
+    /// start (clipped to `day` when provided so cross-midnight continuations
+    /// sort at 00:00), then priority, then manual sort key.
+    public static func sortForDay(_ tasks: [TodoTask], on day: LocalDay? = nil) -> [TodoTask] {
+        func startMinute(of task: TodoTask) -> Int? {
+            guard let s = task.schedule else { return nil }
+            if let day { return DayLayout.clippedRange(for: s, on: day)?.start }
+            return s.startMinute
+        }
+        return tasks.sorted { a, b in
+            let am = startMinute(of: a), bm = startMinute(of: b)
             switch (am, bm) {
             case let (x?, y?) where x != y: return x < y
             case (nil, _?): return true // all-day first, like the agenda (2a)
@@ -16,6 +22,12 @@ public enum TaskGrouping {
             if a.priority != b.priority { return a.priority > b.priority }
             return a.sortKey < b.sortKey
         }
+    }
+
+    /// Tasks occurring on `day`: active tasks sorted by day time first, then completed.
+    public static func calendarDayTasks(_ tasks: [TodoTask], on day: LocalDay) -> [TodoTask] {
+        let items = tasks.filter { $0.schedule?.occurs(on: day) == true }
+        return sortForDay(items.filter { !$0.isCompleted }, on: day) + items.filter(\.isCompleted)
     }
 
     public static func isOverdue(_ t: TodoTask, today: LocalDay) -> Bool {
@@ -249,15 +261,21 @@ public enum DayLayout {
         public var lanes: Int
     }
 
+    /// Clips a timed schedule to `day` (0..<1440 minutes), returning `nil` for all-day tasks.
+    public static func clippedRange(for schedule: Schedule, on day: LocalDay) -> (start: Int, end: Int)? {
+        guard let sm = schedule.startMinute, schedule.occurs(on: day) else { return nil }
+        let offset = schedule.startDay.days(until: day) * 1440
+        let rawEnd = schedule.endOffsetMinutes ?? (sm + 30)
+        let start = max(0, sm - offset)
+        let end = min(1440, max(rawEnd, sm + 15) - offset)
+        guard end > start else { return nil }
+        return (start, end)
+    }
+
     public static func blocks(for tasks: [TodoTask], on day: LocalDay) -> [Block] {
         var items: [(TodoTask, Int, Int)] = []
         for t in tasks {
-            guard let s = t.schedule, let sm = s.startMinute, s.occurs(on: day) else { continue }
-            let offset = s.startDay.days(until: day) * 1440
-            let rawEnd = s.endOffsetMinutes ?? (sm + 30)
-            let start = max(0, sm - offset)
-            let end = min(1440, max(rawEnd, sm + 15) - offset)
-            guard end > start else { continue }
+            guard let s = t.schedule, let (start, end) = clippedRange(for: s, on: day) else { continue }
             items.append((t, start, end))
         }
         items.sort { ($0.1, -$0.2) < ($1.1, -$1.2) }

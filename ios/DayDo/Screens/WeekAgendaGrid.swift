@@ -80,21 +80,33 @@ struct WeekAgendaGrid: View {
         let gridDays = MonthLayout.gridDays(for: month)
         let weeks = stride(from: 0, to: gridDays.count, by: 7).map { Array(gridDays[$0..<min($0 + 7, gridDays.count)]) }
         let displayedWeekStart = weekDays.first
-        let circleSize: CGFloat = isRegular ? 22 : 17
-        let dayFontSize: CGFloat = isRegular ? 12 : 10.5
 
-        return VStack(spacing: 2) {
+        let hPad: CGFloat = isRegular ? 10 : 6
+        let vPad: CGFloat = height < 105 ? 3 : 6
+        let innerH = max(0, height - vPad * 2)
+        let headerH = min(isRegular ? 15 : 13, max(10, innerH * 0.12))
+        let headerGap: CGFloat = height < 105 ? 1 : 2
+        let weekCount = max(1, weeks.count)
+        let rowGap: CGFloat = height < 105 ? 0 : 1
+        let weekAvailH = max(0, innerH - headerH - headerGap - rowGap * CGFloat(weekCount - 1))
+        let weekRowH = weekAvailH / CGFloat(weekCount)
+        let colCellW = max(0, (width - hPad * 2) / 7)
+        let circleSize = min(isRegular ? 22 : 18, max(10, min(weekRowH, colCellW) * 0.92))
+        let dayFontSize = min(isRegular ? 12 : 11, max(8, circleSize * 0.64))
+        let weekdayFontSize = min(isRegular ? 11 : 10, max(8, headerH * 0.78))
+
+        return VStack(spacing: headerGap) {
             HStack(spacing: 0) {
                 ForEach(LocalDay.weekdaySymbols, id: \.self) { symbol in
                     Text(symbol)
-                        .font(.system(size: isRegular ? 11 : 10, weight: .medium))
+                        .font(.system(size: weekdayFontSize, weight: .medium))
                         .foregroundStyle(Palette.textTertiary)
                         .frame(maxWidth: .infinity)
                 }
             }
-            .frame(height: isRegular ? 15 : 13)
+            .frame(height: headerH)
 
-            VStack(spacing: 1) {
+            VStack(spacing: rowGap) {
                 ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
                     let isDisplayedWeek = week.first == displayedWeekStart
                     HStack(spacing: 0) {
@@ -115,97 +127,121 @@ struct WeekAgendaGrid: View {
                             .hoverEffect(.highlight)
                             .opacity(inMonth ? 1 : (isDisplayedWeek ? 0.65 : 0.35))
                             .accessibilityIdentifier("weekAgendaMini-\(d)")
-                            .accessibilityLabel(DateText.full(d))
+                            .accessibilityLabel(isToday ? "\(DateText.full(d))，今天" : DateText.full(d))
+                            .accessibilityValue(isDisplayedWeek ? "目前顯示的週" : "")
                         }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: weekRowH)
                     .background(Capsule().fill(isDisplayedWeek ? accent.soft : .clear))
                 }
             }
         }
-        .padding(.horizontal, isRegular ? 10 : 6)
-        .padding(.vertical, 6)
+        .padding(.horizontal, hPad)
+        .padding(.vertical, vPad)
         .frame(width: width, height: height, alignment: .top)
         .clipped()
     }
 
     // MARK: Day Cell (Cells 1..7)
 
-    private func tasksForDay(_ d: LocalDay) -> [TodoTask] {
-        let items = tasks.filter { $0.schedule?.occurs(on: d) == true }
-        let active = TaskGrouping.sortForDay(items.filter { !model.displaysCompleted($0) })
-        let done = TaskGrouping.sortForDay(items.filter { model.displaysCompleted($0) })
-        return active + done
-    }
-
-    private func dayCell(_ d: LocalDay, width: CGFloat, height: CGFloat) -> some View {
-        let isToday = d == today
-        let headerH: CGFloat = isRegular ? 24 : 22
-        let itemH: CGFloat = isRegular ? 22 : 19
-        let itemSpacing: CGFloat = 2
-        let listH = max(0, height - 6 - headerH - 4 - 4)
-        let maxSlots = max(0, Int((listH + itemSpacing) / (itemH + itemSpacing)))
-
-        let dayTasks = tasksForDay(d)
-        let hasOverflow = dayTasks.count > maxSlots
-        let visibleCount = hasOverflow ? max(0, maxSlots - 1) : dayTasks.count
-        let visibleTasks = Array(dayTasks.prefix(visibleCount))
-        let overflowCount = dayTasks.count - visibleCount
-
-        return ZStack(alignment: .topLeading) {
+    @ViewBuilder
+    private func emptyDayTapTarget(_ d: LocalDay) -> some View {
+        if isViewerFilter {
+            Color.clear.accessibilityHidden(true)
+        } else {
             Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture { tapEmpty(d) }
                 .accessibilityElement()
                 .accessibilityAddTraits(.isButton)
                 .accessibilityLabel("\(DateText.full(d))，點兩下新增任務")
-                .accessibilityHidden(isViewerFilter)
+                .accessibilityAction { tapEmpty(d) }
+        }
+    }
+
+    private func overflowButton(_ d: LocalDay, count: Int, height: CGFloat, alignment: Alignment) -> some View {
+        Button { openDay(d) } label: {
+            Text("+\(count)")
+                .font(.system(size: isRegular ? 12 : 11, weight: .semibold))
+                .foregroundStyle(accent.text)
+                .padding(.horizontal, 4)
+                .frame(maxWidth: alignment == .leading ? .infinity : nil, alignment: alignment)
+                .frame(height: height)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.press(scale: 0.96, opacity: 0.85))
+        .hoverEffect(.highlight)
+        .accessibilityIdentifier("weekAgendaMore-\(d)")
+        .accessibilityLabel("還有 \(count) 項任務，點按切換至單日檢視")
+    }
+
+    private func dayCell(_ d: LocalDay, width: CGFloat, height: CGFloat) -> some View {
+        let isToday = d == today
+        let hPad: CGFloat = isRegular ? 10 : 6
+        let vPadTop: CGFloat = height < 105 ? 3 : 6
+        let vPadBot: CGFloat = height < 105 ? 2 : 4
+        let headerGap: CGFloat = height < 105 ? 2 : 4
+        let headerH: CGFloat = isRegular ? 24 : 22
+        let itemH: CGFloat = isRegular ? 22 : 19
+        let itemSpacing: CGFloat = 2
+        let listH = max(0, height - vPadTop - headerH - headerGap - vPadBot)
+        let maxSlots = max(0, Int((listH + itemSpacing) / (itemH + itemSpacing)))
+
+        let dayTasks = TaskGrouping.calendarDayTasks(tasks, on: d)
+        let hasOverflow = dayTasks.count > maxSlots
+        let visibleCount = hasOverflow ? max(0, maxSlots - 1) : dayTasks.count
+        let visibleTasks = Array(dayTasks.prefix(visibleCount))
+        let overflowCount = dayTasks.count - visibleCount
+        let inlineOverflowInHeader = hasOverflow && maxSlots == 0
+
+        return ZStack(alignment: .topLeading) {
+            emptyDayTapTarget(d)
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 4) {
-                    Text("週\(LocalDay.weekdaySymbols[d.weekday])")
-                        .font(.system(size: isRegular ? 13 : 12, weight: isToday ? .bold : .semibold))
-                        .foregroundStyle(isToday ? accent.text : Palette.textSecondary)
-                    Text("\(d.day)")
-                        .font(.system(size: isRegular ? 13 : 12, weight: isToday ? .bold : .semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(isToday ? accent.onAccent : Palette.text)
-                        .frame(width: isToday ? (isRegular ? 22 : 20) : nil, height: isToday ? (isRegular ? 22 : 20) : nil)
-                        .background {
-                            if isToday {
-                                Circle().fill(accent.color)
+                    HStack(spacing: 4) {
+                        Text("週\(LocalDay.weekdaySymbols[d.weekday])")
+                            .font(.system(size: isRegular ? 13 : 12, weight: isToday ? .bold : .semibold))
+                            .foregroundStyle(isToday ? accent.text : Palette.textSecondary)
+                        Text("\(d.day)")
+                            .font(.system(size: isRegular ? 13 : 12, weight: isToday ? .bold : .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(isToday ? accent.onAccent : Palette.text)
+                            .frame(width: isToday ? (isRegular ? 22 : 20) : nil, height: isToday ? (isRegular ? 22 : 20) : nil)
+                            .background {
+                                if isToday {
+                                    Circle().fill(accent.color)
+                                }
                             }
-                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(isToday ? "\(DateText.full(d))，今天" : DateText.full(d))
+                    .allowsHitTesting(false)
+
                     Spacer(minLength: 0)
+
+                    if inlineOverflowInHeader {
+                        overflowButton(d, count: overflowCount, height: headerH, alignment: .trailing)
+                    }
                 }
                 .frame(height: headerH)
-                .padding(.bottom, 4)
-                .allowsHitTesting(false)
+                .padding(.bottom, headerGap)
 
-                VStack(alignment: .leading, spacing: itemSpacing) {
-                    ForEach(visibleTasks) { task in
-                        taskRow(task, cellWidth: width - (isRegular ? 20 : 12), rowHeight: itemH)
-                    }
-                    if hasOverflow {
-                        Button { openDay(d) } label: {
-                            Text("+\(overflowCount)")
-                                .font(.system(size: isRegular ? 12 : 11, weight: .semibold))
-                                .foregroundStyle(accent.text)
-                                .padding(.horizontal, 4)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .frame(height: itemH)
-                                .contentShape(Rectangle())
+                if !visibleTasks.isEmpty || (hasOverflow && !inlineOverflowInHeader) {
+                    VStack(alignment: .leading, spacing: itemSpacing) {
+                        ForEach(visibleTasks) { task in
+                            taskRow(task, on: d, cellWidth: width - hPad * 2, rowHeight: itemH)
                         }
-                        .buttonStyle(.press(scale: 0.96, opacity: 0.85))
-                        .hoverEffect(.highlight)
-                        .accessibilityIdentifier("weekAgendaMore-\(d)")
-                        .accessibilityLabel("還有 \(overflowCount) 項任務，點按切換至單日檢視")
+                        if hasOverflow && !inlineOverflowInHeader {
+                            overflowButton(d, count: overflowCount, height: itemH, alignment: .leading)
+                        }
                     }
                 }
             }
-            .padding(.horizontal, isRegular ? 10 : 6)
-            .padding(.top, 6)
-            .padding(.bottom, 4)
+            .padding(.horizontal, hPad)
+            .padding(.top, vPadTop)
+            .padding(.bottom, vPadBot)
         }
         .frame(width: width, height: height, alignment: .topLeading)
         .clipped()
@@ -213,11 +249,11 @@ struct WeekAgendaGrid: View {
         .accessibilityIdentifier("weekAgendaDay-\(d)")
     }
 
-    private func taskRow(_ task: TodoTask, cellWidth: CGFloat, rowHeight: CGFloat) -> some View {
+    private func taskRow(_ task: TodoTask, on day: LocalDay, cellWidth: CGFloat, rowHeight: CGFloat) -> some View {
         let color = Palette.listColor(model.project(task.projectId)?.color)
         let isDone = model.displaysCompleted(task)
         let owner = partnerOwner(for: task, show: showOwnerAvatars, members: model.members)
-        let startMinute = task.schedule?.startMinute
+        let startMinute = task.schedule.flatMap { DayLayout.clippedRange(for: $0, on: day)?.start }
         let avatarSize: CGFloat = isRegular ? 15 : 13
         let strokeWidth: CGFloat = 1
         let timeWidth: CGFloat = startMinute == nil ? 0 : (isRegular ? 36 : 33)
@@ -256,13 +292,13 @@ struct WeekAgendaGrid: View {
         }
         .buttonStyle(.press(scale: 0.97, opacity: 0.88))
         .hoverEffect(.highlight)
-        .accessibilityLabel(taskAccessibilityLabel(task, isDone: isDone))
+        .accessibilityLabel(taskAccessibilityLabel(task, startMinute: startMinute, isDone: isDone))
         .accessibilityValue(owner.map { "\($0.name)的" } ?? "")
     }
 
-    private func taskAccessibilityLabel(_ task: TodoTask, isDone: Bool) -> String {
+    private func taskAccessibilityLabel(_ task: TodoTask, startMinute: Int?, isDone: Bool) -> String {
         var parts = [task.title]
-        if let m = task.schedule?.startMinute {
+        if let m = startMinute {
             parts.append(DateText.hm(m))
         }
         if isDone {

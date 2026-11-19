@@ -190,7 +190,7 @@ struct CalendarScreen: View {
         }
         if mode == .week {
             HeaderAction(
-                systemName: weekAgendaStyle ? "rectangle.split.3x1" : "square.grid.2x2",
+                systemName: weekAgendaStyle ? "calendar.day.timeline.left" : "square.grid.2x2",
                 label: weekAgendaStyle ? "切換為週時間軸" : "切換為週清單"
             ) {
                 shiftDir = 0
@@ -531,7 +531,7 @@ struct CalendarScreen: View {
                     if mode == .week && weekAgendaStyle {
                         WeekAgendaGrid(
                             weekDays: rangeDays,
-                            month: sel.firstOfMonth,
+                            month: (rangeDays.first ?? sel).firstOfMonth,
                             tasks: displayedTasks,
                             today: model.today,
                             isRegular: isRegular,
@@ -553,7 +553,7 @@ struct CalendarScreen: View {
                                 let dir = weekChanged ? (newWeekStart > oldWeekStart ? 1 : -1) : 0
                                 shiftPage(direction: dir, token: Motion.page, haptic: .selection, bumpPage: weekChanged) {
                                     selected = d
-                                    month = d.firstOfMonth
+                                    month = newWeekStart.firstOfMonth
                                 }
                             }
                         )
@@ -729,8 +729,7 @@ struct CalendarScreen: View {
     }
 
     var dayItems: [TodoTask] {
-        let items = filtered.filter { $0.schedule?.occurs(on: sel) == true }
-        return TaskGrouping.sortForDay(items.filter { !$0.isCompleted }) + items.filter(\.isCompleted)
+        TaskGrouping.calendarDayTasks(filtered, on: sel)
     }
 
     var dayTitle: String { DateText.monthDay(sel).replacingOccurrences(of: " ", with: "") + (sel == model.today ? "・今天" : "") }

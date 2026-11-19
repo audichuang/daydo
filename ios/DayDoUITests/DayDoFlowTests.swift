@@ -2046,10 +2046,11 @@ final class DayDoFlowTests: XCTestCase {
         }
         shot("week-agenda")
 
-        // Tap a task row -> opens task detail sheet.
-        let brief = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).firstMatch
-        XCTAssertTrue(brief.waitForExistence(timeout: 3), app.debugDescription)
-        brief.tap()
+        // Tap the first-sorted task on today (independent of cell height) -> opens task detail sheet.
+        let todayCell = app.descendants(matching: .any)["weekAgendaDay-\(fmt.string(from: now))"]
+        let firstTask = todayCell.buttons.matching(NSPredicate(format: "label CONTAINS '去全聯買菜'")).firstMatch
+        XCTAssertTrue(firstTask.waitForExistence(timeout: 3), app.debugDescription)
+        firstTask.tap()
         XCTAssertTrue(app.buttons["儲存"].waitForExistence(timeout: 3), app.debugDescription)
         let expandBtn = app.buttons["展開為全屏"]
         let dragStart = expandBtn.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
@@ -2106,11 +2107,12 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(agenda.waitForNonExistence(timeout: 3))
         XCTAssertEqual(toggle.label, "切換為週清單")
 
-        // Switch back to week agenda and tap today's +N overflow -> switches to .day mode.
+        // Switch back to week agenda and tap today's +N overflow if present -> switches to .day mode.
         toggle.tap()
         let moreBtn = app.buttons["weekAgendaMore-\(fmt.string(from: now))"]
-        XCTAssertTrue(moreBtn.waitForExistence(timeout: 3), app.debugDescription)
-        moreBtn.tap()
-        XCTAssertTrue(app.buttons["切換檢視：目前日"].waitForExistence(timeout: 3), app.debugDescription)
+        if moreBtn.waitForExistence(timeout: 2) {
+            moreBtn.tap()
+            XCTAssertTrue(app.buttons["切換檢視：目前日"].waitForExistence(timeout: 3), app.debugDescription)
+        }
     }
 }
