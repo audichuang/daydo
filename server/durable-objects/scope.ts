@@ -119,8 +119,8 @@ export class ScopeObject extends DurableObject<CloudBindings> {
   }
 
   pull(input: Api.ScopePullInput): Api.ScopePullResponse {
+    Relocation.assertScopeReadable(this.ctx.storage.sql);
     const state = Relocation.getRelocationState(this.ctx.storage.sql);
-    if (state === 'importing') throw new Relocation.ScopeRelocatingError(state);
     if (state === 'live' && input.expectedProjectMembers) {
       this.reconcileProjectMembers(input.expectedProjectMembers);
     }
@@ -148,7 +148,7 @@ export class ScopeObject extends DurableObject<CloudBindings> {
   }
 
   purgeFrozenData(input: Api.ScopePurgeFrozenInput): Api.ScopePurgeFrozenResponse {
-    return this.ctx.storage.transactionSync(() => Relocation.purgeFrozenData(this.ctx.storage.sql, input));
+    return this.ctx.storage.transactionSync(() => Relocation.purgeFrozenData(this.ctx.storage.sql, input, Date.now()));
   }
 }
 

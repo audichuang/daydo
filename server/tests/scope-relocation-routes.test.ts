@@ -274,7 +274,25 @@ describe('POST /admin/scope-relocation', () => {
         })
       ).status,
     ).toBe(200);
-    expect((await call({ action: 'unfreeze', physical: 'u:u-a' })).status).toBe(200);
+
+    // purge-frozen: refused while u:u-a is not routed to the copy, allowed once it is.
+    const oldSeq = (await call({ action: 'status', physical: 'u:u-a' })).json.maxServerSeq;
+    expect((await call({ action: 'purge-frozen', physical: 'u:u-a', expectMaxServerSeq: oldSeq })).status).toBe(409);
+    const callMapped = async (body: Record<string, unknown>) => {
+      const res = await admin(
+        makeContext({ headers: auth, body, envOverrides: { SCOPE_PHYSICAL_NAMES: JSON.stringify({ 'u:u-a': 'u:u-a:nrt1' }) } }),
+      );
+      return { status: res.status, json: (await res.json()) as Record<string, any> };
+    };
+    expect((await callMapped({ action: 'purge-frozen', physical: 'u:u-a', expectMaxServerSeq: oldSeq + 1 })).status).toBe(409);
+    expect((await callMapped({ action: 'purge-frozen', physical: 'u:u-a:nrt1', expectMaxServerSeq: oldSeq })).status).toBe(409);
+    const purged = await callMapped({ action: 'purge-frozen', physical: 'u:u-a', expectMaxServerSeq: oldSeq });
+    expect(purged.status).toBe(200);
+    expect(purged.json.state).toBe('frozen');
+    expect((await call({ action: 'status', physical: 'u:u-a' })).json.tables.project).toBe(0);
+    expect((await call({ action: 'status', physical: 'u:u-a:nrt1' })).json.tables.project).toBe(1);
+    // A purged old DO can never be unfrozen.
+    expect((await call({ action: 'unfreeze', physical: 'u:u-a' })).status).toBe(409);
   });
 });
 

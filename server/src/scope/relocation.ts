@@ -14,7 +14,7 @@ import type {
   ScopeTableDigest,
 } from './api';
 import { MAX_PULL_PAGE_CHARS } from './pull';
-import { RELOCATION_STATE_TABLE } from './schema';
+import { RELOCATION_PURGED_TABLE, RELOCATION_STATE_TABLE } from './schema';
 import { Sha256 } from './sha256';
 
 export const SCOPE_RELOCATING_CODE = 'SCOPE_RELOCATING';
@@ -69,9 +69,14 @@ export function assertScopeWritable(sql: SqlStorage): void {
   }
 }
 
+export function isScopePurged(sql: SqlStorage): boolean {
+  return sql.exec(`SELECT 1 FROM "${RELOCATION_PURGED_TABLE}" WHERE id = 1`).toArray().length > 0;
+}
+
+/** Reads are refused while importing, and on a purged old DO (an empty page must never look like a complete sync). */
 export function assertScopeReadable(sql: SqlStorage): void {
   const state = getRelocationState(sql);
-  if (state === 'importing') {
+  if (state === 'importing' || isScopePurged(sql)) {
     throw new ScopeRelocatingError(state);
   }
 }
@@ -93,7 +98,7 @@ export function listRelocationTables(sql: SqlStorage): string[] {
       tables.push(name);
       continue;
     }
-    if (name === RELOCATION_STATE_TABLE) continue;
+    if (name === RELOCATION_STATE_TABLE || name === RELOCATION_PURGED_TABLE) continue;
     if (name.startsWith('sqlite_') || name.startsWith('_')) continue;
     tables.push(name);
   }
@@ -222,6 +227,9 @@ export function setRelocationState(
   }
   if (!isAllowedTransition(current, input.state)) {
     throw conflictError(`Illegal relocation state transition: '${current}' -> '${input.state}'`);
+  }
+  if (isScopePurged(sql)) {
+    throw conflictError('Scope data was purged after relocation; its state can no longer change');
   }
 
   if (current === 'live' && input.state === 'importing') {
@@ -434,7 +442,11 @@ export function computeScopeDigest(sql: SqlStorage): ScopeDigest {
  * Deletes every row of a relocated (frozen) old DO and keeps it frozen, so the empty object still
  * rejects writes instead of silently accepting them. The caller runs it in one storage transaction.
  */
-export function purgeFrozenData(sql: SqlStorage, input: ScopePurgeFrozenInput): ScopePurgeFrozenResponse {
+export function purgeFrozenData(
+  sql: SqlStorage,
+  input: ScopePurgeFrozenInput,
+  nowMs: number,
+): ScopePurgeFrozenResponse {
   const state = getRelocationState(sql);
   if (state !== 'frozen') {
     throw conflictError(`purgeFrozenData requires state 'frozen' (actual: '${state}')`);
@@ -453,5 +465,6 @@ export function purgeFrozenData(sql: SqlStorage, input: ScopePurgeFrozenInput): 
     deleted[table] = rows.length > 0 ? Number(rows[0].n) : 0;
     sql.exec(`DELETE FROM "${table}"`);
   }
+  sql.exec(`INSERT OR IGNORE INTO "${RELOCATION_PURGED_TABLE}" (id, purgedAt) VALUES (1, ?)`, nowMs);
   return { deleted, state: getRelocationState(sql) };
 }

@@ -10,6 +10,7 @@ export const POST = defineHandler(async (c) => {
     authorizationHeader: c.req.header('Authorization'),
     readBody: () => readJsonObject(c),
     getPhysicalScopeStub: (physical) => productionAppDeps(c.env).getPhysicalScopeStub(physical),
+    resolveScopePhysical: (logical) => productionAppDeps(c.env).resolveScopePhysical(logical),
   });
   return c.json(result.body, result.status);
 });

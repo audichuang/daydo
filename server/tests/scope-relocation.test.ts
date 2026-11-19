@@ -8,7 +8,7 @@ import { syncDueSources, syncSource } from '../src/ics/engine';
 import { D1IcsStore } from '../src/ics/store';
 import { handleToolCall } from '../src/mcp/registry';
 import { isScopeRelocatingError, listRelocationTables } from '../src/scope/relocation';
-import { ensureScopeSchema, RELOCATION_STATE_TABLE } from '../src/scope/schema';
+import { ensureScopeSchema, RELOCATION_PURGED_TABLE, RELOCATION_STATE_TABLE } from '../src/scope/schema';
 import { Sha256, sha256HexSync } from '../src/scope/sha256';
 import { acceptInvite, createInvite } from '../src/sharing';
 import { ScopeClass } from './helpers/scopeWorld';
@@ -59,7 +59,8 @@ describe('table coverage', () => {
     expect(createdTables.length).toBeGreaterThan(10);
     expect(createdTables).toContain(RELOCATION_STATE_TABLE);
 
-    const expected = createdTables.filter((t) => t !== RELOCATION_STATE_TABLE);
+    expect(createdTables).toContain(RELOCATION_PURGED_TABLE);
+    const expected = createdTables.filter((t) => t !== RELOCATION_STATE_TABLE && t !== RELOCATION_PURGED_TABLE);
     const doState = createTestDoState();
     const scope = new ScopeClass(doState.ctx, { SYNC_FAULT: 'none' });
 
@@ -935,5 +936,13 @@ describe('purgeFrozenData on a relocated old DO', () => {
     await expect(
       scope.push({ scope: 'u:u-a', scopeUserId: 'u-a', pusherUserId: 'u-a', deviceId: 'dev-a', memberships: { p1: 'owner' }, purgedProjects: [], meMemberId: null, ops: [] }),
     ).rejects.toThrow(/relocating/i);
+
+    // A purged DO must not answer reads with an empty "complete" page, and can never be unfrozen.
+    expect(() =>
+      scope.pull({ scope: 'u:u-a', scopeUserId: 'u-a', requesterUserId: 'u-a', since: 0, limit: 100, memberships: { p1: 'owner' }, meMemberId: null }),
+    ).toThrow(/relocating/i);
+    expect(() => scope.getInboxProjectId({ readableProjectIds: ['p1'] })).toThrow(/relocating/i);
+    expect(() => scope.setRelocationState({ state: 'live', expect: 'frozen' })).toThrow(/purged/);
+    expect(scope.relocationStatus().state).toBe('frozen');
   });
 });
