@@ -150,6 +150,13 @@ export async function handleScopeRelocationAdmin(
       }
       case 'digest':
         return { status: 200, body: { ...(await stub.digest()) } };
+      case 'purge-frozen': {
+        const expectMaxServerSeq = body.expectMaxServerSeq;
+        if (typeof expectMaxServerSeq !== 'number' || !Number.isSafeInteger(expectMaxServerSeq) || expectMaxServerSeq < 0) {
+          return { status: 400, body: { error: 'expectMaxServerSeq must be a non-negative integer for purge-frozen' } };
+        }
+        return { status: 200, body: { ...(await stub.purgeFrozenData({ expectMaxServerSeq })) } };
+      }
       default:
         return { status: 400, body: { error: `Unknown action '${action}'` } };
     }

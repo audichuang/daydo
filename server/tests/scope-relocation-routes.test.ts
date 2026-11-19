@@ -225,6 +225,11 @@ describe('POST /admin/scope-relocation', () => {
     // Unknown action -> 400
     expect((await call({ action: 'nuke', physical: 'u:u-a' })).status).toBe(400);
 
+    // purge-frozen: needs expectMaxServerSeq (400) and a frozen DO (409)
+    expect((await call({ action: 'purge-frozen', physical: 'u:u-a' })).status).toBe(400);
+    expect((await call({ action: 'purge-frozen', physical: 'u:u-a', expectMaxServerSeq: st.json.maxServerSeq })).status).toBe(409);
+    expect((await call({ action: 'status', physical: 'u:u-a' })).json.tables.project).toBe(1);
+
     // Freeze old, begin-import new, copy, verify digest, finish-import
     expect((await call({ action: 'freeze', physical: 'u:u-a' })).status).toBe(200);
     expect((await call({ action: 'begin-import', physical: 'u:u-a:nrt1' })).status).toBe(200);

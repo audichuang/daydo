@@ -890,3 +890,50 @@ describe('D1 + Scope push retry consistency after 503', () => {
     expect(homes).toEqual([{ entity: 'task', entityId: 't-new', scope: 'u:u-a' }]);
   });
 });
+
+describe('purgeFrozenData on a relocated old DO', () => {
+  async function seededScope() {
+    const doState = createTestDoState();
+    const scope = new ScopeClass(doState.ctx, { SYNC_FAULT: 'none' }, true);
+    const hlc = `${Date.now()}:0000:dev-a`;
+    const res = await scope.push({
+      scope: 'u:u-a',
+      scopeUserId: 'u-a',
+      pusherUserId: 'u-a',
+      deviceId: 'dev-a',
+      memberships: { p1: 'owner' },
+      purgedProjects: [],
+      meMemberId: null,
+      ops: [
+        { opId: 'op-p1', hlc, entity: 'project', entityId: 'p1', op: 'upsert', fields: Object.keys(projectRow('p1', { isInbox: true, ownerId: 'm-a' })), row: projectRow('p1', { isInbox: true, ownerId: 'm-a' }) },
+        { opId: 'op-t1', hlc: `${Date.now()}:0001:dev-a`, entity: 'task', entityId: 't1', op: 'upsert', fields: Object.keys(taskRow('t1', 'p1')), row: taskRow('t1', 'p1') },
+      ],
+    });
+    expect(res.results.every((r) => r.status === 'applied')).toBe(true);
+    return scope;
+  }
+
+  it('refuses a live DO and a wrong expectMaxServerSeq, then empties a frozen DO and keeps it frozen', async () => {
+    const scope = await seededScope();
+    const before = scope.relocationStatus();
+    expect(before.maxServerSeq).toBeGreaterThan(0);
+
+    expect(() => scope.purgeFrozenData({ expectMaxServerSeq: before.maxServerSeq })).toThrow(/frozen/);
+    scope.setRelocationState({ state: 'frozen', expect: 'live' });
+    expect(() => scope.purgeFrozenData({ expectMaxServerSeq: before.maxServerSeq + 1 })).toThrow(/mismatch/);
+    expect(scope.relocationStatus().tables.task).toBe(1);
+
+    const res = scope.purgeFrozenData({ expectMaxServerSeq: before.maxServerSeq });
+    expect(res.state).toBe('frozen');
+    expect(res.deleted.task).toBe(1);
+    expect(res.deleted.opApplied).toBeGreaterThan(0);
+
+    const after = scope.relocationStatus();
+    expect(after.state).toBe('frozen');
+    expect(Object.values(after.tables).every((n) => n === 0)).toBe(true);
+    expect(after.maxServerSeq).toBe(0);
+    await expect(
+      scope.push({ scope: 'u:u-a', scopeUserId: 'u-a', pusherUserId: 'u-a', deviceId: 'dev-a', memberships: { p1: 'owner' }, purgedProjects: [], meMemberId: null, ops: [] }),
+    ).rejects.toThrow(/relocating/i);
+  });
+});

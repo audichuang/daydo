@@ -146,6 +146,10 @@ export class ScopeObject extends DurableObject<CloudBindings> {
   digest(): Api.ScopeDigest {
     return Relocation.computeScopeDigest(this.ctx.storage.sql);
   }
+
+  purgeFrozenData(input: Api.ScopePurgeFrozenInput): Api.ScopePurgeFrozenResponse {
+    return this.ctx.storage.transactionSync(() => Relocation.purgeFrozenData(this.ctx.storage.sql, input));
+  }
 }
 
 export const Scope = defineDurableObject({

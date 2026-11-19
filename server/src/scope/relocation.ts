@@ -5,6 +5,8 @@ import type {
   ScopeExportPageResponse,
   ScopeImportPageInput,
   ScopeImportPageResponse,
+  ScopePurgeFrozenInput,
+  ScopePurgeFrozenResponse,
   ScopeRelocationState,
   ScopeRelocationStatus,
   ScopeSetRelocationStateInput,
@@ -426,4 +428,30 @@ export function computeScopeDigest(sql: SqlStorage): ScopeDigest {
   }
 
   return { state, tables };
+}
+
+/**
+ * Deletes every row of a relocated (frozen) old DO and keeps it frozen, so the empty object still
+ * rejects writes instead of silently accepting them. The caller runs it in one storage transaction.
+ */
+export function purgeFrozenData(sql: SqlStorage, input: ScopePurgeFrozenInput): ScopePurgeFrozenResponse {
+  const state = getRelocationState(sql);
+  if (state !== 'frozen') {
+    throw conflictError(`purgeFrozenData requires state 'frozen' (actual: '${state}')`);
+  }
+  const expect = input?.expectMaxServerSeq;
+  if (typeof expect !== 'number' || !Number.isSafeInteger(expect) || expect < 0) {
+    throw badRequestError('expectMaxServerSeq must be a non-negative integer');
+  }
+  const actual = getRelocationStatus(sql).maxServerSeq;
+  if (actual !== expect) {
+    throw conflictError(`maxServerSeq mismatch: expected ${expect}, actual ${actual}`);
+  }
+  const deleted: Record<string, number> = {};
+  for (const table of listRelocationTables(sql)) {
+    const rows = sql.exec(`SELECT COUNT(*) AS n FROM "${table}"`).toArray();
+    deleted[table] = rows.length > 0 ? Number(rows[0].n) : 0;
+    sql.exec(`DELETE FROM "${table}"`);
+  }
+  return { deleted, state: getRelocationState(sql) };
 }
