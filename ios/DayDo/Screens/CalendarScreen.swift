@@ -532,6 +532,7 @@ struct CalendarScreen: View {
                         WeekAgendaGrid(
                             weekDays: rangeDays,
                             month: (rangeDays.first ?? sel).firstOfMonth,
+                            selected: sel,
                             tasks: displayedTasks,
                             today: model.today,
                             isRegular: isRegular,
@@ -553,7 +554,7 @@ struct CalendarScreen: View {
                                 let dir = weekChanged ? (newWeekStart > oldWeekStart ? 1 : -1) : 0
                                 shiftPage(direction: dir, token: Motion.page, haptic: .selection, bumpPage: weekChanged) {
                                     selected = d
-                                    month = newWeekStart.firstOfMonth
+                                    month = d.firstOfMonth
                                 }
                             }
                         )
@@ -907,7 +908,7 @@ struct TimelineAgendaRow: View {
         let owner = partnerOwner(for: task, show: showOwnerAvatar, members: model.members)
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .trailing, spacing: 0) {
-                if let m = task.schedule?.startMinute {
+                if let m = task.schedule.flatMap({ DayLayout.clippedRange(for: $0, on: day)?.start }) {
                     Text(DateText.hm(m)).font(.system(size: 15)).foregroundStyle(Palette.textSecondary)
                 }
             }

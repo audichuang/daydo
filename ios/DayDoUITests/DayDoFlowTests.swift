@@ -2058,11 +2058,10 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(expandBtn.waitForNonExistence(timeout: 3))
 
         // Tap a mini-month day in another week -> changes the displayed week.
-        let dayOfMonth = cal.component(.day, from: now)
-        let otherWeekOffset = dayOfMonth <= 15 ? 7 : -7
-        let otherDay = cal.date(byAdding: .day, value: otherWeekOffset, to: now)!
-        let otherSunday = cal.date(byAdding: .day, value: -weekday, to: otherDay)!
-        let miniBtn = app.buttons["weekAgendaMini-\(fmt.string(from: otherDay))"]
+        let sundayDayOfMonth = cal.component(.day, from: sunday)
+        let otherWeekOffset = sundayDayOfMonth <= 14 ? 7 : -7
+        let otherSunday = cal.date(byAdding: .day, value: otherWeekOffset, to: sunday)!
+        let miniBtn = app.buttons["weekAgendaMini-\(fmt.string(from: otherSunday))"]
         XCTAssertTrue(miniBtn.waitForExistence(timeout: 3), app.debugDescription)
         miniBtn.tap()
 
@@ -2079,6 +2078,18 @@ final class DayDoFlowTests: XCTestCase {
             .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: endX, dy: 0.45)))
         XCTAssertTrue(currentSundayCell.waitForExistence(timeout: 3), app.debugDescription)
 
+        // Tap a different mini-month day in the same week -> selects it without changing the displayed week.
+        let sameWeekOffset = weekday == 0 ? 1 : 0
+        let sameWeekDay = cal.date(byAdding: .day, value: sameWeekOffset, to: sunday)!
+        let sameWeekStr = fmt.string(from: sameWeekDay)
+        let sameWeekMiniBtn = app.buttons["weekAgendaMini-\(sameWeekStr)"]
+        XCTAssertTrue(sameWeekMiniBtn.waitForExistence(timeout: 3), app.debugDescription)
+        sameWeekMiniBtn.tap()
+        XCTAssertTrue(sameWeekMiniBtn.isSelected, "Selected mini-month button should have isSelected trait")
+        let sameWeekDayCell = app.descendants(matching: .any)["weekAgendaDay-\(sameWeekStr)"]
+        XCTAssertTrue(sameWeekDayCell.isSelected, "Selected day cell should have isSelected trait")
+        XCTAssertTrue(currentSundayCell.exists, "Tapping a day in the same week must not change the displayed week")
+
         // Tap empty space in a sparse day cell (<= 1 task in DemoData) -> opens composer.
         let sparseOffset = weekday <= 4 ? weekday + 2 : weekday - 5
         let sparseDay = cal.date(byAdding: .day, value: sparseOffset, to: sunday)!
@@ -2091,7 +2102,7 @@ final class DayDoFlowTests: XCTestCase {
         app.buttons["關閉"].tap()
         XCTAssertTrue(composerTitle.waitForNonExistence(timeout: 3))
 
-        // Capture light appearance too.
+        // Capture light appearance (100%) and 130% text scale screenshots.
         app.buttons["設定"].firstMatch.tap()
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH '外觀'")).firstMatch.tap()
         let lightChip = app.buttons["淺色"]
@@ -2101,18 +2112,31 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(agenda.waitForExistence(timeout: 3))
         shot("week-agenda-light")
 
+        app.buttons["設定"].firstMatch.tap()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH '外觀'")).firstMatch.tap()
+        let scale130 = app.buttons["130%"]
+        XCTAssertTrue(scale130.waitForExistence(timeout: 3), app.debugDescription)
+        scale130.tap()
+        app.buttons["日曆"].firstMatch.tap()
+        XCTAssertTrue(agenda.waitForExistence(timeout: 3))
+        shot("week-agenda-130")
+
         // Toggle back -> restores TimeGrid.
         toggle.tap()
         XCTAssertTrue(app.scrollViews["timeGridScroll"].waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertTrue(agenda.waitForNonExistence(timeout: 3))
         XCTAssertEqual(toggle.label, "切換為週清單")
 
-        // Switch back to week agenda and tap today's +N overflow if present -> switches to .day mode.
+        // Switch back to week agenda and tap today's +N overflow -> switches to .day mode on today.
         toggle.tap()
         let moreBtn = app.buttons["weekAgendaMore-\(fmt.string(from: now))"]
-        if moreBtn.waitForExistence(timeout: 2) {
-            moreBtn.tap()
-            XCTAssertTrue(app.buttons["切換檢視：目前日"].waitForExistence(timeout: 3), app.debugDescription)
-        }
+        XCTAssertTrue(moreBtn.waitForExistence(timeout: 3), app.debugDescription)
+        moreBtn.tap()
+        XCTAssertTrue(app.buttons["切換檢視：目前日"].waitForExistence(timeout: 3), app.debugDescription)
+        let todayComps = cal.dateComponents([.year, .month, .day], from: now)
+        let expectedTitlePrefix = "\(todayComps.month!)月"
+        XCTAssertTrue(app.buttons["calendarTitle"].label.hasPrefix(expectedTitlePrefix), app.buttons["calendarTitle"].label)
+        let todayHeaderPrefix = "\(todayComps.month!) 月 \(todayComps.day!) 日"
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", todayHeaderPrefix)).firstMatch.waitForExistence(timeout: 3), app.debugDescription)
     }
 }

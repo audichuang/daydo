@@ -5,9 +5,11 @@ import DayDoCore
 struct WeekAgendaGrid: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
+    @Environment(\.textScale) private var textScale
 
     var weekDays: [LocalDay]
     var month: LocalDay
+    var selected: LocalDay
     var tasks: [TodoTask]
     var today: LocalDay
     var isRegular: Bool = false
@@ -84,16 +86,16 @@ struct WeekAgendaGrid: View {
         let hPad: CGFloat = isRegular ? 10 : 6
         let vPad: CGFloat = height < 105 ? 3 : 6
         let innerH = max(0, height - vPad * 2)
-        let headerH = min(isRegular ? 15 : 13, max(10, innerH * 0.12))
+        let headerH = min((isRegular ? 15 : 13) * textScale, max(10, innerH * 0.14))
         let headerGap: CGFloat = height < 105 ? 1 : 2
         let weekCount = max(1, weeks.count)
         let rowGap: CGFloat = height < 105 ? 0 : 1
         let weekAvailH = max(0, innerH - headerH - headerGap - rowGap * CGFloat(weekCount - 1))
         let weekRowH = weekAvailH / CGFloat(weekCount)
         let colCellW = max(0, (width - hPad * 2) / 7)
-        let circleSize = min(isRegular ? 22 : 18, max(10, min(weekRowH, colCellW) * 0.92))
-        let dayFontSize = min(isRegular ? 12 : 11, max(8, circleSize * 0.64))
-        let weekdayFontSize = min(isRegular ? 11 : 10, max(8, headerH * 0.78))
+        let circleSize = min((isRegular ? 22 : 18) * textScale, max(10, min(weekRowH, colCellW) * 0.92))
+        let dayFontSize = min((isRegular ? 12 : 11) * textScale, max(8, circleSize * 0.64))
+        let weekdayFontSize = min((isRegular ? 11 : 10) * textScale, max(8, headerH * 0.78))
 
         return VStack(spacing: headerGap) {
             HStack(spacing: 0) {
@@ -112,14 +114,21 @@ struct WeekAgendaGrid: View {
                     HStack(spacing: 0) {
                         ForEach(week, id: \.self) { d in
                             let isToday = d == today
+                            let isSelected = d == selected
                             let inMonth = d.month == month.month
                             Button { pickMiniDay(d) } label: {
                                 Text("\(d.day)")
-                                    .font(.system(size: dayFontSize, weight: isToday ? .bold : (isDisplayedWeek ? .semibold : .regular)))
+                                    .font(.system(size: dayFontSize, weight: (isToday || isSelected) ? .bold : (isDisplayedWeek ? .semibold : .regular)))
                                     .monospacedDigit()
                                     .foregroundStyle(isToday ? accent.onAccent : (isDisplayedWeek ? accent.text : Palette.textDay))
                                     .frame(width: circleSize, height: circleSize)
-                                    .background(Circle().fill(isToday ? accent.color : .clear))
+                                    .background {
+                                        if isToday {
+                                            Circle().fill(accent.color)
+                                        } else if isSelected {
+                                            Circle().strokeBorder(accent.color, lineWidth: 1.5)
+                                        }
+                                    }
                                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                                     .contentShape(Rectangle())
                             }
@@ -129,6 +138,7 @@ struct WeekAgendaGrid: View {
                             .accessibilityIdentifier("weekAgendaMini-\(d)")
                             .accessibilityLabel(isToday ? "\(DateText.full(d))，今天" : DateText.full(d))
                             .accessibilityValue(isDisplayedWeek ? "目前顯示的週" : "")
+                            .accessibilityAddTraits(isSelected ? .isSelected : [])
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -160,10 +170,10 @@ struct WeekAgendaGrid: View {
         }
     }
 
-    private func overflowButton(_ d: LocalDay, count: Int, height: CGFloat, alignment: Alignment) -> some View {
+    private func overflowButton(_ d: LocalDay, count: Int, height: CGFloat, fontSize: CGFloat, alignment: Alignment) -> some View {
         Button { openDay(d) } label: {
             Text("+\(count)")
-                .font(.system(size: isRegular ? 12 : 11, weight: .semibold))
+                .font(.system(size: fontSize, weight: .semibold))
                 .foregroundStyle(accent.text)
                 .padding(.horizontal, 4)
                 .frame(maxWidth: alignment == .leading ? .infinity : nil, alignment: alignment)
@@ -178,12 +188,16 @@ struct WeekAgendaGrid: View {
 
     private func dayCell(_ d: LocalDay, width: CGFloat, height: CGFloat) -> some View {
         let isToday = d == today
+        let isSelected = d == selected
         let hPad: CGFloat = isRegular ? 10 : 6
         let vPadTop: CGFloat = height < 105 ? 3 : 6
         let vPadBot: CGFloat = height < 105 ? 2 : 4
         let headerGap: CGFloat = height < 105 ? 2 : 4
-        let headerH: CGFloat = isRegular ? 24 : 22
-        let itemH: CGFloat = isRegular ? 22 : 19
+        let headerFontSize: CGFloat = (isRegular ? 13 : 12) * textScale
+        let todayCircleSize: CGFloat = (isRegular ? 22 : 20) * textScale
+        let headerH: CGFloat = max((isRegular ? 24 : 22) * textScale, todayCircleSize)
+        let itemH: CGFloat = (isRegular ? 22 : 19) * textScale
+        let moreFontSize: CGFloat = (isRegular ? 12 : 11) * textScale
         let itemSpacing: CGFloat = 2
         let listH = max(0, height - vPadTop - headerH - headerGap - vPadBot)
         let maxSlots = max(0, Int((listH + itemSpacing) / (itemH + itemSpacing)))
@@ -202,13 +216,13 @@ struct WeekAgendaGrid: View {
                 HStack(spacing: 4) {
                     HStack(spacing: 4) {
                         Text("週\(LocalDay.weekdaySymbols[d.weekday])")
-                            .font(.system(size: isRegular ? 13 : 12, weight: isToday ? .bold : .semibold))
+                            .font(.system(size: headerFontSize, weight: isToday ? .bold : .semibold))
                             .foregroundStyle(isToday ? accent.text : Palette.textSecondary)
                         Text("\(d.day)")
-                            .font(.system(size: isRegular ? 13 : 12, weight: isToday ? .bold : .semibold))
+                            .font(.system(size: headerFontSize, weight: isToday ? .bold : .semibold))
                             .monospacedDigit()
                             .foregroundStyle(isToday ? accent.onAccent : Palette.text)
-                            .frame(width: isToday ? (isRegular ? 22 : 20) : nil, height: isToday ? (isRegular ? 22 : 20) : nil)
+                            .frame(width: isToday ? todayCircleSize : nil, height: isToday ? todayCircleSize : nil)
                             .background {
                                 if isToday {
                                     Circle().fill(accent.color)
@@ -222,7 +236,7 @@ struct WeekAgendaGrid: View {
                     Spacer(minLength: 0)
 
                     if inlineOverflowInHeader {
-                        overflowButton(d, count: overflowCount, height: headerH, alignment: .trailing)
+                        overflowButton(d, count: overflowCount, height: headerH, fontSize: moreFontSize, alignment: .trailing)
                     }
                 }
                 .frame(height: headerH)
@@ -234,7 +248,7 @@ struct WeekAgendaGrid: View {
                             taskRow(task, on: d, cellWidth: width - hPad * 2, rowHeight: itemH)
                         }
                         if hasOverflow && !inlineOverflowInHeader {
-                            overflowButton(d, count: overflowCount, height: itemH, alignment: .leading)
+                            overflowButton(d, count: overflowCount, height: itemH, fontSize: moreFontSize, alignment: .leading)
                         }
                     }
                 }
@@ -247,6 +261,7 @@ struct WeekAgendaGrid: View {
         .clipped()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("weekAgendaDay-\(d)")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private func taskRow(_ task: TodoTask, on day: LocalDay, cellWidth: CGFloat, rowHeight: CGFloat) -> some View {
@@ -254,9 +269,11 @@ struct WeekAgendaGrid: View {
         let isDone = model.displaysCompleted(task)
         let owner = partnerOwner(for: task, show: showOwnerAvatars, members: model.members)
         let startMinute = task.schedule.flatMap { DayLayout.clippedRange(for: $0, on: day)?.start }
-        let avatarSize: CGFloat = isRegular ? 15 : 13
+        let titleFontSize: CGFloat = (isRegular ? 13 : 11.5) * textScale
+        let timeFontSize: CGFloat = (isRegular ? 11 : 10) * textScale
+        let avatarSize: CGFloat = min(rowHeight - 4, (isRegular ? 15 : 13) * textScale)
         let strokeWidth: CGFloat = 1
-        let timeWidth: CGFloat = startMinute == nil ? 0 : (isRegular ? 36 : 33)
+        let timeWidth: CGFloat = startMinute == nil ? 0 : (isRegular ? 36 : 33) * textScale
         let availableTitleWidth = cellWidth - 2.5 - 4 - 4 - timeWidth - (avatarSize + strokeWidth + 4)
         let showAvatar = owner != nil && availableTitleWidth >= TimeGrid.ownerAvatarMinTitleWidth
 
@@ -266,7 +283,7 @@ struct WeekAgendaGrid: View {
                     .fill(color)
                     .frame(width: 2.5)
                 Text(task.title)
-                    .font(.system(size: isRegular ? 13 : 11.5, weight: .medium))
+                    .font(.system(size: titleFontSize, weight: .medium))
                     .foregroundStyle(isDone ? Palette.done : Palette.text)
                     .strikethrough(isDone, color: Palette.done)
                     .lineLimit(1)
@@ -277,7 +294,7 @@ struct WeekAgendaGrid: View {
                 }
                 if let m = startMinute {
                     Text(DateText.hm(m))
-                        .font(.system(size: isRegular ? 11 : 10, weight: .regular))
+                        .font(.system(size: timeFontSize, weight: .regular))
                         .monospacedDigit()
                         .foregroundStyle(isDone ? Palette.done : Palette.textSecondary)
                         .fixedSize()
