@@ -203,7 +203,7 @@ Both `SCOPE_ADMIN_TOKEN` and `SCOPE_PHYSICAL_NAMES` are set as secrets with `voi
 6. Before setting the mapping, run `node scripts/relocate-scope.mjs status <newPhysical>` and confirm `state` is `live` and `maxServerSeq` (and table counts) match `<oldPhysical>`.
 7. Set `SCOPE_PHYSICAL_NAMES` via `void secret put SCOPE_PHYSICAL_NAMES` with `{"<logicalScope>":"<newPhysical>"}` (stdin).
 8. Verify latency and pulls (`node scripts/measure-latency.mjs <userId>`) and confirm an App sync succeeds.
-9. Keep the old DO frozen as the rollback source. After cut-over, **never deploy or roll back to a build older than this change** (an older build ignores the freeze and would write to the old DO), and **never unfreeze the old DO once the new DO has accepted writes** (doing so would split-brain the scope).
+9. Treat the new DO as written to from the moment the mapping takes effect (even the verification pull in step 8 can write member projections). Record the Worker version ID that serves the mapping (`scriptVersion` in Workers Analytics) after step 8. From then on, a Worker version carries both code and secret bindings: only roll back to a version that has this change **and** the current `SCOPE_PHYSICAL_NAMES` mapping. Rolling back to the step-1 version (no mapping) sends writes to the frozen old DO (HTTP 503 until fixed); a build older than this change ignores the freeze and writes to the old DO (split-brain). If no such version exists, deploy the fix forward. Keep the old DO frozen as a read-only backup and **never unfreeze it** once the mapping has taken effect.
 10. Remove the temporary `SCOPE_ADMIN_TOKEN` secret once the move is verified (`void secret delete SCOPE_ADMIN_TOKEN` or via dashboard).
 
 ## MCP Server (`mcp.daydoapp.com`)
