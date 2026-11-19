@@ -58,8 +58,9 @@ resident=1
 name=""
 if [[ "$mode" != build ]]; then
   case "$target" in
-    iphone) name="DD iPhone 18 Pro" ;;
-    ipad) name="DD iPad Pro 11" ;;
+    # Full names of the resident devices take the same path as their aliases.
+    iphone|"DD iPhone 18 Pro") target=iphone; name="DD iPhone 18 Pro" ;;
+    ipad|"DD iPad Pro 11") target=ipad; name="DD iPad Pro 11" ;;
     "DD "*) name="$target"; resident=0 ;;
     *) usage ;;
   esac

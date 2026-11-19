@@ -597,6 +597,22 @@ t_temp_device_missing() {
   eq "$RC" 2 "park refuses temp devices"
 }
 
+t_full_name_is_resident() {
+  rm -f "$S/udid"; : >"$S/archive"
+  run -- "DD iPhone 18 Pro"
+  eq "$RC" 0 "full name restores a parked resident device"
+  has "$S/events.log" "sim-vault restored UDID-NEW" "restored"
+  run -- up iphone; eq "$RC" 0 "up by alias"
+  run -- up "DD iPhone 18 Pro"
+  eq "$RC" 8 "full name shares the alias's owner record"
+  run -- down "DD iPhone 18 Pro"
+  eq "$RC" 0 "down by full name releases the alias's lease and shuts down"
+  eq "$(cat "$S/leases")" "" "no lease left"
+  run -- park "DD iPhone 18 Pro"
+  eq "$RC" 0 "full name can be parked"
+  has "$S/events.log" "sim-vault park-done" "parked"
+}
+
 t_test_waits_for_other_xcodebuild() {
   echo 999 >"$S/pgrep.out"
   bg test iphone; local tpid=$BGPID
@@ -678,7 +694,7 @@ t_up_stale_owner_record t_up_failure_removes_record t_test_allows_own_up_lease
 t_test_refuses_foreign_lease t_test_foreign_lease_races_ensure t_down_releases_and_shuts_down
 t_down_interleaved_lease t_down_missing_device t_park_transition_guard t_down_transition_guard
 t_park_rc_passthrough t_park_lock_timeout t_old_sim_vault t_no_sim_vault t_temp_device_missing
-t_test_waits_for_other_xcodebuild t_release_failure_rc t_record_basic t_record_test_failure_rc
+t_full_name_is_resident t_test_waits_for_other_xcodebuild t_release_failure_rc t_record_basic t_record_test_failure_rc
 t_record_recorder_fails t_record_test_refused t_never_bypasses_sim_vault"
 SELECTED="${*:-$ALL}"
 total=0
