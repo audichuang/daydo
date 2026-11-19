@@ -5,6 +5,10 @@ export default defineConfig({
   "worker": {
     "compatibility_date": "2026-02-24"
   },
+  // Replicas buy nothing for a couple of users in Taiwan/Japan; keep every query on the primary.
+  "database": {
+    "readReplication": false
+  },
   "inference": {
     "bindings": {
       "storage": true
