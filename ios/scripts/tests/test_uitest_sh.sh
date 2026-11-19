@@ -141,6 +141,7 @@ S="$STUB_STATE"
 printf '%s\n' "xcodebuild $*" >>"$S/events.log"
 echo $$ >"$S/xcodebuild.pid"
 echo $PPID >"$S/xcodebuild.ppid"
+if [[ -e "$S/xcodebuild.sleep" ]]; then sleep "$(cat "$S/xcodebuild.sleep")"; fi
 if [[ -e "$S/xcodebuild.block" ]]; then
   while [[ ! -e "$S/xcodebuild.release" ]]; do sleep 0.05; done
 fi
@@ -162,6 +163,10 @@ if [[ "${1:-} ${2:-}" == "simctl io" && "${4:-}" == recordVideo ]]; then
   echo $$ >"$S/rec.pid"
   : >"$out"
   echo "Recording started" >&2
+  if [[ -e "$S/rec.die" ]]; then
+    sleep 0.2; echo "recordVideo: device disconnected" >&2
+    printf '%s\n' "rec-died" >>"$S/events.log"; exit 1
+  fi
   while :; do sleep 0.05; done
 fi
 exit 0
@@ -415,12 +420,14 @@ t_up_stale_owner_record() {
   hasnt "$S/leases" "deadbeef" "fresh owner"
 }
 
-t_up_failure_removes_record() {
+t_up_failure_keeps_record() {
   echo 4 >"$S/rc.ensure"
   run -- up iphone
   eq "$RC" 4 "ensure rc passed on"
-  [[ -e "$(owner_file)" ]] && fail "no owner record left after a failed up"
-  return 0
+  [[ -s "$(owner_file)" ]] || fail "owner record kept after a failed up"
+  rm -f "$S/rc.ensure"
+  run -- up iphone
+  eq "$RC" 0 "a kept record without a live lease does not block the next up"
 }
 
 t_test_allows_own_up_lease() {
@@ -653,7 +660,39 @@ t_record_basic() {
   before "rec-stopped" "sim-vault release .*dd:uitest" "lease released only after recordVideo exited"
   [[ -e "$T/rec/cal.mp4" ]] || fail "video file"
   has "$T/rec/cal.log" "TEST SUCCEEDED" "log"
-  eq "$(find "$T/tmp" -maxdepth 1 -name 'dd-record.*' | wc -l | tr -d ' ')" 0 "recorder log removed"
+  [[ -e "$T/rec/cal.mp4.recordVideo.log" ]] && fail "recorder log removed after a good recording"
+  has "$T/err" "^video: $T/rec/cal.mp4" "success line"
+}
+
+t_up_failed_ensure_keeps_owner() {
+  # sim-vault keeps the lease when bootstatus and the undo shutdown both fail.
+  # shellcheck disable=SC2016,SC2028 # expanded by the stub
+  echo 'printf "%s\n" "$@" | grep -A1 -x -- --lease | tail -n 1 >>"$S/leases"' >"$S/hook.ensure"
+  echo 1 >"$S/rc.ensure"
+  run -- up iphone
+  eq "$RC" 1 "ensure rc passed on"
+  local a; a="$(cat "$S/leases")"
+  [[ -n "$a" ]] || { fail "stub did not leave a lease"; return; }
+  eq "$(cat "$(owner_file)" 2>/dev/null)" "$a" "owner record kept"
+  rm -f "$S/hook.ensure" "$S/rc.ensure"
+  run -- down iphone
+  eq "$RC" 0 "down"
+  has "$S/events.log" "sim-vault release DD iPhone 18 Pro --lease $a" "down releases that same lease"
+  eq "$(cat "$S/leases")" "" "no lease left"
+}
+
+t_record_recorder_dies_midway() {
+  : >"$S/rec.die"; echo 1 >"$S/xcodebuild.sleep"
+  run_record
+  eq "$RC" 11 "recording failure code when the test passed"
+  has "$S/events.log" "rec-died" "recorder died during the test"
+  has "$T/rec/cal.mp4.recordVideo.log" "device disconnected" "recorder log kept"
+  has "$T/err" "cal.mp4.recordVideo.log" "points at the recorder log"
+  hasnt "$T/err" "^video: " "no success line with the video path"
+  echo 65 >"$S/rc.xcodebuild"
+  run_record
+  eq "$RC" 65 "test failure code wins"
+  hasnt "$T/err" "^video: " "still no video line"
 }
 
 t_record_test_failure_rc() {
@@ -690,11 +729,11 @@ t_never_bypasses_sim_vault() {
 
 ALL="t_test_run_basic t_park_first_test_waits t_test_first_park_waits
 t_sigkill_shell_child_keeps_lock t_record_sigkill_recorder_keeps_lock t_up_twice_same_worktree
-t_up_stale_owner_record t_up_failure_removes_record t_test_allows_own_up_lease
+t_up_stale_owner_record t_up_failure_keeps_record t_test_allows_own_up_lease
 t_test_refuses_foreign_lease t_test_foreign_lease_races_ensure t_down_releases_and_shuts_down
 t_down_interleaved_lease t_down_missing_device t_park_transition_guard t_down_transition_guard
 t_park_rc_passthrough t_park_lock_timeout t_old_sim_vault t_no_sim_vault t_temp_device_missing
-t_full_name_is_resident t_test_waits_for_other_xcodebuild t_release_failure_rc t_record_basic t_record_test_failure_rc
+t_full_name_is_resident t_test_waits_for_other_xcodebuild t_release_failure_rc t_up_failed_ensure_keeps_owner t_record_basic t_record_recorder_dies_midway t_record_test_failure_rc
 t_record_recorder_fails t_record_test_refused t_never_bypasses_sim_vault"
 SELECTED="${*:-$ALL}"
 total=0

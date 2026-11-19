@@ -10,7 +10,7 @@
 #
 # uitest.sh does the recording (DD_UITEST_RECORD): it starts recordVideo on the device it leased,
 # runs the test once recording has started, and keeps the lease and its lock until recordVideo
-# has exited.
+# has exited. Exit 11: the test passed but the recording failed (see <prefix>.mp4.recordVideo.log).
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
@@ -21,9 +21,16 @@ target="$1"; test_id="$2"; out="$3"
 here="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$(dirname "$out")"
 
+rec_log="$out.mp4.recordVideo.log"
+rm -f "$rec_log"
 rc=0
 DD_UITEST_RECORD="$out.mp4" "$here/uitest.sh" "$target" "-only-testing:DayDoUITests/$test_id" \
   >"$out.log" 2>&1 || rc=$?
 grep -E "Executed|TEST (SUCCEEDED|FAILED)" "$out.log" | tail -2 || true
-echo "video: $out.mp4  log: $out.log  test rc=$rc" >&2
+# uitest.sh keeps the recorder's log only when the recording failed (11 if the test passed).
+if [[ -e "$rec_log" ]]; then
+  echo "錄影失敗，影片不可用：recordVideo log: $rec_log  log: $out.log  rc=$rc" >&2
+else
+  echo "video: $out.mp4  log: $out.log  test rc=$rc" >&2
+fi
 exit "$rc"

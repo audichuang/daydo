@@ -31,7 +31,9 @@
 # DD_UITEST_RECORD=<file.mp4> (record-uitest.sh sets it) records the screen: recordVideo is
 # started after the device is leased and booted, the tests start once it records, and after
 # them it gets SIGINT and the lease is dropped only once it has exited. As a child of this
-# script it holds the lock too.
+# script it holds the lock too. If recordVideo exits early, fails or has to be killed, its
+# output stays in <file.mp4>.recordVideo.log and the exit code is 11 unless the test itself
+# failed (then the test's code).
 #
 # Knobs for the tests in ios/scripts/tests: DD_UITEST_LOCK_WAIT (s, default 1800),
 # DD_UITEST_POLL (s). DD_PARK_TRIM=1 adds --trim-posterboard to park.
@@ -209,10 +211,9 @@ if [[ "$mode" == up ]]; then
   rc=0
   # --wait matches this script's own 30 min: restoring a 6 GB archive takes minutes.
   udid=$(sim-vault ensure "$name" --boot --lease "$owner" --wait 1800) || rc=$?
-  if [[ $rc != 0 ]]; then
-    [[ -n "${DD_SIM_OWNER:-}" ]] || rm -f "$owner_file"
-    exit "$rc"
-  fi
+  # On failure the record stays: sim-vault keeps the lease when the boot and its undo both
+  # fail, and down must still name it. The next up overwrites a record whose lease is gone.
+  [[ $rc == 0 ]] || exit "$rc"
   eval "exec ${lock_fd}>&-"
   printf '%s\n' "$udid"
   exit 0
@@ -265,9 +266,13 @@ fi
 record="${DD_UITEST_RECORD:-}"
 rec_pid=""
 rec_log=""
+rec_failed=0
 alive() { [[ -n "$1" ]] && kill -0 "$1" 2>/dev/null; }
+# Only an exit 0 after our SIGINT is a good recording; exiting early, failing, or needing
+# SIGKILL is a recording failure.
 stop_recorder() {
   [[ -n "$rec_pid" ]] || return 0
+  local rec_rc=0
   if alive "$rec_pid"; then
     kill -INT "$rec_pid" 2>/dev/null || true
     local waited=0
@@ -275,16 +280,27 @@ stop_recorder() {
     if alive "$rec_pid"; then
       echo "recordVideo 30 秒內沒有結束，強制停止（影片可能不完整）" >&2
       kill -KILL "$rec_pid" 2>/dev/null || true
+      rec_failed=1
     fi
+    wait "$rec_pid" 2>/dev/null || rec_rc=$?
+  else
+    wait "$rec_pid" 2>/dev/null || rec_rc=$?
+    echo "recordVideo 在測試結束前就退出了（rc=${rec_rc}）" >&2
+    rec_failed=1
   fi
-  wait "$rec_pid" 2>/dev/null || true
+  [[ $rec_rc == 0 ]] || rec_failed=1
   rec_pid=""
 }
 finish() {
   local rc=$? release_rc=0
   trap - EXIT INT TERM HUP
   stop_recorder
-  [[ -z "$rec_log" ]] || rm -f "$rec_log"
+  if [[ $rec_failed == 1 ]]; then
+    echo "錄影失敗，recordVideo 的 log：${rec_log}" >&2
+    [[ $rc != 0 ]] || rc=11
+  elif [[ -n "$rec_log" ]]; then
+    rm -f "$rec_log"
+  fi
   sim-vault release "$name" --lease "$test_owner" || release_rc=$?
   if [[ $release_rc != 0 ]]; then
     echo "交回 lease ${test_owner} 失敗（rc=${release_rc}），lease 還留著；下次測試或 park 會清掉" >&2
@@ -318,7 +334,7 @@ fi
 
 if [[ -n "$record" ]]; then
   mkdir -p "$(dirname "$record")"
-  rec_log=$(mktemp "${TMPDIR:-/tmp}/dd-record.XXXXXX")
+  rec_log="$record.recordVideo.log"
   # A background job of a non-interactive bash starts with SIGINT ignored, and SIGINT is how
   # recordVideo is told to finish the file; restore the default before exec.
   python3 -I -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
