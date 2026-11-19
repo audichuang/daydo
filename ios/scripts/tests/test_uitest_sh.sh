@@ -41,6 +41,10 @@ case " $* " in
     if [[ "$cmd" == shutdown && -e "$S/old-vault" ]]; then
       echo "sim-vault: error: argument command: invalid choice: 'shutdown'" >&2; exit 2
     fi
+    if [[ "$cmd" == ensure ]]; then
+      if [[ -e "$S/no-deny" ]]; then echo "usage: sim-vault ensure [--boot] [--lease OWNER] name"
+      else echo "usage: sim-vault ensure [--boot] [--lease OWNER] [--deny-other-leases] [--allow-lease OWNER] name"; fi
+    fi
     if [[ "$cmd" == park ]]; then
       if [[ -e "$S/no-trim" ]]; then echo "usage: sim-vault park [--shutdown] [--missing-ok] name"
       else echo "usage: sim-vault park [--shutdown] [--missing-ok] [--trim-posterboard] name"; fi
@@ -51,9 +55,14 @@ shift
 name="${1:-}"; shift || true
 ev "sim-vault $cmd $name $*"
 if [[ -e "$S/hook.$cmd" ]]; then . "$S/hook.$cmd"; fi
-owner=""
+owner=""; deny=0; allow=""
 while [[ $# -gt 0 ]]; do
-  case "$1" in --lease) owner="$2"; shift 2 ;; *) shift ;; esac
+  case "$1" in
+    --lease) owner="$2"; shift 2 ;;
+    --allow-lease) allow="$allow"$'\n'"$2"; shift 2 ;;
+    --deny-other-leases) deny=1; shift ;;
+    *) shift ;;
+  esac
 done
 leases() { grep -v '^$' "$S/leases" 2>/dev/null || true; }
 busy() {
@@ -90,6 +99,18 @@ case "$cmd" in
         echo "error (exit 3, no-archive): no archive for '$name'" >&2; exit 3
       fi
     fi
+    if [[ $deny == 1 ]]; then
+      others=""
+      while IFS= read -r o; do
+        [[ "$o" == "$owner" ]] && continue
+        case $'\n'"$allow"$'\n' in *$'\n'"$o"$'\n'*) continue ;; esac
+        others="${others:+$others,}$o"
+      done < <(leases)
+      if [[ -n "$others" ]]; then
+        echo "error (exit 8, busy): '$name' is leased by $others" >&2
+        ev "sim-vault ensure-denied"; exit 8
+      fi
+    fi
     if [[ -n "$owner" ]] && ! leases | grep -qxF -- "$owner"; then
       printf '%s\n' "$owner" >>"$S/leases"
     fi
@@ -119,6 +140,7 @@ cat >"$STUB/xcodebuild" <<'EOF'
 S="$STUB_STATE"
 printf '%s\n' "xcodebuild $*" >>"$S/events.log"
 echo $$ >"$S/xcodebuild.pid"
+echo $PPID >"$S/xcodebuild.ppid"
 if [[ -e "$S/xcodebuild.block" ]]; then
   while [[ ! -e "$S/xcodebuild.release" ]]; do sleep 0.05; done
 fi
@@ -137,6 +159,7 @@ if [[ "${1:-} ${2:-}" == "simctl io" && "${4:-}" == recordVideo ]]; then
   out="${@: -1}"
   # Exit a little after SIGINT, like recordVideo finishing the file.
   trap 'sleep 0.3; printf "%s\n" "rec-stopped" >>"$S/events.log"; exit 0' INT
+  echo $$ >"$S/rec.pid"
   : >"$out"
   echo "Recording started" >&2
   while :; do sleep 0.05; done
@@ -174,10 +197,10 @@ setup() {
   set_env "$STUB"
 }
 set_env() {
-  ENVCMD=(env -u BASH_ENV -u DD_SIM_OWNER -u DD_PARK_TRIM -u DD_UITEST_HANDSHAKE_DIR
+  ENVCMD=(env -u BASH_ENV -u DD_SIM_OWNER -u DD_PARK_TRIM -u DD_UITEST_RECORD
     -u DD_UITEST_LOCK_PID -u DD_UITEST_LOCK_FD -u DD_UITEST_LOCK_RC
     HOME="$T/home" TMPDIR="$T/tmp" STUB_STATE="$S"
-    DD_UITEST_POLL=0.05 DD_UITEST_LOCK_WAIT=30 DD_UITEST_HANDSHAKE_WAIT=10
+    DD_UITEST_POLL=0.05 DD_UITEST_LOCK_WAIT=30
     PATH="$1:/usr/bin:/bin")
 }
 # run [VAR=val...] -- uitest.sh args; stdout in $T/out, stderr in $T/err, exit code in RC.
@@ -258,10 +281,15 @@ check_stubs() {
 }
 check_stubs
 
+
+owner_file() { echo "$T/home/Library/Developer/CoreSimulator/sim-vault/owners/daydo-$(printf '%s' "$ROOT" | shasum | cut -c1-40)-iphone"; }
+ENSURE_TEST="sim-vault ensure DD iPhone 18 Pro --boot --lease dd:uitest --deny-other-leases"
+
 t_test_run_basic() {
   run -- iphone -only-testing:DayDoUITests/X
   eq "$RC" 0 "rc"
-  before "sim-vault status DD iPhone 18 Pro" "sim-vault ensure DD iPhone 18 Pro --boot --lease dd:uitest --wait 1800" "status before ensure"
+  has "$S/events.log" "^$ENSURE_TEST --wait 1800$" "one ensure that refuses other leases (no allow without an up)"
+  hasnt "$S/events.log" "sim-vault status" "no separate status check before ensure"
   has "$S/events.log" "xcodebuild test .*id=UDID-AAA .*-only-testing:DayDoUITests/X" "xcodebuild uses the leased UDID"
   before "xcodebuild-exit" "sim-vault release DD iPhone 18 Pro --lease dd:uitest" "release after xcodebuild"
   eq "$(cat "$S/leases")" "" "no lease left"
@@ -278,7 +306,7 @@ t_park_first_test_waits() {
   bg test iphone; local tpid=$BGPID
   sleep 1
   kill -0 "$tpid" 2>/dev/null || fail "test should still be waiting"
-  eq "$(count_lines 'sim-vault (status|ensure)')" 1 "only park's status ran while park holds the lock"
+  hasnt "$S/events.log" "sim-vault ensure" "test leased nothing while park holds the lock"
   has "$T/test.err" "等 DayDo 模擬器鎖" "test says it waits for the lock"
   : >"$S/park.go"
   wait_exit "$ppid" 10; eq "$WRC" 0 "park rc"
@@ -288,6 +316,10 @@ t_park_first_test_waits() {
   eq "$(last_line "$T/park.out")" "park rc=0" "park rc line"
 }
 
+nothing_after_xcodebuild() {
+  eq "$(tail -n 1 "$S/events.log")" "$(grep '^xcodebuild test' "$S/events.log")" "$1"
+}
+
 t_test_first_park_waits() {
   : >"$S/xcodebuild.block"
   bg test iphone; local tpid=$BGPID
@@ -295,8 +327,7 @@ t_test_first_park_waits() {
   bg park park iphone; local ppid=$BGPID
   sleep 1
   kill -0 "$ppid" 2>/dev/null || fail "park should be waiting"
-  local n; n="$(wc -l <"$S/events.log")"
-  eq "$(tail -n 1 "$S/events.log")" "$(grep '^xcodebuild test' "$S/events.log")" "nothing ran after xcodebuild started (lines: $n)"
+  nothing_after_xcodebuild "nothing ran after xcodebuild started"
   : >"$S/xcodebuild.release"
   wait_exit "$tpid" 10; eq "$WRC" 0 "test rc"
   wait_exit "$ppid" 10; eq "$WRC" 0 "park rc"
@@ -318,62 +349,127 @@ t_sigkill_shell_child_keeps_lock() {
   hasnt "$S/events.log" "sim-vault release" "no release after SIGKILL"
   lock_free && fail "lock must stay held by the orphaned xcodebuild"
   bg park park iphone; local ppid=$BGPID
+  bg down down iphone; local dpid=$BGPID
   sleep 1
   kill -0 "$ppid" 2>/dev/null || fail "park should wait for the orphaned xcodebuild"
-  eq "$(tail -n 1 "$S/events.log")" "$(grep '^xcodebuild test' "$S/events.log")" "park did nothing while the child lives"
+  kill -0 "$dpid" 2>/dev/null || fail "down should wait for the orphaned xcodebuild"
+  nothing_after_xcodebuild "park and down did nothing while the child lives"
   : >"$S/xcodebuild.release"
-  wait_exit "$ppid" 10; eq "$WRC" 0 "park rc"
+  wait_exit "$ppid" 10
+  wait_exit "$dpid" 10
   before "xcodebuild-exit" "sim-vault release DD iPhone 18 Pro --lease dd:uitest" "stale dd:uitest released after the child exited"
-  before "sim-vault release .*dd:uitest" "sim-vault park-done" "then parked"
   lock_free || fail "lock released once everyone exited"
 }
 
+t_record_sigkill_recorder_keeps_lock() {
+  : >"$S/xcodebuild.block"
+  "${ENVCMD[@]}" bash --noprofile --norc "$RECORD" iphone Flow/testX "$T/rec/cal" >"$T/out" 2>"$T/err" &
+  local wpid=$!; BG_PIDS="$BG_PIDS $wpid"
+  wait_for "^xcodebuild test" "$S/events.log" 10 || return
+  local upid rpid; upid="$(cat "$S/xcodebuild.ppid")"; rpid="$(cat "$S/rec.pid")"
+  BG_PIDS="$BG_PIDS $rpid"
+  # Kill the wrapper and uitest.sh; then let xcodebuild finish: only recordVideo is left.
+  kill -KILL "$wpid" "$upid"
+  wait "$wpid" 2>/dev/null
+  : >"$S/xcodebuild.release"
+  wait_for "xcodebuild-exit" "$S/events.log" 10 || return
+  kill -0 "$rpid" 2>/dev/null || fail "recordVideo should still be running"
+  bg park park iphone; local ppid=$BGPID
+  bg down down iphone; local dpid=$BGPID
+  sleep 1
+  kill -0 "$ppid" 2>/dev/null || fail "park should wait while recordVideo holds the lock"
+  kill -0 "$dpid" 2>/dev/null || fail "down should wait while recordVideo holds the lock"
+  hasnt "$S/events.log" "sim-vault (park|shutdown|release)" "nothing released, parked or shut down"
+  kill -KILL "$rpid"
+  wait_exit "$ppid" 10
+  wait_exit "$dpid" 10
+  before "xcodebuild-exit" "sim-vault release .*dd:uitest" "only afterwards"
+}
+
 t_up_twice_same_worktree() {
-  run -- up iphone; eq "$RC" 0 "first up"; local first; first="$(cat "$T/out")"
-  run -- up iphone; eq "$RC" 0 "second up"
-  eq "$first" "UDID-AAA" "up prints only the UDID"
-  eq "$(cat "$T/out")" "UDID-AAA" "second up prints the same UDID"
-  eq "$(cat "$S/leases")" "dd:up:$ROOT" "one shared lease for the worktree"
+  run -- up iphone; eq "$RC" 0 "first up"
+  eq "$(cat "$T/out")" "UDID-AAA" "up prints only the UDID"
+  local a; a="$(cat "$S/leases")"
+  [[ "$a" =~ ^dd:up:$ROOT:[0-9a-f]{8}$ ]] || fail "owner has a random suffix: $a"
+  eq "$(cat "$(owner_file)")" "$a" "owner recorded for down"
+  run -- up iphone
+  eq "$RC" 8 "second up from the same worktree refused"
+  has "$T/err" "DD_SIM_OWNER" "tells how to share"
+  eq "$(cat "$S/leases")" "$a" "still one lease"
   run DD_SIM_OWNER=dd:session-b -- up iphone; eq "$RC" 0 "up with DD_SIM_OWNER"
-  eq "$(wc -l <"$S/leases" | tr -d ' ')" 2 "DD_SIM_OWNER gives a separate lease"
+  eq "$(wc -l <"$S/leases" | tr -d ' ')" 2 "separate lease"
+  run -- down iphone
+  eq "$RC" 8 "A's down does not shut down B's device"
+  eq "$(cat "$S/leases")" "dd:session-b" "only A's lease released"
+  [[ -e "$(owner_file)" ]] && fail "owner record removed after release"
+  [[ -e "$S/booted" ]] || fail "device stays booted for B"
+  run -- up iphone; eq "$RC" 0 "up works again after down"
   lock_free || fail "up leaves the lock free"
 }
 
+t_up_stale_owner_record() {
+  mkdir -p "$(dirname "$(owner_file)")"
+  echo "dd:up:$ROOT:deadbeef" >"$(owner_file)"
+  run -- up iphone
+  eq "$RC" 0 "a record whose lease is gone does not block"
+  hasnt "$S/leases" "deadbeef" "fresh owner"
+}
+
+t_up_failure_removes_record() {
+  echo 4 >"$S/rc.ensure"
+  run -- up iphone
+  eq "$RC" 4 "ensure rc passed on"
+  [[ -e "$(owner_file)" ]] && fail "no owner record left after a failed up"
+  return 0
+}
+
 t_test_allows_own_up_lease() {
-  echo "dd:up:$ROOT" >"$S/leases"
+  run -- up iphone
+  local a; a="$(cat "$S/leases")"
   run -- iphone
   eq "$RC" 0 "test runs next to this worktree's own up lease"
-  eq "$(cat "$S/leases")" "dd:up:$ROOT" "own lease kept"
+  has "$S/events.log" "$ENSURE_TEST --allow-lease $a --wait 1800" "allows the recorded owner"
+  eq "$(cat "$S/leases")" "$a" "own lease kept"
+  run DD_SIM_OWNER=dd:me -- iphone
+  eq "$RC" 8 "with DD_SIM_OWNER set, the recorded owner is someone else"
 }
 
 t_test_refuses_foreign_lease() {
   echo "dd:up:/somewhere/else" >"$S/leases"
-  echo "gone:owner" >"$S/stale-lease"
   run -- iphone
   eq "$RC" 8 "rc"
   has "$T/err" "dd:up:/somewhere/else" "names the owner"
-  hasnt "$T/err" "gone:owner" "stale lease ignored"
   hasnt "$S/events.log" "xcodebuild" "xcodebuild not called"
-  hasnt "$S/events.log" "sim-vault ensure" "no lease taken"
-  eq "$(cat "$S/leases")" "dd:up:/somewhere/else" "foreign lease untouched"
-  run DD_SIM_OWNER=dd:session-b -- iphone
-  eq "$RC" 8 "another session's lease counts as foreign"
+  eq "$(cat "$S/leases")" "dd:up:/somewhere/else" "no dd:uitest lease taken, foreign lease untouched"
+}
+
+t_test_foreign_lease_races_ensure() {
+  # A lease taken by a direct `sim-vault ensure` right before ours: refused inside ensure.
+  # shellcheck disable=SC2016 # expanded by the stub
+  echo 'echo intruder >>"$S/leases"' >"$S/hook.ensure"
+  run -- iphone
+  eq "$RC" 8 "rc"
+  hasnt "$S/events.log" "^xcodebuild" "xcodebuild not called"
+  eq "$(cat "$S/leases")" "intruder" "no dd:uitest lease"
 }
 
 t_down_releases_and_shuts_down() {
-  echo "dd:up:$ROOT" >"$S/leases"
+  run -- up iphone
+  local a; a="$(cat "$S/leases")"
   run -- down iphone
   eq "$RC" 0 "rc"
-  before "sim-vault release DD iPhone 18 Pro --lease dd:up:$ROOT" "sim-vault shutdown DD" "release then shutdown"
+  before "sim-vault release DD iPhone 18 Pro --lease $a" "sim-vault shutdown DD" "release then shutdown"
   has "$S/events.log" "sim-vault shutdown-done" "shut down"
+  run DD_SIM_OWNER=dd:x -- down iphone
+  eq "$RC" 0 "down with DD_SIM_OWNER and no lease"
 }
 
 t_down_interleaved_lease() {
-  echo "dd:up:$ROOT" >"$S/leases"
+  echo "dd:me" >"$S/leases"
   # shellcheck disable=SC2016 # expanded by the stub
   echo 'echo intruder >>"$S/leases"' >"$S/hook.shutdown"
   : >"$S/booted"
-  run -- down iphone
+  run DD_SIM_OWNER=dd:me -- down iphone
   eq "$RC" 8 "rc passed on"
   has "$T/err" "intruder" "owner reported"
   has "$S/events.log" "sim-vault shutdown-refused" "sim-vault refused"
@@ -388,18 +484,35 @@ t_down_missing_device() {
   hasnt "$S/events.log" "sim-vault shutdown" "no shutdown for a parked device"
 }
 
-t_park_transition_guard() {
+legacy_xcodebuild() {
   echo 4242 >"$S/pgrep.out"
-  echo "/usr/bin/xcodebuild test -project DayDo.xcodeproj -destination platform=iOS Simulator,id=UDID-AAA" >"$S/ps.4242"
+  echo "/usr/bin/xcodebuild test -project DayDo.xcodeproj -destination platform=iOS Simulator,id=$1" >"$S/ps.4242"
+}
+
+t_park_transition_guard() {
+  legacy_xcodebuild UDID-AAA
   run -- park iphone
   eq "$RC" 8 "rc"
   eq "$(last_line "$T/out")" "park rc=8" "rc line"
   has "$T/err" "舊版" "explains"
   hasnt "$S/events.log" "sim-vault (park|release)" "nothing released or parked"
-  echo "/usr/bin/xcodebuild test -destination platform=iOS Simulator,id=OTHER" >"$S/ps.4242"
+  legacy_xcodebuild OTHER
   run -- park iphone
   eq "$RC" 0 "xcodebuild on another device does not block park"
   has "$S/events.log" "sim-vault park-done" "parked"
+}
+
+t_down_transition_guard() {
+  run DD_SIM_OWNER=dd:me -- up iphone
+  legacy_xcodebuild UDID-AAA
+  run DD_SIM_OWNER=dd:me -- down iphone
+  eq "$RC" 8 "rc"
+  has "$T/err" "舊版" "explains"
+  hasnt "$S/events.log" "sim-vault (shutdown|release)" "nothing released or shut down"
+  [[ -e "$S/booted" ]] || fail "device stays booted"
+  legacy_xcodebuild OTHER
+  run DD_SIM_OWNER=dd:me -- down iphone
+  eq "$RC" 0 "xcodebuild on another device does not block down"
 }
 
 t_park_rc_passthrough() {
@@ -437,16 +550,19 @@ time.sleep(30)
 }
 
 t_old_sim_vault() {
-  : >"$S/old-vault"
-  local m
-  for m in "" up down park; do
-    if [[ -n "$m" ]]; then run -- "$m" iphone; else run -- iphone; fi
-    eq "$RC" 2 "${m:-test}: rc"
-    has "$T/err" "版本過舊（缺 shutdown）.*aghub-cli source sync audichuang/audi-skill -g --update --yes" "${m:-test}: message"
+  local m flag
+  for flag in old-vault no-deny; do
+    : >"$S/$flag"
+    for m in "" up down park; do
+      if [[ -n "$m" ]]; then run -- "$m" iphone; else run -- iphone; fi
+      eq "$RC" 2 "$flag ${m:-test}: rc"
+      has "$T/err" "版本過舊.*aghub-cli source sync audichuang/audi-skill -g --update --yes" "$flag ${m:-test}: message"
+    done
+    eq "$(last_line "$T/out")" "park rc=2" "park prints its rc"
+    rm -f "$S/$flag"
   done
-  eq "$(last_line "$T/out")" "park rc=2" "park prints its rc"
+  has "$T/err" "deny-other-leases" "names the missing flag"
   eq "$(wc -l <"$S/events.log" | tr -d ' ')" 0 "no sim-vault command ran"
-  rm -f "$S/old-vault"
   : >"$S/no-trim"
   run DD_PARK_TRIM=1 -- park iphone
   eq "$RC" 2 "trim without support: rc"
@@ -475,6 +591,8 @@ t_temp_device_missing() {
   run -- "DD tmp x"
   eq "$RC" 2 "rc"
   hasnt "$S/events.log" "sim-vault ensure" "temp device is not restored"
+  run -- up "DD tmp x"
+  eq "$RC" 2 "up does not restore a temp device either"
   run -- park "DD tmp x"
   eq "$RC" 2 "park refuses temp devices"
 }
@@ -490,36 +608,43 @@ t_test_waits_for_other_xcodebuild() {
   has "$T/test.err" "有別的 xcodebuild 在跑" "says so"
 }
 
+t_release_failure_rc() {
+  echo 65 >"$S/rc.xcodebuild"; echo 8 >"$S/rc.release"
+  run -- iphone
+  eq "$RC" 65 "test failure wins over release failure"
+  has "$T/err" "交回 lease dd:uitest 失敗（rc=8）" "release failure reported"
+  rm -f "$S/rc.xcodebuild"
+  run -- iphone
+  eq "$RC" 8 "release failure after a passing run"
+  echo 4 >"$S/rc.ensure"
+  run -- iphone
+  eq "$RC" 4 "ensure failure wins over release failure"
+}
+
 run_record() {
   RC=0
   "${ENVCMD[@]}" bash --noprofile --norc "$RECORD" iphone Flow/testX "$T/rec/cal" >"$T/out" 2>"$T/err" || RC=$?
 }
 
-t_record_handshake() {
+t_record_basic() {
   rm -f "$S/udid"; : >"$S/archive"
   run_record
   eq "$RC" 0 "rc"
-  has "$S/events.log" "xcrun simctl io UDID-NEW recordVideo" "records the device uitest.sh leased"
+  has "$S/events.log" "xcrun simctl io UDID-NEW recordVideo .*$T/rec/cal.mp4" "records the device uitest.sh leased"
   before "sim-vault ensure .*dd:uitest" "recordVideo" "lease before recording"
   before "recordVideo" "^xcodebuild test" "recording before the test"
   before "xcodebuild-exit" "rec-stopped" "recording stops after the test"
   before "rec-stopped" "sim-vault release .*dd:uitest" "lease released only after recordVideo exited"
   [[ -e "$T/rec/cal.mp4" ]] || fail "video file"
   has "$T/rec/cal.log" "TEST SUCCEEDED" "log"
-  eq "$(find "$T/tmp" -maxdepth 1 -name 'dd-record.*' | wc -l | tr -d ' ')" 0 "handshake dir removed"
+  eq "$(find "$T/tmp" -maxdepth 1 -name 'dd-record.*' | wc -l | tr -d ' ')" 0 "recorder log removed"
 }
 
-t_test_failure_rc() {
+t_record_test_failure_rc() {
   echo 65 >"$S/rc.xcodebuild"
-  run -- iphone
-  eq "$RC" 65 "xcodebuild's rc passed on"
-  has "$S/events.log" "sim-vault release DD iPhone 18 Pro --lease dd:uitest" "lease released after a failed run"
-  eq "$(cat "$S/leases")" "" "no lease left"
-  : >"$S/events.log"
   run_record
   eq "$RC" 65 "record passes the test's rc on"
   before "rec-stopped" "sim-vault release .*dd:uitest" "lease released after recording stopped"
-  hasnt "$T/rec/cal.log" "沒有回報 stopped" "no false 'no stopped' warning"
 }
 
 t_record_recorder_fails() {
@@ -548,11 +673,13 @@ t_never_bypasses_sim_vault() {
 }
 
 ALL="t_test_run_basic t_park_first_test_waits t_test_first_park_waits
-t_sigkill_shell_child_keeps_lock t_up_twice_same_worktree t_test_allows_own_up_lease
-t_test_refuses_foreign_lease t_down_releases_and_shuts_down t_down_interleaved_lease
-t_down_missing_device t_park_transition_guard t_park_rc_passthrough t_park_lock_timeout
-t_old_sim_vault t_no_sim_vault t_temp_device_missing t_test_waits_for_other_xcodebuild
-t_record_handshake t_test_failure_rc t_record_recorder_fails t_record_test_refused t_never_bypasses_sim_vault"
+t_sigkill_shell_child_keeps_lock t_record_sigkill_recorder_keeps_lock t_up_twice_same_worktree
+t_up_stale_owner_record t_up_failure_removes_record t_test_allows_own_up_lease
+t_test_refuses_foreign_lease t_test_foreign_lease_races_ensure t_down_releases_and_shuts_down
+t_down_interleaved_lease t_down_missing_device t_park_transition_guard t_down_transition_guard
+t_park_rc_passthrough t_park_lock_timeout t_old_sim_vault t_no_sim_vault t_temp_device_missing
+t_test_waits_for_other_xcodebuild t_release_failure_rc t_record_basic t_record_test_failure_rc
+t_record_recorder_fails t_record_test_refused t_never_bypasses_sim_vault"
 SELECTED="${*:-$ALL}"
 total=0
 for CURRENT in $SELECTED; do

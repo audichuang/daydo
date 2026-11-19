@@ -30,7 +30,7 @@ def holder_text(fd):
         try:
             os.kill(int(pid), 0)
         except ProcessLookupError:
-            text += f"（pid {pid} 已結束，鎖仍由它的子程序持有，例如 xcodebuild）"
+            text += f"（pid {pid} 已結束，鎖仍由它的子程序持有，例如 xcodebuild 或 recordVideo）"
         except PermissionError:
             pass
     return text
