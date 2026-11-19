@@ -946,3 +946,26 @@ describe('purgeFrozenData on a relocated old DO', () => {
     expect(scope.relocationStatus().state).toBe('frozen');
   });
 });
+
+describe('opLogDigest prefix proof', () => {
+  it('matches between a source and its copy up to the source rowid, and differs for another log', () => {
+    const a = createTestDoState();
+    const b = createTestDoState();
+    const c = createTestDoState();
+    const insert = (st: ReturnType<typeof createTestDoState>, rowid: number, opId: string) =>
+      st.sqlite.prepare('INSERT INTO opApplied (rowid, opId, userId, status, reason, serverSeq) VALUES (?, ?, ?, ?, ?, ?)').run(rowid, opId, 'u', 'applied', null, rowid);
+    const sa = new ScopeClass(a.ctx, { SYNC_FAULT: 'none' });
+    const sb = new ScopeClass(b.ctx, { SYNC_FAULT: 'none' });
+    const sc = new ScopeClass(c.ctx, { SYNC_FAULT: 'none' });
+    for (const st of [a, b]) { insert(st, 1, 'op-1'); insert(st, 2, 'op-2'); }
+    insert(b, 3, 'op-3'); // the copy kept growing after cut-over
+    insert(c, 1, 'other-1'); insert(c, 2, 'other-2'); insert(c, 3, 'other-3');
+
+    const src = sa.opLogDigest({});
+    expect(src).toMatchObject({ count: 2, maxRowid: 2 });
+    expect(sb.opLogDigest({ maxRowid: src.maxRowid })).toEqual(src);
+    expect(sb.opLogDigest({}).count).toBe(3);
+    expect(sc.opLogDigest({ maxRowid: src.maxRowid }).sha256).not.toBe(src.sha256);
+    expect(() => sa.opLogDigest({ maxRowid: -1 })).toThrow(/maxRowid/);
+  });
+});

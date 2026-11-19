@@ -286,6 +286,30 @@ describe('POST /admin/scope-relocation', () => {
     };
     expect((await callMapped({ action: 'purge-frozen', physical: 'u:u-a', expectMaxServerSeq: oldSeq + 1 })).status).toBe(409);
     expect((await callMapped({ action: 'purge-frozen', physical: 'u:u-a:nrt1', expectMaxServerSeq: oldSeq })).status).toBe(409);
+
+    // Mapping mistakenly pointing at another account's live DO with a higher seq: refused, source intact.
+    await world!.db.insert(schema.user).values({ id: 'u-b', name: 'B', initial: 'B', color: '#34C759', avatarUrl: null, createdAt: NOW_ISH });
+    let bSeq = 0;
+    const bHlc = () => `${Date.now()}:${String(bSeq++).padStart(4, '0')}:dev-b`;
+    await world!.push('u-b', 'dev-b', [
+      deviceOp({ deviceHlc: bHlc }, 'project', projectRow('pb', { isInbox: true })),
+      deviceOp({ deviceHlc: bHlc }, 'task', taskRow('tb1', 'pb')),
+      deviceOp({ deviceHlc: bHlc }, 'task', taskRow('tb2', 'pb')),
+    ]);
+    expect((await call({ action: 'status', physical: 'u:u-b' })).json.maxServerSeq).toBeGreaterThanOrEqual(oldSeq);
+    const callTo = async (target: string, body: Record<string, unknown>) => {
+      const res = await admin(
+        makeContext({ headers: auth, body, envOverrides: { SCOPE_PHYSICAL_NAMES: JSON.stringify({ 'u:u-a': target }) } }),
+      );
+      return { status: res.status, json: (await res.json()) as Record<string, any> };
+    };
+    const wrongAccount = await callTo('u:u-b', { action: 'purge-frozen', physical: 'u:u-a', expectMaxServerSeq: oldSeq });
+    expect(wrongAccount.status).toBe(409);
+    expect(wrongAccount.json.error).toMatch(/op log|seq/);
+    // Mapping pointing at a target still importing: refused.
+    expect((await call({ action: 'begin-import', physical: 'u:u-a:nrt2' })).status).toBe(200);
+    expect((await callTo('u:u-a:nrt2', { action: 'purge-frozen', physical: 'u:u-a', expectMaxServerSeq: oldSeq })).status).toBe(409);
+    expect((await call({ action: 'status', physical: 'u:u-a' })).json.tables.project).toBe(1);
     const purged = await callMapped({ action: 'purge-frozen', physical: 'u:u-a', expectMaxServerSeq: oldSeq });
     expect(purged.status).toBe(200);
     expect(purged.json.state).toBe('frozen');

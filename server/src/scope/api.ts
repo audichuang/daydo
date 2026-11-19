@@ -194,6 +194,15 @@ export interface ScopePurgeFrozenResponse {
   state: ScopeRelocationState;
 }
 
+export interface ScopeOpLogDigestInput {
+  maxRowid?: number;
+}
+
+export interface ScopeOpLogDigest extends ScopeTableDigest {
+  /** Last rowid included (0 when the log is empty). */
+  maxRowid: number;
+}
+
 export interface ScopeRelocationStub {
   relocationStatus(): Promise<ScopeRelocationStatus>;
   setRelocationState(input: ScopeSetRelocationStateInput): Promise<ScopeSetRelocationStateResponse>;
@@ -201,4 +210,5 @@ export interface ScopeRelocationStub {
   importPage(input: ScopeImportPageInput): Promise<ScopeImportPageResponse>;
   digest(): Promise<ScopeDigest>;
   purgeFrozenData(input: ScopePurgeFrozenInput): Promise<ScopePurgeFrozenResponse>;
+  opLogDigest(input: ScopeOpLogDigestInput): Promise<ScopeOpLogDigest>;
 }

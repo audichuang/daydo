@@ -5,6 +5,8 @@ import type {
   ScopeExportPageResponse,
   ScopeImportPageInput,
   ScopeImportPageResponse,
+  ScopeOpLogDigest,
+  ScopeOpLogDigestInput,
   ScopePurgeFrozenInput,
   ScopePurgeFrozenResponse,
   ScopeRelocationState,
@@ -398,44 +400,64 @@ export function importTablePage(
   return { table: input.table, imported: input.rows.length };
 }
 
+function digestTable(
+  sql: SqlStorage,
+  table: string,
+  maxRowid: number,
+): ScopeTableDigest & { maxRowid: number } {
+  const { columns } = readTableColumnInfo(sql, table);
+  const colSelect = columns.map((c) => `"${c}"`).join(', ');
+  const hasher = new Sha256();
+  hasher.updateText(`${JSON.stringify(columns)}\n`);
+
+  let cursor = 0;
+  let count = 0;
+  while (true) {
+    const batch = sql
+      .exec(
+        `SELECT rowid AS "${ROWID_ALIAS}", ${colSelect} FROM "${table}" WHERE rowid > ? AND rowid <= ? ORDER BY rowid ASC LIMIT ?`,
+        cursor,
+        maxRowid,
+        SQL_BATCH_SIZE,
+      )
+      .toArray();
+    if (batch.length === 0) break;
+    for (const raw of batch) {
+      const rowid = Number(raw[ROWID_ALIAS]);
+      const tuple: Array<string | number | null> = [rowid];
+      for (const col of columns) {
+        tuple.push(readScalarValue(raw[col], table, col));
+      }
+      hasher.updateText(`${JSON.stringify(tuple)}\n`);
+      count += 1;
+      cursor = rowid;
+    }
+    if (batch.length < SQL_BATCH_SIZE) break;
+  }
+  return { count, sha256: hasher.hex(), maxRowid: cursor };
+}
+
 export function computeScopeDigest(sql: SqlStorage): ScopeDigest {
   const state = getRelocationState(sql);
   const tables: Record<string, ScopeTableDigest> = {};
-
   for (const table of listRelocationTables(sql)) {
-    const { columns } = readTableColumnInfo(sql, table);
-    const colSelect = columns.map((c) => `"${c}"`).join(', ');
-    const hasher = new Sha256();
-    hasher.updateText(`${JSON.stringify(columns)}\n`);
-
-    let cursor = 0;
-    let count = 0;
-    while (true) {
-      const batch = sql
-        .exec(
-          `SELECT rowid AS "${ROWID_ALIAS}", ${colSelect} FROM "${table}" WHERE rowid > ? ORDER BY rowid ASC LIMIT ?`,
-          cursor,
-          SQL_BATCH_SIZE,
-        )
-        .toArray();
-      if (batch.length === 0) break;
-      for (const raw of batch) {
-        const rowid = Number(raw[ROWID_ALIAS]);
-        const tuple: Array<string | number | null> = [rowid];
-        for (const col of columns) {
-          tuple.push(readScalarValue(raw[col], table, col));
-        }
-        hasher.updateText(`${JSON.stringify(tuple)}\n`);
-        count += 1;
-        cursor = rowid;
-      }
-      if (batch.length < SQL_BATCH_SIZE) break;
-    }
-
-    tables[table] = { count, sha256: hasher.hex() };
+    const { count, sha256 } = digestTable(sql, table, Number.MAX_SAFE_INTEGER);
+    tables[table] = { count, sha256 };
   }
-
   return { state, tables };
+}
+
+/**
+ * Digest of the append-only `opApplied` log up to `maxRowid` (all rows when omitted). A relocation
+ * copies rowids unchanged, so a copy's prefix up to the source's last rowid equals the source log;
+ * another account's DO does not.
+ */
+export function computeOpLogDigest(sql: SqlStorage, input: ScopeOpLogDigestInput): ScopeOpLogDigest {
+  const maxRowid = input?.maxRowid ?? Number.MAX_SAFE_INTEGER;
+  if (typeof maxRowid !== 'number' || !Number.isSafeInteger(maxRowid) || maxRowid < 0) {
+    throw badRequestError('maxRowid must be a non-negative integer');
+  }
+  return digestTable(sql, 'opApplied', maxRowid);
 }
 
 /**

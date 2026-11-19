@@ -169,6 +169,16 @@ export async function handleScopeRelocationAdmin(
             body: { error: `Target '${target}' is not a live copy at or beyond seq ${expectMaxServerSeq} (state ${targetStatus.state}, seq ${targetStatus.maxServerSeq})` },
           };
         }
+        // The target must be a copy of this source: the source's op log (append-only, rowids kept by
+        // the copy) must equal the target's log up to the same rowid. Another account's DO fails this.
+        const sourceLog = await stub.opLogDigest({});
+        if (sourceLog.count === 0) {
+          return { status: 409, body: { error: `'${physical}' has an empty op log; nothing proves '${target}' is its copy` } };
+        }
+        const targetLog = await params.getPhysicalScopeStub(target).opLogDigest({ maxRowid: sourceLog.maxRowid });
+        if (targetLog.count !== sourceLog.count || targetLog.sha256 !== sourceLog.sha256) {
+          return { status: 409, body: { error: `'${target}' does not contain '${physical}' op log; refusing to purge` } };
+        }
         return { status: 200, body: { ...(await stub.purgeFrozenData({ expectMaxServerSeq })) } };
       }
       default:

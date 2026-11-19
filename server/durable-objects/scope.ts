@@ -147,6 +147,10 @@ export class ScopeObject extends DurableObject<CloudBindings> {
     return Relocation.computeScopeDigest(this.ctx.storage.sql);
   }
 
+  opLogDigest(input: Api.ScopeOpLogDigestInput): Api.ScopeOpLogDigest {
+    return Relocation.computeOpLogDigest(this.ctx.storage.sql, input);
+  }
+
   purgeFrozenData(input: Api.ScopePurgeFrozenInput): Api.ScopePurgeFrozenResponse {
     return this.ctx.storage.transactionSync(() => Relocation.purgeFrozenData(this.ctx.storage.sql, input, Date.now()));
   }
