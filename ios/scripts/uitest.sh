@@ -15,25 +15,30 @@
 # once fail with "Failed to send signal 19"; DerivedData and CPU are shared). Waiting for
 # either gives up after 30 min with exit 8.
 #
-# Devices come from `sim-vault ensure` with a lease, which park and `sim-vault shutdown`
-# respect: resident devices are restored from the NAS when parked (never created here: on 3
-# no archive, on 4 the archive's runtime is not installed; ask the user). sim-vault exit codes
+# Requires sim-vault >= 4.0.0 (`uv tool install --force "git+https://github.com/audichuang/sim-vault@v4.0.0"`).
+# Devices come from sim-vault with a lease, which park and `sim-vault shutdown` respect:
+# resident devices are restored from the NAS when parked (never created here: on 3 no
+# archive, on 4 the archive's runtime is not installed; ask the user). sim-vault exit codes
 # are passed on unchanged; see `sim-vault --help`.
 #
-# Lease owners: a test run holds `dd:uitest` while it runs, and refuses (8) when anyone but
-# the caller holds a lease: -DayDoReset wipes the app's data and Keychain. `up` and `down` use
-# $DD_SIM_OWNER when set. Otherwise `up` makes a fresh owner `dd:up:<worktree>:<random>` and
-# records it in owners/daydo-<sha1 of worktree>-<device> next to the lock, refusing (8) while
-# an earlier `up` from this worktree still holds its lease; `down` reads it back and removes
-# the record once the lease is released. A test without DD_SIM_OWNER accepts that recorded
-# owner as the caller.
+# Lease owners: a test run uses `sim-vault run --lease dd:run --boot --deny-other-leases`
+# (a held lease tied to the inherited SIM_VAULT_LEASE_FD, alive while xcodebuild or
+# recordVideo lives, blocking other owners' later ensures, and dropped automatically on exit;
+# any leftover `dd:uitest` from a killed old-version run is released under the project lock
+# first). It refuses (8) when anyone but the caller holds a lease: -DayDoReset wipes the
+# app's data and Keychain. `up` and `down` use $DD_SIM_OWNER when set; otherwise they use
+# sim-vault session leases (`--lease auto --lease-scope <worktree> --lease-prefix dd:up`)
+# and no longer write owner files. During transition, `down` falls back to releasing and
+# removing an existing legacy owner file when `release --lease auto` reports `no-lease`, and
+# test mode allows `whoami` (or the legacy owner file if `whoami` is empty) when DD_SIM_OWNER
+# is unset.
 #
-# DD_UITEST_RECORD=<file.mp4> (record-uitest.sh sets it) records the screen: recordVideo is
-# started after the device is leased and booted, the tests start once it records, and after
-# them it gets SIGINT and the lease is dropped only once it has exited. As a child of this
-# script it holds the lock too. If recordVideo exits early, fails or has to be killed, its
-# output stays in <file.mp4>.recordVideo.log and the exit code is 11 unless the test itself
-# failed (then the test's code).
+# DD_UITEST_RECORD=<file.mp4> (record-uitest.sh sets it) records the screen inside the
+# `sim-vault run` child: recordVideo starts once the device is leased and booted, the tests
+# start once it records, and after them it gets SIGINT before the child exits (keeping both
+# the lock and lease fd while recording). If recordVideo exits early, fails or has to be
+# killed, its output stays in <file.mp4>.recordVideo.log and the exit code is 11 unless the
+# test itself failed (then the test's code).
 #
 # Knobs for the tests in ios/scripts/tests: DD_UITEST_LOCK_WAIT (s, default 1800),
 # DD_UITEST_POLL (s). DD_PARK_TRIM=1 adds --trim-posterboard to park.
@@ -47,11 +52,111 @@ lock_wait="${DD_UITEST_LOCK_WAIT:-1800}"
 # Relative to the caller's directory; the test run later cds into ios/.
 record="${DD_UITEST_RECORD:-}"
 case "$record" in ""|/*) ;; *) record="$PWD/$record" ;; esac
+
+# Internal child invoked by `sim-vault run -- "$BASH" "$0" --run-child "$@"`.
+# Inherits the DayDo project lock fd and SIM_VAULT_LEASE_FD; runs recording + xcodebuild.
+if [[ "${1:-}" == --run-child && -n "${SIM_VAULT_UDID:-}" ]]; then
+  shift
+  name="${SIM_VAULT_NAME:-}"
+  udid="$SIM_VAULT_UDID"
+  rec_pid=""
+  rec_log=""
+  rec_failed=0
+  xb_pid=""
+  alive() { [[ -n "$1" ]] && kill -0 "$1" 2>/dev/null; }
+  # Only an exit 0 after our SIGINT is a good recording; exiting early, failing, or needing
+  # SIGKILL is a recording failure.
+  stop_recorder() {
+    [[ -n "$rec_pid" ]] || return 0
+    local rec_rc=0
+    if alive "$rec_pid"; then
+      kill -INT "$rec_pid" 2>/dev/null || true
+      local waited=0
+      while alive "$rec_pid" && (( waited < 300 )); do sleep 0.1; waited=$((waited + 1)); done
+      if alive "$rec_pid"; then
+        echo "recordVideo 30 秒內沒有結束，強制停止（影片可能不完整）" >&2
+        kill -KILL "$rec_pid" 2>/dev/null || true
+        rec_failed=1
+      fi
+      wait "$rec_pid" 2>/dev/null || rec_rc=$?
+    else
+      wait "$rec_pid" 2>/dev/null || rec_rc=$?
+      echo "recordVideo 在測試結束前就退出了（rc=${rec_rc}）" >&2
+      rec_failed=1
+    fi
+    [[ $rec_rc == 0 ]] || rec_failed=1
+    rec_pid=""
+  }
+  finish() {
+    local rc=$? rm_rc=0
+    trap - EXIT INT TERM HUP
+    stop_recorder || rec_failed=1
+    if [[ $rec_failed == 1 ]]; then
+      echo "錄影失敗，recordVideo 的 log：${rec_log}" >&2
+      [[ $rc != 0 ]] || rc=11
+    elif [[ -n "$rec_log" ]]; then
+      rm -f "$rec_log" || rm_rc=$?
+      if [[ $rm_rc != 0 ]]; then
+        echo "警告：無法刪除錄影 log ${rec_log}（rc=${rm_rc}）" >&2
+      fi
+    fi
+    exit "$rc"
+  }
+  on_child_signal() {
+    local sig_rc="$1"
+    trap - INT TERM HUP
+    if [[ -n "$xb_pid" ]] && alive "$xb_pid"; then
+      kill -TERM "$xb_pid" 2>/dev/null || true
+      wait "$xb_pid" 2>/dev/null || true
+    fi
+    xb_pid=""
+    exit "$sig_rc"
+  }
+  trap finish EXIT
+  trap 'on_child_signal 130' INT
+  trap 'on_child_signal 143' TERM
+  trap 'on_child_signal 129' HUP
+
+  if [[ -n "$record" ]]; then
+    mkdir -p "$(dirname "$record")"
+    rec_log="$record.recordVideo.log"
+    # A background job of a non-interactive bash starts with SIGINT ignored, and SIGINT is how
+    # recordVideo is told to finish the file; restore the default before exec.
+    # recordVideo is stopped by stop_recorder before this child exits, so it keeps the lease fd.
+    python3 -I -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
+      xcrun simctl io "$udid" recordVideo --codec h264 --force "$record" >"$rec_log" 2>&1 &
+    rec_pid=$!
+    # recordVideo prints "Recording started" once frames flow; if this Xcode prints nothing,
+    # still alive after the grace period counts as started.
+    waited=0
+    until grep -q "Recording started" "$rec_log" 2>/dev/null || (( waited >= 50 )); do
+      alive "$rec_pid" || break
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+    if ! alive "$rec_pid"; then
+      echo "recordVideo 沒有啟動，不跑測試：$(cat "$rec_log" 2>/dev/null)" >&2
+      exit 1
+    fi
+  fi
+
+  cd "$here/.."
+  echo "UI 測試：${name} (${udid})" >&2
+  xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO "$@" &
+  xb_pid=$!
+  rc=0
+  wait "$xb_pid" || rc=$?
+  xb_pid=""
+  exit "$rc"
+fi
+
 orphan_hint() {
   echo "若 owner 的 worktree 已不存在、或確認那個 session 已結束，可 \`sim-vault release \"${name}\" --lease <owner>\` 清掉；不要清別人仍在用的" >&2
 }
 test_owner="dd:uitest"
-sync_hint="先同步 audi-skill：aghub-cli source sync audichuang/audi-skill -g --update --yes"
+install_hint='uv tool install --force "git+https://github.com/audichuang/sim-vault@v4.0.0"'
 
 usage() {
   echo "usage: $0 {build [xcodebuild args...] | [up|down|park] [iphone|ipad|\"DD <name>\"] | [iphone|ipad|\"DD <name>\"] [xcodebuild args...]}" >&2
@@ -89,25 +194,18 @@ fi
 # Probe the sim-vault on PATH before touching any lease or archive.
 need_sim_vault() {
   if ! command -v sim-vault >/dev/null; then
-    echo "找不到 sim-vault：ln -s ~/.aghub/modern-ios-guidance/scripts/sim-vault ~/.local/bin/sim-vault（modern-ios-guidance 技能要先用 aghub 裝好）" >&2
+    echo "找不到 sim-vault；請安裝：${install_hint}" >&2
     exit 2
   fi
-  if ! sim-vault shutdown --help >/dev/null 2>&1; then
-    echo "sim-vault 版本過舊（缺 shutdown），${sync_hint}" >&2
+  local ver
+  ver=$(sim-vault --version 2>/dev/null) || ver=""
+  if ! [[ "$ver" =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]] || (( 10#${BASH_REMATCH[1]} < 4 )); then
+    echo "sim-vault 版本過舊（需要 >= 4.0.0，目前：${ver:-未知}）；請更新：${install_hint}" >&2
     exit 2
   fi
-  local help
-  help=$(sim-vault ensure --help 2>&1) || true
-  if [[ "$help" != *--deny-other-leases* ]]; then
-    echo "sim-vault 版本過舊（ensure 沒有 --deny-other-leases），${sync_hint}" >&2
+  if ! sim-vault run --help >/dev/null 2>&1; then
+    echo "sim-vault 版本過舊（缺 run）；請更新：${install_hint}" >&2
     exit 2
-  fi
-  if [[ "$mode" == park && "${DD_PARK_TRIM:-}" == 1 ]]; then
-    help=$(sim-vault park --help 2>&1) || true
-    if [[ "$help" != *--trim-posterboard* ]]; then
-      echo "sim-vault 版本過舊（park 沒有 --trim-posterboard），${sync_hint}" >&2
-      exit 2
-    fi
   fi
 }
 
@@ -153,8 +251,7 @@ if [[ "$mode" == build ]]; then
   exit
 fi
 
-# Where `up` records the owner it made when DD_SIM_OWNER is not set. Written and removed
-# only while holding the lock.
+# Legacy owner file from pre-4.0 `up` (read by test/down during transition; never written).
 case "$target" in
   iphone|ipad) alias="$target" ;;
   *) alias="$(printf '%s' "$name" | tr -c 'A-Za-z0-9' '_')" ;;
@@ -162,9 +259,9 @@ esac
 owner_file="$state_dir/owners/daydo-$(printf '%s' "$root" | shasum | cut -c1-40)-$alias"
 recorded_owner() { cat "$owner_file" 2>/dev/null || true; }
 
-# Reads `sim-vault status --json`: count of available devices with the name, the UDID (empty
-# unless exactly one), and the live lease owners, one per line.
-count="" status_udid="" leases=""
+# Reads `sim-vault status --json`: count of available devices with the name and the UDID
+# (empty unless exactly one).
+count="" status_udid=""
 load_status() {
   local json parsed
   json=$(sim-vault status "$name" --json)
@@ -173,13 +270,9 @@ import json, sys
 s = json.load(sys.stdin)
 print(s.get("count") or 0)
 print(s.get("udid") or "")
-for l in s.get("leases") or []:
-    if not l.get("stale"):
-        print(l.get("owner") or "?")
 ')
   count=$(printf '%s\n' "$parsed" | sed -n 1p)
   status_udid=$(printf '%s\n' "$parsed" | sed -n 2p)
-  leases=$(printf '%s\n' "$parsed" | sed -n '3,$p')
 }
 
 # Old uitest.sh runs hold no lease and take a different lock; refuse while one of them is
@@ -196,29 +289,23 @@ legacy_guard() {
 }
 
 if [[ "$mode" == up ]]; then
-  load_status
-  if [[ "$count" == 0 && $resident == 0 ]]; then
-    echo "找不到名為「${name}」的模擬器；臨時機不從 NAS 還原，先建好再跑" >&2
-    exit 2
-  fi
-  if [[ -n "${DD_SIM_OWNER:-}" ]]; then
-    owner="$DD_SIM_OWNER"
-  else
-    prev="$(recorded_owner)"
-    if [[ -n "$prev" ]] && printf '%s\n' "$leases" | grep -qxF -- "$prev"; then
-      echo "這個 worktree 先前的 up 還持有「${name}」的 lease（${prev}）。那個 session 做完先 down；兩個 session 同時用這台，各自設 DD_SIM_OWNER=<唯一值> 再 up／down" >&2
-      exit 8
+  if [[ $resident == 0 ]]; then
+    load_status
+    if [[ "$count" == 0 ]]; then
+      echo "找不到名為「${name}」的模擬器；臨時機不從 NAS 還原，先建好再跑" >&2
+      exit 2
     fi
-    owner="dd:up:$root:$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
-    mkdir -p "$(dirname "$owner_file")"
-    # Recorded before the lease exists, so a killed up never leaves a lease nobody can name.
-    printf '%s\n' "$owner" >"$owner_file"
   fi
   rc=0
   # --wait matches this script's own 30 min: restoring a 6 GB archive takes minutes.
-  udid=$(sim-vault ensure "$name" --boot --lease "$owner" --wait 1800) || rc=$?
-  # On failure the record stays: sim-vault keeps the lease when the boot and its undo both
-  # fail, and down must still name it. The next up overwrites a record whose lease is gone.
+  if [[ -n "${DD_SIM_OWNER:-}" ]]; then
+    udid=$(sim-vault ensure "$name" --boot --lease "$DD_SIM_OWNER" --wait 1800) || rc=$?
+  else
+    udid=$(sim-vault ensure "$name" --boot --lease auto --lease-scope "$root" --lease-prefix dd:up --wait 1800) || rc=$?
+  fi
+  if [[ $rc == 8 && -z "${DD_SIM_OWNER:-}" ]]; then
+    echo "若要兩個 session 同時用這台，請各自設 DD_SIM_OWNER=<唯一值> 再 up／down" >&2
+  fi
   [[ $rc == 0 ]] || exit "$rc"
   eval "exec ${lock_fd}>&-"
   printf '%s\n' "$udid"
@@ -228,10 +315,18 @@ fi
 if [[ "$mode" == down ]]; then
   load_status
   legacy_guard 關機
-  owner="${DD_SIM_OWNER:-$(recorded_owner)}"
-  if [[ -n "$owner" ]]; then
-    sim-vault release "$name" --lease "$owner"
-    [[ -n "${DD_SIM_OWNER:-}" ]] || rm -f "$owner_file"
+  if [[ -n "${DD_SIM_OWNER:-}" ]]; then
+    sim-vault release "$name" --lease "$DD_SIM_OWNER"
+  else
+    rel_json=$(sim-vault release "$name" --lease auto --lease-scope "$root" --json)
+    rel_action=$(printf '%s' "$rel_json" | python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("action", ""))')
+    if [[ "$rel_action" == no-lease && -e "$owner_file" ]]; then
+      owner="$(recorded_owner)"
+      if [[ -n "$owner" ]]; then
+        sim-vault release "$name" --lease "$owner"
+      fi
+      rm -f "$owner_file"
+    fi
   fi
   if [[ "$count" == 0 ]]; then
     echo "「${name}」不在本機（可能已收進 NAS），不用關機" >&2
@@ -271,100 +366,71 @@ if [[ $resident == 0 ]]; then
   fi
 fi
 
-rec_pid=""
-rec_log=""
-rec_failed=0
-alive() { [[ -n "$1" ]] && kill -0 "$1" 2>/dev/null; }
-# Only an exit 0 after our SIGINT is a good recording; exiting early, failing, or needing
-# SIGKILL is a recording failure.
-stop_recorder() {
-  [[ -n "$rec_pid" ]] || return 0
-  local rec_rc=0
-  if alive "$rec_pid"; then
-    kill -INT "$rec_pid" 2>/dev/null || true
-    local waited=0
-    while alive "$rec_pid" && (( waited < 300 )); do sleep 0.1; waited=$((waited + 1)); done
-    if alive "$rec_pid"; then
-      echo "recordVideo 30 秒內沒有結束，強制停止（影片可能不完整）" >&2
-      kill -KILL "$rec_pid" 2>/dev/null || true
-      rec_failed=1
-    fi
-    wait "$rec_pid" 2>/dev/null || rec_rc=$?
-  else
-    wait "$rec_pid" 2>/dev/null || rec_rc=$?
-    echo "recordVideo 在測試結束前就退出了（rc=${rec_rc}）" >&2
-    rec_failed=1
-  fi
-  [[ $rec_rc == 0 ]] || rec_failed=1
-  rec_pid=""
-}
-finish() {
-  local rc=$? release_rc=0
-  trap - EXIT INT TERM HUP
-  stop_recorder
-  if [[ $rec_failed == 1 ]]; then
-    echo "錄影失敗，recordVideo 的 log：${rec_log}" >&2
-    [[ $rc != 0 ]] || rc=11
-  elif [[ -n "$rec_log" ]]; then
-    rm -f "$rec_log"
-  fi
-  sim-vault release "$name" --lease "$test_owner" || release_rc=$?
-  if [[ $release_rc != 0 ]]; then
-    echo "交回 lease ${test_owner} 失敗（rc=${release_rc}），lease 還留著；下次測試或 park 會清掉" >&2
-    # The run's own failure says more than the cleanup's.
-    [[ $rc != 0 ]] || rc=$release_rc
-  fi
-  exit "$rc"
-}
-trap finish EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-trap 'exit 129' HUP
+# Holding the lock means no same-lock runner is alive, so a dd:uitest lease is left over
+# from a killed old-version run.
+sim-vault release "$name" --lease "$test_owner"
 
-# The caller's own manual-test lease may stay; anyone else's makes ensure refuse (8) without
-# leasing, checked under sim-vault's device lock.
-caller="${DD_SIM_OWNER:-$(recorded_owner)}"
+# The caller's own manual-test lease may stay; anyone else's makes run refuse (8) without
+# leasing, checked under sim-vault's device lock. Never allow both DD_SIM_OWNER and whoami.
+caller=""
+if [[ -n "${DD_SIM_OWNER:-}" ]]; then
+  caller="$DD_SIM_OWNER"
+else
+  caller="$(sim-vault whoami "$name" --lease-scope "$root" 2>/dev/null || true)"
+  if [[ -z "$caller" ]]; then
+    caller="$(recorded_owner)"
+  fi
+fi
 allow=()
 [[ -z "$caller" ]] || allow=(--allow-lease "$caller")
+
+if [[ -n "$record" ]]; then
+  export DD_UITEST_RECORD="$record"
+fi
+
+result_file="$(mktemp "${TMPDIR:-/tmp}/dd-uitest-result.XXXXXX")"
+run_pid=""
+cleanup_outer() {
+  rm -f "$result_file" 2>/dev/null || true
+}
+on_outer_signal() {
+  local sig_rc="$1"
+  trap - INT TERM HUP
+  if [[ -n "$run_pid" ]]; then
+    kill -TERM "$run_pid" 2>/dev/null || true
+    wait "$run_pid" 2>/dev/null || true
+  fi
+  cleanup_outer
+  exit "$sig_rc"
+}
+trap cleanup_outer EXIT
+trap 'on_outer_signal 130' INT
+trap 'on_outer_signal 143' TERM
+trap 'on_outer_signal 129' HUP
+
 # --wait matches this script's own 30 min: restoring a 6 GB archive takes minutes.
 # --boot boots here instead of letting xcodebuild do it: xcodebuild shuts down a simulator it
 # booted as soon as the run ends, often 30 s after boot while PosterBoard is still writing
 # its wallpaper store. One such cut on 2026-11-17 corrupted that store and PosterBoard then
 # crashed on every boot. A device that was already booted is left running.
 rc=0
-udid=$(sim-vault ensure "$name" --boot --lease "$test_owner" --deny-other-leases \
-  ${allow[@]+"${allow[@]}"} --wait 1800) || rc=$?
-if [[ $rc == 8 ]]; then
-  echo "「${name}」正被別人使用或鎖住（見上面的 owner）；UI 測試的 -DayDoReset 會清掉 App 資料與 Keychain，不跑" >&2
-  orphan_hint
-fi
-[[ $rc == 0 ]] || exit "$rc"
+sim-vault run "$name" --lease dd:run --boot --deny-other-leases \
+  ${allow[@]+"${allow[@]}"} --wait 1800 --result-file "$result_file" \
+  -- "$BASH" "$0" --run-child "$@" &
+run_pid=$!
+wait "$run_pid" || rc=$?
+run_pid=""
 
-if [[ -n "$record" ]]; then
-  mkdir -p "$(dirname "$record")"
-  rec_log="$record.recordVideo.log"
-  # A background job of a non-interactive bash starts with SIGINT ignored, and SIGINT is how
-  # recordVideo is told to finish the file; restore the default before exec.
-  python3 -I -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
-    xcrun simctl io "$udid" recordVideo --codec h264 --force "$record" >"$rec_log" 2>&1 &
-  rec_pid=$!
-  # recordVideo prints "Recording started" once frames flow; if this Xcode prints nothing,
-  # still alive after the grace period counts as started.
-  waited=0
-  until grep -q "Recording started" "$rec_log" 2>/dev/null || (( waited >= 50 )); do
-    alive "$rec_pid" || break
-    sleep 0.1
-    waited=$((waited + 1))
-  done
-  if ! alive "$rec_pid"; then
-    echo "recordVideo 沒有啟動，不跑測試：$(cat "$rec_log" 2>/dev/null)" >&2
-    exit 1
+if [[ $rc == 8 && -s "$result_file" ]]; then
+  stage=$(python3 -I -c 'import json, sys
+try:
+    print(json.load(open(sys.argv[1])).get("stage", ""))
+except Exception:
+    pass
+' "$result_file" 2>/dev/null || true)
+  if [[ "$stage" == acquire ]]; then
+    echo "「${name}」正被別人使用或鎖住（見上面的 owner）；UI 測試的 -DayDoReset 會清掉 App 資料與 Keychain，不跑" >&2
+    orphan_hint
   fi
 fi
-
-cd "$here/.."
-echo "UI 測試：${name} (${udid})" >&2
-# Foreground on purpose: a signal then reaches the trap only after xcodebuild has exited.
-xcodebuild test -project DayDo.xcodeproj -scheme DayDo \
-  -destination "platform=iOS Simulator,id=$udid" \
-  -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO "$@"
+exit "$rc"
