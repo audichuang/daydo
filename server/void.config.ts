@@ -5,7 +5,7 @@ export default defineConfig({
   "worker": {
     "compatibility_date": "2026-02-24"
   },
-  // Replicas buy nothing for a couple of users in Taiwan/Japan; keep every query on the primary.
+  // The Worker runs next to the D1 primary (placement below), so replicas no longer help.
   "database": {
     "readReplication": false
   },
