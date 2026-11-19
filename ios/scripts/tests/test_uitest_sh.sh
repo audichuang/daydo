@@ -23,9 +23,66 @@ FAILED_TESTS=""
 CURRENT=""
 BG_PIDS=""
 
+kill_test_procs() {
+  local pattern="${1:-}" extra="" p pid
+  for p in "${S:-}/xcodebuild.pid" "${S:-}/rec.pid"; do
+    if [[ -f "$p" ]]; then
+      pid="$(cat "$p" 2>/dev/null || true)"
+      [[ -z "$pid" ]] || extra="$extra $pid"
+    fi
+  done
+  local roots="$BG_PIDS $extra"
+  BG_PIDS=""
+  "$REAL_PY" -c '
+import os, signal, subprocess, sys
+pattern = sys.argv[1]
+roots = {int(x) for x in sys.argv[2:] if x.isdigit()}
+out = subprocess.run(["/bin/ps", "-axww", "-o", "pid=,ppid=,args="],
+                     capture_output=True, text=True).stdout
+children = {}
+ppid_of = {}
+args_of = {}
+for line in out.splitlines():
+    parts = line.split(None, 2)
+    if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+        p, pp, a = int(parts[0]), int(parts[1]), parts[2]
+        ppid_of[p] = pp
+        children.setdefault(pp, []).append(p)
+        args_of[p] = a
+# Never kill ourselves or any ancestor up to PID 1.
+keep = set()
+cur = os.getpid()
+while cur and cur not in keep:
+    keep.add(cur)
+    cur = ppid_of.get(cur, 0)
+victims = set()
+stack = list(roots)
+while stack:
+    p = stack.pop()
+    if p in victims or p in keep:
+        continue
+    victims.add(p)
+    stack.extend(children.get(p, ()))
+if pattern:
+    for p, a in args_of.items():
+        if pattern in a and p not in keep:
+            stack.append(p)
+    while stack:
+        p = stack.pop()
+        if p in victims or p in keep:
+            continue
+        victims.add(p)
+        stack.extend(children.get(p, ()))
+for p in victims:
+    try:
+        os.kill(p, signal.SIGKILL)
+    except OSError:
+        pass
+' "$pattern" $roots 2>/dev/null || true
+}
+
 cleanup() {
-  local p
-  for p in $BG_PIDS; do kill -KILL "$p" 2>/dev/null || true; done
+  kill_test_procs "$WORK"
   chmod -R u+w "$WORK" 2>/dev/null || true
   rm -rf "$WORK"
 }
@@ -327,6 +384,14 @@ EOF
 cat >"$STUB/xcodebuild" <<'EOF'
 #!/bin/bash
 S="$STUB_STATE"
+if [[ -e "$S/xcodebuild.ignore_term" ]]; then
+  trap '' TERM INT HUP
+  echo $$ >"$S/xcodebuild.pid"
+  echo $PPID >"$S/xcodebuild.ppid"
+  printf '%s\n' "xcodebuild $*" >>"$S/events.log"
+  while [[ -d "$S" ]]; do sleep 0.05; done
+  exit 0
+fi
 if [[ -e "$S/xcodebuild.slow_term" ]]; then
   delay="$(cat "$S/xcodebuild.slow_term")"
   trap '' INT
@@ -334,7 +399,8 @@ if [[ -e "$S/xcodebuild.slow_term" ]]; then
   echo $$ >"$S/xcodebuild.pid"
   echo $PPID >"$S/xcodebuild.ppid"
   printf '%s\n' "xcodebuild $*" >>"$S/events.log"
-  while :; do sleep 0.05; done
+  while [[ -d "$S" ]]; do sleep 0.05; done
+  exit 0
 fi
 printf '%s\n' "xcodebuild $*" >>"$S/events.log"
 echo $$ >"$S/xcodebuild.pid"
@@ -342,7 +408,7 @@ echo $PPID >"$S/xcodebuild.ppid"
 if [[ -e "$S/hook.xcodebuild" ]]; then . "$S/hook.xcodebuild"; fi
 if [[ -e "$S/xcodebuild.sleep" ]]; then sleep "$(cat "$S/xcodebuild.sleep")"; fi
 if [[ -e "$S/xcodebuild.block" ]]; then
-  while [[ ! -e "$S/xcodebuild.release" ]]; do sleep 0.05; done
+  while [[ -d "$S" && ! -e "$S/xcodebuild.release" ]]; do sleep 0.05; done
 fi
 printf '%s\n' "xcodebuild-exit" >>"$S/events.log"
 echo "Executed 1 test, with 0 failures"
@@ -540,7 +606,7 @@ setup() {
 }
 set_env() {
   ENVCMD=(env -u BASH_ENV -u DD_SIM_OWNER -u DD_PARK_TRIM -u DD_UITEST_RECORD
-    -u DD_UITEST_LOCK_PID -u DD_UITEST_LOCK_FD -u DD_UITEST_LOCK_RC
+    -u DD_UITEST_LOCK_PID -u DD_UITEST_LOCK_FD -u DD_UITEST_LOCK_RC -u DD_UITEST_KILL_AFTER
     -u CLAUDE_PID -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID -u SIM_VAULT_ANCHOR_PID
     HOME="$T/home" TMPDIR="$T/tmp" STUB_STATE="$S"
     DD_UITEST_POLL=0.05 DD_UITEST_LOCK_WAIT=30
@@ -561,7 +627,7 @@ plistlib.dump({
 }, open(p, "wb"))
 ' "$T/home/Library/Developer/CoreSimulator/Devices/UDID-REAL-001"
   ENVCMD=(env -u BASH_ENV -u DD_SIM_OWNER -u DD_PARK_TRIM -u DD_UITEST_RECORD
-    -u DD_UITEST_LOCK_PID -u DD_UITEST_LOCK_FD -u DD_UITEST_LOCK_RC
+    -u DD_UITEST_LOCK_PID -u DD_UITEST_LOCK_FD -u DD_UITEST_LOCK_RC -u DD_UITEST_KILL_AFTER
     -u CLAUDE_PID -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID
     HOME="$T/home" TMPDIR="$T/tmp" STUB_STATE="$S"
     SIM_VAULT_DIR="$T/vault" SIM_VAULT_HISTORY="$T/history.jsonl"
@@ -1431,18 +1497,32 @@ t_real_sigint_pgrp_slow_xcodebuild() {
   "${ENVCMD[@]}" "$REAL_PY" -c '
 import os, signal, subprocess, sys, time
 uitest, events, outf, errf, rcf = sys.argv[1:6]
+rc, elapsed = "ERR", 0.0
 with open(outf, "wb") as o, open(errf, "wb") as e:
     p = subprocess.Popen(["bash", "--noprofile", "--norc", uitest, "iphone"],
                          stdout=o, stderr=e, start_new_session=True)
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        if os.path.exists(events) and "xcodebuild test" in open(events).read():
-            break
-        time.sleep(0.05)
-    t0 = time.monotonic()
-    os.killpg(p.pid, signal.SIGINT)
-    rc = p.wait(timeout=20)
-    elapsed = time.monotonic() - t0
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if os.path.exists(events) and "xcodebuild test" in open(events).read():
+                break
+            time.sleep(0.05)
+        t0 = time.monotonic()
+        os.killpg(p.pid, signal.SIGINT)
+        try:
+            rc = p.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            rc = "TIMEOUT"
+        elapsed = time.monotonic() - t0
+    finally:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            p.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
 with open(rcf, "w") as f:
     f.write(f"{rc} {elapsed:.2f}\n")
 ' "$UITEST" "$S/events.log" "$T/out" "$T/err" "$rc_file"
@@ -1455,6 +1535,58 @@ with open(rcf, "w") as f:
     || fail "wrapper returned too early (${elapsed}s < 6.5s)"
   if [[ -n "$xpid" ]] && kill -0 "$xpid" 2>/dev/null; then
     fail "fake xcodebuild (pid $xpid) still running after wrapper exited (elapsed=${elapsed}s)"
+    kill -KILL "$xpid" 2>/dev/null || true
+  fi
+  has "$T/err" "sim-vault-run: stage=child rc=130 childRc=130 teardown=ok" "clean teardown=ok"
+  eq "$(realvault_leases)" "" "no lease left"
+  lock_free || fail "lock free"
+}
+
+t_real_sigint_pgrp_ignores_term() {
+  setup_realvault
+  : >"$S/xcodebuild.ignore_term"
+  local rc_file="$T/pgrp.rc"
+  "${ENVCMD[@]}" DD_UITEST_KILL_AFTER=2 "$REAL_PY" -c '
+import os, signal, subprocess, sys, time
+uitest, events, outf, errf, rcf = sys.argv[1:6]
+rc, elapsed = "ERR", 0.0
+with open(outf, "wb") as o, open(errf, "wb") as e:
+    p = subprocess.Popen(["bash", "--noprofile", "--norc", uitest, "iphone"],
+                         stdout=o, stderr=e, start_new_session=True)
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if os.path.exists(events) and "xcodebuild test" in open(events).read():
+                break
+            time.sleep(0.05)
+        t0 = time.monotonic()
+        os.killpg(p.pid, signal.SIGINT)
+        try:
+            rc = p.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            rc = "TIMEOUT"
+        elapsed = time.monotonic() - t0
+    finally:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            p.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
+with open(rcf, "w") as f:
+    f.write(f"{rc} {elapsed:.2f}\n")
+' "$UITEST" "$S/events.log" "$T/out" "$T/err" "$rc_file"
+  local rc elapsed xpid
+  read -r rc elapsed <"$rc_file"
+  xpid="$(cat "$S/xcodebuild.pid" 2>/dev/null || true)"
+  eq "$rc" 130 "SIGINT returns 130 when xcodebuild ignores TERM (elapsed=${elapsed}s)"
+  "$REAL_PY" -c "import sys; e = float(sys.argv[1]); sys.exit(0 if 1.5 <= e <= 6.0 else 1)" "$elapsed" \
+    || fail "expected wrapper to force-kill after ~2s, took ${elapsed}s"
+  has "$T/err" "xcodebuild 2 秒內沒有結束，強制停止" "warns xcodebuild was force-killed"
+  if [[ -n "$xpid" ]] && kill -0 "$xpid" 2>/dev/null; then
+    fail "fake xcodebuild (pid $xpid) still running after force-kill"
     kill -KILL "$xpid" 2>/dev/null || true
   fi
   has "$T/err" "sim-vault-run: stage=child rc=130 childRc=130 teardown=ok" "clean teardown=ok"
@@ -1517,7 +1649,8 @@ t_record_test_refused t_record_rm_log_failure_preserves_rc t_sigterm_stops_child
 t_real_test_basic t_real_foreign_lease_refused t_real_xcodebuild_65_and_8
 t_real_up_twice_same_worktree t_real_up_test_down t_real_legacy_owner_file_down
 t_real_leftover_dd_uitest_released t_real_record_failure_11 t_real_sigterm_releases_held_lease
-t_real_null_anchor_case_alias t_real_sigint_pgrp_slow_xcodebuild t_real_sigkill_all_keeps_held_lease
+t_real_null_anchor_case_alias t_real_sigint_pgrp_slow_xcodebuild t_real_sigint_pgrp_ignores_term
+t_real_sigkill_all_keeps_held_lease
 t_never_bypasses_sim_vault"
 SELECTED="${*:-$ALL}"
 total=0
@@ -1525,6 +1658,7 @@ for CURRENT in $SELECTED; do
   setup
   before_fails=$FAILS
   "$CURRENT"
+  kill_test_procs "$T"
   total=$((total + 1))
   if (( FAILS == before_fails )); then echo "ok   $CURRENT"; else echo "FAIL $CURRENT"; fi
 done

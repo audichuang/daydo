@@ -41,7 +41,8 @@
 # test itself failed (then the test's code).
 #
 # Knobs for the tests in ios/scripts/tests: DD_UITEST_LOCK_WAIT (s, default 1800),
-# DD_UITEST_POLL (s). DD_PARK_TRIM=1 adds --trim-posterboard to park.
+# DD_UITEST_POLL (s), DD_UITEST_KILL_AFTER (s, default 30). DD_PARK_TRIM=1 adds
+# --trim-posterboard to park.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd -P)"
@@ -63,6 +64,7 @@ if [[ "${1:-}" == --run-child && -n "${SIM_VAULT_UDID:-}" ]]; then
   rec_log=""
   rec_failed=0
   xb_pid=""
+  kill_after="${DD_UITEST_KILL_AFTER:-30}"
   alive() { [[ -n "$1" ]] && kill -0 "$1" 2>/dev/null; }
   # Only an exit 0 after our SIGINT is a good recording; exiting early, failing, or needing
   # SIGKILL is a recording failure.
@@ -108,6 +110,12 @@ if [[ "${1:-}" == --run-child && -n "${SIM_VAULT_UDID:-}" ]]; then
     trap '' INT TERM HUP
     if [[ -n "$xb_pid" ]] && alive "$xb_pid"; then
       kill -TERM "$xb_pid" 2>/dev/null || true
+      local waited=0 limit=$((kill_after * 10))
+      while alive "$xb_pid" && (( waited < limit )); do sleep 0.1; waited=$((waited + 1)); done
+      if alive "$xb_pid"; then
+        echo "xcodebuild ${kill_after} 秒內沒有結束，強制停止" >&2
+        kill -KILL "$xb_pid" 2>/dev/null || true
+      fi
       wait "$xb_pid" 2>/dev/null || true
     fi
     xb_pid=""
