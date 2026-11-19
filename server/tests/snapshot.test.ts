@@ -4,6 +4,7 @@ import * as schema from '../db/schema';
 import { serverClock } from '../src/sync/serverClock';
 import { acceptInvite, createInvite } from '../src/sharing';
 import { loadSnapshot } from '../src/serverops/snapshot';
+import { MAX_PULL_PAGE_CHARS } from '../src/scope/pull';
 import { createScopeWorld } from './helpers/scopeWorld';
 
 function createHarness() {
@@ -157,7 +158,7 @@ describe('M9a loadSnapshot', () => {
     expect(a.canWrite('p-shared')).toBe(true);
   });
 
-  it('pages past limit=1000 within one scope and returns every row', async () => {
+  it('pages past the page limit within one scope and returns every row', async () => {
     const h = createHarness();
     await seedUsers(h, ['u-a']);
     const total = 1600;
@@ -173,13 +174,53 @@ describe('M9a loadSnapshot', () => {
 
     const pulls = vi.spyOn(h, 'getScopeStub');
     const started = performance.now();
-    const snap = await loadSnapshot(h.db, 'u-a', h.getScopeStub);
+    const snap = await loadSnapshot(h.db, 'u-a', h.getScopeStub, 500);
     const elapsed = performance.now() - started;
     console.log(`loadSnapshot ${total} tasks: ${elapsed.toFixed(0)} ms (getScopeStub calls: ${pulls.mock.calls.length})`);
 
+    // 1601 rows (project + tasks) at 500 per page: 4 pages.
+    expect(pulls.mock.calls).toHaveLength(4);
     const tasks = snap.rows('task');
     expect(tasks).toHaveLength(total);
     expect(new Set(tasks.map((t) => t.row.id)).size).toBe(total);
     expect(snap.liveTasks()).toHaveLength(total);
+
+  }, 120_000);
+
+  it('ends a page early when rows are large, so one RPC page stays under the size budget', async () => {
+    const h = createHarness();
+    await seedUsers(h, ['u-a']);
+    const total = 400;
+    const content = 'x'.repeat(25_000); // 400 x 25k chars exceeds MAX_PULL_PAGE_CHARS
+    await h.push('u-a', [projectOp(h, 'p-long')]);
+    for (let i = 0; i < total; i += 50) {
+      const ops = [];
+      for (let j = i; j < Math.min(i + 50, total); j += 1) {
+        ops.push(taskOp(h, `t-${j}`, 'p-long', { content }));
+      }
+      const r = await h.push('u-a', ops);
+      expect(r.results.every((x) => x.status === 'applied')).toBe(true);
+    }
+
+    const pageChars: number[] = [];
+    const getScopeStub = (scope: string) => {
+      const stub = h.getScopeStub(scope);
+      return {
+        pull: async (input: Parameters<typeof stub.pull>[0]) => {
+          const res = await stub.pull(input);
+          pageChars.push(res.rows.reduce((n, r) => n + JSON.stringify(r).length, 0));
+          return res;
+        },
+        purgeProject: stub.purgeProject.bind(stub),
+      };
+    };
+    const snap = await loadSnapshot(h.db, 'u-a', getScopeStub);
+
+    expect(pageChars.length).toBeGreaterThan(1);
+    for (const c of pageChars) expect(c).toBeLessThanOrEqual(MAX_PULL_PAGE_CHARS);
+    const tasks = snap.rows('task');
+    expect(tasks).toHaveLength(total);
+    expect(new Set(tasks.map((t) => t.row.id)).size).toBe(total);
+    expect(tasks.every((t) => t.row.content === content)).toBe(true);
   }, 120_000);
 });

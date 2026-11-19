@@ -74,6 +74,24 @@ export function getAttachmentInfo(
   };
 }
 
+/**
+ * Budget for one page, in JSON characters. The page goes back over Workers RPC (32 MiB per
+ * message) and row content has no length cap, so a page also ends early when its rows get
+ * large; a UTF-16 serialization of 8M characters stays near 16 MB.
+ */
+export const MAX_PULL_PAGE_CHARS = 8_000_000;
+
+/** Rows to return: at most `limit`, and stop before the budget is exceeded (always at least one). */
+function pageEnd(sorted: readonly PullScopeRow[], limit: number): number {
+  const max = Math.min(sorted.length, limit);
+  let chars = 0;
+  for (let i = 0; i < max; i += 1) {
+    chars += JSON.stringify(sorted[i]).length;
+    if (chars > MAX_PULL_PAGE_CHARS && i > 0) return i;
+  }
+  return max;
+}
+
 export function pullScope(sql: SqlStorage, input: ScopePullInput): ScopePullResponse {
   const isBackfill =
     Array.isArray(input.backfillProjectIds) && input.backfillProjectIds.length > 0;
@@ -186,8 +204,9 @@ export function pullScope(sql: SqlStorage, input: ScopePullInput): ScopePullResp
   }
 
   combined.sort((a, b) => a.serverSeq - b.serverSeq);
-  const hasMore = combined.length > input.limit;
-  const rows = hasMore ? combined.slice(0, input.limit) : combined;
+  const end = pageEnd(combined, input.limit);
+  const hasMore = combined.length > end;
+  const rows = hasMore ? combined.slice(0, end) : combined;
   const cursor = rows.length > 0 ? rows[rows.length - 1].serverSeq : input.since;
 
   return {

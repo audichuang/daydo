@@ -201,7 +201,7 @@
 | POST | `/auth/link` | 已登入時連結另一種登入方式（之後做） |
 | DELETE | `/account` | 刪除帳號與所有資料（之後做，上架前必須有） |
 | POST | `/sync/push` | `{deviceId, ops: [{opId, hlc, entity, entityId, op, fields, row}]}`（最多 200）→ `{results: [{opId, status, reason?, row, clocks}], serverTime}`，`results` 與 `ops` 同順序；`serverTime` 是 HLC 字串（`<ms>:<counter>:server`） |
-| POST | `/sync/pull` | `{cursors: {"u:<id>": seq}, backfill?: [projectId], limit?}` → `{scopes: [{scope, rows: [{entity, row, clocks, serverSeq} \| {entity, entityId, gone: true, serverSeq}], cursor, hasMore}], memberships: [{projectId, scope, role}], members: [member 列（另帶 userId, avatarUrl）]}`；沒給游標的範圍從 0 開始 |
+| POST | `/sync/pull` | `{cursors: {"u:<id>": seq}, backfill?: [projectId], limit?}` → `{scopes: [{scope, rows: [{entity, row, clocks, serverSeq} \| {entity, entityId, gone: true, serverSeq}], cursor, hasMore}], memberships: [{projectId, scope, role}], members: [member 列（另帶 userId, avatarUrl）]}`；沒給游標的範圍從 0 開始；列很大時一頁可能少於 `limit` 但 `hasMore=true`（Scope 每頁有 JSON 字元預算） |
 | POST | `/invites` | `{projectId, role, email?}`（owner 才能建；email 只用來顯示）→ `{code, url: "daydo://invite/<code>", expiresAt}` |
 | GET | `/invites/<code>` | → `{projectName, inviterName, role, expiresAt}`（讓 App 顯示「誰邀你加入哪份清單」） |
 | POST | `/invites/<code>/accept` | 加入成員，並投影一筆 projectMember → `{projectId, scope, role}`。D1 用一條「邀請存在、未撤銷、未過期才寫入成員資格」的條件式 INSERT，讀回結果；撤銷與接受同時發生時以 D1 執行順序為準 |

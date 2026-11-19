@@ -302,7 +302,7 @@ UPDATE oauthCode SET usedAt=? WHERE codeHash=? AND usedAt IS NULL AND expiresAt>
 
 ### 6.1 讀：`src/serverops/snapshot.ts`
 
-- `loadSnapshot(db, userId, getScopeStub)` 以 `executeSyncPull(cursors:{}, limit:1000)` 迴圈，直到每個 scope 的 `hasMore=false`。
+- `loadSnapshot(db, userId, getScopeStub)` 以 `executeSyncPull(cursors:{}, limit:1000)` 迴圈，直到每個 scope 的 `hasMore=false`。Scope 的 `pullScope` 另有每頁 JSON 字元預算（`MAX_PULL_PAGE_CHARS`，800 萬字元），列很大時提早結束該頁並回 `hasMore=true`，避免超過 Workers RPC 單則 32 MiB 上限。
 - **snapshot 保留原始列**：
   - 包括垃圾桶裡的任務（`deletedAt`）與 tombstone（`purgedAt`）。tombstone 保留原本的 `projectId`（`merge.ts` 的 delete 分支複製既有列），所以只要清單仍可見，就會出現在 pull 裡。
   - 只排除 `gone` 列。

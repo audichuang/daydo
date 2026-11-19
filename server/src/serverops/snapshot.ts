@@ -44,6 +44,7 @@ export async function loadSnapshot(
   db: AppDb,
   userId: string,
   getScopeStub: (scope: string) => Pick<ScopeStub, 'pull' | 'purgeProject'>,
+  pageLimit: number = PULL_LIMIT,
 ): Promise<Snapshot> {
   const byEntity = new Map<EntityName, Map<string, SnapshotRow>>();
   const cursors: Record<string, number> = {};
@@ -54,7 +55,7 @@ export async function loadSnapshot(
     const res = await executeSyncPull(db, {
       userId,
       cursors,
-      limit: PULL_LIMIT,
+      limit: pageLimit,
       getScopeStub,
     });
     if (page === 0) {
