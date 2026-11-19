@@ -1,4 +1,6 @@
 export const RELOCATION_STATE_TABLE = 'relocationState';
+/** Set once by purgeFrozenData; kept separate from relocationState so older builds still read 'frozen'. */
+export const RELOCATION_PURGED_TABLE = '_relocationPurged';
 
 export function ensureScopeSchema(sql: SqlStorage): void {
   sql.exec(`
@@ -209,6 +211,11 @@ export function ensureScopeSchema(sql: SqlStorage): void {
       CREATE TABLE IF NOT EXISTS relocationState (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         state TEXT NOT NULL CHECK (state IN ('live', 'frozen', 'importing'))
+      );
+
+      CREATE TABLE IF NOT EXISTS _relocationPurged (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        purgedAt INTEGER NOT NULL
       );
     `);
 

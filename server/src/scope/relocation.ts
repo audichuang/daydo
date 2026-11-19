@@ -5,6 +5,10 @@ import type {
   ScopeExportPageResponse,
   ScopeImportPageInput,
   ScopeImportPageResponse,
+  ScopeOpLogDigest,
+  ScopeOpLogDigestInput,
+  ScopePurgeFrozenInput,
+  ScopePurgeFrozenResponse,
   ScopeRelocationState,
   ScopeRelocationStatus,
   ScopeSetRelocationStateInput,
@@ -12,7 +16,7 @@ import type {
   ScopeTableDigest,
 } from './api';
 import { MAX_PULL_PAGE_CHARS } from './pull';
-import { RELOCATION_STATE_TABLE } from './schema';
+import { RELOCATION_PURGED_TABLE, RELOCATION_STATE_TABLE } from './schema';
 import { Sha256 } from './sha256';
 
 export const SCOPE_RELOCATING_CODE = 'SCOPE_RELOCATING';
@@ -67,9 +71,14 @@ export function assertScopeWritable(sql: SqlStorage): void {
   }
 }
 
+export function isScopePurged(sql: SqlStorage): boolean {
+  return sql.exec(`SELECT 1 FROM "${RELOCATION_PURGED_TABLE}" WHERE id = 1`).toArray().length > 0;
+}
+
+/** Reads are refused while importing, and on a purged old DO (an empty page must never look like a complete sync). */
 export function assertScopeReadable(sql: SqlStorage): void {
   const state = getRelocationState(sql);
-  if (state === 'importing') {
+  if (state === 'importing' || isScopePurged(sql)) {
     throw new ScopeRelocatingError(state);
   }
 }
@@ -91,7 +100,7 @@ export function listRelocationTables(sql: SqlStorage): string[] {
       tables.push(name);
       continue;
     }
-    if (name === RELOCATION_STATE_TABLE) continue;
+    if (name === RELOCATION_STATE_TABLE || name === RELOCATION_PURGED_TABLE) continue;
     if (name.startsWith('sqlite_') || name.startsWith('_')) continue;
     tables.push(name);
   }
@@ -220,6 +229,9 @@ export function setRelocationState(
   }
   if (!isAllowedTransition(current, input.state)) {
     throw conflictError(`Illegal relocation state transition: '${current}' -> '${input.state}'`);
+  }
+  if (isScopePurged(sql)) {
+    throw conflictError('Scope data was purged after relocation; its state can no longer change');
   }
 
   if (current === 'live' && input.state === 'importing') {
@@ -388,42 +400,93 @@ export function importTablePage(
   return { table: input.table, imported: input.rows.length };
 }
 
+function digestTable(
+  sql: SqlStorage,
+  table: string,
+  maxRowid: number,
+): ScopeTableDigest & { maxRowid: number } {
+  const { columns } = readTableColumnInfo(sql, table);
+  const colSelect = columns.map((c) => `"${c}"`).join(', ');
+  const hasher = new Sha256();
+  hasher.updateText(`${JSON.stringify(columns)}\n`);
+
+  let cursor = 0;
+  let count = 0;
+  while (true) {
+    const batch = sql
+      .exec(
+        `SELECT rowid AS "${ROWID_ALIAS}", ${colSelect} FROM "${table}" WHERE rowid > ? AND rowid <= ? ORDER BY rowid ASC LIMIT ?`,
+        cursor,
+        maxRowid,
+        SQL_BATCH_SIZE,
+      )
+      .toArray();
+    if (batch.length === 0) break;
+    for (const raw of batch) {
+      const rowid = Number(raw[ROWID_ALIAS]);
+      const tuple: Array<string | number | null> = [rowid];
+      for (const col of columns) {
+        tuple.push(readScalarValue(raw[col], table, col));
+      }
+      hasher.updateText(`${JSON.stringify(tuple)}\n`);
+      count += 1;
+      cursor = rowid;
+    }
+    if (batch.length < SQL_BATCH_SIZE) break;
+  }
+  return { count, sha256: hasher.hex(), maxRowid: cursor };
+}
+
 export function computeScopeDigest(sql: SqlStorage): ScopeDigest {
   const state = getRelocationState(sql);
   const tables: Record<string, ScopeTableDigest> = {};
-
   for (const table of listRelocationTables(sql)) {
-    const { columns } = readTableColumnInfo(sql, table);
-    const colSelect = columns.map((c) => `"${c}"`).join(', ');
-    const hasher = new Sha256();
-    hasher.updateText(`${JSON.stringify(columns)}\n`);
-
-    let cursor = 0;
-    let count = 0;
-    while (true) {
-      const batch = sql
-        .exec(
-          `SELECT rowid AS "${ROWID_ALIAS}", ${colSelect} FROM "${table}" WHERE rowid > ? ORDER BY rowid ASC LIMIT ?`,
-          cursor,
-          SQL_BATCH_SIZE,
-        )
-        .toArray();
-      if (batch.length === 0) break;
-      for (const raw of batch) {
-        const rowid = Number(raw[ROWID_ALIAS]);
-        const tuple: Array<string | number | null> = [rowid];
-        for (const col of columns) {
-          tuple.push(readScalarValue(raw[col], table, col));
-        }
-        hasher.updateText(`${JSON.stringify(tuple)}\n`);
-        count += 1;
-        cursor = rowid;
-      }
-      if (batch.length < SQL_BATCH_SIZE) break;
-    }
-
-    tables[table] = { count, sha256: hasher.hex() };
+    const { count, sha256 } = digestTable(sql, table, Number.MAX_SAFE_INTEGER);
+    tables[table] = { count, sha256 };
   }
-
   return { state, tables };
+}
+
+/**
+ * Digest of the append-only `opApplied` log up to `maxRowid` (all rows when omitted). A relocation
+ * copies rowids unchanged, so a copy's prefix up to the source's last rowid equals the source log;
+ * another account's DO does not.
+ */
+export function computeOpLogDigest(sql: SqlStorage, input: ScopeOpLogDigestInput): ScopeOpLogDigest {
+  const maxRowid = input?.maxRowid ?? Number.MAX_SAFE_INTEGER;
+  if (typeof maxRowid !== 'number' || !Number.isSafeInteger(maxRowid) || maxRowid < 0) {
+    throw badRequestError('maxRowid must be a non-negative integer');
+  }
+  return digestTable(sql, 'opApplied', maxRowid);
+}
+
+/**
+ * Deletes every row of a relocated (frozen) old DO and keeps it frozen, so the empty object still
+ * rejects writes instead of silently accepting them. The caller runs it in one storage transaction.
+ */
+export function purgeFrozenData(
+  sql: SqlStorage,
+  input: ScopePurgeFrozenInput,
+  nowMs: number,
+): ScopePurgeFrozenResponse {
+  const state = getRelocationState(sql);
+  if (state !== 'frozen') {
+    throw conflictError(`purgeFrozenData requires state 'frozen' (actual: '${state}')`);
+  }
+  const expect = input?.expectMaxServerSeq;
+  if (typeof expect !== 'number' || !Number.isSafeInteger(expect) || expect < 0) {
+    throw badRequestError('expectMaxServerSeq must be a non-negative integer');
+  }
+  const actual = getRelocationStatus(sql).maxServerSeq;
+  if (actual !== expect) {
+    throw conflictError(`maxServerSeq mismatch: expected ${expect}, actual ${actual}`);
+  }
+  const deleted: Record<string, number> = {};
+  for (const table of listRelocationTables(sql)) {
+    const rows = sql.exec(`SELECT COUNT(*) AS n FROM "${table}"`).toArray();
+    deleted[table] = rows.length > 0 ? Number(rows[0].n) : 0;
+    sql.exec(`DELETE FROM "${table}"`);
+  }
+  sql.exec(`INSERT OR IGNORE INTO "${RELOCATION_PURGED_TABLE}" (id, purgedAt) VALUES (1, ?)`, nowMs);
+  return { deleted, state: getRelocationState(sql) };
 }

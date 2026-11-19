@@ -94,6 +94,8 @@ export interface AppDeps {
   db: AppDb;
   getScopeStub: (scope: string) => ScopeStub;
   getPhysicalScopeStub: (physical: string) => ScopeRelocationStub;
+  /** Physical DO name the logical scope is routed to, when SCOPE_PHYSICAL_NAMES maps it. */
+  resolveScopePhysical: (logical: string) => string | undefined;
   getNow: GetNow;
   mailer: Mailer;
   storage: R2Bucket | null;
@@ -120,6 +122,7 @@ export function productionAppDeps(bindings: AppBindings): AppDeps {
       return physical !== undefined ? getNativeScopeStub(bindings, physical) : Scope.get(scope);
     },
     getPhysicalScopeStub: (physical) => getNativeScopeStub(bindings, physical),
+    resolveScopePhysical: (logical) => physicalNames.get(logical),
     getNow: systemNow,
     mailer: selectMailer({ binding: bindings.EMAIL }),
     storage: bindings.STORAGE ? createStorage(bindings.STORAGE) : null,

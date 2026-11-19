@@ -121,6 +121,7 @@ export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
     db,
     getScopeStub,
     getPhysicalScopeStub,
+    resolveScopePhysical: (logical: string) => physicalNames.get(logical),
     getNow: options.getNow ?? systemNow,
     mailer: {
       send: (message: MailMessage) => {

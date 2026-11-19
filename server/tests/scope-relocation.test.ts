@@ -8,7 +8,7 @@ import { syncDueSources, syncSource } from '../src/ics/engine';
 import { D1IcsStore } from '../src/ics/store';
 import { handleToolCall } from '../src/mcp/registry';
 import { isScopeRelocatingError, listRelocationTables } from '../src/scope/relocation';
-import { ensureScopeSchema, RELOCATION_STATE_TABLE } from '../src/scope/schema';
+import { ensureScopeSchema, RELOCATION_PURGED_TABLE, RELOCATION_STATE_TABLE } from '../src/scope/schema';
 import { Sha256, sha256HexSync } from '../src/scope/sha256';
 import { acceptInvite, createInvite } from '../src/sharing';
 import { ScopeClass } from './helpers/scopeWorld';
@@ -59,7 +59,8 @@ describe('table coverage', () => {
     expect(createdTables.length).toBeGreaterThan(10);
     expect(createdTables).toContain(RELOCATION_STATE_TABLE);
 
-    const expected = createdTables.filter((t) => t !== RELOCATION_STATE_TABLE);
+    expect(createdTables).toContain(RELOCATION_PURGED_TABLE);
+    const expected = createdTables.filter((t) => t !== RELOCATION_STATE_TABLE && t !== RELOCATION_PURGED_TABLE);
     const doState = createTestDoState();
     const scope = new ScopeClass(doState.ctx, { SYNC_FAULT: 'none' });
 
@@ -888,5 +889,83 @@ describe('D1 + Scope push retry consistency after 503', () => {
     // And D1 entityHome still points to logical scope u:u-a
     const homes = await h.db.select().from(schema.entityHome).where(eq(schema.entityHome.entityId, 't-new'));
     expect(homes).toEqual([{ entity: 'task', entityId: 't-new', scope: 'u:u-a' }]);
+  });
+});
+
+describe('purgeFrozenData on a relocated old DO', () => {
+  async function seededScope() {
+    const doState = createTestDoState();
+    const scope = new ScopeClass(doState.ctx, { SYNC_FAULT: 'none' }, true);
+    const hlc = `${Date.now()}:0000:dev-a`;
+    const res = await scope.push({
+      scope: 'u:u-a',
+      scopeUserId: 'u-a',
+      pusherUserId: 'u-a',
+      deviceId: 'dev-a',
+      memberships: { p1: 'owner' },
+      purgedProjects: [],
+      meMemberId: null,
+      ops: [
+        { opId: 'op-p1', hlc, entity: 'project', entityId: 'p1', op: 'upsert', fields: Object.keys(projectRow('p1', { isInbox: true, ownerId: 'm-a' })), row: projectRow('p1', { isInbox: true, ownerId: 'm-a' }) },
+        { opId: 'op-t1', hlc: `${Date.now()}:0001:dev-a`, entity: 'task', entityId: 't1', op: 'upsert', fields: Object.keys(taskRow('t1', 'p1')), row: taskRow('t1', 'p1') },
+      ],
+    });
+    expect(res.results.every((r) => r.status === 'applied')).toBe(true);
+    return scope;
+  }
+
+  it('refuses a live DO and a wrong expectMaxServerSeq, then empties a frozen DO and keeps it frozen', async () => {
+    const scope = await seededScope();
+    const before = scope.relocationStatus();
+    expect(before.maxServerSeq).toBeGreaterThan(0);
+
+    expect(() => scope.purgeFrozenData({ expectMaxServerSeq: before.maxServerSeq })).toThrow(/frozen/);
+    scope.setRelocationState({ state: 'frozen', expect: 'live' });
+    expect(() => scope.purgeFrozenData({ expectMaxServerSeq: before.maxServerSeq + 1 })).toThrow(/mismatch/);
+    expect(scope.relocationStatus().tables.task).toBe(1);
+
+    const res = scope.purgeFrozenData({ expectMaxServerSeq: before.maxServerSeq });
+    expect(res.state).toBe('frozen');
+    expect(res.deleted.task).toBe(1);
+    expect(res.deleted.opApplied).toBeGreaterThan(0);
+
+    const after = scope.relocationStatus();
+    expect(after.state).toBe('frozen');
+    expect(Object.values(after.tables).every((n) => n === 0)).toBe(true);
+    expect(after.maxServerSeq).toBe(0);
+    await expect(
+      scope.push({ scope: 'u:u-a', scopeUserId: 'u-a', pusherUserId: 'u-a', deviceId: 'dev-a', memberships: { p1: 'owner' }, purgedProjects: [], meMemberId: null, ops: [] }),
+    ).rejects.toThrow(/relocating/i);
+
+    // A purged DO must not answer reads with an empty "complete" page, and can never be unfrozen.
+    expect(() =>
+      scope.pull({ scope: 'u:u-a', scopeUserId: 'u-a', requesterUserId: 'u-a', since: 0, limit: 100, memberships: { p1: 'owner' }, meMemberId: null }),
+    ).toThrow(/relocating/i);
+    expect(() => scope.getInboxProjectId({ readableProjectIds: ['p1'] })).toThrow(/relocating/i);
+    expect(() => scope.setRelocationState({ state: 'live', expect: 'frozen' })).toThrow(/purged/);
+    expect(scope.relocationStatus().state).toBe('frozen');
+  });
+});
+
+describe('opLogDigest prefix proof', () => {
+  it('matches between a source and its copy up to the source rowid, and differs for another log', () => {
+    const a = createTestDoState();
+    const b = createTestDoState();
+    const c = createTestDoState();
+    const insert = (st: ReturnType<typeof createTestDoState>, rowid: number, opId: string) =>
+      st.sqlite.prepare('INSERT INTO opApplied (rowid, opId, userId, status, reason, serverSeq) VALUES (?, ?, ?, ?, ?, ?)').run(rowid, opId, 'u', 'applied', null, rowid);
+    const sa = new ScopeClass(a.ctx, { SYNC_FAULT: 'none' });
+    const sb = new ScopeClass(b.ctx, { SYNC_FAULT: 'none' });
+    const sc = new ScopeClass(c.ctx, { SYNC_FAULT: 'none' });
+    for (const st of [a, b]) { insert(st, 1, 'op-1'); insert(st, 2, 'op-2'); }
+    insert(b, 3, 'op-3'); // the copy kept growing after cut-over
+    insert(c, 1, 'other-1'); insert(c, 2, 'other-2'); insert(c, 3, 'other-3');
+
+    const src = sa.opLogDigest({});
+    expect(src).toMatchObject({ count: 2, maxRowid: 2 });
+    expect(sb.opLogDigest({ maxRowid: src.maxRowid })).toEqual(src);
+    expect(sb.opLogDigest({}).count).toBe(3);
+    expect(sc.opLogDigest({ maxRowid: src.maxRowid }).sha256).not.toBe(src.sha256);
+    expect(() => sa.opLogDigest({ maxRowid: -1 })).toThrow(/maxRowid/);
   });
 });

@@ -184,10 +184,31 @@ export interface ScopeStub {
   purgeProject(input: ScopePurgeProjectInput): Promise<ScopePurgeProjectResponse>;
 }
 
+export interface ScopePurgeFrozenInput {
+  /** Must equal the DO's current max serverSeq: proves the caller names the DO it inspected. */
+  expectMaxServerSeq: number;
+}
+
+export interface ScopePurgeFrozenResponse {
+  deleted: Record<string, number>;
+  state: ScopeRelocationState;
+}
+
+export interface ScopeOpLogDigestInput {
+  maxRowid?: number;
+}
+
+export interface ScopeOpLogDigest extends ScopeTableDigest {
+  /** Last rowid included (0 when the log is empty). */
+  maxRowid: number;
+}
+
 export interface ScopeRelocationStub {
   relocationStatus(): Promise<ScopeRelocationStatus>;
   setRelocationState(input: ScopeSetRelocationStateInput): Promise<ScopeSetRelocationStateResponse>;
   exportPage(input: ScopeExportPageInput): Promise<ScopeExportPageResponse>;
   importPage(input: ScopeImportPageInput): Promise<ScopeImportPageResponse>;
   digest(): Promise<ScopeDigest>;
+  purgeFrozenData(input: ScopePurgeFrozenInput): Promise<ScopePurgeFrozenResponse>;
+  opLogDigest(input: ScopeOpLogDigestInput): Promise<ScopeOpLogDigest>;
 }

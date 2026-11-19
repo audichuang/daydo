@@ -37,6 +37,7 @@ export interface ScopeRelocationAdminParams {
   authorizationHeader: string | undefined;
   readBody: () => Promise<Record<string, unknown> | null>;
   getPhysicalScopeStub: (physical: string) => ScopeRelocationStub;
+  resolveScopePhysical: (logical: string) => string | undefined;
 }
 
 function stripPrefixedMessage(message: string, prefix: string): string | null {
@@ -150,6 +151,36 @@ export async function handleScopeRelocationAdmin(
       }
       case 'digest':
         return { status: 200, body: { ...(await stub.digest()) } };
+      case 'purge-frozen': {
+        const expectMaxServerSeq = body.expectMaxServerSeq;
+        if (typeof expectMaxServerSeq !== 'number' || !Number.isSafeInteger(expectMaxServerSeq) || expectMaxServerSeq < 0) {
+          return { status: 400, body: { error: 'expectMaxServerSeq must be a non-negative integer for purge-frozen' } };
+        }
+        // `physical` is the old DO, named after the logical scope it served. Purge only once that
+        // scope is routed elsewhere and the copy there is live and at least as far along.
+        const target = params.resolveScopePhysical(physical);
+        if (!target || target === physical) {
+          return { status: 409, body: { error: `'${physical}' is not routed to another physical DO; refusing to purge` } };
+        }
+        const targetStatus = await params.getPhysicalScopeStub(target).relocationStatus();
+        if (targetStatus.state !== 'live' || targetStatus.maxServerSeq < expectMaxServerSeq) {
+          return {
+            status: 409,
+            body: { error: `Target '${target}' is not a live copy at or beyond seq ${expectMaxServerSeq} (state ${targetStatus.state}, seq ${targetStatus.maxServerSeq})` },
+          };
+        }
+        // The target must be a copy of this source: the source's op log (append-only, rowids kept by
+        // the copy) must equal the target's log up to the same rowid. Another account's DO fails this.
+        const sourceLog = await stub.opLogDigest({});
+        if (sourceLog.count === 0) {
+          return { status: 409, body: { error: `'${physical}' has an empty op log; nothing proves '${target}' is its copy` } };
+        }
+        const targetLog = await params.getPhysicalScopeStub(target).opLogDigest({ maxRowid: sourceLog.maxRowid });
+        if (targetLog.count !== sourceLog.count || targetLog.sha256 !== sourceLog.sha256) {
+          return { status: 409, body: { error: `'${target}' does not contain '${physical}' op log; refusing to purge` } };
+        }
+        return { status: 200, body: { ...(await stub.purgeFrozenData({ expectMaxServerSeq })) } };
+      }
       default:
         return { status: 400, body: { error: `Unknown action '${action}'` } };
     }
