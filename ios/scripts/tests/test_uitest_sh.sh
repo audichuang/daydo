@@ -177,10 +177,19 @@ case "$cmd" in
     printf '{"ok":true,"name":"%s","count":%s,"udid":%s,"leases":[%s]}\n' "$name" "$count" "$udid" "$items"
     ;;
   whoami)
-    echo "anchor: null" >&2
+    anchor_json='{"pid":1234,"comm":"claude"}'
+    [[ ! -e "$S/null-anchor" ]] || anchor_json="null"
     tok="$(session_for_scope "$scope")"
     if [[ -n "$tok" ]] && leases | grep -qxF -- "$tok"; then
-      printf '%s\n' "$tok"
+      lease_json="\"$tok\""
+    else
+      tok=""; lease_json="null"
+    fi
+    if [[ $as_json == 1 ]]; then
+      printf '{"ok":true,"anchor":%s,"lease":%s}\n' "$anchor_json" "$lease_json"
+    else
+      echo "anchor: $anchor_json" >&2
+      [[ -z "$tok" ]] || printf '%s\n' "$tok"
     fi
     ;;
   ensure)
@@ -318,6 +327,15 @@ EOF
 cat >"$STUB/xcodebuild" <<'EOF'
 #!/bin/bash
 S="$STUB_STATE"
+if [[ -e "$S/xcodebuild.slow_term" ]]; then
+  delay="$(cat "$S/xcodebuild.slow_term")"
+  trap '' INT
+  trap 'sleep "$delay"; printf "%s\n" "xcodebuild-slow-exit" >>"$S/events.log"; exit 143' TERM
+  echo $$ >"$S/xcodebuild.pid"
+  echo $PPID >"$S/xcodebuild.ppid"
+  printf '%s\n' "xcodebuild $*" >>"$S/events.log"
+  while :; do sleep 0.05; done
+fi
 printf '%s\n' "xcodebuild $*" >>"$S/events.log"
 echo $$ >"$S/xcodebuild.pid"
 echo $PPID >"$S/xcodebuild.ppid"
@@ -523,7 +541,7 @@ setup() {
 set_env() {
   ENVCMD=(env -u BASH_ENV -u DD_SIM_OWNER -u DD_PARK_TRIM -u DD_UITEST_RECORD
     -u DD_UITEST_LOCK_PID -u DD_UITEST_LOCK_FD -u DD_UITEST_LOCK_RC
-    -u CLAUDE_PID -u CODEX_THREAD_ID
+    -u CLAUDE_PID -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID -u SIM_VAULT_ANCHOR_PID
     HOME="$T/home" TMPDIR="$T/tmp" STUB_STATE="$S"
     DD_UITEST_POLL=0.05 DD_UITEST_LOCK_WAIT=30
     PATH="$1:/usr/bin:/bin")
@@ -544,7 +562,7 @@ plistlib.dump({
 ' "$T/home/Library/Developer/CoreSimulator/Devices/UDID-REAL-001"
   ENVCMD=(env -u BASH_ENV -u DD_SIM_OWNER -u DD_PARK_TRIM -u DD_UITEST_RECORD
     -u DD_UITEST_LOCK_PID -u DD_UITEST_LOCK_FD -u DD_UITEST_LOCK_RC
-    -u CLAUDE_PID -u CODEX_THREAD_ID
+    -u CLAUDE_PID -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID
     HOME="$T/home" TMPDIR="$T/tmp" STUB_STATE="$S"
     SIM_VAULT_DIR="$T/vault" SIM_VAULT_HISTORY="$T/history.jsonl"
     SIM_VAULT_ANCHOR_PID="$$"
@@ -657,9 +675,9 @@ INSTALL_HINT='uv tool install --force "git\+https://github\.com/audichuang/sim-v
 t_test_run_basic() {
   run -- iphone -only-testing:DayDoUITests/X
   eq "$RC" 0 "rc"
-  has "$S/events.log" "^sim-vault release DD iPhone 18 Pro --lease dd:uitest$" "clears leftover dd:uitest before run"
+  has "$S/events.log" "^sim-vault release DD iPhone 18 Pro --lease dd:uitest --wait 1800$" "clears leftover dd:uitest with --wait 1800 before run"
   has "$S/events.log" "^$RUN_TEST --wait 1800 --result-file " "one run that refuses other leases (no allow without an up)"
-  before "sim-vault release DD iPhone 18 Pro --lease dd:uitest" "^$RUN_TEST" "release legacy dd:uitest before run"
+  before "sim-vault release DD iPhone 18 Pro --lease dd:uitest --wait 1800" "^$RUN_TEST" "release legacy dd:uitest before run"
   hasnt "$S/events.log" "sim-vault status" "no separate status check before run"
   has "$S/events.log" "xcodebuild test .*id=UDID-AAA .*-only-testing:DayDoUITests/X" "xcodebuild uses the leased UDID"
   before "xcodebuild-exit" "sim-vault run-teardown dd:run:" "teardown after xcodebuild"
@@ -672,7 +690,7 @@ t_test_releases_leftover_dd_uitest() {
   echo "dd:uitest" >"$S/leases"
   run -- iphone
   eq "$RC" 0 "leftover dd:uitest does not block test"
-  before "sim-vault release DD iPhone 18 Pro --lease dd:uitest" "^$RUN_TEST" "released before run"
+  before "sim-vault release DD iPhone 18 Pro --lease dd:uitest --wait 1800" "^$RUN_TEST" "released with --wait 1800 before run"
   eq "$(cat "$S/leases")" "" "no lease left"
 }
 
@@ -809,13 +827,39 @@ t_test_allows_own_up_lease() {
   local a; a="$(cat "$S/leases")"
   run -- iphone
   eq "$RC" 0 "test runs next to this worktree's own up lease"
-  has "$S/events.log" "^sim-vault whoami DD iPhone 18 Pro --lease-scope $ROOT$" "queries whoami"
+  has "$S/events.log" "^sim-vault whoami DD iPhone 18 Pro --lease-scope $ROOT --json$" "queries whoami --json"
   has "$S/events.log" "^$RUN_TEST --allow-lease $a --wait 1800" "allows the whoami owner"
   eq "$(cat "$S/leases")" "$a" "own lease kept"
   run DD_SIM_OWNER=dd:me -- iphone
   eq "$RC" 8 "with DD_SIM_OWNER set, the whoami owner is someone else"
   has "$S/events.log" "^$RUN_TEST --allow-lease dd:me --wait 1800" "only DD_SIM_OWNER allowed"
   hasnt "$S/events.log" "--allow-lease dd:me --allow-lease $a" "never allows both"
+}
+
+t_null_anchor_and_whoami_failure() {
+  local mode_flag
+  for mode_flag in null-anchor whoami-fail; do
+    : >"$S/events.log"
+    rm -f "$S/null-anchor" "$S/rc.whoami" "$S/leases" "$S/sessions" "$S/booted"
+    if [[ "$mode_flag" == null-anchor ]]; then : >"$S/null-anchor"; else echo 1 >"$S/rc.whoami"; fi
+    # up without DD_SIM_OWNER must refuse (2) and tell user to set DD_SIM_OWNER
+    run -- up iphone
+    eq "$RC" 2 "$mode_flag: up refuses with 2"
+    has "$T/err" "DD_SIM_OWNER" "$mode_flag: up tells user to set DD_SIM_OWNER"
+    hasnt "$S/events.log" "^sim-vault ensure " "$mode_flag: up never calls ensure"
+    # Even if a session lease exists for this scope, test and down must NOT claim it
+    printf '%s\t%s\n' "$ROOT" "dd:up:11223344" >"$S/sessions"
+    echo "dd:up:11223344" >"$S/leases"
+    : >"$S/booted"
+    run -- iphone
+    eq "$RC" 8 "$mode_flag: test refuses session lease when anchor is null/unknown"
+    hasnt "$S/events.log" "--allow-lease dd:up:11223344" "$mode_flag: test must not pass whoami token"
+    run -- down iphone
+    eq "$RC" 8 "$mode_flag: down refuses to shut down while session lease exists"
+    hasnt "$S/events.log" "sim-vault release .*--lease auto" "$mode_flag: down must not call release --lease auto"
+    has "$T/err" "未釋放" "$mode_flag: down says nothing was released"
+    eq "$(cat "$S/leases")" "dd:up:11223344" "$mode_flag: other lease untouched"
+  done
 }
 
 t_test_allows_legacy_owner_file_transition() {
@@ -1301,6 +1345,155 @@ t_real_sigterm_releases_held_lease() {
   lock_free || fail "lock free after SIGTERM"
 }
 
+run_detached() {
+  # Run a command reparented under launchd (PID 1) with no recognizable session anchor.
+  local out_file="$T/out" err_file="$T/err" rc_file="$T/detach.rc"
+  rm -f "$rc_file" "$out_file" "$err_file"
+  "${ENVCMD[@]}" env -u SIM_VAULT_ANCHOR_PID -u CLAUDE_PID -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID \
+    "$REAL_PY" -c '
+import os, subprocess, sys
+rcfile, outf, errf = sys.argv[1], sys.argv[2], sys.argv[3]
+cmd = sys.argv[4:]
+if os.fork():
+    os.wait()
+    sys.exit(0)
+os.setsid()
+if os.fork():
+    os._exit(0)
+with open(outf, "wb") as o, open(errf, "wb") as e:
+    rc = subprocess.call(cmd, stdout=o, stderr=e)
+with open(rcfile + ".tmp", "w") as f:
+    f.write(str(rc))
+os.rename(rcfile + ".tmp", rcfile)
+' "$rc_file" "$out_file" "$err_file" "$@"
+  local i=0
+  while [[ ! -e "$rc_file" ]]; do
+    sleep 0.05; i=$((i + 1))
+    if (( i > 200 )); then fail "detached command timed out: $*"; RC=124; return 1; fi
+  done
+  RC="$(cat "$rc_file")"
+}
+
+t_real_null_anchor_case_alias() {
+  setup_realvault
+  mkdir -p "$T/checkout/ios/scripts"
+  cp "$UITEST" "$SCRIPTS/flock-exec.py" "$T/checkout/ios/scripts/"
+  chmod +x "$T/checkout/ios/scripts/uitest.sh"
+  local co_lower co_upper
+  co_lower="$(cd "$T/checkout" && pwd -P)"
+  co_upper="$(dirname "$co_lower")/CHECKOUT"
+  # 1) Detached `up` (anchor=null) without DD_SIM_OWNER must refuse with rc 2.
+  run_detached bash --noprofile --norc "$co_lower/ios/scripts/uitest.sh" up iphone
+  eq "$RC" 2 "null-anchor up refuses with rc 2"
+  has "$T/err" "DD_SIM_OWNER" "null-anchor up tells user to set DD_SIM_OWNER"
+  eq "$(realvault_leases)" "" "null-anchor up took no lease"
+
+  # 2) Simulate an existing null-anchor session lease on <tmp>/checkout (via direct sim-vault).
+  run_detached sim-vault ensure "DD iPhone 18 Pro" --boot --lease auto --lease-scope "$co_lower" --lease-prefix dd:up
+  eq "$RC" 0 "precondition: direct sim-vault created null-anchor session lease"
+  local tok; tok="$(realvault_leases)"
+  [[ "$tok" =~ ^dd:up:[0-9a-f]{8}$ ]] || { fail "expected session token, got '$tok'"; return; }
+
+  # 3) Detached test from <tmp>/CHECKOUT (case-alias) must NOT claim the null-anchor lease.
+  run_detached bash --noprofile --norc "$co_upper/ios/scripts/uitest.sh" iphone
+  eq "$RC" 8 "null-anchor test from case-alias refuses with 8"
+  hasnt "$S/events.log" "^xcodebuild" "xcodebuild never started"
+  eq "$(realvault_leases)" "$tok" "other session's lease untouched after test"
+
+  # 4) Detached down from <tmp>/CHECKOUT must NOT release the null-anchor lease or shut down.
+  run_detached bash --noprofile --norc "$co_upper/ios/scripts/uitest.sh" down iphone
+  eq "$RC" 8 "null-anchor down from case-alias refuses shutdown with 8"
+  has "$T/err" "未釋放" "down explains nothing was released"
+  eq "$(realvault_leases)" "$tok" "other session's lease untouched after down"
+  eq "$(realvault_state)" "Booted" "device stayed booted"
+
+  # 5) Clean up that lease, then verify legacy owner-file fallback still works under null anchor.
+  "${ENVCMD[@]}" sim-vault release "DD iPhone 18 Pro" --lease "$tok" >/dev/null 2>&1
+  local legacy="dd:up:$co_lower:feedface" co_owner_file
+  co_owner_file="$T/home/Library/Developer/CoreSimulator/sim-vault/owners/daydo-$(printf '%s' "$co_lower" | shasum | cut -c1-40)-iphone"
+  "${ENVCMD[@]}" sim-vault ensure "DD iPhone 18 Pro" --boot --lease "$legacy" >/dev/null 2>&1
+  mkdir -p "$(dirname "$co_owner_file")"
+  printf '%s\n' "$legacy" >"$co_owner_file"
+  run_detached bash --noprofile --norc "$co_lower/ios/scripts/uitest.sh" iphone
+  eq "$RC" 0 "null-anchor test still allows legacy owner file"
+  run_detached bash --noprofile --norc "$co_lower/ios/scripts/uitest.sh" down iphone
+  eq "$RC" 0 "null-anchor down still releases legacy owner file and shuts down"
+  [[ -e "$co_owner_file" ]] && fail "legacy owner file deleted"
+  eq "$(realvault_leases)" "" "no lease left"
+  eq "$(realvault_state)" "Shutdown" "device shut down"
+}
+
+t_real_sigint_pgrp_slow_xcodebuild() {
+  setup_realvault
+  echo 7 >"$S/xcodebuild.slow_term"
+  # Run uitest.sh in its own session/process group, then send SIGINT to the whole pgrp (like Ctrl-C).
+  local rc_file="$T/pgrp.rc"
+  "${ENVCMD[@]}" "$REAL_PY" -c '
+import os, signal, subprocess, sys, time
+uitest, events, outf, errf, rcf = sys.argv[1:6]
+with open(outf, "wb") as o, open(errf, "wb") as e:
+    p = subprocess.Popen(["bash", "--noprofile", "--norc", uitest, "iphone"],
+                         stdout=o, stderr=e, start_new_session=True)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if os.path.exists(events) and "xcodebuild test" in open(events).read():
+            break
+        time.sleep(0.05)
+    t0 = time.monotonic()
+    os.killpg(p.pid, signal.SIGINT)
+    rc = p.wait(timeout=20)
+    elapsed = time.monotonic() - t0
+with open(rcf, "w") as f:
+    f.write(f"{rc} {elapsed:.2f}\n")
+' "$UITEST" "$S/events.log" "$T/out" "$T/err" "$rc_file"
+  local rc elapsed xpid
+  read -r rc elapsed <"$rc_file"
+  xpid="$(cat "$S/xcodebuild.pid" 2>/dev/null || true)"
+  eq "$rc" 130 "SIGINT returns 130"
+  has "$S/events.log" "^xcodebuild-slow-exit$" "wrapper returned only after fake xcodebuild finished exiting"
+  "$REAL_PY" -c "import sys; sys.exit(0 if float(sys.argv[1]) >= 6.5 else 1)" "$elapsed" \
+    || fail "wrapper returned too early (${elapsed}s < 6.5s)"
+  if [[ -n "$xpid" ]] && kill -0 "$xpid" 2>/dev/null; then
+    fail "fake xcodebuild (pid $xpid) still running after wrapper exited (elapsed=${elapsed}s)"
+    kill -KILL "$xpid" 2>/dev/null || true
+  fi
+  has "$T/err" "sim-vault-run: stage=child rc=130 childRc=130 teardown=ok" "clean teardown=ok"
+  eq "$(realvault_leases)" "" "no lease left"
+  lock_free || fail "lock free"
+}
+
+t_real_sigkill_all_keeps_held_lease() {
+  setup_realvault
+  : >"$S/xcodebuild.block"
+  bg test iphone; local outer_pid=$BGPID
+  wait_for "^xcodebuild test" "$S/events.log" 10 || return
+  local xpid child_pid run_pid
+  xpid="$(cat "$S/xcodebuild.pid")"
+  child_pid="$(cat "$S/xcodebuild.ppid")"
+  run_pid="$(/bin/ps -o ppid= -p "$child_pid" | tr -d ' ')"
+  BG_PIDS="$BG_PIDS $xpid"
+  kill -KILL "$outer_pid" "$run_pid" "$child_pid" 2>/dev/null || true
+  wait "$outer_pid" 2>/dev/null || true
+  sleep 0.2
+  kill -0 "$xpid" 2>/dev/null || fail "fake xcodebuild should survive SIGKILL of wrappers"
+  # While fake xcodebuild holds SIM_VAULT_LEASE_FD, shutdown and another ensure must return 8.
+  local src=0 erc=0
+  "${ENVCMD[@]}" sim-vault shutdown "DD iPhone 18 Pro" >/dev/null 2>&1 || src=$?
+  eq "$src" 8 "shutdown refused (8) while xcodebuild holds lease fd"
+  "${ENVCMD[@]}" sim-vault ensure "DD iPhone 18 Pro" --lease other >/dev/null 2>&1 || erc=$?
+  eq "$erc" 8 "ensure --lease other refused (8) while xcodebuild holds lease fd"
+  # Let fake xcodebuild finish; lease must be gone afterwards.
+  : >"$S/xcodebuild.release"
+  wait_for "xcodebuild-exit" "$S/events.log" 10 || return
+  local i=0
+  while kill -0 "$xpid" 2>/dev/null && (( i < 100 )); do sleep 0.05; i=$((i + 1)); done
+  eq "$(realvault_leases)" "" "held lease gone after xcodebuild exited"
+  src=0
+  "${ENVCMD[@]}" sim-vault shutdown "DD iPhone 18 Pro" >/dev/null 2>&1 || src=$?
+  eq "$src" 0 "shutdown succeeds after xcodebuild released lease fd"
+  lock_free || fail "lock free after xcodebuild exited"
+}
+
 t_never_bypasses_sim_vault() {
   # Over every stub test above: the wrappers never shut down, delete, erase or boot directly.
   if grep -hE "^xcrun simctl (shutdown|delete|erase|boot)" "$WORK"/t-*/state/events.log | grep -v "UDID-REAL-001"; then
@@ -1312,6 +1505,7 @@ t_never_bypasses_sim_vault() {
 ALL="t_test_run_basic t_test_releases_leftover_dd_uitest t_park_first_test_waits t_test_first_park_waits
 t_sigkill_shell_child_keeps_lock t_record_sigkill_recorder_keeps_lock t_up_twice_same_worktree
 t_up_stale_owner_record t_up_failure_no_owner_file t_test_allows_own_up_lease
+t_null_anchor_and_whoami_failure
 t_test_allows_legacy_owner_file_transition t_test_refuses_foreign_lease t_test_foreign_lease_races_run
 t_test_child_and_teardown_rc_8_no_busy_msg t_down_releases_and_shuts_down
 t_down_legacy_owner_file_transition t_down_interleaved_lease t_down_missing_device
@@ -1323,6 +1517,7 @@ t_record_test_refused t_record_rm_log_failure_preserves_rc t_sigterm_stops_child
 t_real_test_basic t_real_foreign_lease_refused t_real_xcodebuild_65_and_8
 t_real_up_twice_same_worktree t_real_up_test_down t_real_legacy_owner_file_down
 t_real_leftover_dd_uitest_released t_real_record_failure_11 t_real_sigterm_releases_held_lease
+t_real_null_anchor_case_alias t_real_sigint_pgrp_slow_xcodebuild t_real_sigkill_all_keeps_held_lease
 t_never_bypasses_sim_vault"
 SELECTED="${*:-$ALL}"
 total=0

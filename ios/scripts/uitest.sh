@@ -89,7 +89,8 @@ if [[ "${1:-}" == --run-child && -n "${SIM_VAULT_UDID:-}" ]]; then
   }
   finish() {
     local rc=$? rm_rc=0
-    trap - EXIT INT TERM HUP
+    trap - EXIT
+    trap '' INT TERM HUP
     stop_recorder || rec_failed=1
     if [[ $rec_failed == 1 ]]; then
       echo "錄影失敗，recordVideo 的 log：${rec_log}" >&2
@@ -104,7 +105,7 @@ if [[ "${1:-}" == --run-child && -n "${SIM_VAULT_UDID:-}" ]]; then
   }
   on_child_signal() {
     local sig_rc="$1"
-    trap - INT TERM HUP
+    trap '' INT TERM HUP
     if [[ -n "$xb_pid" ]] && alive "$xb_pid"; then
       kill -TERM "$xb_pid" 2>/dev/null || true
       wait "$xb_pid" 2>/dev/null || true
@@ -259,6 +260,33 @@ esac
 owner_file="$state_dir/owners/daydo-$(printf '%s' "$root" | shasum | cut -c1-40)-$alias"
 recorded_owner() { cat "$owner_file" 2>/dev/null || true; }
 
+# Reads `sim-vault whoami --json`: whether a recognizable session anchor exists (1/0)
+# and the session lease token for this worktree (empty if none or if anchor is null).
+# A null anchor (or failed whoami) must not grant session identity across sessions.
+whoami_has_anchor=0 whoami_lease=""
+load_whoami() {
+  whoami_has_anchor=0
+  whoami_lease=""
+  local json parsed
+  json=$(sim-vault whoami "$name" --lease-scope "$root" --json 2>/dev/null) || return 0
+  parsed=$(printf '%s' "$json" | python3 -I -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+if d.get("ok") and d.get("anchor") is not None:
+    print("1")
+    print(d.get("lease") or "")
+else:
+    print("0")
+    print("")
+' 2>/dev/null) || return 0
+  whoami_has_anchor=$(printf '%s\n' "$parsed" | sed -n 1p)
+  whoami_lease=$(printf '%s\n' "$parsed" | sed -n 2p)
+  [[ "$whoami_has_anchor" == 1 ]] || { whoami_has_anchor=0; whoami_lease=""; }
+}
+
 # Reads `sim-vault status --json`: count of available devices with the name and the UDID
 # (empty unless exactly one).
 count="" status_udid=""
@@ -301,6 +329,11 @@ if [[ "$mode" == up ]]; then
   if [[ -n "${DD_SIM_OWNER:-}" ]]; then
     udid=$(sim-vault ensure "$name" --boot --lease "$DD_SIM_OWNER" --wait 1800) || rc=$?
   else
+    load_whoami
+    if [[ $whoami_has_anchor != 1 ]]; then
+      echo "無法辨識目前的 session（sim-vault whoami 沒有 anchor）；請設 DD_SIM_OWNER=<唯一值> 再 up／down／測試" >&2
+      exit 2
+    fi
     udid=$(sim-vault ensure "$name" --boot --lease auto --lease-scope "$root" --lease-prefix dd:up --wait 1800) || rc=$?
   fi
   if [[ $rc == 8 && -z "${DD_SIM_OWNER:-}" ]]; then
@@ -318,14 +351,20 @@ if [[ "$mode" == down ]]; then
   if [[ -n "${DD_SIM_OWNER:-}" ]]; then
     sim-vault release "$name" --lease "$DD_SIM_OWNER"
   else
-    rel_json=$(sim-vault release "$name" --lease auto --lease-scope "$root" --json)
-    rel_action=$(printf '%s' "$rel_json" | python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("action", ""))')
+    load_whoami
+    rel_action="no-lease"
+    if [[ $whoami_has_anchor == 1 ]]; then
+      rel_json=$(sim-vault release "$name" --lease auto --lease-scope "$root" --json)
+      rel_action=$(printf '%s' "$rel_json" | python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("action", ""))')
+    fi
     if [[ "$rel_action" == no-lease && -e "$owner_file" ]]; then
       owner="$(recorded_owner)"
       if [[ -n "$owner" ]]; then
         sim-vault release "$name" --lease "$owner"
       fi
       rm -f "$owner_file"
+    elif [[ $whoami_has_anchor != 1 ]]; then
+      echo "無法辨識目前的 session（未設 DD_SIM_OWNER 且沒有舊 owner 檔），未釋放任何 lease；若要釋放特定 lease 請設 DD_SIM_OWNER=<owner>" >&2
     fi
   fi
   if [[ "$count" == 0 ]]; then
@@ -368,7 +407,7 @@ fi
 
 # Holding the lock means no same-lock runner is alive, so a dd:uitest lease is left over
 # from a killed old-version run.
-sim-vault release "$name" --lease "$test_owner"
+sim-vault release "$name" --lease "$test_owner" --wait 1800
 
 # The caller's own manual-test lease may stay; anyone else's makes run refuse (8) without
 # leasing, checked under sim-vault's device lock. Never allow both DD_SIM_OWNER and whoami.
@@ -376,7 +415,8 @@ caller=""
 if [[ -n "${DD_SIM_OWNER:-}" ]]; then
   caller="$DD_SIM_OWNER"
 else
-  caller="$(sim-vault whoami "$name" --lease-scope "$root" 2>/dev/null || true)"
+  load_whoami
+  caller="$whoami_lease"
   if [[ -z "$caller" ]]; then
     caller="$(recorded_owner)"
   fi
@@ -395,7 +435,7 @@ cleanup_outer() {
 }
 on_outer_signal() {
   local sig_rc="$1"
-  trap - INT TERM HUP
+  trap '' INT TERM HUP
   if [[ -n "$run_pid" ]]; then
     kill -TERM "$run_pid" 2>/dev/null || true
     wait "$run_pid" 2>/dev/null || true
