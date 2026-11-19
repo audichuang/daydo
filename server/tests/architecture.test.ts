@@ -77,6 +77,8 @@ interface Guard {
    * a lookbehind exclusion once let calls through that the previous version blocked.
    */
   bad: string[];
+  /** Optional snippets that must NOT trigger the rule; proves exclusions/word boundaries work. */
+  good?: string[];
 }
 
 const ALL = ['src', 'routes', 'crons', 'durable-objects'];
@@ -240,6 +242,22 @@ const GUARDS: Guard[] = [
     bad: ['getScopeStub: (scope) => Scope.get(scope),'],
   },
   {
+    name: 'native SCOPE namespace (idFromName / .SCOPE) is used only in src/deps.ts',
+    dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
+    pattern: /\bidFromName\(|\.SCOPE\b/,
+    allow: ['src/deps.ts'],
+    bad: [
+      "const id = c.env.SCOPE.idFromName('u:1');",
+      'const stub = ns.get(ns.idFromName(name));',
+      'const ns = bindings.SCOPE;',
+    ],
+    good: [
+      'const raw = env.SCOPE_PHYSICAL_NAMES;',
+      'const token = env.SCOPE_ADMIN_TOKEN;',
+      'const stub = deps.getPhysicalScopeStub(physical);',
+    ],
+  },
+  {
     // Frozen: config reads stay at the routes/middleware edge; src/ grows no new hidden env dependency.
     name: 'void/env is imported in src only by the two auth edge files',
     dirs: ['src', 'crons', 'durable-objects'],
@@ -303,10 +321,11 @@ function specToolNames(): string[] {
 }
 
 describe('architecture guards', () => {
-  it.each(GUARDS)('$name', ({ dirs, pattern, allow, bad }) => {
+  it.each(GUARDS)('$name', ({ dirs, pattern, allow, bad, good }) => {
     expect(pattern.global || pattern.sticky, 'stateful regex flags').toBe(false);
     expect(bad.length, 'no bad samples').toBeGreaterThan(0);
     for (const sample of bad) expect(pattern.test(sample), `pattern misses bad sample: ${sample}`).toBe(true);
+    for (const sample of good ?? []) expect(pattern.test(sample), `pattern falsely matches good sample: ${sample}`).toBe(false);
     expect(matchingFiles(dirs, pattern)).toEqual([...allow].sort());
   });
 

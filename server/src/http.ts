@@ -1,4 +1,5 @@
 import type { CloudContext } from 'void';
+import { isScopeRelocatingError } from './scope/relocation';
 
 export async function readJsonObject(c: CloudContext): Promise<Record<string, unknown> | null> {
   try {
@@ -14,4 +15,18 @@ export async function readJsonObject(c: CloudContext): Promise<Record<string, un
 
 export function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+export async function withScopeRelocating503(
+  c: CloudContext,
+  run: () => Promise<Response>,
+): Promise<Response> {
+  try {
+    return await run();
+  } catch (err) {
+    if (isScopeRelocatingError(err)) {
+      return c.json({ error: 'Scope is relocating; retry shortly' }, 503);
+    }
+    throw err;
+  }
 }

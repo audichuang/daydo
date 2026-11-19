@@ -1,7 +1,7 @@
 import { defineHandler } from 'void';
 import { requireUser } from '../../src/auth/middleware';
 import { productionAppDeps } from '../../src/deps';
-import { readJsonObject } from '../../src/http';
+import { readJsonObject, withScopeRelocating503 } from '../../src/http';
 import { executeSyncPull } from '../../src/sync/pull';
 
 const DEFAULT_PULL_LIMIT = 500;
@@ -64,14 +64,16 @@ export const POST = defineHandler(async (c) => {
     limit = Math.min(body.limit, MAX_PULL_LIMIT);
   }
 
-  const deps = productionAppDeps(c.env);
-  const result = await executeSyncPull(deps.db, {
-    userId,
-    cursors,
-    backfill,
-    limit,
-    getScopeStub: deps.getScopeStub,
-  });
+  return withScopeRelocating503(c, async () => {
+    const deps = productionAppDeps(c.env);
+    const result = await executeSyncPull(deps.db, {
+      userId,
+      cursors,
+      backfill,
+      limit,
+      getScopeStub: deps.getScopeStub,
+    });
 
-  return c.json(result, 200);
+    return c.json(result, 200);
+  });
 });

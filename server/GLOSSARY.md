@@ -4,7 +4,7 @@
 
 ## 資料放哪
 
-- **Scope**：一個使用者自己的同步空間，名稱 `u:<userId>`，由一個 Durable Object 存它的清單、任務等列。
+- **Scope**：一個使用者自己的同步空間，邏輯名稱 `u:<userId>`，由一個 Durable Object 存它的清單、任務等列。預設實體 DO 名稱與邏輯名稱相同；搬遷區域時可透過 `SCOPE_PHYSICAL_NAMES` 在 `src/deps.ts` 將邏輯名稱路由到新的實體 DO（`locationHint: 'apac-ne'`），D1 與 App 游標仍維持邏輯名稱。
 - **Scope ledger**：Scope DO 裡的帳本規則（`src/scope/`）：schema、store、push、成員、purge、pull、row 檢視。
 - **D1 帳本**：跨使用者的資料。`entityHome` 記每一列住在哪個 Scope（由 sync/push 綁定）；`projectMembership`、`listScopes`、`purgedProject` 屬於 `src/membership/`。
 - **home Scope**：一份清單建立者的 Scope。成員關係只投影到這裡的 `projectMember` 列，pull 時由 `planPullMembers` 補齊缺的。
@@ -33,4 +33,4 @@
 
 ## 接線
 
-- **AppDeps**：入口（route、cron）對外的一包 `{ db, getScopeStub, getNow, mailer }`。正式環境由 `src/deps.ts` 的 `productionAppDeps(bindings)` 產生，測試由 `createScopeWorld().deps` 產生（`satisfies AppDeps`）。每呼叫一次 `productionAppDeps` 就開一個新的 `first-primary` D1 session，所以它放在原本開 session 的位置，不 memoize、不共用；`crons/ics-sync.ts` 的 OAuth 清理與 ICS 各開一個。設定（`void/env`）不在裡面，routes 照舊直接讀 `env`。
+- **AppDeps**：入口（route、cron）對外的一包 `{ db, getScopeStub, getPhysicalScopeStub, getNow, mailer, storage }`。`getScopeStub` 以邏輯名稱取 Scope DO（未對應走 `Scope.get`，有 `SCOPE_PHYSICAL_NAMES` 對應則經原生 `SCOPE` binding 帶 `locationHint: 'apac-ne'`），`getPhysicalScopeStub` 以實體名稱取管理用 stub。正式環境由 `src/deps.ts` 的 `productionAppDeps(bindings)` 產生，測試由 `createScopeWorld().deps` 產生（`satisfies AppDeps`）。每呼叫一次 `productionAppDeps` 就開一個新的 `first-primary` D1 session，所以它放在原本開 session 的位置，不 memoize、不共用；`crons/ics-sync.ts` 的 OAuth 清理與 ICS 各開一個。設定（`void/env`）不在裡面，routes 照舊直接讀 `env`。

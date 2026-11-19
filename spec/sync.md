@@ -39,7 +39,7 @@
 
 ## 範圍（scope）與權限
 
-- **範圍**：id 是 `u:<userId>`，一個使用者一個 DO 實例。寫入都在 `transactionSync` 裡做；DO 的 SQLite 是同步呼叫，天然一次只處理一個請求，不需要自己排隊（2026-11-15 在 void 1.8.0 本機實測：20 個同時呼叫依序得到 1 到 20、交易失敗會回滾、兩個 DO 互不影響、dev server 重開資料還在）。
+- **範圍**：邏輯名稱是 `u:<userId>`，一個使用者一個 DO 實例（D1 的 `entityHome`／`listScopes` 與 App 游標一律用這個邏輯名稱；預設實體 DO 名稱與邏輯名稱相同，搬遷 DO 區域時可透過 `void secret put SCOPE_PHYSICAL_NAMES` 將個別邏輯名稱對應到新的實體 DO 名稱）。寫入都在 `transactionSync` 裡做；DO 的 SQLite 是同步呼叫，天然一次只處理一個請求，不需要自己排隊（2026-11-15 在 void 1.8.0 本機實測：20 個同時呼叫依序得到 1 到 20、交易失敗會回滾、兩個 DO 互不影響、dev server 重開資料還在）。
 - **資料永遠不搬家**：每筆資料住在建立它的人的範圍；checklistItem、附件、留言住在所屬任務的範圍（不論是誰加的）。D1 的 `entityHome(entity, entityId → scope)` 在第一次建立時寫入、之後不變：Worker 用一個 `batch()` 做 `INSERT … ON CONFLICT DO NOTHING` 再讀回綁定的範圍，讀回的不是自己要寫的範圍就是被別人先佔了（每次新建多一次 D1 寫入，這個規模可以接受），Worker 找路只看它；新建時：任務、清單等住推送者的範圍，子列住其任務的範圍。已綁定到別的範圍的 id 再送新建，回 `rejected`，原因 `id-in-other-scope`。標籤不做全域綁定：每個人的標籤以 `(推送者範圍, name)` 為鍵，住推送者自己的範圍，彼此同名也不衝突。
 - **「在哪份清單」只是欄位**：task 的 `projectId` 可以指向任何清單，包括別人建立的共享清單；子列跟著它的任務。移動任務＝在任務的範圍裡改 `projectId`，DO 在**同一個交易**裡把它的子列清單標記一起改掉、全部給新的 serverSeq，並為離開的清單寫離開紀錄。沒有跨 DO 的兩步驟，所以沒有中間空檔。
 - **哪些範圍存有某份清單的資料**：D1 的 `listScopes(projectId, scope)`。**寫入前先登記**：op 會讓資料列進入某份清單（新建、移動）時，Worker 先在 D1 用一個 `batch()`（D1 在 Worker 裡只有 batch 是原子的，沒有互動式交易）執行「清單沒有被永久刪除才寫入 `listScopes`」的條件式 INSERT，加上讀回這份清單是否已永久刪除，才交給 DO；已永久刪除就回 `rejected`。目的清單從 op 的 `row.projectId` 得知（新建與移動的 op 一定帶它）；子列不登記，跟著任務。看一份共享清單時，從這些範圍各拿屬於它的列。

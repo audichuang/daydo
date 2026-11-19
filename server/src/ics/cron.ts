@@ -7,6 +7,8 @@ import { D1IcsStore } from './store';
 
 export interface IcsCronEnv {
   DB: AppBindings['DB'];
+  SCOPE?: AppBindings['SCOPE'];
+  SCOPE_PHYSICAL_NAMES?: string;
   DEFAULT_TIMEZONE?: string;
   ICS_ALLOW_INSECURE_HOSTS?: string;
 }

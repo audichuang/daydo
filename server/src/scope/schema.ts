@@ -1,3 +1,5 @@
+export const RELOCATION_STATE_TABLE = 'relocationState';
+
 export function ensureScopeSchema(sql: SqlStorage): void {
   sql.exec(`
       CREATE TABLE IF NOT EXISTS member (
@@ -202,6 +204,11 @@ export function ensureScopeSchema(sql: SqlStorage): void {
       CREATE TABLE IF NOT EXISTS purgedProject (
         projectId TEXT PRIMARY KEY NOT NULL,
         purgedAt INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS relocationState (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        state TEXT NOT NULL CHECK (state IN ('live', 'frozen', 'importing'))
       );
     `);
 

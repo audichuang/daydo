@@ -1,5 +1,6 @@
 // MCP tool registry: definitions, behaviour hints, argument validation (spec/mcp.md 5, 8).
 
+import { isScopeRelocatingError } from '../scope/relocation';
 import { attachmentTools } from './tools/attachments';
 import { icsTools } from './tools/ics';
 import { projectTools } from './tools/projects';
@@ -154,6 +155,12 @@ export async function handleToolCall(
     if (isMcpResult(result)) return result;
     return { content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result) }] };
   } catch (e) {
+    if (isScopeRelocatingError(e)) {
+      return {
+        content: [{ type: 'text', text: 'Error: Scope is relocating; please retry shortly.' }],
+        isError: true,
+      };
+    }
     return { content: [{ type: 'text', text: `Error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
   }
 }

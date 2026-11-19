@@ -115,6 +115,65 @@ export interface ScopePullResponse {
   hasMore: boolean;
 }
 
+export type ScopeRelocationState = 'live' | 'frozen' | 'importing';
+
+export interface ScopeRelocationStatus {
+  state: ScopeRelocationState;
+  tables: Record<string, number>;
+  maxServerSeq: number;
+  counter: Array<{ id: number; value: number }>;
+}
+
+export interface ScopeSetRelocationStateInput {
+  state: ScopeRelocationState;
+  expect: ScopeRelocationState;
+  /** Required for importing -> live: target recomputes its digest inside the state transition transaction and refuses on mismatch. */
+  expectDigest?: Record<string, ScopeTableDigest>;
+}
+
+export interface ScopeSetRelocationStateResponse {
+  previous: ScopeRelocationState;
+  state: ScopeRelocationState;
+}
+
+export interface ScopeExportedRow {
+  rowid: number;
+  values: Record<string, string | number | null>;
+}
+
+export interface ScopeExportPageInput {
+  table: string;
+  afterRowid?: number;
+  maxChars?: number;
+}
+
+export interface ScopeExportPageResponse {
+  table: string;
+  rows: ScopeExportedRow[];
+  nextAfterRowid: number;
+  done: boolean;
+}
+
+export interface ScopeImportPageInput {
+  table: string;
+  rows: ScopeExportedRow[];
+}
+
+export interface ScopeImportPageResponse {
+  table: string;
+  imported: number;
+}
+
+export interface ScopeTableDigest {
+  count: number;
+  sha256: string;
+}
+
+export interface ScopeDigest {
+  state: ScopeRelocationState;
+  tables: Record<string, ScopeTableDigest>;
+}
+
 export interface ScopeStub {
   push(input: ScopePushInput): Promise<ScopePushResponse>;
   pull(input: ScopePullInput): Promise<ScopePullResponse>;
@@ -123,4 +182,12 @@ export interface ScopeStub {
   getAttachmentInfo(input: { attachmentId: string }): Promise<ScopeAttachmentInfo | null>;
   projectMember(input: ScopeProjectMemberInput): Promise<void>;
   purgeProject(input: ScopePurgeProjectInput): Promise<ScopePurgeProjectResponse>;
+}
+
+export interface ScopeRelocationStub {
+  relocationStatus(): Promise<ScopeRelocationStatus>;
+  setRelocationState(input: ScopeSetRelocationStateInput): Promise<ScopeSetRelocationStateResponse>;
+  exportPage(input: ScopeExportPageInput): Promise<ScopeExportPageResponse>;
+  importPage(input: ScopeImportPageInput): Promise<ScopeImportPageResponse>;
+  digest(): Promise<ScopeDigest>;
 }

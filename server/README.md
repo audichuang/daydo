@@ -189,6 +189,23 @@ It only pulls (read-only) with a 10-minute token for that user. `GET /health` is
 
 Server-side numbers come from Workers Analytics with `cf sql query` (use `node_modules/.bin/cf`, cf 1.x; the global `cf` may be 0.x without `sql`). Columns are `wallTimeUs`, `cpuTimeUs`, `coloCode`, `scriptVersion`, `responseBodyBytes`; datasets are sampled, so `MAX`/quantiles must be `APPROX_*` and `ORDER BY` needs a `LIMIT`. The dataset has no request path: compare one request type across versions by grouping on `responseBodyBytes` and `scriptVersion`. `durableObjectsInvocations.wallTimeUs` is not a Scope's own duration (it has exceeded the whole calling request), so do not read it as Scope latency; use the script above.
 
+### Relocating a Scope
+
+A Durable Object stays in the region where it was created. To move a user's logical scope (`u:<userId>`) to a new physical DO created in Tokyo (`locationHint: 'apac-ne'`) while keeping the logical name everywhere in D1 and App cursors:
+
+Both `SCOPE_ADMIN_TOKEN` and `SCOPE_PHYSICAL_NAMES` are set as secrets with `void secret put <NAME>` (reads stdin), not Worker `vars` (Void rejects `worker.vars` for keys declared in `env.ts`).
+
+1. Deploy this code with `SCOPE_PHYSICAL_NAMES` unset, then set a temporary admin secret: `void secret put SCOPE_ADMIN_TOKEN`.
+2. Export `SCOPE_ADMIN_TOKEN`, `CF_ACCESS_CLIENT_ID`, and `CF_ACCESS_CLIENT_SECRET`, then run `node scripts/relocate-scope.mjs status <oldPhysical>` **before** freezing and confirm its table counts and `maxServerSeq` match the account (non-empty).
+3. Freeze the old DO (blocks writes with HTTP 503 so the App keeps local ops for retry; reads still work without writing): `node scripts/relocate-scope.mjs freeze <oldPhysical>`.
+4. Copy every table to the new physical DO with a local JSONL backup and compare digests: `node scripts/relocate-scope.mjs copy <oldPhysical> <newPhysical> <backupDir>`. Verify every table prints `OK` with matching row count and SHA-256. If a copy fails half-way, the target stays in `importing` and cannot be resumed — rerun `copy` with a **new** target physical name and a **new** backup directory.
+5. Finish the import (`importing -> live`; verifies old is `frozen`, new is `importing`, and every table digest matches both client-side and inside the target DO's `transactionSync`): `node scripts/relocate-scope.mjs finish <oldPhysical> <newPhysical>`.
+6. Before setting the mapping, run `node scripts/relocate-scope.mjs status <newPhysical>` and confirm `state` is `live` and `maxServerSeq` (and table counts) match `<oldPhysical>`.
+7. Set `SCOPE_PHYSICAL_NAMES` via `void secret put SCOPE_PHYSICAL_NAMES` with `{"<logicalScope>":"<newPhysical>"}` (stdin).
+8. Verify latency and pulls (`node scripts/measure-latency.mjs <userId>`) and confirm an App sync succeeds.
+9. Keep the old DO frozen as the rollback source. After cut-over, **never deploy or roll back to a build older than this change** (an older build ignores the freeze and would write to the old DO), and **never unfreeze the old DO once the new DO has accepted writes** (doing so would split-brain the scope).
+10. Remove the temporary `SCOPE_ADMIN_TOKEN` secret once the move is verified (`void secret delete SCOPE_ADMIN_TOKEN` or via dashboard).
+
 ## MCP Server (`mcp.daydoapp.com`)
 
 The same Worker also serves the remote MCP server (OAuth 2.1 + JSON-RPC tools + ICS subscription sync). Design: [`../spec/mcp.md`](../spec/mcp.md). The hostname gate (`middleware/00.host.ts`, `MCP_HOST`, default `mcp.daydoapp.com`) runs before Access: on the MCP host only `/`, `/register`, `/token`, `/authorize*` and the two `/.well-known/oauth-*` documents are served (everything else is 404); on `api.daydoapp.com` those MCP paths are 404.

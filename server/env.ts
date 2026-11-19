@@ -19,5 +19,7 @@ export default defineEnv({
   APPLE_AUTH_URL: url().default('https://appleid.apple.com/auth/authorize'),
   DEFAULT_TIMEZONE: string().default('Asia/Taipei'),
   ICS_ALLOW_INSECURE_HOSTS: string().optional(),
+  SCOPE_PHYSICAL_NAMES: string().optional(),
+  SCOPE_ADMIN_TOKEN: string().optional(),
   SYNC_FAULT: oneOf(['none', 'split-txn']).default('none'),
 });

@@ -1,5 +1,6 @@
 // Attachment tools (spec/mcp.md 8): upload_attachment, get_attachment.
 import { canReadAttachment } from '../../attachments/access';
+import { isScopeRelocatingError } from '../../scope/relocation';
 import { attachmentObjectKey, MAX_ATTACHMENT_BYTES } from '../../attachments/r2';
 import { uuidv7 } from '../../domain/uuid';
 import { isNil } from '../../serverops/values';
@@ -259,6 +260,7 @@ export function attachmentTools(): ToolDef[] {
           // Only compensate when we know the row was not written; on RPC/network errors the DO may
           // have committed before the response was lost, so keep the R2 object.
           const definitelyNotWritten =
+            isScopeRelocatingError(err) ||
             err instanceof WriteValidationError ||
             (err instanceof WriteError &&
               (err.outcome.status === 'rejected' || err.outcome.status === 'purged'));

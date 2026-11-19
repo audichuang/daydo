@@ -3,7 +3,7 @@ import { env } from 'void/env';
 import { AuthVerificationError, verifyGoogleToken } from '../../src/auth/providers';
 import { createSessionForIdentity } from '../../src/auth/session';
 import { productionAppDeps } from '../../src/deps';
-import { nonEmptyString, readJsonObject } from '../../src/http';
+import { nonEmptyString, readJsonObject, withScopeRelocating503 } from '../../src/http';
 
 export const POST = defineHandler(async (c) => {
   const body = await readJsonObject(c);
@@ -35,12 +35,14 @@ export const POST = defineHandler(async (c) => {
     throw error;
   }
 
-  const deps = productionAppDeps(c.env);
-  const result = await createSessionForIdentity(deps.db, {
-    ...verified,
-    deviceId,
-    jwtSecret: env.JWT_SECRET,
-    getScopeStub: deps.getScopeStub,
+  return withScopeRelocating503(c, async () => {
+    const deps = productionAppDeps(c.env);
+    const result = await createSessionForIdentity(deps.db, {
+      ...verified,
+      deviceId,
+      jwtSecret: env.JWT_SECRET,
+      getScopeStub: deps.getScopeStub,
+    });
+    return c.json(result, 200);
   });
-  return c.json(result, 200);
 });

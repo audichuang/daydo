@@ -1,7 +1,7 @@
 import { defineHandler } from 'void';
 import { requireUser } from '../../src/auth/middleware';
 import { productionAppDeps } from '../../src/deps';
-import { nonEmptyString, readJsonObject } from '../../src/http';
+import { nonEmptyString, readJsonObject, withScopeRelocating503 } from '../../src/http';
 import { MAX_OPS_PER_PUSH } from '../../src/sync/envelope';
 import { executeSyncPush } from '../../src/sync/push';
 import { serverClock } from '../../src/sync/serverClock';
@@ -28,15 +28,17 @@ export const POST = defineHandler(async (c) => {
     return c.json({ error: `ops exceeds maximum batch size of ${MAX_OPS_PER_PUSH}` }, 400);
   }
 
-  const deps = productionAppDeps(c.env);
-  const result = await executeSyncPush(deps.db, {
-    userId,
-    deviceId,
-    ops: body.ops,
-    getScopeStub: deps.getScopeStub,
-    clock: serverClock,
-    storage: deps.storage,
-  });
+  return withScopeRelocating503(c, async () => {
+    const deps = productionAppDeps(c.env);
+    const result = await executeSyncPush(deps.db, {
+      userId,
+      deviceId,
+      ops: body.ops as unknown[],
+      getScopeStub: deps.getScopeStub,
+      clock: serverClock,
+      storage: deps.storage,
+    });
 
-  return c.json(result, 200);
+    return c.json(result, 200);
+  });
 });

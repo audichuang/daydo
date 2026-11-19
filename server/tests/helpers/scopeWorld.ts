@@ -5,7 +5,7 @@ import type { MailMessage } from '../../src/mail/mailer';
 import { createServerHlcClock } from '../../src/sync/hlc';
 import { executeSyncPull } from '../../src/sync/pull';
 import { executeSyncPush } from '../../src/sync/push';
-import type { ScopeStub } from '../../src/scope/api';
+import type { ScopeRelocationStub, ScopeStub } from '../../src/scope/api';
 import { createMemoryR2, type MemoryR2Bucket } from './memoryR2';
 import { createTestD1, createTestDoState } from '../sqliteD1';
 
@@ -41,6 +41,8 @@ export interface CreateScopeWorldOptions {
   getNow?: GetNow;
   /** R2 bucket override (defaults to a fresh in-memory bucket). */
   storage?: MemoryR2Bucket;
+  /** Optional logical -> physical DO name mapping (simulates SCOPE_PHYSICAL_NAMES). */
+  physicalNames?: Record<string, string>;
 }
 
 /** In-memory D1 + per-scope ScopeObject test world shared by sync, MCP, and ICS tests. */
@@ -51,19 +53,26 @@ export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
   const DoClass = options.scopeClass ?? ScopeClass;
   const scopes = new Map<string, InstanceType<typeof ScopeObject>>();
   const scopeSqlites = new Map<string, ReturnType<typeof createTestDoState>['sqlite']>();
+  const physicalNames = new Map<string, string>(Object.entries(options.physicalNames ?? {}));
   const calls: PushCall[] = [];
   const clock = createServerHlcClock();
 
-  const getScopeStub = (scope: string): ScopeStub => {
-    let instance = scopes.get(scope);
+  const getOrCreateScope = (physical: string): InstanceType<typeof ScopeObject> => {
+    let instance = scopes.get(physical);
     if (!instance) {
       const doState = createTestDoState();
       instance = new DoClass(doState.ctx, { SYNC_FAULT: syncFault }) as InstanceType<
         typeof ScopeObject
       >;
-      scopes.set(scope, instance);
-      scopeSqlites.set(scope, doState.sqlite);
+      scopes.set(physical, instance);
+      scopeSqlites.set(physical, doState.sqlite);
     }
+    return instance;
+  };
+
+  const getScopeStub = (scope: string): ScopeStub => {
+    const physical = physicalNames.get(scope) ?? scope;
+    const instance = getOrCreateScope(physical);
     const stub = instance as unknown as ScopeStub;
     const proceed = (nextInput: ScopePushInput) => {
       calls.push({
@@ -86,6 +95,11 @@ export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
     });
   };
 
+  const getPhysicalScopeStub = (physical: string): ScopeRelocationStub => {
+    const instance = getOrCreateScope(physical);
+    return instance as unknown as ScopeRelocationStub;
+  };
+
   const push = (userId: string, deviceId: string, ops: unknown[]) =>
     executeSyncPush(db, { userId, deviceId, ops, getScopeStub, clock, storage });
 
@@ -106,6 +120,7 @@ export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
   const deps = {
     db,
     getScopeStub,
+    getPhysicalScopeStub,
     getNow: options.getNow ?? systemNow,
     mailer: {
       send: (message: MailMessage) => {
@@ -125,8 +140,10 @@ export function createScopeWorld(options: CreateScopeWorldOptions = {}) {
     storage,
     scopes,
     scopeSqlites,
+    physicalNames,
     calls,
     getScopeStub,
+    getPhysicalScopeStub,
     push,
     pull,
     sentMail,

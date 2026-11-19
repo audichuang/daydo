@@ -30,6 +30,7 @@ const NON_MCP_PATHS = [
   '/registerx',
   '/token/x',
   '/attachments/att-1/content',
+  '/admin/scope-relocation',
   '/.well-known/other',
   '/.well-known/oauth-protected-resource/extra',
 ];
