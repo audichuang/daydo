@@ -2007,4 +2007,110 @@ final class DayDoFlowTests: XCTestCase {
 
         shot("countdown-list")
     }
+
+    @MainActor
+    func testWeekAgendaToggleAndNavigation() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        app.buttons["日曆"].tap()
+        XCTAssertTrue(app.buttons["calendarTitle"].waitForExistence(timeout: 3), app.debugDescription)
+
+        app.buttons["calendarMode"].tap()
+        let weekItem = app.buttons["週"].firstMatch
+        XCTAssertTrue(weekItem.waitForExistence(timeout: 3))
+        weekItem.tap()
+
+        // Default week mode is TimeGrid; toggle switches to 週清單.
+        XCTAssertTrue(app.scrollViews["timeGridScroll"].waitForExistence(timeout: 3), app.debugDescription)
+        let toggle = app.buttons["weekLayoutToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertEqual(toggle.label, "切換為週清單")
+        toggle.tap()
+
+        let agenda = app.otherElements["weekAgenda"]
+        XCTAssertTrue(agenda.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertEqual(toggle.label, "切換為週時間軸")
+
+        let cal = Calendar.current
+        let now = Date()
+        let weekday = cal.component(.weekday, from: now) - 1 // 0 = Sun ... 6 = Sat
+        let sunday = cal.date(byAdding: .day, value: -weekday, to: now)!
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        for i in 0..<7 {
+            let d = cal.date(byAdding: .day, value: i, to: sunday)!
+            let cell = app.descendants(matching: .any)["weekAgendaDay-\(fmt.string(from: d))"]
+            XCTAssertTrue(cell.waitForExistence(timeout: 3), "Missing day cell for offset \(i)")
+        }
+        shot("week-agenda")
+
+        // Tap a task row -> opens task detail sheet.
+        let brief = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).firstMatch
+        XCTAssertTrue(brief.waitForExistence(timeout: 3), app.debugDescription)
+        brief.tap()
+        XCTAssertTrue(app.buttons["儲存"].waitForExistence(timeout: 3), app.debugDescription)
+        let expandBtn = app.buttons["展開為全屏"]
+        let dragStart = expandBtn.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        dragStart.press(forDuration: 0.05, thenDragTo: dragStart.withOffset(CGVector(dx: 0, dy: 420)))
+        XCTAssertTrue(expandBtn.waitForNonExistence(timeout: 3))
+
+        // Tap a mini-month day in another week -> changes the displayed week.
+        let dayOfMonth = cal.component(.day, from: now)
+        let otherWeekOffset = dayOfMonth <= 15 ? 7 : -7
+        let otherDay = cal.date(byAdding: .day, value: otherWeekOffset, to: now)!
+        let otherSunday = cal.date(byAdding: .day, value: -weekday, to: otherDay)!
+        let miniBtn = app.buttons["weekAgendaMini-\(fmt.string(from: otherDay))"]
+        XCTAssertTrue(miniBtn.waitForExistence(timeout: 3), app.debugDescription)
+        miniBtn.tap()
+
+        let currentSundayCell = app.descendants(matching: .any)["weekAgendaDay-\(fmt.string(from: sunday))"]
+        let otherSundayCell = app.descendants(matching: .any)["weekAgendaDay-\(fmt.string(from: otherSunday))"]
+        XCTAssertTrue(otherSundayCell.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(currentSundayCell.waitForNonExistence(timeout: 3))
+
+        // Horizontal swipe pages back to the current week.
+        let window = app.windows.firstMatch
+        let startX: CGFloat = otherWeekOffset > 0 ? 0.25 : 0.85
+        let endX: CGFloat = otherWeekOffset > 0 ? 0.85 : 0.25
+        window.coordinate(withNormalizedOffset: CGVector(dx: startX, dy: 0.45))
+            .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: endX, dy: 0.45)))
+        XCTAssertTrue(currentSundayCell.waitForExistence(timeout: 3), app.debugDescription)
+
+        // Tap empty space in a sparse day cell (<= 1 task in DemoData) -> opens composer.
+        let sparseOffset = weekday <= 4 ? weekday + 2 : weekday - 5
+        let sparseDay = cal.date(byAdding: .day, value: sparseOffset, to: sunday)!
+        let sparseCell = app.descendants(matching: .any)["weekAgendaDay-\(fmt.string(from: sparseDay))"]
+        XCTAssertTrue(sparseCell.waitForExistence(timeout: 3))
+        sparseCell.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75)).tap()
+        let composerTitle = app.descendants(matching: .any)["composerTitle"]
+        XCTAssertTrue(composerTitle.waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["composerMore"].tap()
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(composerTitle.waitForNonExistence(timeout: 3))
+
+        // Capture light appearance too.
+        app.buttons["設定"].firstMatch.tap()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH '外觀'")).firstMatch.tap()
+        let lightChip = app.buttons["淺色"]
+        XCTAssertTrue(lightChip.waitForExistence(timeout: 3))
+        lightChip.tap()
+        app.buttons["日曆"].firstMatch.tap()
+        XCTAssertTrue(agenda.waitForExistence(timeout: 3))
+        shot("week-agenda-light")
+
+        // Toggle back -> restores TimeGrid.
+        toggle.tap()
+        XCTAssertTrue(app.scrollViews["timeGridScroll"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(agenda.waitForNonExistence(timeout: 3))
+        XCTAssertEqual(toggle.label, "切換為週清單")
+
+        // Switch back to week agenda and tap today's +N overflow -> switches to .day mode.
+        toggle.tap()
+        let moreBtn = app.buttons["weekAgendaMore-\(fmt.string(from: now))"]
+        XCTAssertTrue(moreBtn.waitForExistence(timeout: 3), app.debugDescription)
+        moreBtn.tap()
+        XCTAssertTrue(app.buttons["切換檢視：目前日"].waitForExistence(timeout: 3), app.debugDescription)
+    }
 }

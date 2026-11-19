@@ -31,6 +31,7 @@ struct CalendarScreen: View {
     @AppStorage("calendarViewMode") private var modeRaw = CalMode.list.rawValue
     @AppStorage("calendarCollapsed") private var collapsed = false
     @AppStorage("agendaTimeline") private var timelineStyle = false
+    @AppStorage("weekAgendaStyle") private var weekAgendaStyle = false
     @AppStorage("calendarShowCompleted") private var showCompleted = true
     @State private var selected: LocalDay?
     @State private var month: LocalDay?
@@ -186,6 +187,16 @@ struct CalendarScreen: View {
             HeaderAction(systemName: timelineStyle ? "list.bullet.rectangle" : "calendar.day.timeline.left", label: timelineStyle ? "切換為卡片清單" : "切換為時間軸清單") {
                 withAnimation(Motion.toggle(reduceMotion)) { timelineStyle.toggle() }
             }
+        }
+        if mode == .week {
+            HeaderAction(
+                systemName: weekAgendaStyle ? "rectangle.split.3x1" : "square.grid.2x2",
+                label: weekAgendaStyle ? "切換為週時間軸" : "切換為週清單"
+            ) {
+                shiftDir = 0
+                withAnimation(Motion.toggle(reduceMotion)) { weekAgendaStyle.toggle() }
+            }
+            .accessibilityIdentifier("weekLayoutToggle")
         }
         Menu {
             Button("回到今天", systemImage: "arrow.uturn.backward") { goToday() }
@@ -517,22 +528,55 @@ struct CalendarScreen: View {
                 .gesture(horizontalOnlySwipe)
             case .week, .threeDay, .day:
                 ZStack {
-                    TimeGrid(days: rangeDays, tasks: displayedTasks, today: model.today, selected: sel, isRegular: isRegular,
-                             showOwnerAvatars: showOwnerAvatars,
-                             isViewerFilter: model.isViewer(projectId: projectFilter),
-                             dragLock: gridDragLock,
-                             openTask: { model.openTask($0, inlineAvailable: false) },
-                             tapSlot: { d, m in compose(day: d, minute: m) },
-                             createRange: { d, s, e in compose(day: d, minute: s, endMinute: e) },
-                             moveTask: { task, draft in moveTask(task, to: draft) },
-                             tapDay: { d in
+                    if mode == .week && weekAgendaStyle {
+                        WeekAgendaGrid(
+                            weekDays: rangeDays,
+                            month: sel.firstOfMonth,
+                            tasks: displayedTasks,
+                            today: model.today,
+                            isRegular: isRegular,
+                            showOwnerAvatars: showOwnerAvatars,
+                            isViewerFilter: model.isViewer(projectId: projectFilter),
+                            openTask: { model.openTask($0, inlineAvailable: false) },
+                            tapEmpty: { d in compose(day: d, minute: nil) },
+                            openDay: { d in
                                 shiftPage(direction: 0) {
                                     selected = d
+                                    month = d.firstOfMonth
                                     modeRaw = CalMode.day.rawValue
                                 }
-                             })
-                        .id("\(mode.rawValue)-\(pageSequence)")
+                            },
+                            pickMiniDay: { d in
+                                let oldWeekStart = sel.adding(days: -sel.weekday)
+                                let newWeekStart = d.adding(days: -d.weekday)
+                                let weekChanged = newWeekStart != oldWeekStart
+                                let dir = weekChanged ? (newWeekStart > oldWeekStart ? 1 : -1) : 0
+                                shiftPage(direction: dir, token: Motion.page, haptic: .selection, bumpPage: weekChanged) {
+                                    selected = d
+                                    month = d.firstOfMonth
+                                }
+                            }
+                        )
+                        .id("week-agenda-\(pageSequence)")
                         .transition(pageTransition)
+                    } else {
+                        TimeGrid(days: rangeDays, tasks: displayedTasks, today: model.today, selected: sel, isRegular: isRegular,
+                                 showOwnerAvatars: showOwnerAvatars,
+                                 isViewerFilter: model.isViewer(projectId: projectFilter),
+                                 dragLock: gridDragLock,
+                                 openTask: { model.openTask($0, inlineAvailable: false) },
+                                 tapSlot: { d, m in compose(day: d, minute: m) },
+                                 createRange: { d, s, e in compose(day: d, minute: s, endMinute: e) },
+                                 moveTask: { task, draft in moveTask(task, to: draft) },
+                                 tapDay: { d in
+                                    shiftPage(direction: 0) {
+                                        selected = d
+                                        modeRaw = CalMode.day.rawValue
+                                    }
+                                 })
+                            .id("\(mode.rawValue)-\(pageSequence)")
+                            .transition(pageTransition)
+                    }
                 }
                 .offset(x: reduceMotion ? 0 : hDragOffset)
                 .clipped()
@@ -767,14 +811,14 @@ struct CalReload: Hashable { var range: ClosedRange<LocalDay>; var member: Strin
 private struct CalQueryKey: Equatable { var range: ClosedRange<LocalDay>; var member: String?; var completed: Bool }
 private struct CalAgendaContext: Hashable { var day: LocalDay; var member: String?; var project: String?; var completed: Bool }
 
-private func partnerOwner(for task: TodoTask, show: Bool, members: [Member]) -> Member? {
+func partnerOwner(for task: TodoTask, show: Bool, members: [Member]) -> Member? {
     guard show, !task.ownerId.isEmpty,
           let member = members.first(where: { $0.id == task.ownerId }),
           !member.isMe else { return nil }
     return member
 }
 
-private struct OwnerAvatarBadge: View {
+struct OwnerAvatarBadge: View {
     var member: Member
     var size: CGFloat = 18
     var strokeWidth: CGFloat = 1.5
