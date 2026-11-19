@@ -177,6 +177,18 @@ CF_ACCESS_CLIENT_ID=... CF_ACCESS_CLIENT_SECRET=... npm run smoke:prod
 
 Attachment R2 upload/download verification is covered in [`.claude/skills/verify/features/attachments.md`](./.claude/skills/verify/features/attachments.md).
 
+### Measuring latency
+
+Measure before and after a performance change, with the App's real path rather than `GET /` or MCP alone:
+
+```bash
+JWT_SECRET=... CF_ACCESS_CLIENT_ID=... CF_ACCESS_CLIENT_SECRET=... node scripts/measure-latency.mjs <userId>
+```
+
+It only pulls (read-only) with a 10-minute token for that user. `GET /health` is the network floor (it touches neither D1 nor a Scope), a backfill of an unknown project runs the pull's D1 queries without calling any Scope, and the incremental pull minus those two splits server time into D1 and Scope. Full pulls at limits 200, 500 and 1000 must return the same row count; per-page cost shows whether page count or payload dominates.
+
+Server-side numbers come from Workers Analytics with `cf sql query` (use `node_modules/.bin/cf`, cf 1.x; the global `cf` may be 0.x without `sql`). Columns are `wallTimeUs`, `cpuTimeUs`, `coloCode`, `scriptVersion`, `responseBodyBytes`; datasets are sampled, so `MAX`/quantiles must be `APPROX_*` and `ORDER BY` needs a `LIMIT`. The dataset has no request path: compare one request type across versions by grouping on `responseBodyBytes` and `scriptVersion`. `durableObjectsInvocations.wallTimeUs` is not a Scope's own duration (it has exceeded the whole calling request), so do not read it as Scope latency; use the script above.
+
 ## MCP Server (`mcp.daydoapp.com`)
 
 The same Worker also serves the remote MCP server (OAuth 2.1 + JSON-RPC tools + ICS subscription sync). Design: [`../spec/mcp.md`](../spec/mcp.md). The hostname gate (`middleware/00.host.ts`, `MCP_HOST`, default `mcp.daydoapp.com`) runs before Access: on the MCP host only `/`, `/register`, `/token`, `/authorize*` and the two `/.well-known/oauth-*` documents are served (everything else is 404); on `api.daydoapp.com` those MCP paths are 404.
