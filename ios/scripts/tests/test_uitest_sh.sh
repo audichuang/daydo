@@ -736,7 +736,7 @@ check_stubs
 
 owner_file() { echo "$T/home/Library/Developer/CoreSimulator/sim-vault/owners/daydo-$(printf '%s' "$ROOT" | shasum | cut -c1-40)-iphone"; }
 RUN_TEST="sim-vault run DD iPhone 18 Pro --lease dd:run --boot --deny-other-leases"
-INSTALL_HINT='uv tool install --force "git\+https://github\.com/audichuang/sim-vault@v4\.0\.0"'
+INSTALL_HINT='uv tool install --force "git\+https://github\.com/audichuang/sim-vault@v4\.1\.0"'
 
 t_test_run_basic() {
   run -- iphone -only-testing:DayDoUITests/X

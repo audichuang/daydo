@@ -15,7 +15,7 @@
 # once fail with "Failed to send signal 19"; DerivedData and CPU are shared). Waiting for
 # either gives up after 30 min with exit 8.
 #
-# Requires sim-vault >= 4.0.0 (`uv tool install --force "git+https://github.com/audichuang/sim-vault@v4.0.0"`).
+# Requires sim-vault >= 4.0.0 (`uv tool install --force "git+https://github.com/audichuang/sim-vault@v4.1.0"`).
 # Devices come from sim-vault with a lease, which park and `sim-vault shutdown` respect:
 # resident devices are restored from the NAS when parked (never created here: on 3 no
 # archive, on 4 the archive's runtime is not installed; ask the user). sim-vault exit codes
@@ -165,7 +165,7 @@ orphan_hint() {
   echo "若 owner 的 worktree 已不存在、或確認那個 session 已結束，可 \`sim-vault release \"${name}\" --lease <owner>\` 清掉；不要清別人仍在用的" >&2
 }
 test_owner="dd:uitest"
-install_hint='uv tool install --force "git+https://github.com/audichuang/sim-vault@v4.0.0"'
+install_hint='uv tool install --force "git+https://github.com/audichuang/sim-vault@v4.1.0"'
 
 usage() {
   echo "usage: $0 {build [xcodebuild args...] | [up|down|park] [iphone|ipad|\"DD <name>\"] | [iphone|ipad|\"DD <name>\"] [xcodebuild args...]}" >&2
