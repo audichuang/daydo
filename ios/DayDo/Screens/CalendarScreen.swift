@@ -1100,6 +1100,10 @@ struct WeekRow: View {
     }
 }
 
+/// Scroll target for a time-grid hour row. A distinct type so it can never match the
+/// Int offsets other ForEach rows in the same ScrollView use (0...6 for the week columns).
+private struct HourRowID: Hashable { var hour: Int }
+
 private struct PendingBlockMove {
     var token: UUID
     var taskId: String
@@ -1271,7 +1275,7 @@ struct TimeGrid: View {
                                         Rectangle().fill(Palette.gridLine).frame(height: 1)
                                     }
                                     .frame(height: h == 24 ? 1 : hourH, alignment: .top)
-                                    .id(h)
+                                    .id(HourRowID(hour: h))
                                 }
                             }
                             // Column separators + tap-to-create
@@ -1325,7 +1329,7 @@ struct TimeGrid: View {
                     .task(id: days) {
                         // Wait for menu dismiss / transition & initial layout, then snap accurately.
                         try? await Task.sleep(for: .milliseconds(350))
-                        proxy.scrollTo(initialHour, anchor: .top)
+                        proxy.scrollTo(HourRowID(hour: initialHour), anchor: .top)
                     }
                 }
             }

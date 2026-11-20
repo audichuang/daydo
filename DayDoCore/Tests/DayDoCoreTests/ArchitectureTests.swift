@@ -249,6 +249,16 @@ private let guards: [Guard] = [
         #expect(gates >= sizedBadges, "\(sizedBadges) sized owner badges but only \(gates) title-width gates")
     }
 
+    /// TimeGrid hour rows must use a dedicated scroll-id type: plain Int ids collided with the
+    /// week columns' `id: \.offset` (0...6), so opening 週 between 05:00 and 09:00 scrolled to
+    /// a day column at 00:00 instead of the hour row.
+    @Test func timeGridScrollTargetsHourRowID() throws {
+        let code = try codeLines("ios/DayDo/Screens/CalendarScreen.swift")
+        #expect(code.contains(".id(HourRowID(hour: h))"), "hour rows lost their HourRowID; renamed?")
+        #expect(code.contains("proxy.scrollTo(HourRowID(hour: initialHour)"), "initial scroll must target HourRowID")
+        #expect(!code.contains(".id(h)"), "hour rows must not use plain Int ids (collide with column offsets)")
+    }
+
     @Test func screensRevealCreatedTasksInAllFilter() throws {
         let files = swiftFiles(in: ["ios/DayDo/Screens"])
         var offenders: [String] = []

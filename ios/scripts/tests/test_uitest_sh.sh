@@ -1456,7 +1456,19 @@ t_real_null_anchor_case_alias() {
 
   # 2) Simulate an existing null-anchor session lease on <tmp>/checkout (via direct sim-vault).
   run_detached sim-vault ensure "DD iPhone 18 Pro" --boot --lease auto --lease-scope "$co_lower" --lease-prefix dd:up
-  eq "$RC" 0 "precondition: direct sim-vault created null-anchor session lease"
+  if [[ "$RC" == 2 ]] && grep -q "no-session-anchor" "$T/err"; then
+    # sim-vault 4.1.0+ refuses a null-anchor auto lease; forge one left over from 4.0.0 instead.
+    eq "$(realvault_leases)" "" "4.1 null-anchor ensure took no lease"
+    "${ENVCMD[@]}" sim-vault ensure "DD iPhone 18 Pro" --boot --lease auto --lease-scope "$co_lower" \
+      --lease-prefix dd:up >/dev/null 2>&1 || { fail "anchored ensure failed"; return; }
+    "$REAL_PY" -I -c 'import glob, json, sys
+path, = [p for p in glob.glob(sys.argv[1] + "/Library/Developer/CoreSimulator/sim-vault/leases/*/*.json")
+         if not p.rsplit("/", 1)[1].startswith("_")]
+record = json.load(open(path)); record["anchor"] = None; json.dump(record, open(path, "w"))
+' "$T/home" || { fail "could not null the lease anchor"; return; }
+  else
+    eq "$RC" 0 "precondition: direct sim-vault created null-anchor session lease"
+  fi
   local tok; tok="$(realvault_leases)"
   [[ "$tok" =~ ^dd:up:[0-9a-f]{8}$ ]] || { fail "expected session token, got '$tok'"; return; }
 
