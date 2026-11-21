@@ -2156,4 +2156,157 @@ final class DayDoFlowTests: XCTestCase {
         let todayHeaderPrefix = "\(todayComps.month!) 月 \(todayComps.day!) 日"
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", todayHeaderPrefix)).firstMatch.waitForExistence(timeout: 3), app.debugDescription)
     }
+
+    @MainActor
+    func testTaskListScopeSwitchWhileHiddenShowsOnlyNewList() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        // 1. Open list A (工作) on Tasks tab and confirm its task is shown.
+        app.buttons["開啟清單抽屜"].tap()
+        let folder = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '工作與學習'")).firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 3), app.debugDescription)
+        folder.tap()
+        let workList = app.buttons["drawer.list.工作"]
+        XCTAssertTrue(workList.waitForExistence(timeout: 3), app.debugDescription)
+        workList.tap()
+        XCTAssertTrue(app.staticTexts["工作"].waitForExistence(timeout: 3), app.debugDescription)
+        let workTask = app.buttons["完成：準備週一產品會議簡報"]
+        XCTAssertTrue(workTask.waitForExistence(timeout: 3), app.debugDescription)
+        let inboxTask = app.buttons["完成：整理 Q1 OKR 草稿"]
+        XCTAssertFalse(inboxTask.exists)
+
+        // 2. Switch to Calendar tab, then open drawer via left-edge swipe and pick list B (收件匣).
+        app.buttons["日曆"].tap()
+        XCTAssertTrue(app.buttons["calendarTitle"].waitForExistence(timeout: 3), app.debugDescription)
+
+        let window = app.windows.firstMatch
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5))
+            .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5)))
+        let inbox = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '收件匣'")).firstMatch
+        XCTAssertTrue(inbox.waitForExistence(timeout: 3), app.debugDescription)
+        inbox.tap()
+
+        // 3. Back on Tasks tab: only list B's tasks should appear; list A's tasks must not remain.
+        XCTAssertTrue(app.staticTexts["收件匣"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(inboxTask.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(workTask.exists, "Old list A task must not remain after switching to list B while hidden")
+    }
+
+    @MainActor
+    func testCalendarResetsSelectionAndFiltersWhenReturningFromOtherTab() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        app.buttons["日曆"].tap()
+        XCTAssertTrue(app.buttons["calendarTitle"].waitForExistence(timeout: 3), app.debugDescription)
+
+        let comps = Calendar.current.dateComponents([.month, .day], from: Date())
+        let m = comps.month!
+        let todayDay = comps.day!
+        let otherDay = todayDay == 12 ? 15 : 12
+        let otherPrefix = "\(m) 月 \(otherDay) 日"
+        let otherCell = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", otherPrefix)).firstMatch
+        XCTAssertTrue(otherCell.waitForExistence(timeout: 3), app.debugDescription)
+        otherCell.tap()
+        XCTAssertTrue(otherCell.isSelected)
+        let otherHeading = app.staticTexts["\(m)月\(otherDay)日"]
+        XCTAssertTrue(otherHeading.waitForExistence(timeout: 3), app.debugDescription)
+
+        // Apply a project filter as well.
+        app.buttons["更多選項"].tap()
+        let filterMenu = app.buttons["清單篩選"]
+        XCTAssertTrue(filterMenu.waitForExistence(timeout: 3), app.debugDescription)
+        filterMenu.tap()
+        let workFilter = app.buttons["工作"].firstMatch
+        XCTAssertTrue(workFilter.waitForExistence(timeout: 3), app.debugDescription)
+        workFilter.tap()
+        let activeFilterChip = app.buttons["移除清單篩選：工作"]
+        XCTAssertTrue(activeFilterChip.waitForExistence(timeout: 3), app.debugDescription)
+
+        // Switch away to Tasks and come back to Calendar.
+        app.buttons["任務"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["開啟清單抽屜"].waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["日曆"].tap()
+
+        let todayHeading = app.staticTexts["\(m)月\(todayDay)日・今天"]
+        XCTAssertTrue(todayHeading.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(activeFilterChip.exists, "Project filter should reset on returning to Calendar")
+    }
+
+    @MainActor
+    func testSearchResetsQueryAndRefocusesKeyboardWhenReturningFromOtherTab() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        app.buttons["搜尋"].firstMatch.tap()
+        let field = app.textFields["搜尋任務、描述、標籤、子任務"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3), app.debugDescription)
+        field.tap()
+        field.typeText("訂位")
+        let resultRow = app.buttons.matching(NSPredicate(format: "label CONTAINS '晚餐：巷口火鍋'")).firstMatch
+        XCTAssertTrue(resultRow.waitForExistence(timeout: 3), app.debugDescription)
+        let activeOnlyChip = app.buttons["只看未完成"]
+        activeOnlyChip.tap()
+        XCTAssertTrue(activeOnlyChip.isSelected)
+
+        // Switch away to Tasks and return to Search.
+        app.buttons["任務"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["開啟清單抽屜"].waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["搜尋"].firstMatch.tap()
+
+        XCTAssertTrue(field.waitForExistence(timeout: 3), app.debugDescription)
+        let fieldText = (field.value as? String) ?? ""
+        XCTAssertTrue(fieldText.isEmpty || fieldText == "搜尋任務、描述、標籤、子任務", "Expected cleared search query, got: \(fieldText)")
+        XCTAssertFalse(resultRow.exists, "Previous search results should be cleared on re-entry")
+        XCTAssertFalse(activeOnlyChip.isSelected, "activeOnly filter should reset on re-entry")
+        XCTAssertTrue(
+            app.keyboards.firstMatch.waitForExistence(timeout: 3)
+                || ((field.value(forKey: "hasKeyboardFocus") as? Bool) == true),
+            "Search field should automatically focus keyboard on re-entry"
+        )
+    }
+
+    @MainActor
+    func testResidentTabsStatusBarScrollsToTopAndTaskTabResetsScroll() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        dismissNotificationPrompt()
+
+        // Visit Calendar and Search so all resident tabs' ScrollViews are mounted in the window.
+        app.buttons["日曆"].tap()
+        XCTAssertTrue(app.buttons["calendarTitle"].waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["搜尋"].firstMatch.tap()
+        XCTAssertTrue(app.textFields["搜尋任務、描述、標籤、子任務"].waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["任務"].firstMatch.tap()
+
+        let topTitle = app.staticTexts["今天"].firstMatch
+        XCTAssertTrue(topTitle.waitForExistence(timeout: 3), app.debugDescription)
+        let initialTopY = topTitle.frame.minY
+        let scroll = app.scrollViews.firstMatch
+
+        // 1. Scroll down, then tap the status bar (left clock area, clear of Dynamic Island) -> scrolls back to top.
+        scroll.swipeUp()
+        scroll.swipeUp()
+        XCTAssertLessThan(topTitle.frame.minY, initialTopY - 60, "Expected task list to scroll down before status-bar tap")
+
+        let statusBarTap = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.02))
+        statusBarTap.tap()
+        let backToTop = NSPredicate { _, _ in
+            topTitle.exists && abs(topTitle.frame.minY - initialTopY) < 20
+        }
+        let exp = XCTNSPredicateExpectation(predicate: backToTop, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [exp], timeout: 3), .completed, "Status-bar tap should scroll Tasks to top even when hidden tabs are resident (topY=\(topTitle.frame.minY), initial=\(initialTopY))")
+
+        // 2. Scroll down again, switch to Calendar and back to Tasks -> scroll position resets to top.
+        scroll.swipeUp()
+        scroll.swipeUp()
+        XCTAssertLessThan(topTitle.frame.minY, initialTopY - 60, "Expected task list to scroll down before tab switch")
+
+        app.buttons["日曆"].tap()
+        XCTAssertTrue(app.buttons["calendarTitle"].waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["任務"].firstMatch.tap()
+        XCTAssertTrue(topTitle.waitForExistence(timeout: 3), app.debugDescription)
+        let expReset = XCTNSPredicateExpectation(predicate: backToTop, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [expReset], timeout: 3), .completed, "Returning to Tasks tab should reset scroll to top (topY=\(topTitle.frame.minY), initial=\(initialTopY))")
+    }
 }

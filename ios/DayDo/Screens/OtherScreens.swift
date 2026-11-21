@@ -12,6 +12,7 @@ struct SearchScreen: View {
     @State private var activeOnly = false
     @State private var results: [TodoTask] = []
     @State private var loadedKey: SearchKey?
+    @State private var scrollPosition = ScrollPosition(edge: .top)
     @FocusState private var focused: Bool
 
     private var activeSearchKey: SearchKey? {
@@ -63,6 +64,7 @@ struct SearchScreen: View {
                     .card()
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .opacity(results.isEmpty ? 0 : 1)
+                    .enclosingScrollsToTop(isActive)
                     if results.isEmpty {
                         Text(text.isEmpty ? (model.tags.isEmpty ? "輸入關鍵字開始搜尋" : "") : "找不到「\(text)」")
                             .txt(14).foregroundStyle(Palette.textSecondary).padding(.top, 30)
@@ -83,6 +85,7 @@ struct SearchScreen: View {
                         }
                     }
                 }
+                .scrollPosition($scrollPosition)
                 .padding(.horizontal, 16)
                 .contentMargins(.bottom, isRegular ? 32 : 140, for: .scrollContent)
                 .scrollDismissesKeyboard(.immediately)
@@ -93,6 +96,16 @@ struct SearchScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: activeSearchKey) {
             guard let key = activeSearchKey, key != loadedKey else { return }
+            if key.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                lastText = key.text
+                loadedKey = key
+                if !results.isEmpty {
+                    withAnimation(Motion.layout(reduceMotion)) {
+                        results = []
+                    }
+                }
+                return
+            }
             do {
                 if key.text != lastText {
                     try await Task.sleep(for: .milliseconds(180))
@@ -113,7 +126,13 @@ struct SearchScreen: View {
         .onAppear { if isActive && text.isEmpty { focused = true } }
         .onChange(of: isActive) { _, active in
             if active {
-                if text.isEmpty { focused = true }
+                text = ""
+                lastText = ""
+                activeOnly = false
+                results = []
+                loadedKey = nil
+                scrollPosition.scrollTo(edge: .top)
+                focused = true
             } else {
                 focused = false
             }

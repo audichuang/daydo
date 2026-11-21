@@ -17,10 +17,21 @@ struct TaskListScreen: View {
     @State private var loadedReload: TaskReload?
     @State private var limits: [TaskScope: Int] = [:]
     @State private var shareText: String?
+    @State private var scrollPosition = ScrollPosition(edge: .top)
     @AppStorage("closedSections") private var closedRaw = "completed"
 
     private var activeReload: TaskReload? {
         isActive ? TaskReload(scope: scope, revision: model.revision, limit: limits[scope], memberId: activeMemberFilter) : nil
+    }
+
+    /// Only expose sections matching the current `scope` so switching lists while
+    /// hidden (or while a load is in flight / fails) never shows or acts on old rows.
+    private var visibleSections: [TaskSection] {
+        loadedScope == scope ? sections : []
+    }
+
+    private var isScopeLoaded: Bool {
+        loaded && loadedScope == scope
     }
 
     var closed: Set<String> { Set(closedRaw.split(separator: ",").map(String.init)) }
@@ -60,32 +71,33 @@ struct TaskListScreen: View {
                         }
                         .padding(.horizontal, 4)
 
-                        Group {
-                            if loaded && sections.isEmpty {
-                                EmptyState(scope: scope)
-                                    .transition(.opacity)
-                            }
-                            ForEach(sections) { sec in
-                                SectionCard(section: sec, scope: scope, closed: closed.contains(sec.id)) { toggle(sec.id) }
-                                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
-                            }
+                        if isScopeLoaded && visibleSections.isEmpty {
+                            EmptyState(scope: scope)
+                                .id(SectionViewID(scope: loadedScope, sectionId: "__empty"))
+                                .transition(.opacity)
                         }
-                        .id(loadedScope)
-                        if sections.contains(where: \.hasMore) {
+                        ForEach(visibleSections) { sec in
+                            SectionCard(section: sec, scope: scope, closed: closed.contains(sec.id)) { toggle(sec.id) }
+                                .id(SectionViewID(scope: loadedScope, sectionId: sec.id))
+                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                        }
+                        if visibleSections.contains(where: \.hasMore) {
                             Button { loadMore() } label: {
                                 Text("載入更多").txt(13, .semibold).foregroundStyle(accent.text)
                                     .frame(maxWidth: .infinity, minHeight: 36)
                             }
                             .buttonStyle(.press)
                             .hoverEffect(.highlight)
-                        } else if !sections.isEmpty {
+                        } else if !visibleSections.isEmpty {
                             Text("已顯示全部").txt(12).foregroundStyle(Palette.textFaint).frame(maxWidth: .infinity).padding(.vertical, 4)
                         }
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, isRegular ? 12 : 60)
                     .padding(.bottom, isRegular ? (showComposeFAB ? 96 : 32) : 170)
+                    .enclosingScrollsToTop(isActive)
                 }
+                .scrollPosition($scrollPosition)
                 .scrollIndicators(.hidden)
 
                 if !isRegular {
@@ -123,6 +135,12 @@ struct TaskListScreen: View {
             guard let reload = activeReload, reload != loadedReload else { return }
             await load(for: reload)
         }
+        .onChange(of: isActive) { _, active in
+            if active {
+                limits = [:]
+                scrollPosition.scrollTo(edge: .top)
+            }
+        }
     }
 
     private var activeMemberFilter: String? {
@@ -153,7 +171,7 @@ struct TaskListScreen: View {
                     withAnimation(Motion.toggle(reduceMotion)) { model.compact.toggle() }
                 }
                 Button(closed.contains("completed") ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle("completed") }
-                if let overdue = sections.first(where: { $0.id == "overdue" }),
+                if let overdue = visibleSections.first(where: { $0.id == "overdue" }),
                    !isViewerScope,
                    !model.editableTaskIds(in: overdue.tasks).isEmpty {
                     Divider()
@@ -184,16 +202,22 @@ struct TaskListScreen: View {
 
     var subtitle: String {
         // A multi-day task sits in both 今天 and 明天; count it once.
-        let active = Set(sections.filter { $0.id != "completed" && $0.id != "trash" }.flatMap { $0.tasks.map(\.id) }).count
+        let active = Set(visibleSections.filter { $0.id != "completed" && $0.id != "trash" }.flatMap { $0.tasks.map(\.id) }).count
         switch scope {
         case .smart(.today): return "\(DateText.full(model.today)) · \(model.counts.today) 項待辦"
-        case .smart(.completed): return "\(sections.first?.tasks.count ?? 0) 項"
+        case .smart(.completed): return "\(visibleSections.first?.tasks.count ?? 0) 項"
         case .smart(.trash): return "刪除的任務可在這裡還原"
         default: return "\(active) 項待辦"
         }
     }
 
     func load(for reload: TaskReload) async {
+        if loadedScope != reload.scope {
+            sections = []
+            loaded = false
+            loadedScope = nil
+            loadedReload = nil
+        }
         do {
             let loadedSections = try await model.api.listSections(reload.scope, limit: reload.limit, memberId: reload.memberId)
             guard !Task.isCancelled else { return }
@@ -220,7 +244,7 @@ struct TaskListScreen: View {
     }
 
     func loadMore() {
-        let current = sections.first(where: \.hasMore)?.tasks.count ?? 0
+        let current = visibleSections.first(where: \.hasMore)?.tasks.count ?? 0
         let step = (scope == .smart(.completed) || scope == .smart(.trash)) ? 300 : 30
         limits[scope] = current + step
     }
@@ -267,7 +291,7 @@ struct TaskListScreen: View {
     }
 
     func projectShareText(_ project: Project) -> String {
-        let active = sections.filter { $0.id != "completed" && $0.id != "trash" }.flatMap(\.tasks)
+        let active = visibleSections.filter { $0.id != "completed" && $0.id != "trash" }.flatMap(\.tasks)
         let lines = active.map { t in
             if let sched = t.schedule {
                 return "□ \(t.title)  \(DateText.taskLine(sched, today: model.today))"
@@ -283,6 +307,7 @@ struct TaskListScreen: View {
 }
 
 struct TaskReload: Hashable { var scope: TaskScope; var revision: Int; var limit: Int?; var memberId: String? }
+private struct SectionViewID: Hashable { var scope: TaskScope?; var sectionId: String }
 
 struct SectionCard: View {
     @Environment(AppModel.self) private var model

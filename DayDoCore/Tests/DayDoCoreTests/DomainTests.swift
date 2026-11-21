@@ -179,6 +179,8 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "UTC")!
         let samples = [
+            day("1500-02-28"), day("1582-10-04"), day("1582-10-15"),
+            day("1599-12-31"), day("1600-01-01"),
             day("1900-02-28"), day("1969-12-31"), day("1970-01-01"),
             day("2000-02-29"), day("2024-02-28"), day("2026-11-15"),
             day("2028-02-29"), day("2100-03-01"),
@@ -197,6 +199,12 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
                 #expect(actual.days(until: base) == -delta)
             }
         }
+        // Explicitly verify the 1582 Julian-to-Gregorian cutover matches Foundation's Calendar.
+        #expect(day("1582-10-04").adding(days: 1) == day("1582-10-15"))
+        #expect(day("1582-10-04").days(until: day("1582-10-15")) == 1)
+        #expect(day("1582-10-15").adding(days: -1) == day("1582-10-04"))
+        #expect(day("1600-01-01").adding(days: -1) == day("1599-12-31"))
+        #expect(day("1500-02-01").daysInMonth == 29)
     }
 }
 

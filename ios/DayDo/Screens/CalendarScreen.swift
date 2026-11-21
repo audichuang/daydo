@@ -51,6 +51,10 @@ struct CalendarScreen: View {
     @State private var pageShiftHaptic = 0
     @State private var pendingMove: PendingBlockMove?
     @State private var gridDragLock = GridDragLock()
+    @State private var listScrollPosition = ScrollPosition(edge: .top)
+    @State private var yearScrollPosition = ScrollPosition(edge: .top)
+    @State private var monthScrollPosition = ScrollPosition(edge: .top)
+    @State private var timeGridScrollReset = 0
 
     private var activeReload: CalReload? {
         isActive ? CalReload(range: range, member: effectiveMemberFilter, completed: showCompleted, revision: model.revision) : nil
@@ -106,16 +110,20 @@ struct CalendarScreen: View {
             await load(for: reload)
         }
         .onAppear { applyPendingCalendarDay() }
-        .onChange(of: isActive) { _, active in
-            if active {
-                applyPendingCalendarDay()
-            } else {
+        .onChange(of: CalActivation(isActive: isActive, navTrigger: model.calendarNavigationTrigger)) { old, new in
+            if !new.isActive {
                 gridDragLock.isActive = false
                 drag.horizontalOffset = 0
                 drag.collapseY = 0
+                return
+            }
+            if !old.isActive {
+                resetForTabEntry()
+            }
+            if model.calendarNavigationDay != nil {
+                applyPendingCalendarDay()
             }
         }
-        .onChange(of: model.calendarNavigationTrigger) { _, _ in applyPendingCalendarDay() }
         .onChange(of: model.filterMembers) { _, _ in
             if effectiveMemberFilter != memberFilter {
                 memberFilter = effectiveMemberFilter
@@ -124,6 +132,22 @@ struct CalendarScreen: View {
         .onChange(of: showCompleted) { _, newValue in
             model.syncCalendarShowCompletedToWidget(newValue)
         }
+    }
+
+    private func resetForTabEntry() {
+        gridDragLock.isActive = false
+        drag.horizontalOffset = 0
+        drag.collapseY = 0
+        pendingMove = nil
+        selected = nil
+        month = nil
+        memberFilter = nil
+        projectFilter = nil
+        shiftDir = 0
+        listScrollPosition.scrollTo(edge: .top)
+        yearScrollPosition.scrollTo(edge: .top)
+        monthScrollPosition.scrollTo(edge: .top)
+        timeGridScrollReset += 1
     }
 
     private func applyPendingCalendarDay() {
@@ -512,7 +536,9 @@ struct CalendarScreen: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.bottom, 170)
+                        .enclosingScrollsToTop(isActive)
                     }
+                    .scrollPosition($listScrollPosition)
                     .scrollIndicators(.hidden)
                 }
             case .year:
@@ -539,7 +565,9 @@ struct CalendarScreen: View {
                     .clipped()
                     .padding(.horizontal, isRegular ? 24 : 16)
                     .padding(.bottom, isRegular ? 32 : 170)
+                    .enclosingScrollsToTop(isActive)
                 }
+                .scrollPosition($yearScrollPosition)
                 .gesture(horizontalOnlySwipe)
             case .month:
                 ScrollView {
@@ -552,7 +580,9 @@ struct CalendarScreen: View {
                     .clipped()
                     .padding(.horizontal, isRegular ? 16 : 8)
                     .padding(.bottom, isRegular ? 32 : 170)
+                    .enclosingScrollsToTop(isActive)
                 }
+                .scrollPosition($monthScrollPosition)
                 .gesture(horizontalOnlySwipe)
             case .week, .threeDay, .day:
                 let days = rangeDays
@@ -599,6 +629,8 @@ struct CalendarScreen: View {
                     } else {
                         TimeGrid(days: days, tasks: timeGrid.displayedTasks, allDayItems: timeGrid.allDayItems, blocksByDay: timeGrid.blocksByDay,
                                  today: model.today, selected: sel, isRegular: isRegular,
+                                 isActive: isActive,
+                                 scrollResetToken: timeGridScrollReset,
                                  showOwnerAvatars: showOwnerAvatars,
                                  isViewerFilter: model.isViewer(projectId: projectFilter),
                                  dragLock: gridDragLock,
@@ -1185,6 +1217,8 @@ private struct CalendarDayCell: View, Equatable {
 }
 
 struct CalReload: Hashable { var range: ClosedRange<LocalDay>; var member: String?; var completed: Bool; var revision: Int }
+private struct CalActivation: Equatable { var isActive: Bool; var navTrigger: Int }
+private struct TimeGridScrollKey: Equatable { var days: [LocalDay]; var resetToken: Int }
 private struct CalQueryKey: Equatable { var range: ClosedRange<LocalDay>; var member: String?; var completed: Bool }
 private struct CalAgendaContext: Hashable { var day: LocalDay; var member: String?; var project: String?; var completed: Bool }
 
@@ -1553,6 +1587,8 @@ struct TimeGrid: View {
     var today: LocalDay
     var selected: LocalDay
     var isRegular: Bool = false
+    var isActive: Bool = true
+    var scrollResetToken: Int = 0
     var showOwnerAvatars: Bool = false
     var isViewerFilter: Bool = false
     fileprivate var dragLock: GridDragLock
@@ -1638,6 +1674,7 @@ struct TimeGrid: View {
                                     }
                                 }
                                 .frame(width: colW, height: CGFloat(totalLanes) * 21 + 4, alignment: .topLeading)
+                                .enclosingScrollsToTop(false)
                             }
                             .frame(height: visibleHeight)
                         }
@@ -1730,12 +1767,14 @@ struct TimeGrid: View {
                         )
                         .padding(.top, 8)
                         .padding(.bottom, isRegular ? 24 : 160)
+                        .enclosingScrollsToTop(isActive)
                     }
                     .accessibilityIdentifier("timeGridScroll")
                     .scrollDisabled(dragMode != nil)
                     .defaultScrollAnchor(UnitPoint(x: 0, y: min(1, CGFloat(initialHour) * hourH / 900)), for: .initialOffset)
                     .scrollIndicators(.hidden)
-                    .task(id: days) {
+                    .task(id: TimeGridScrollKey(days: days, resetToken: scrollResetToken)) {
+                        guard isActive else { return }
                         // Wait for menu dismiss / transition & initial layout, then snap accurately.
                         try? await Task.sleep(for: .milliseconds(350))
                         proxy.scrollTo(HourRowID(hour: initialHour), anchor: .top)
@@ -1746,6 +1785,9 @@ struct TimeGrid: View {
         }
         .sensoryFeedback(.impact(weight: .light), trigger: moveStartHaptic)
         .sensoryFeedback(.selection, trigger: snapHaptic)
+        .onChange(of: isActive) { _, active in
+            if !active { cancelDrag() }
+        }
         .onDisappear { cancelDrag() }
     }
 
