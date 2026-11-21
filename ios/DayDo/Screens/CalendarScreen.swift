@@ -113,8 +113,8 @@ struct CalendarScreen: View {
         .onChange(of: CalActivation(isActive: isActive, navTrigger: model.calendarNavigationTrigger)) { old, new in
             if !new.isActive {
                 gridDragLock.isActive = false
-                drag.horizontalOffset = 0
-                drag.collapseY = 0
+                if drag.horizontalOffset != 0 { drag.horizontalOffset = 0 }
+                if drag.collapseY != 0 { drag.collapseY = 0 }
                 return
             }
             if !old.isActive {
@@ -136,18 +136,32 @@ struct CalendarScreen: View {
 
     private func resetForTabEntry() {
         gridDragLock.isActive = false
-        drag.horizontalOffset = 0
-        drag.collapseY = 0
-        pendingMove = nil
-        selected = nil
-        month = nil
-        memberFilter = nil
-        projectFilter = nil
-        shiftDir = 0
-        listScrollPosition.scrollTo(edge: .top)
-        yearScrollPosition.scrollTo(edge: .top)
-        monthScrollPosition.scrollTo(edge: .top)
-        timeGridScrollReset += 1
+        if drag.horizontalOffset != 0 { drag.horizontalOffset = 0 }
+        if drag.collapseY != 0 { drag.collapseY = 0 }
+        if pendingMove != nil { pendingMove = nil }
+        if selected != nil { selected = nil }
+        if month != nil { month = nil }
+        if memberFilter != nil { memberFilter = nil }
+        if projectFilter != nil { projectFilter = nil }
+        if shiftDir != 0 { shiftDir = 0 }
+        switch mode {
+        case .list:
+            if listScrollPosition.isPositionedByUser || listScrollPosition.edge != .top {
+                listScrollPosition.scrollTo(edge: .top)
+            }
+        case .year:
+            if yearScrollPosition.isPositionedByUser || yearScrollPosition.edge != .top {
+                yearScrollPosition.scrollTo(edge: .top)
+            }
+        case .month:
+            if monthScrollPosition.isPositionedByUser || monthScrollPosition.edge != .top {
+                monthScrollPosition.scrollTo(edge: .top)
+            }
+        case .week where weekAgendaStyle:
+            break
+        case .week, .threeDay, .day:
+            timeGridScrollReset += 1
+        }
     }
 
     private func applyPendingCalendarDay() {
@@ -2173,14 +2187,9 @@ private struct TimeGridLongPressGesture: UIGestureRecognizerRepresentable {
 
         func lockScroll(for view: UIView?) {
             dragLock.isActive = true
-            var current = view?.superview
-            while let v = current {
-                if let scrollView = v as? UIScrollView {
-                    lockedPan = scrollView.panGestureRecognizer
-                    scrollView.panGestureRecognizer.isEnabled = false
-                    break
-                }
-                current = v.superview
+            if let scrollView = view?.enclosingScrollView {
+                lockedPan = scrollView.panGestureRecognizer
+                scrollView.panGestureRecognizer.isEnabled = false
             }
         }
 

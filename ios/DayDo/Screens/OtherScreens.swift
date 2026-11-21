@@ -126,14 +126,18 @@ struct SearchScreen: View {
         .onAppear { if isActive && text.isEmpty { focused = true } }
         .onChange(of: isActive) { _, active in
             if active {
-                text = ""
-                lastText = ""
-                activeOnly = false
-                results = []
-                loadedKey = nil
-                scrollPosition.scrollTo(edge: .top)
-                focused = true
-            } else {
+                if !text.isEmpty { text = "" }
+                if !lastText.isEmpty { lastText = "" }
+                if activeOnly { activeOnly = false }
+                if !results.isEmpty { results = [] }
+                if let key = loadedKey, !key.text.isEmpty || key.activeOnly {
+                    loadedKey = nil
+                }
+                if scrollPosition.isPositionedByUser || scrollPosition.edge != .top {
+                    scrollPosition.scrollTo(edge: .top)
+                }
+                if !focused { focused = true }
+            } else if focused {
                 focused = false
             }
         }

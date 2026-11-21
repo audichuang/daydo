@@ -531,12 +531,21 @@ struct ActivityAnchor: UIViewRepresentable {
     final class Coordinator { var isPresenting = false }
 }
 
-private extension UIView {
-    var nearestViewController: UIViewController? {
+extension UIView {
+    fileprivate var nearestViewController: UIViewController? {
         var responder: UIResponder? = self
         while let current = responder {
             if let vc = current as? UIViewController { return vc }
             responder = current.next
+        }
+        return nil
+    }
+
+    var enclosingScrollView: UIScrollView? {
+        var current = superview
+        while let view = current {
+            if let scrollView = view as? UIScrollView { return scrollView }
+            current = view.superview
         }
         return nil
     }

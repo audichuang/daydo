@@ -509,14 +509,7 @@ private struct ScrollsToTopBridge: UIViewRepresentable {
         }
 
         func apply() {
-            var current = superview
-            while let view = current {
-                if let scrollView = view as? UIScrollView {
-                    scrollView.scrollsToTop = scrollsToTopEnabled
-                    break
-                }
-                current = view.superview
-            }
+            enclosingScrollView?.scrollsToTop = scrollsToTopEnabled
         }
     }
 }

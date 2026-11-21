@@ -188,8 +188,26 @@ final class DayDoFlowTests: XCTestCase {
         app.buttons["儲存"].tap()
         XCTAssertTrue(app.buttons["確定"].waitForExistence(timeout: 3))
         app.buttons["確定"].tap()
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報' AND label CONTAINS '19:00 – 19:30'")).firstMatch.waitForExistence(timeout: 3))
+        let updatedDate = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '設定日期與時間' AND label CONTAINS '19:00 – 19:30'")).firstMatch
+        XCTAssertTrue(updatedDate.waitForExistence(timeout: 3), app.debugDescription)
         shot("10-detail-after-date")
+
+        // Dismiss detail sheet and scroll to the moved row under 明天 in the lazy task list.
+        let collapseBtn = app.buttons["收合為半屏"]
+        if collapseBtn.exists {
+            collapseBtn.tap()
+        }
+        let expandBtn = app.buttons["展開為全屏"]
+        XCTAssertTrue(expandBtn.waitForExistence(timeout: 3), app.debugDescription)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap()
+        XCTAssertTrue(expandBtn.waitForNonExistence(timeout: 3), app.debugDescription)
+
+        let updatedRow = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報' AND label CONTAINS '19:00 – 19:30'")).firstMatch
+        let listScroll = app.scrollViews.firstMatch
+        for _ in 0..<4 where !updatedRow.exists {
+            listScroll.swipeUp()
+        }
+        XCTAssertTrue(updatedRow.waitForExistence(timeout: 3), app.debugDescription)
     }
 
     @MainActor
@@ -462,7 +480,9 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["全部"].waitForExistence(timeout: 3))
         // Header count matches the drawer badge even though 花蓮小旅行 spans 今天 and 明天.
         XCTAssertTrue(app.staticTexts["\(badge) 項待辦"].waitForExistence(timeout: 3), "drawer badge \(badge) vs header")
-        XCTAssertTrue(app.staticTexts["之後"].waitForExistence(timeout: 3))
+        let laterHeader = app.staticTexts["之後"]
+        for _ in 0..<3 where !laterHeader.exists { app.swipeUp() }
+        XCTAssertTrue(laterHeader.waitForExistence(timeout: 3))
         let far = app.staticTexts["搬家整理：打包書櫃"]
         for _ in 0..<4 where !far.exists { app.swipeUp() }
         XCTAssertTrue(far.waitForExistence(timeout: 3))

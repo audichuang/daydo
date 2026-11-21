@@ -137,8 +137,10 @@ struct TaskListScreen: View {
         }
         .onChange(of: isActive) { _, active in
             if active {
-                limits = [:]
-                scrollPosition.scrollTo(edge: .top)
+                if !limits.isEmpty { limits = [:] }
+                if scrollPosition.isPositionedByUser || scrollPosition.edge != .top {
+                    scrollPosition.scrollTo(edge: .top)
+                }
             }
         }
     }
