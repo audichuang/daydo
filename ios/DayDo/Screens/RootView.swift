@@ -39,16 +39,7 @@ struct RootView: View {
                         } else {
                             ZStack(alignment: .bottom) {
                                 ZStack(alignment: .bottom) {
-                                    Group {
-                                        switch model.tab {
-                                        case .tasks: TaskListScreen(scope: model.scope).transition(.opacity)
-                                        case .calendar: CalendarScreen().transition(.opacity)
-                                        case .search: SearchScreen().transition(.opacity)
-                                        case .settings: SettingsScreen().transition(.opacity)
-                                        }
-                                    }
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                    .animation(Motion.tabContent(reduceMotion), value: model.tab)
+                                    CompactTabContent()
 
                                     BottomNav(tab: $model.tab, todayDay: model.today.day)
                                         .padding(.horizontal, 16)
@@ -200,6 +191,56 @@ struct RootView: View {
 }
 
 struct TaskRef: Identifiable { let id: String }
+
+/// Keeps visited main tabs resident so switching between Tasks, Calendar, and
+/// Search crossfades without tearing down view trees or repeating SQLite loads.
+private struct CompactTabContent: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var mountedTabs: Set<MainTab> = []
+
+    var body: some View {
+        let activeTab = model.tab
+        ZStack {
+            if mountedTabs.contains(.tasks) || activeTab == .tasks {
+                TaskListScreen(scope: model.scope, isActive: activeTab == .tasks)
+                    .opacity(activeTab == .tasks ? 1 : 0)
+                    .allowsHitTesting(activeTab == .tasks)
+                    .accessibilityElement(children: activeTab == .tasks ? .contain : .ignore)
+                    .accessibilityHidden(activeTab != .tasks)
+                    .zIndex(activeTab == .tasks ? 1 : 0)
+                    .transition(.opacity)
+            }
+            if mountedTabs.contains(.calendar) || activeTab == .calendar {
+                CalendarScreen(isActive: activeTab == .calendar)
+                    .opacity(activeTab == .calendar ? 1 : 0)
+                    .allowsHitTesting(activeTab == .calendar)
+                    .accessibilityElement(children: activeTab == .calendar ? .contain : .ignore)
+                    .accessibilityHidden(activeTab != .calendar)
+                    .zIndex(activeTab == .calendar ? 1 : 0)
+                    .transition(.opacity)
+            }
+            if mountedTabs.contains(.search) || activeTab == .search {
+                SearchScreen(isActive: activeTab == .search)
+                    .opacity(activeTab == .search ? 1 : 0)
+                    .allowsHitTesting(activeTab == .search)
+                    .accessibilityElement(children: activeTab == .search ? .contain : .ignore)
+                    .accessibilityHidden(activeTab != .search)
+                    .zIndex(activeTab == .search ? 1 : 0)
+                    .transition(.opacity)
+            }
+            if activeTab == .settings {
+                SettingsScreen()
+                    .zIndex(1)
+                    .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(Motion.tabContent(reduceMotion), value: activeTab)
+        .onAppear { mountedTabs.insert(activeTab) }
+        .onChange(of: activeTab) { _, tab in mountedTabs.insert(tab) }
+    }
+}
 
 /// Floating glass navigation: 任務／日曆／搜尋／設定 (62pt high, 30pt from bottom).
 struct BottomNav: View {

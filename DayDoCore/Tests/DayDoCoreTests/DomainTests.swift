@@ -174,6 +174,30 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         #expect(Recurrence(rrule: "RRULE:FREQ=YEARLY")!.next(after: day("2028-02-29")) == day("2032-02-29"))
         #expect(Recurrence(frequency: .weekly, byWeekday: [0]).label(anchor: sun) == "每週日")
     }
+
+    @Test func localDayArithmeticMatchesGregorianCalendar() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let samples = [
+            day("1900-02-28"), day("1969-12-31"), day("1970-01-01"),
+            day("2000-02-29"), day("2024-02-28"), day("2026-11-15"),
+            day("2028-02-29"), day("2100-03-01"),
+        ]
+        for base in samples {
+            let baseDate = cal.date(from: DateComponents(year: base.year, month: base.month, day: base.day))!
+            #expect(base.weekday == cal.component(.weekday, from: baseDate) - 1)
+            #expect(base.daysInMonth == cal.range(of: .day, in: .month, for: baseDate)!.count)
+            for delta in [-400, -31, -1, 0, 1, 28, 366, 1000] {
+                let targetDate = cal.date(byAdding: .day, value: delta, to: baseDate)!
+                let comps = cal.dateComponents([.year, .month, .day], from: targetDate)
+                let expected = LocalDay(year: comps.year!, month: comps.month!, day: comps.day!)
+                let actual = base.adding(days: delta)
+                #expect(actual == expected)
+                #expect(base.days(until: actual) == delta)
+                #expect(actual.days(until: base) == -delta)
+            }
+        }
+    }
 }
 
 @Suite struct LayoutTests {

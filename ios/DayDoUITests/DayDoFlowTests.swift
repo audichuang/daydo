@@ -58,16 +58,28 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 5))
         let todayBrief = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報' AND NOT (label BEGINSWITH '完成：')")).firstMatch
         XCTAssertTrue(todayBrief.label.contains("工作"), "Mixed-list views keep the list name: \(todayBrief.label)")
-        // Under the 明天 header a row shows only its time, not "明天" again.
-        let weekly = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '週會' AND label CONTAINS '10:00'")).firstMatch
-        XCTAssertTrue(weekly.waitForExistence(timeout: 3), app.debugDescription)
-        XCTAssertFalse(weekly.label.contains("明天"), weekly.label)
         shot("01-today")
         row.tap()
         // The row leaves 今天 and goes to the (collapsed) 已完成 section.
         XCTAssertTrue(app.buttons["完成：去全聯買菜"].waitForNonExistence(timeout: 3))
-        app.buttons.matching(NSPredicate(format: "label BEGINSWITH '已完成'")).firstMatch.tap()
-        XCTAssertTrue(app.buttons["取消完成：去全聯買菜"].waitForExistence(timeout: 3))
+        // Under the 明天 header a row shows only its time, not "明天" again.
+        let scroll = app.scrollViews.firstMatch
+        let weekly = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '週會' AND label CONTAINS '10:00'")).firstMatch
+        for _ in 0..<4 where !weekly.exists {
+            scroll.swipeUp()
+        }
+        XCTAssertTrue(weekly.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(weekly.label.contains("明天"), weekly.label)
+        let completedHeader = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '已完成'")).firstMatch
+        for _ in 0..<4 where !completedHeader.isHittable {
+            scroll.swipeUp()
+        }
+        completedHeader.tap()
+        let uncompleteRow = app.buttons["取消完成：去全聯買菜"]
+        for _ in 0..<3 where !uncompleteRow.exists {
+            scroll.swipeUp()
+        }
+        XCTAssertTrue(uncompleteRow.waitForExistence(timeout: 3))
 
         // Density toggle → compact (1c) via ⋯ menu
         app.buttons["更多選項"].tap()
@@ -103,6 +115,11 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(next7.waitForExistence(timeout: 3), app.debugDescription)
         next7.tap()
         let weeklyNext7 = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '週會' AND label CONTAINS '10:00'")).firstMatch
+        if !weeklyNext7.waitForExistence(timeout: 2) {
+            for _ in 0..<4 where !weeklyNext7.exists {
+                app.scrollViews.firstMatch.swipeUp()
+            }
+        }
         XCTAssertTrue(weeklyNext7.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertFalse(weeklyNext7.label.contains("明天"), weeklyNext7.label)
         shot("04b-next7")

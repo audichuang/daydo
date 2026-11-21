@@ -54,13 +54,36 @@ public struct LocalDay: Hashable, Comparable, Codable, Sendable, CustomStringCon
         return c
     }()
 
-    /// Midnight UTC of this day; only used for day arithmetic.
+    /// Days since 1970-01-01 in the proleptic Gregorian calendar (Howard Hinnant's algorithm).
+    private var epochDay: Int {
+        let y = year - (month <= 2 ? 1 : 0)
+        let era = (y >= 0 ? y : y - 399) / 400
+        let yoe = y - era * 400
+        let doy = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+        return era * 146097 + doe - 719468
+    }
+
+    private static func fromEpochDay(_ z: Int) -> LocalDay {
+        let shifted = z + 719468
+        let era = (shifted >= 0 ? shifted : shifted - 146096) / 146097
+        let doe = shifted - era * 146097
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+        let y = yoe + era * 400
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+        let mp = (5 * doy + 2) / 153
+        let d = doy - (153 * mp + 2) / 5 + 1
+        let m = mp + (mp < 10 ? 3 : -9)
+        return LocalDay(year: y + (m <= 2 ? 1 : 0), month: m, day: d)
+    }
+
+    /// Midnight UTC of this day; only used for calendar-based month arithmetic.
     var utcDate: Date {
         LocalDay.calendar.date(from: DateComponents(year: year, month: month, day: day))!
     }
 
     public func adding(days: Int) -> LocalDay {
-        LocalDay(date: LocalDay.calendar.date(byAdding: .day, value: days, to: utcDate)!, in: TimeZone(identifier: "UTC")!)
+        days == 0 ? self : LocalDay.fromEpochDay(epochDay + days)
     }
 
     public func adding(months: Int) -> LocalDay {
@@ -68,16 +91,27 @@ public struct LocalDay: Hashable, Comparable, Codable, Sendable, CustomStringCon
     }
 
     public func days(until other: LocalDay) -> Int {
-        LocalDay.calendar.dateComponents([.day], from: utcDate, to: other.utcDate).day!
+        other.epochDay - epochDay
     }
 
     /// 0 = Sunday … 6 = Saturday.
-    public var weekday: Int { LocalDay.calendar.component(.weekday, from: utcDate) - 1 }
+    public var weekday: Int {
+        let r = (epochDay + 4) % 7
+        return r >= 0 ? r : r + 7
+    }
 
     public var firstOfMonth: LocalDay { LocalDay(year: year, month: month, day: 1) }
 
     public var daysInMonth: Int {
-        LocalDay.calendar.range(of: .day, in: .month, for: utcDate)!.count
+        switch month {
+        case 1, 3, 5, 7, 8, 10, 12: return 31
+        case 4, 6, 9, 11: return 30
+        case 2:
+            let isLeap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+            return isLeap ? 29 : 28
+        default:
+            return LocalDay.calendar.range(of: .day, in: .month, for: utcDate)!.count
+        }
     }
 
     /// Absolute instant of `minute` on this day in `timeZone`.

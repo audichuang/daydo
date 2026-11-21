@@ -1,3 +1,4 @@
+import Observation
 import SwiftUI
 import DayDoCore
 
@@ -27,6 +28,7 @@ struct CalendarScreen: View {
     @Environment(\.accent) private var accent
     @Environment(\.isRegularWindow) private var isRegular
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var isActive: Bool = true
 
     @AppStorage("calendarViewMode") private var modeRaw = CalMode.list.rawValue
     @AppStorage("calendarCollapsed") private var collapsed = false
@@ -38,15 +40,21 @@ struct CalendarScreen: View {
     @State private var memberFilter: String?
     @State private var projectFilter: String?
     @State private var tasks: [TodoTask] = []
+    @State private var tasksVersion = 0
     @State private var loadedQuery: CalQueryKey?
-    @State private var hDragOffset: CGFloat = 0
-    @State private var collapseDragY: CGFloat = 0
+    @State private var loadedReload: CalReload?
+    @State private var drag = CalendarDragState()
+    @State private var cache = CalendarDerivedCache()
     @State private var shiftDir = 0
     @State private var pageSequence = 0
     @State private var dateSelectionHaptic = 0
     @State private var pageShiftHaptic = 0
     @State private var pendingMove: PendingBlockMove?
     @State private var gridDragLock = GridDragLock()
+
+    private var activeReload: CalReload? {
+        isActive ? CalReload(range: range, member: effectiveMemberFilter, completed: showCompleted, revision: model.revision) : nil
+    }
 
     var mode: CalMode { CalMode(rawValue: modeRaw) ?? .list }
     var sel: LocalDay { selected ?? model.today }
@@ -93,8 +101,20 @@ struct CalendarScreen: View {
                 }
             }
         }
-        .task(id: CalReload(range: range, member: effectiveMemberFilter, completed: showCompleted, revision: model.revision)) { await load() }
+        .task(id: activeReload) {
+            guard let reload = activeReload, reload != loadedReload else { return }
+            await load(for: reload)
+        }
         .onAppear { applyPendingCalendarDay() }
+        .onChange(of: isActive) { _, active in
+            if active {
+                applyPendingCalendarDay()
+            } else {
+                gridDragLock.isActive = false
+                drag.horizontalOffset = 0
+                drag.collapseY = 0
+            }
+        }
         .onChange(of: model.calendarNavigationTrigger) { _, _ in applyPendingCalendarDay() }
         .onChange(of: model.filterMembers) { _, _ in
             if effectiveMemberFilter != memberFilter {
@@ -143,15 +163,7 @@ struct CalendarScreen: View {
 
     @ViewBuilder
     private func modeMenuButton(useGlass: Bool) -> some View {
-        Menu {
-            ForEach(CalMode.allCases) { m in
-                Button {
-                    withAnimation(Motion.toggle(reduceMotion)) { modeRaw = m.rawValue }
-                } label: {
-                    if m == mode { Label(m.label, systemImage: "checkmark") } else { Label(m.label, systemImage: m.icon) }
-                }
-            }
-        } label: {
+        let iconLabel = Group {
             if useGlass {
                 Image(systemName: mode.icon).font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text)
                     .frame(width: 44, height: 44)
@@ -166,9 +178,24 @@ struct CalendarScreen: View {
                 .frame(height: 36)
             }
         }
-        .hoverEffect(.highlight)
-        .accessibilityLabel("切換檢視：目前\(mode.label)")
-        .accessibilityIdentifier("calendarMode")
+        if isActive {
+            Menu {
+                ForEach(CalMode.allCases) { m in
+                    Button {
+                        withAnimation(Motion.toggle(reduceMotion)) { modeRaw = m.rawValue }
+                    } label: {
+                        if m == mode { Label(m.label, systemImage: "checkmark") } else { Label(m.label, systemImage: m.icon) }
+                    }
+                }
+            } label: {
+                iconLabel
+            }
+            .hoverEffect(.highlight)
+            .accessibilityLabel("切換檢視：目前\(mode.label)")
+            .accessibilityIdentifier("calendarMode")
+        } else {
+            iconLabel.accessibilityHidden(true)
+        }
     }
 
     private var titleButton: some View {
@@ -198,31 +225,36 @@ struct CalendarScreen: View {
             }
             .accessibilityIdentifier("weekLayoutToggle")
         }
-        Menu {
-            Button("回到今天", systemImage: "arrow.uturn.backward") { goToday() }
-            Button(showCompleted ? "隱藏已完成" : "顯示已完成", systemImage: "checkmark.circle") { showCompleted.toggle() }
-            Menu("清單篩選", systemImage: "line.3.horizontal.decrease") {
-                Button {
-                    projectFilter = nil
-                } label: { if projectFilter == nil { Label("全部清單", systemImage: "checkmark") } else { Text("全部清單") } }
-                ForEach(model.projects) { p in
+        let ellipsisLabel = Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
+        if isActive {
+            Menu {
+                Button("回到今天", systemImage: "arrow.uturn.backward") { goToday() }
+                Button(showCompleted ? "隱藏已完成" : "顯示已完成", systemImage: "checkmark.circle") { showCompleted.toggle() }
+                Menu("清單篩選", systemImage: "line.3.horizontal.decrease") {
                     Button {
-                        projectFilter = p.id
-                    } label: { if projectFilter == p.id { Label(p.name, systemImage: "checkmark") } else { Text(p.name) } }
-                }
-            }
-            if mode == .list {
-                Button(collapsed ? "展開整個月份" : "收合成單週", systemImage: "rectangle.compress.vertical") {
-                    withAnimation(Motion.layout(reduceMotion)) {
-                        collapsed.toggle()
+                        projectFilter = nil
+                    } label: { if projectFilter == nil { Label("全部清單", systemImage: "checkmark") } else { Text("全部清單") } }
+                    ForEach(model.projects) { p in
+                        Button {
+                            projectFilter = p.id
+                        } label: { if projectFilter == p.id { Label(p.name, systemImage: "checkmark") } else { Text(p.name) } }
                     }
                 }
+                if mode == .list {
+                    Button(collapsed ? "展開整個月份" : "收合成單週", systemImage: "rectangle.compress.vertical") {
+                        withAnimation(Motion.layout(reduceMotion)) {
+                            collapsed.toggle()
+                        }
+                    }
+                }
+            } label: {
+                ellipsisLabel
             }
-        } label: {
-            Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
+            .hoverEffect(.highlight)
+            .accessibilityLabel("更多選項")
+        } else {
+            ellipsisLabel.accessibilityHidden(true)
         }
-        .hoverEffect(.highlight)
-        .accessibilityLabel("更多選項")
     }
 
     var title: String {
@@ -278,26 +310,33 @@ struct CalendarScreen: View {
         case .week, .threeDay, .day:
             return rangeDays.first!...rangeDays.last!
         default:
-            let g = MonthLayout.gridDays(for: shownMonth)
+            let g = cache.gridDays(for: shownMonth)
             return g.first!...g.last!
         }
     }
 
     func load() async {
-        let member = effectiveMemberFilter
-        let currentQuery = CalQueryKey(range: range, member: member, completed: showCompleted)
-        let q = TaskQuery(from: range.lowerBound, to: range.upperBound, includeCompleted: showCompleted, memberId: member)
+        await load(for: CalReload(range: range, member: effectiveMemberFilter, completed: showCompleted, revision: model.revision))
+    }
+
+    private func load(for reload: CalReload) async {
+        let currentQuery = CalQueryKey(range: reload.range, member: reload.member, completed: reload.completed)
+        let q = TaskQuery(from: reload.range.lowerBound, to: reload.range.upperBound, includeCompleted: reload.completed, memberId: reload.member)
         do {
             let loaded = try await model.api.listTasks(q)
             guard !Task.isCancelled else { return }
             if loadedQuery == currentQuery {
                 withAnimation(Motion.layout(reduceMotion)) {
                     tasks = loaded
+                    tasksVersion += 1
                     loadedQuery = currentQuery
+                    loadedReload = reload
                 }
             } else {
                 tasks = loaded
+                tasksVersion += 1
                 loadedQuery = currentQuery
+                loadedReload = reload
             }
         } catch is CancellationError {
             return
@@ -307,18 +346,7 @@ struct CalendarScreen: View {
     }
 
     var filtered: [TodoTask] {
-        guard let projectFilter else { return tasks }
-        return tasks.filter { $0.projectId == projectFilter }
-    }
-
-    private var displayedTasks: [TodoTask] {
-        guard let pending = pendingMove else { return filtered }
-        return filtered.map { task in
-            guard task.id == pending.taskId else { return task }
-            var copy = task
-            copy.schedule = pending.schedule
-            return copy
-        }
+        cache.filteredTasks(tasksVersion: tasksVersion, projectFilter: projectFilter, tasks: tasks)
     }
 
     private enum PageHaptic {
@@ -412,11 +440,11 @@ struct CalendarScreen: View {
             let dir = projected < 0 ? 1 : -1
             shiftPage(direction: dir, token: Motion.page, haptic: .pageShift) {
                 applyShift(dir)
-                hDragOffset = 0
+                drag.horizontalOffset = 0
             }
         } else {
             withAnimation(Motion.pageSnapBack(reduceMotion)) {
-                hDragOffset = 0
+                drag.horizontalOffset = 0
             }
         }
     }
@@ -429,7 +457,7 @@ struct CalendarScreen: View {
             verticalShouldBegin: { _ in false },
             onHorizontalChanged: { tx in
                 if !reduceMotion {
-                    hDragOffset = tx * 0.9
+                    drag.horizontalOffset = tx * 0.9
                 }
             },
             onHorizontalEnded: { tx, vx in
@@ -507,7 +535,7 @@ struct CalendarScreen: View {
                         .id("year-\(pageSequence)")
                         .transition(pageTransition)
                     }
-                    .offset(x: reduceMotion ? 0 : hDragOffset)
+                    .modifier(HorizontalDragOffsetModifier(drag: drag, reduceMotion: reduceMotion))
                     .clipped()
                     .padding(.horizontal, isRegular ? 24 : 16)
                     .padding(.bottom, isRegular ? 32 : 170)
@@ -520,20 +548,28 @@ struct CalendarScreen: View {
                             .id("month-\(pageSequence)")
                             .transition(pageTransition)
                     }
-                    .offset(x: reduceMotion ? 0 : hDragOffset)
+                    .modifier(HorizontalDragOffsetModifier(drag: drag, reduceMotion: reduceMotion))
                     .clipped()
                     .padding(.horizontal, isRegular ? 16 : 8)
                     .padding(.bottom, isRegular ? 32 : 170)
                 }
                 .gesture(horizontalOnlySwipe)
             case .week, .threeDay, .day:
+                let days = rangeDays
+                let timeGrid = cache.timeGridData(
+                    tasksVersion: tasksVersion,
+                    projectFilter: projectFilter,
+                    pendingMove: pendingMove,
+                    days: days,
+                    tasks: tasks
+                )
                 ZStack {
                     if mode == .week && weekAgendaStyle {
                         WeekAgendaGrid(
-                            weekDays: rangeDays,
-                            month: (rangeDays.first ?? sel).firstOfMonth,
+                            weekDays: days,
+                            month: (days.first ?? sel).firstOfMonth,
                             selected: sel,
-                            tasks: displayedTasks,
+                            tasks: timeGrid.displayedTasks,
                             today: model.today,
                             isRegular: isRegular,
                             showOwnerAvatars: showOwnerAvatars,
@@ -561,7 +597,8 @@ struct CalendarScreen: View {
                         .id("week-agenda-\(pageSequence)")
                         .transition(pageTransition)
                     } else {
-                        TimeGrid(days: rangeDays, tasks: displayedTasks, today: model.today, selected: sel, isRegular: isRegular,
+                        TimeGrid(days: days, tasks: timeGrid.displayedTasks, allDayItems: timeGrid.allDayItems, blocksByDay: timeGrid.blocksByDay,
+                                 today: model.today, selected: sel, isRegular: isRegular,
                                  showOwnerAvatars: showOwnerAvatars,
                                  isViewerFilter: model.isViewer(projectId: projectFilter),
                                  dragLock: gridDragLock,
@@ -579,7 +616,7 @@ struct CalendarScreen: View {
                             .transition(pageTransition)
                     }
                 }
-                .offset(x: reduceMotion ? 0 : hDragOffset)
+                .modifier(HorizontalDragOffsetModifier(drag: drag, reduceMotion: reduceMotion))
                 .clipped()
                 .gesture(horizontalOnlySwipe)
             }
@@ -587,8 +624,8 @@ struct CalendarScreen: View {
         .onChange(of: modeRaw) { _, _ in
             // Non-animated cleanup when mode changes.
             gridDragLock.isActive = false
-            hDragOffset = 0
-            collapseDragY = 0
+            drag.horizontalOffset = 0
+            drag.collapseY = 0
             shiftDir = 0
             pageSequence += 1
         }
@@ -598,139 +635,49 @@ struct CalendarScreen: View {
     }
 
     var busyDays: Set<LocalDay> {
-        var s = Set<LocalDay>()
-        for t in filtered {
-            guard let sch = t.schedule else { continue }
-            var d = max(sch.startDay, range.lowerBound)
-            let end = min(sch.lastDay, range.upperBound)
-            while d <= end { s.insert(d); d = d.adding(days: 1) }
-        }
-        return s
+        cache.busyDays(tasksVersion: tasksVersion, projectFilter: projectFilter, year: shownMonth.year, tasks: tasks)
     }
 
     // MARK: 清單 — date grid
 
     var dateGrid: some View {
-        let days = MonthLayout.gridDays(for: shownMonth)
-        let rowCount = max(1, days.count / 7)
-        let rowH: CGFloat = 50
-        let rowSpacing: CGFloat = 2
-        let fullGridHeight = CGFloat(rowCount) * rowH + CGFloat(rowCount - 1) * rowSpacing
-        let collapsedGridHeight = rowH
-        let travel = max(1, fullGridHeight - collapsedGridHeight)
-        let restProgress: CGFloat = collapsed ? 0 : 1
-        let progress: CGFloat = reduceMotion ? restProgress : min(1, max(0, restProgress + collapseDragY / travel))
-        let visibleGridHeight = collapsedGridHeight + (fullGridHeight - collapsedGridHeight) * progress
-        let selectedRow = days.firstIndex(of: sel).map { $0 / 7 } ?? 0
-        let gridOffsetY = -CGFloat(selectedRow) * (rowH + rowSpacing) * (1 - progress)
-
-        return VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                ForEach(LocalDay.weekdaySymbols, id: \.self) { Text($0).txt(12).foregroundStyle(Palette.textTertiary).frame(maxWidth: .infinity) }
-            }
-            .padding(.bottom, 6)
-            ZStack(alignment: .top) {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: rowSpacing) {
-                    ForEach(Array(days.enumerated()), id: \.element) { idx, d in
-                        dayCell(d, progress: progress)
-                            .allowsHitTesting(progress > 0 || idx / 7 == selectedRow)
-                            .accessibilityHidden(progress == 0 && idx / 7 != selectedRow)
+        let days = cache.gridDays(for: shownMonth)
+        let dotColors = cache.dayDotColors(
+            tasksVersion: tasksVersion,
+            projectFilter: projectFilter,
+            month: shownMonth,
+            projects: model.projects,
+            tasks: tasks
+        )
+        return CalendarDateGrid(
+            days: days,
+            dayDotColors: dotColors,
+            shownMonth: shownMonth,
+            selected: sel,
+            today: model.today,
+            collapsed: $collapsed,
+            pageSequence: pageSequence,
+            pageTransition: pageTransition,
+            isRegular: isRegular,
+            drag: drag,
+            onSelectDay: { d in
+                let monthChanged = d.month != shownMonth.month
+                let dir = monthChanged ? (d > shownMonth ? 1 : -1) : shiftDir
+                shiftPage(direction: dir, bumpPage: monthChanged) {
+                    selected = d
+                    if monthChanged {
+                        month = d.firstOfMonth
                     }
                 }
-                .offset(y: gridOffsetY)
-                .id("list-\(pageSequence)")
-                .transition(pageTransition)
+            },
+            onHorizontalEnded: { tx, vx in
+                finishHorizontalSwipe(tx: tx, vx: vx)
             }
-            .offset(x: reduceMotion ? 0 : hDragOffset)
-            .frame(height: visibleGridHeight, alignment: .top)
-            .clipped()
-
-            Button {
-                withAnimation(Motion.layout(reduceMotion)) {
-                    collapsed.toggle()
-                    collapseDragY = 0
-                }
-            } label: {
-                Capsule().fill(Palette.handle).frame(width: 36, height: 4).frame(maxWidth: .infinity, minHeight: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.press)
-            .accessibilityLabel(collapsed ? "展開整個月份" : "收合成單週")
-        }
-        .padding(.top, 4)
-        .gesture(
-            CalendarPanGesture(
-                allowLeftEdgeRightward: isRegular,
-                allowVertical: { true },
-                verticalShouldBegin: { vy in (!collapsed && vy < 0) || (collapsed && vy > 0) },
-                onHorizontalChanged: { tx in
-                    if !reduceMotion {
-                        hDragOffset = tx * 0.9
-                    }
-                },
-                onHorizontalEnded: { tx, vx in
-                    finishHorizontalSwipe(tx: tx, vx: vx)
-                },
-                onVerticalChanged: { ty in
-                    if !reduceMotion {
-                        collapseDragY = ty
-                    }
-                },
-                onVerticalEnded: { ty, vy in
-                    withAnimation(Motion.layout(reduceMotion)) {
-                        if !collapsed && (ty < -45 || vy < -350) {
-                            collapsed = true
-                        } else if collapsed && (ty > 45 || vy > 350) {
-                            collapsed = false
-                        }
-                        collapseDragY = 0
-                    }
-                }
-            )
         )
     }
 
-    func dayCell(_ d: LocalDay, progress: CGFloat) -> some View {
-        let isSel = d == sel, isToday = d == model.today, inMonth = d.month == shownMonth.month
-        let cellOpacity = inMonth ? 1.0 : (1.0 - 0.62 * Double(progress))
-        var colors: [String] = []
-        for t in filtered where t.schedule?.occurs(on: d) == true && !t.isCompleted {
-            let c = model.project(t.projectId)?.color ?? "#5B6461"
-            if !colors.contains(c) { colors.append(c) }
-        }
-        return Button {
-            let monthChanged = d.month != shownMonth.month
-            let dir = monthChanged ? (d > shownMonth ? 1 : -1) : shiftDir
-            shiftPage(direction: dir, bumpPage: monthChanged) {
-                selected = d
-                if monthChanged {
-                    month = d.firstOfMonth
-                }
-            }
-        } label: {
-            VStack(spacing: 3) {
-                Text("\(d.day)")
-                    .txt(17, isSel || isToday ? .bold : .medium)
-                    .foregroundStyle(isSel ? accent.onAccent : (isToday ? Palette.todayText(accent: accent) : Palette.textDay))
-                    .frame(width: 38, height: 38)
-                    .background(Circle().fill(isSel ? accent.color : (isToday ? Palette.todayFill(accent: accent) : .clear)))
-                HStack(spacing: 3) {
-                    ForEach(colors.prefix(3), id: \.self) { c in Circle().fill(Palette.listColor(c)).frame(width: 4, height: 4) }
-                }
-                .frame(height: 4)
-            }
-            .frame(maxWidth: .infinity, minHeight: 50)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.press(scale: 0.92, opacity: 0.85))
-        .hoverEffect(.highlight)
-        .opacity(cellOpacity)
-        .accessibilityLabel(DateText.full(d) + (colors.isEmpty ? "" : "，有項目"))
-        .accessibilityAddTraits(isSel ? .isSelected : [])
-    }
-
     var dayItems: [TodoTask] {
-        TaskGrouping.calendarDayTasks(filtered, on: sel)
+        cache.dayItems(tasksVersion: tasksVersion, projectFilter: projectFilter, day: sel, tasks: tasks)
     }
 
     var dayTitle: String { DateText.monthDay(sel).replacingOccurrences(of: " ", with: "") + (sel == model.today ? "・今天" : "") }
@@ -789,21 +736,451 @@ struct CalendarScreen: View {
     // MARK: 月 — event bars
 
     var eventMonth: some View {
-        let layout = MonthLayout(month: shownMonth, tasks: filtered, maxLanes: 5)
+        let weeks = cache.monthWeeks(
+            tasksVersion: tasksVersion,
+            projectFilter: projectFilter,
+            month: shownMonth,
+            projects: model.projects,
+            tasks: tasks
+        )
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
                 ForEach(LocalDay.weekdaySymbols, id: \.self) { Text($0).txt(12).foregroundStyle(Palette.textTertiary).frame(maxWidth: .infinity) }
             }
             .padding(.bottom, 4)
-            ForEach(Array(layout.weeks.enumerated()), id: \.offset) { _, w in
-                WeekRow(week: w, month: shownMonth, selected: sel, today: model.today) { d in
+            ForEach(Array(weeks.enumerated()), id: \.offset) { _, w in
+                WeekRow(week: w, month: shownMonth, today: model.today, reduceMotion: reduceMotion) { d in
                     shiftPage(direction: 0) {
                         selected = d
                         modeRaw = CalMode.day.rawValue
                     }
                 } open: { id in model.openTask(id, inlineAvailable: false) }
+                .equatable()
             }
         }
+    }
+}
+
+/// High-frequency gesture offsets kept out of `CalendarScreen.body` so dragging
+/// does not re-evaluate layouts or diff tasks on every frame.
+@MainActor
+@Observable
+private final class CalendarDragState {
+    var horizontalOffset: CGFloat = 0
+    var collapseY: CGFloat = 0
+}
+
+private struct HorizontalDragOffsetModifier: ViewModifier {
+    var drag: CalendarDragState
+    var reduceMotion: Bool
+
+    func body(content: Content) -> some View {
+        content.offset(x: reduceMotion ? 0 : drag.horizontalOffset)
+    }
+}
+
+private struct WeekRowBar: Equatable {
+    var taskId: String
+    var title: String
+    var colorHex: String?
+    var isCompleted: Bool
+    var timedPrefix: String
+    var startColumn: Int
+    var endColumn: Int
+    var lane: Int
+    var continues: Bool
+}
+
+private struct WeekRowModel: Equatable {
+    var days: [LocalDay]
+    var bars: [WeekRowBar]
+    var overflow: [Int: Int]
+    var rowHeight: CGFloat
+}
+
+struct TimeGridAllDayItem {
+    var task: TodoTask
+    var firstColumn: Int
+    var lastColumn: Int
+    var lane: Int
+}
+
+private struct TimeGridData {
+    var displayedTasks: [TodoTask]
+    var allDayItems: [TimeGridAllDayItem]
+    var blocksByDay: [[DayLayout.Block]]
+}
+
+/// Caches derived calendar data by lightweight scalar/version keys so body
+/// re-evaluations never recompute MonthLayout, DayLayout, dot colors, or busy days.
+@MainActor
+private final class CalendarDerivedCache {
+    private static let laneHeight: CGFloat = 17
+
+    private var gridMonth: LocalDay?
+    private var cachedGridDays: [LocalDay] = []
+
+    private var colorSignature: [(String, String?)] = []
+    private var colorMap: [String: String] = [:]
+    private var colorVersion = 0
+
+    private var filteredKey: (Int, String?)?
+    private var cachedFiltered: [TodoTask] = []
+
+    private var dotColorsKey: (Int, String?, LocalDay, Int)?
+    private var cachedDotColors: [LocalDay: [String]] = [:]
+
+    private var dayItemsKey: (Int, String?, LocalDay)?
+    private var cachedDayItems: [TodoTask] = []
+
+    private var monthWeeksKey: (Int, String?, LocalDay, Int)?
+    private var cachedMonthWeeks: [WeekRowModel] = []
+
+    private var busyKey: (Int, String?, Int)?
+    private var cachedBusyDays: Set<LocalDay> = []
+
+    private var timeGridKey: (Int, String?, UUID?, [LocalDay])?
+    private var cachedTimeGrid: TimeGridData?
+
+    func gridDays(for month: LocalDay) -> [LocalDay] {
+        let first = month.firstOfMonth
+        if gridMonth == first, !cachedGridDays.isEmpty {
+            return cachedGridDays
+        }
+        let days = MonthLayout.gridDays(for: first)
+        gridMonth = first
+        cachedGridDays = days
+        return days
+    }
+
+    private func resolveColorMap(for projects: [Project]) -> (version: Int, map: [String: String]) {
+        let same = projects.count == colorSignature.count
+            && zip(projects, colorSignature).allSatisfy { $0.id == $1.0 && $0.color == $1.1 }
+        if !same {
+            colorSignature = projects.map { ($0.id, $0.color) }
+            var map: [String: String] = [:]
+            map.reserveCapacity(projects.count)
+            for p in projects {
+                if let c = p.color { map[p.id] = c }
+            }
+            colorMap = map
+            colorVersion += 1
+        }
+        return (colorVersion, colorMap)
+    }
+
+    func filteredTasks(tasksVersion: Int, projectFilter: String?, tasks: [TodoTask]) -> [TodoTask] {
+        if let key = filteredKey, key.0 == tasksVersion, key.1 == projectFilter {
+            return cachedFiltered
+        }
+        let result = projectFilter.map { pf in tasks.filter { $0.projectId == pf } } ?? tasks
+        filteredKey = (tasksVersion, projectFilter)
+        cachedFiltered = result
+        return result
+    }
+
+    func dayDotColors(
+        tasksVersion: Int,
+        projectFilter: String?,
+        month: LocalDay,
+        projects: [Project],
+        tasks: [TodoTask]
+    ) -> [LocalDay: [String]] {
+        let first = month.firstOfMonth
+        let (cVer, map) = resolveColorMap(for: projects)
+        if let key = dotColorsKey, key.0 == tasksVersion, key.1 == projectFilter, key.2 == first, key.3 == cVer {
+            return cachedDotColors
+        }
+        let days = gridDays(for: first)
+        let items = filteredTasks(tasksVersion: tasksVersion, projectFilter: projectFilter, tasks: tasks)
+        var out: [LocalDay: [String]] = [:]
+        if let gridFirst = days.first, let gridLast = days.last {
+            for t in items where !t.isCompleted {
+                guard let s = t.schedule, s.overlaps(gridFirst, gridLast) else { continue }
+                let color = map[t.projectId] ?? "#5B6461"
+                var d = max(s.startDay, gridFirst)
+                let end = min(s.lastDay, gridLast)
+                while d <= end {
+                    var colors = out[d] ?? []
+                    if colors.count < 3 && !colors.contains(color) {
+                        colors.append(color)
+                        out[d] = colors
+                    }
+                    d = d.adding(days: 1)
+                }
+            }
+        }
+        dotColorsKey = (tasksVersion, projectFilter, first, cVer)
+        cachedDotColors = out
+        return out
+    }
+
+    func dayItems(tasksVersion: Int, projectFilter: String?, day: LocalDay, tasks: [TodoTask]) -> [TodoTask] {
+        if let key = dayItemsKey, key.0 == tasksVersion, key.1 == projectFilter, key.2 == day {
+            return cachedDayItems
+        }
+        let items = filteredTasks(tasksVersion: tasksVersion, projectFilter: projectFilter, tasks: tasks)
+        let result = TaskGrouping.calendarDayTasks(items, on: day)
+        dayItemsKey = (tasksVersion, projectFilter, day)
+        cachedDayItems = result
+        return result
+    }
+
+    func monthWeeks(
+        tasksVersion: Int,
+        projectFilter: String?,
+        month: LocalDay,
+        projects: [Project],
+        tasks: [TodoTask]
+    ) -> [WeekRowModel] {
+        let first = month.firstOfMonth
+        let (cVer, map) = resolveColorMap(for: projects)
+        if let key = monthWeeksKey, key.0 == tasksVersion, key.1 == projectFilter, key.2 == first, key.3 == cVer {
+            return cachedMonthWeeks
+        }
+        let days = gridDays(for: first)
+        let items = filteredTasks(tasksVersion: tasksVersion, projectFilter: projectFilter, tasks: tasks)
+        let layout = MonthLayout(days: days, tasks: items, maxLanes: 5)
+        let weeks = layout.weeks.map { week -> WeekRowModel in
+            let bars = week.bars.map { bar in
+                WeekRowBar(
+                    taskId: bar.task.id,
+                    title: bar.task.title,
+                    colorHex: map[bar.task.projectId],
+                    isCompleted: bar.task.isCompleted,
+                    timedPrefix: bar.task.schedule?.startMinute.map { "[\(DateText.hm($0))] " } ?? "",
+                    startColumn: bar.startColumn,
+                    endColumn: bar.endColumn,
+                    lane: bar.lane,
+                    continues: bar.continues
+                )
+            }
+            let usedLanes = (bars.map(\.lane).max() ?? -1) + 1
+            let visibleLanes = max(1, usedLanes)
+            let bottomPad: CGFloat = week.overflow.isEmpty ? 8 : 18
+            let rowHeight = 36 + Self.laneHeight * CGFloat(visibleLanes) + bottomPad
+            return WeekRowModel(days: week.days, bars: bars, overflow: week.overflow, rowHeight: rowHeight)
+        }
+        monthWeeksKey = (tasksVersion, projectFilter, first, cVer)
+        cachedMonthWeeks = weeks
+        return weeks
+    }
+
+    func busyDays(tasksVersion: Int, projectFilter: String?, year: Int, tasks: [TodoTask]) -> Set<LocalDay> {
+        if let key = busyKey, key.0 == tasksVersion, key.1 == projectFilter, key.2 == year {
+            return cachedBusyDays
+        }
+        let items = filteredTasks(tasksVersion: tasksVersion, projectFilter: projectFilter, tasks: tasks)
+        let lower = LocalDay(year: year, month: 1, day: 1)
+        let upper = LocalDay(year: year, month: 12, day: 31)
+        var s = Set<LocalDay>()
+        for t in items {
+            guard let sch = t.schedule, sch.overlaps(lower, upper) else { continue }
+            var d = max(sch.startDay, lower)
+            let end = min(sch.lastDay, upper)
+            while d <= end {
+                s.insert(d)
+                d = d.adding(days: 1)
+            }
+        }
+        busyKey = (tasksVersion, projectFilter, year)
+        cachedBusyDays = s
+        return s
+    }
+
+    func timeGridData(
+        tasksVersion: Int,
+        projectFilter: String?,
+        pendingMove: PendingBlockMove?,
+        days: [LocalDay],
+        tasks: [TodoTask]
+    ) -> TimeGridData {
+        let token = pendingMove?.token
+        if let key = timeGridKey, let cached = cachedTimeGrid,
+           key.0 == tasksVersion, key.1 == projectFilter, key.2 == token, key.3 == days {
+            return cached
+        }
+        let base = filteredTasks(tasksVersion: tasksVersion, projectFilter: projectFilter, tasks: tasks)
+        let displayed: [TodoTask]
+        if let pending = pendingMove {
+            displayed = base.map { task in
+                guard task.id == pending.taskId else { return task }
+                var copy = task
+                copy.schedule = pending.schedule
+                return copy
+            }
+        } else {
+            displayed = base
+        }
+
+        var allDay: [TimeGridAllDayItem] = []
+        if let first = days.first, let last = days.last {
+            var lanes: [[ClosedRange<Int>]] = []
+            for t in displayed {
+                guard let s = t.schedule, s.isAllDay, s.overlaps(first, last) else { continue }
+                let a = max(0, first.days(until: s.startDay))
+                let b = min(days.count - 1, first.days(until: s.lastDay))
+                var lane = 0
+                while lane < lanes.count, lanes[lane].contains(where: { $0.overlaps(a...b) }) { lane += 1 }
+                if lane == lanes.count { lanes.append([]) }
+                lanes[lane].append(a...b)
+                allDay.append(TimeGridAllDayItem(task: t, firstColumn: a, lastColumn: b, lane: lane))
+            }
+        }
+
+        let blocksByDay = days.map { DayLayout.blocks(for: displayed, on: $0) }
+        let data = TimeGridData(displayedTasks: displayed, allDayItems: allDay, blocksByDay: blocksByDay)
+        timeGridKey = (tasksVersion, projectFilter, token, days)
+        cachedTimeGrid = data
+        return data
+    }
+}
+
+/// Isolated date grid for 清單 mode: reads `drag.collapseY` without invalidating
+/// `CalendarScreen.body`, and isolates `drag.horizontalOffset` via modifier.
+private struct CalendarDateGrid: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var days: [LocalDay]
+    var dayDotColors: [LocalDay: [String]]
+    var shownMonth: LocalDay
+    var selected: LocalDay
+    var today: LocalDay
+    @Binding var collapsed: Bool
+    var pageSequence: Int
+    var pageTransition: AnyTransition
+    var isRegular: Bool
+    var drag: CalendarDragState
+    var onSelectDay: (LocalDay) -> Void
+    var onHorizontalEnded: (CGFloat, CGFloat) -> Void
+
+    private static let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
+
+    var body: some View {
+        let rowCount = max(1, days.count / 7)
+        let rowH: CGFloat = 50
+        let rowSpacing: CGFloat = 2
+        let fullGridHeight = CGFloat(rowCount) * rowH + CGFloat(rowCount - 1) * rowSpacing
+        let collapsedGridHeight = rowH
+        let travel = max(1, fullGridHeight - collapsedGridHeight)
+        let restProgress: CGFloat = collapsed ? 0 : 1
+        let progress: CGFloat = reduceMotion ? restProgress : min(1, max(0, restProgress + drag.collapseY / travel))
+        let visibleGridHeight = collapsedGridHeight + (fullGridHeight - collapsedGridHeight) * progress
+        let selectedRow = days.firstIndex(of: selected).map { $0 / 7 } ?? 0
+        let gridOffsetY = -CGFloat(selectedRow) * (rowH + rowSpacing) * (1 - progress)
+
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(LocalDay.weekdaySymbols, id: \.self) { Text($0).txt(12).foregroundStyle(Palette.textTertiary).frame(maxWidth: .infinity) }
+            }
+            .padding(.bottom, 6)
+            ZStack(alignment: .top) {
+                LazyVGrid(columns: Self.columns, spacing: rowSpacing) {
+                    ForEach(Array(days.enumerated()), id: \.element) { idx, d in
+                        let inMonth = d.month == shownMonth.month
+                        let cellOpacity = inMonth ? 1.0 : (1.0 - 0.62 * Double(progress))
+                        CalendarDayCell(
+                            day: d,
+                            isSelected: d == selected,
+                            isToday: d == today,
+                            dotColors: dayDotColors[d] ?? [],
+                            reduceMotion: reduceMotion,
+                            onTap: { onSelectDay(d) }
+                        )
+                        .equatable()
+                        .opacity(cellOpacity)
+                        .allowsHitTesting(progress > 0 || idx / 7 == selectedRow)
+                        .accessibilityHidden(progress == 0 && idx / 7 != selectedRow)
+                    }
+                }
+                .offset(y: gridOffsetY)
+                .id("list-\(pageSequence)")
+                .transition(pageTransition)
+            }
+            .modifier(HorizontalDragOffsetModifier(drag: drag, reduceMotion: reduceMotion))
+            .frame(height: visibleGridHeight, alignment: .top)
+            .clipped()
+
+            Button {
+                withAnimation(Motion.layout(reduceMotion)) {
+                    collapsed.toggle()
+                    drag.collapseY = 0
+                }
+            } label: {
+                Capsule().fill(Palette.handle).frame(width: 36, height: 4).frame(maxWidth: .infinity, minHeight: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.press)
+            .accessibilityLabel(collapsed ? "展開整個月份" : "收合成單週")
+        }
+        .padding(.top, 4)
+        .gesture(
+            CalendarPanGesture(
+                allowLeftEdgeRightward: isRegular,
+                allowVertical: { true },
+                verticalShouldBegin: { vy in (!collapsed && vy < 0) || (collapsed && vy > 0) },
+                onHorizontalChanged: { tx in
+                    if !reduceMotion {
+                        drag.horizontalOffset = tx * 0.9
+                    }
+                },
+                onHorizontalEnded: onHorizontalEnded,
+                onVerticalChanged: { ty in
+                    if !reduceMotion {
+                        drag.collapseY = ty
+                    }
+                },
+                onVerticalEnded: { ty, vy in
+                    withAnimation(Motion.layout(reduceMotion)) {
+                        if !collapsed && (ty < -45 || vy < -350) {
+                            collapsed = true
+                        } else if collapsed && (ty > 45 || vy > 350) {
+                            collapsed = false
+                        }
+                        drag.collapseY = 0
+                    }
+                }
+            )
+        )
+    }
+}
+
+private struct CalendarDayCell: View, Equatable {
+    @Environment(\.accent) private var accent
+    var day: LocalDay
+    var isSelected: Bool
+    var isToday: Bool
+    var dotColors: [String]
+    var reduceMotion: Bool
+    var onTap: () -> Void
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.day == rhs.day
+            && lhs.isSelected == rhs.isSelected
+            && lhs.isToday == rhs.isToday
+            && lhs.dotColors == rhs.dotColors
+            && lhs.reduceMotion == rhs.reduceMotion
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 3) {
+                Text("\(day.day)")
+                    .txt(17, isSelected || isToday ? .bold : .medium)
+                    .foregroundStyle(isSelected ? accent.onAccent : (isToday ? Palette.todayText(accent: accent) : Palette.textDay))
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(isSelected ? accent.color : (isToday ? Palette.todayFill(accent: accent) : .clear)))
+                HStack(spacing: 3) {
+                    ForEach(dotColors, id: \.self) { c in Circle().fill(Palette.listColor(c)).frame(width: 4, height: 4) }
+                }
+                .frame(height: 4)
+            }
+            .frame(maxWidth: .infinity, minHeight: 50)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.press(scale: 0.92, opacity: 0.85))
+        .hoverEffect(.highlight)
+        .accessibilityLabel(DateText.full(day) + (dotColors.isEmpty ? "" : "，有項目"))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -968,7 +1345,7 @@ enum AgendaText {
 
 /// 年: twelve mini months; tapping month title opens it in 清單, tapping a day opens 日 view.
 struct YearGrid: View {
-    @Environment(\.accent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var year: Int
     var today: LocalDay
     var busy: Set<LocalDay>
@@ -978,30 +1355,81 @@ struct YearGrid: View {
 
     var body: some View {
         let cols = isRegular ? 4 : 3
+        let masks: [UInt32] = {
+            var out = [UInt32](repeating: 0, count: 12)
+            for d in busy where d.year == year && (1...12).contains(d.month) && (1...31).contains(d.day) {
+                out[d.month - 1] |= 1 << UInt32(d.day)
+            }
+            return out
+        }()
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: isRegular ? 20 : 14), count: cols), spacing: isRegular ? 22 : 18) {
+            ForEach(1...12, id: \.self) { m in
+                YearMonthCell(
+                    year: year,
+                    month: m,
+                    today: today,
+                    busyMask: masks[m - 1],
+                    isRegular: isRegular,
+                    reduceMotion: reduceMotion,
+                    openMonth: openMonth,
+                    openDay: openDay
+                )
+                .equatable()
+            }
+        }
+        .padding(.top, 8)
+    }
+}
+
+private struct YearMonthCell: View, Equatable {
+    @Environment(\.accent) private var accent
+    var year: Int
+    var month: Int
+    var today: LocalDay
+    var busyMask: UInt32
+    var isRegular: Bool
+    var reduceMotion: Bool
+    var openMonth: (LocalDay) -> Void
+    var openDay: (LocalDay) -> Void
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.year == rhs.year
+            && lhs.month == rhs.month
+            && lhs.today == rhs.today
+            && lhs.busyMask == rhs.busyMask
+            && lhs.isRegular == rhs.isRegular
+            && lhs.reduceMotion == rhs.reduceMotion
+    }
+
+    var body: some View {
+        let first = LocalDay(year: year, month: month, day: 1)
+        let days = MonthLayout.gridDays(for: first)
+        let weekCount = days.count / 7
         let dayFontSize: CGFloat = isRegular ? 11 : 8.5
         let circleSize: CGFloat = isRegular ? 18 : 13
         let rowHeight: CGFloat = isRegular ? 20 : 14
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: isRegular ? 20 : 14), count: cols), spacing: isRegular ? 22 : 18) {
-            ForEach(1...12, id: \.self) { m in
-                let first = LocalDay(year: year, month: m, day: 1)
-                VStack(alignment: .leading, spacing: 4) {
-                    Button { openMonth(first) } label: {
-                        Text("\(m)月").txt(isRegular ? 16 : 15, .bold).foregroundStyle(first.month == today.month && year == today.year ? accent.text : Palette.text)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .buttonStyle(.press)
-                    .hoverEffect(.highlight)
-                    .accessibilityLabel("\(year) 年 \(m) 月")
 
-                    let days = MonthLayout.gridDays(for: first)
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 2) {
-                        ForEach(days, id: \.self) { d in
-                            if d.month == m {
+        VStack(alignment: .leading, spacing: 4) {
+            Button { openMonth(first) } label: {
+                Text("\(month)月").txt(isRegular ? 16 : 15, .bold).foregroundStyle(month == today.month && year == today.year ? accent.text : Palette.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.press)
+            .hoverEffect(.highlight)
+            .accessibilityLabel("\(year) 年 \(month) 月")
+
+            VStack(spacing: 2) {
+                ForEach(0..<weekCount, id: \.self) { w in
+                    HStack(spacing: 0) {
+                        ForEach(0..<7, id: \.self) { c in
+                            let d = days[w * 7 + c]
+                            if d.month == month {
                                 let isToday = d == today
+                                let isBusy = (busyMask & (1 << UInt32(d.day))) != 0
                                 Button { openDay(d) } label: {
                                     Text("\(d.day)")
                                         .font(.system(size: dayFontSize, weight: isToday ? .bold : .regular))
-                                        .foregroundStyle(isToday ? accent.onAccent : (busy.contains(d) ? accent.text : Palette.textSecondary))
+                                        .foregroundStyle(isToday ? accent.onAccent : (isBusy ? accent.text : Palette.textSecondary))
                                         .frame(width: circleSize, height: circleSize)
                                         .background(Circle().fill(isToday ? accent.color : .clear))
                                         .frame(maxWidth: .infinity, minHeight: rowHeight)
@@ -1012,35 +1440,33 @@ struct YearGrid: View {
                                 .accessibilityIdentifier("yearDay.\(d)")
                                 .accessibilityLabel(DateText.full(d))
                             } else {
-                                Color.clear.frame(height: rowHeight)
+                                Color.clear.frame(maxWidth: .infinity, minHeight: rowHeight)
                             }
                         }
                     }
                 }
             }
         }
-        .padding(.top, 8)
     }
 }
 
 /// One week of the event month: day numbers on top, bars in lanes.
-struct WeekRow: View {
+private struct WeekRow: View, Equatable {
     @Environment(\.accent) private var accent
-    @Environment(AppModel.self) private var model
-    var week: MonthLayout.Week
+    var week: WeekRowModel
     var month: LocalDay
-    var selected: LocalDay
     var today: LocalDay
+    var reduceMotion: Bool
     var pick: (LocalDay) -> Void
     var open: (String) -> Void
 
     let laneH: CGFloat = 17
 
-    private var rowHeight: CGFloat {
-        let usedLanes = (week.bars.map(\.lane).max() ?? -1) + 1
-        let visibleLanes = max(1, usedLanes)
-        let bottomPad: CGFloat = week.overflow.isEmpty ? 8 : 18
-        return 36 + laneH * CGFloat(visibleLanes) + bottomPad
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.week == rhs.week
+            && lhs.month == rhs.month
+            && lhs.today == rhs.today
+            && lhs.reduceMotion == rhs.reduceMotion
     }
 
     var body: some View {
@@ -1073,13 +1499,12 @@ struct WeekRow: View {
                     }
                 }
                 ForEach(Array(week.bars.enumerated()), id: \.offset) { _, bar in
-                    let color = Palette.listColor(model.project(bar.task.projectId)?.color)
-                    let done = bar.task.isCompleted
-                    let timed = bar.task.schedule?.startMinute.map { "[\(DateText.hm($0))] " } ?? ""
-                    Button { open(bar.task.id) } label: {
+                    let color = Palette.listColor(bar.colorHex)
+                    let done = bar.isCompleted
+                    Button { open(bar.taskId) } label: {
                         HStack(spacing: 0) {
                             Rectangle().fill(color).frame(width: 2)
-                            Text((bar.continues ? "‹ " : "") + (bar.startColumn == bar.endColumn ? timed : "") + bar.task.title)
+                            Text((bar.continues ? "‹ " : "") + (bar.startColumn == bar.endColumn ? bar.timedPrefix : "") + bar.title)
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(done ? Palette.done : Palette.text.opacity(0.92))
                                 .strikethrough(done)
@@ -1096,7 +1521,7 @@ struct WeekRow: View {
                 }
             }
         }
-        .frame(height: rowHeight)
+        .frame(height: week.rowHeight)
     }
 }
 
@@ -1123,6 +1548,8 @@ struct TimeGrid: View {
     @Environment(AppModel.self) private var model
     var days: [LocalDay]
     var tasks: [TodoTask]
+    var allDayItems: [TimeGridAllDayItem]
+    var blocksByDay: [[DayLayout.Block]]
     var today: LocalDay
     var selected: LocalDay
     var isRegular: Bool = false
@@ -1158,23 +1585,6 @@ struct TimeGrid: View {
     var hourH: CGFloat { isRegular ? 64 : 56 }
     var gutter: CGFloat { isRegular ? 52 : 40 }
 
-    var allDayItems: [(TodoTask, Int, Int, Int)] {
-        // (task, firstColumn, lastColumn, lane)
-        guard let first = days.first, let last = days.last else { return [] }
-        var lanes: [[ClosedRange<Int>]] = []
-        var out: [(TodoTask, Int, Int, Int)] = []
-        for t in tasks {
-            guard let s = t.schedule, s.isAllDay, s.overlaps(first, last) else { continue }
-            let a = max(0, first.days(until: s.startDay)), b = min(days.count - 1, first.days(until: s.lastDay))
-            var lane = 0
-            while lane < lanes.count, lanes[lane].contains(where: { $0.overlaps(a...b) }) { lane += 1 }
-            if lane == lanes.count { lanes.append([]) }
-            lanes[lane].append(a...b)
-            out.append((t, a, b, lane))
-        }
-        return out
-    }
-
     var body: some View {
         GeometryReader { geo in
             let colW = (geo.size.width - gutter - 8) / CGFloat(days.count)
@@ -1200,14 +1610,14 @@ struct TimeGrid: View {
 
                 let ad = allDayItems
                 let isDay = days.count == 1
-                let totalLanes = (ad.map(\.3).max() ?? -1) + 1
+                let totalLanes = (ad.map(\.lane).max() ?? -1) + 1
                 let maxVisibleLanes = isDay ? 4 : 3
                 let laneCount = min(maxVisibleLanes, totalLanes)
                 let overflowByCol: [Int: Int] = {
                     guard !isDay else { return [:] }
                     var counts: [Int: Int] = [:]
-                    for (_, a, b, lane) in ad where lane >= maxVisibleLanes {
-                        for col in a...b { counts[col, default: 0] += 1 }
+                    for item in ad where item.lane >= maxVisibleLanes {
+                        for col in item.firstColumn...item.lastColumn { counts[col, default: 0] += 1 }
                     }
                     return counts
                 }()
@@ -1223,9 +1633,8 @@ struct TimeGrid: View {
                             ScrollView(.vertical, showsIndicators: totalLanes > maxVisibleLanes) {
                                 ZStack(alignment: .topLeading) {
                                     ForEach(Array(ad.enumerated()), id: \.offset) { _, item in
-                                        let (t, a, b, lane) = item
-                                        allDayChip(t, width: colW * CGFloat(b - a + 1) - 3)
-                                            .offset(x: colW * CGFloat(a) + 1.5, y: CGFloat(lane) * 21 + 2)
+                                        allDayChip(item.task, width: colW * CGFloat(item.lastColumn - item.firstColumn + 1) - 3)
+                                            .offset(x: colW * CGFloat(item.firstColumn) + 1.5, y: CGFloat(item.lane) * 21 + 2)
                                     }
                                 }
                                 .frame(width: colW, height: CGFloat(totalLanes) * 21 + 4, alignment: .topLeading)
@@ -1238,10 +1647,9 @@ struct TimeGrid: View {
                     } else {
                         ZStack(alignment: .topLeading) {
                             Text("全天").font(.system(size: 10)).foregroundStyle(Palette.textFaint).frame(width: gutter).padding(.top, 4)
-                            ForEach(Array(ad.filter { $0.3 < maxVisibleLanes }.enumerated()), id: \.offset) { _, item in
-                                let (t, a, b, lane) = item
-                                allDayChip(t, width: colW * CGFloat(b - a + 1) - 3)
-                                    .offset(x: gutter + colW * CGFloat(a) + 1.5, y: CGFloat(lane) * 21 + 2)
+                            ForEach(Array(ad.filter { $0.lane < maxVisibleLanes }.enumerated()), id: \.offset) { _, item in
+                                allDayChip(item.task, width: colW * CGFloat(item.lastColumn - item.firstColumn + 1) - 3)
+                                    .offset(x: gutter + colW * CGFloat(item.firstColumn) + 1.5, y: CGFloat(item.lane) * 21 + 2)
                             }
                             ForEach(overflowByCol.keys.sorted(), id: \.self) { col in
                                 let n = overflowByCol[col]!
@@ -1296,7 +1704,8 @@ struct TimeGrid: View {
                                 }
                             }
                             ForEach(Array(days.enumerated()), id: \.offset) { i, d in
-                                ForEach(DayLayout.blocks(for: tasks, on: d), id: \.self) { b in
+                                let dayBlocks = i < blocksByDay.count ? blocksByDay[i] : []
+                                ForEach(dayBlocks, id: \.self) { b in
                                     block(b, colW: colW)
                                         .opacity(draggedTaskId == b.task.id ? 0.35 : 1)
                                         .allowsHitTesting(dragMode == nil)

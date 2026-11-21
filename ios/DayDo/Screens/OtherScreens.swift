@@ -6,11 +6,17 @@ struct SearchScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.isRegularWindow) private var isRegular
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var isActive: Bool = true
     @State private var text = ""
     @State private var lastText = ""
     @State private var activeOnly = false
     @State private var results: [TodoTask] = []
+    @State private var loadedKey: SearchKey?
     @FocusState private var focused: Bool
+
+    private var activeSearchKey: SearchKey? {
+        isActive ? SearchKey(text: text, activeOnly: activeOnly, revision: model.revision) : nil
+    }
 
     var body: some View {
         ZStack {
@@ -26,6 +32,7 @@ struct SearchScreen: View {
                             .focused($focused)
                             .submitLabel(.search)
                             .autocorrectionDisabled()
+                            .accessibilityHidden(!isActive)
                         if !text.isEmpty {
                             Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.textTertiary) }
                                 .buttonStyle(.plain).hoverEffect(.highlight).accessibilityLabel("清除搜尋")
@@ -46,9 +53,10 @@ struct SearchScreen: View {
                 .padding(.horizontal, 16)
 
                 ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(Array(results.enumerated()), id: \.element.id) { i, t in
-                            TaskRow(task: t, separator: i > 0, sectionId: "search")
+                    let firstId = results.first?.id
+                    LazyVStack(spacing: 0) {
+                        ForEach(results) { t in
+                            TaskRow(task: t, separator: t.id != firstId, sectionId: "search")
                                 .transition(Motion.rowTransition(reduceMotion))
                         }
                     }
@@ -83,14 +91,16 @@ struct SearchScreen: View {
         }
         .navigationTitle("搜尋")
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: SearchKey(text: text, activeOnly: activeOnly, revision: model.revision)) {
+        .task(id: activeSearchKey) {
+            guard let key = activeSearchKey, key != loadedKey else { return }
             do {
-                if text != lastText {
+                if key.text != lastText {
                     try await Task.sleep(for: .milliseconds(180))
                 }
-                lastText = text
-                let found = try await model.api.searchTasks(text: text, activeOnly: activeOnly)
+                lastText = key.text
+                let found = try await model.api.searchTasks(text: key.text, activeOnly: key.activeOnly)
                 guard !Task.isCancelled else { return }
+                loadedKey = key
                 withAnimation(Motion.layout(reduceMotion)) {
                     results = found
                 }
@@ -100,7 +110,14 @@ struct SearchScreen: View {
                 if !Task.isCancelled { model.errorMessage = error.localizedDescription }
             }
         }
-        .onAppear { if text.isEmpty { focused = true } }
+        .onAppear { if isActive && text.isEmpty { focused = true } }
+        .onChange(of: isActive) { _, active in
+            if active {
+                if text.isEmpty { focused = true }
+            } else {
+                focused = false
+            }
+        }
         .onChange(of: model.searchFocusTrigger) { _, _ in focused = true }
     }
 }

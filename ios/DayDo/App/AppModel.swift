@@ -509,7 +509,12 @@ final class AppModel {
             async let t = api.listTags()
             async let m = api.listMembers()
             async let c = api.smartCounts()
-            (projects, folders, tags, members, counts) = try await (p, f, t, m, c)
+            let (newProjects, newFolders, newTags, newMembers, newCounts) = try await (p, f, t, m, c)
+            if projects != newProjects { projects = newProjects }
+            if folders != newFolders { folders = newFolders }
+            if tags != newTags { tags = newTags }
+            if members != newMembers { members = newMembers }
+            if counts != newCounts { counts = newCounts }
         } catch {
             errorMessage = error.localizedDescription
         }

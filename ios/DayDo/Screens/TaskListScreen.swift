@@ -9,13 +9,19 @@ struct TaskListScreen: View {
     @Environment(\.isRegularWindow) private var isRegular
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var scope: TaskScope
+    var isActive: Bool = true
 
     @State private var sections: [TaskSection] = []
     @State private var loaded = false
     @State private var loadedScope: TaskScope?
+    @State private var loadedReload: TaskReload?
     @State private var limits: [TaskScope: Int] = [:]
     @State private var shareText: String?
     @AppStorage("closedSections") private var closedRaw = "completed"
+
+    private var activeReload: TaskReload? {
+        isActive ? TaskReload(scope: scope, revision: model.revision, limit: limits[scope], memberId: activeMemberFilter) : nil
+    }
 
     var closed: Set<String> { Set(closedRaw.split(separator: ",").map(String.init)) }
 
@@ -36,7 +42,7 @@ struct TaskListScreen: View {
             }
             ZStack(alignment: .top) {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
+                    LazyVStack(alignment: .leading, spacing: 16) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(model.scopeTitle(scope)).txt(30, .bold).foregroundStyle(Palette.text)
                             Text(subtitle)
@@ -113,7 +119,10 @@ struct TaskListScreen: View {
                 }
             }
         }
-        .task(id: TaskReload(scope: scope, revision: model.revision, limit: limits[scope], memberId: activeMemberFilter)) { await load() }
+        .task(id: activeReload) {
+            guard let reload = activeReload, reload != loadedReload else { return }
+            await load(for: reload)
+        }
     }
 
     private var activeMemberFilter: String? {
@@ -125,47 +134,52 @@ struct TaskListScreen: View {
         if case .project(let id) = scope, !(model.project(id)?.isInbox ?? false) {
             HeaderAction(systemName: "person.crop.circle.badge.plus", label: "共享") { model.sharingProjectId = id }
         }
-        Menu {
-            if case .project(let id) = scope {
-                let proj = model.project(id)
-                let currentView = proj?.viewMode ?? "list"
-                if !(proj?.isViewer ?? false) {
-                    Button("編輯", systemImage: "slider.horizontal.3") { model.editingProjectId = id }
-                    Menu("視圖", systemImage: "rectangle.grid.1x2") {
-                        viewMenuItem("列表", mode: "list", current: currentView, projectId: id)
-                        viewMenuItem("看板", mode: "kanban", current: currentView, projectId: id)
-                        viewMenuItem("時間軸", mode: "timeline", current: currentView, projectId: id)
+        let ellipsisLabel = Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
+        if isActive {
+            Menu {
+                if case .project(let id) = scope {
+                    let proj = model.project(id)
+                    let currentView = proj?.viewMode ?? "list"
+                    if !(proj?.isViewer ?? false) {
+                        Button("編輯", systemImage: "slider.horizontal.3") { model.editingProjectId = id }
+                        Menu("視圖", systemImage: "rectangle.grid.1x2") {
+                            viewMenuItem("列表", mode: "list", current: currentView, projectId: id)
+                            viewMenuItem("看板", mode: "kanban", current: currentView, projectId: id)
+                            viewMenuItem("時間軸", mode: "timeline", current: currentView, projectId: id)
+                        }
                     }
                 }
-            }
-            Button(model.compact ? "顯示詳情" : "隱藏詳情", systemImage: model.compact ? "eye" : "eye.slash") {
-                withAnimation(Motion.toggle(reduceMotion)) { model.compact.toggle() }
-            }
-            Button(closed.contains("completed") ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle("completed") }
-            if let overdue = sections.first(where: { $0.id == "overdue" }),
-               !isViewerScope,
-               !model.editableTaskIds(in: overdue.tasks).isEmpty {
-                Divider()
-                Button("全部延到今天", systemImage: "arrow.uturn.forward") { model.postponeOverdue(tasks: overdue.tasks) }
-            }
-            if case .project(let id) = scope, let proj = model.project(id), !proj.isInbox {
-                Divider()
-                let isDuplicating = model.isDuplicatingProject(id)
-                Menu("更多", systemImage: "ellipsis.circle") {
-                    Button("共享協作", systemImage: "person.2") { model.sharingProjectId = id }
-                    Button("分享", systemImage: "square.and.arrow.up") { shareText = projectShareText(proj) }
-                    Button(isDuplicating ? "複製中…" : "複製清單", systemImage: "doc.on.doc") {
-                        model.duplicateProject(id: id)
-                    }
-                    .disabled(isDuplicating)
+                Button(model.compact ? "顯示詳情" : "隱藏詳情", systemImage: model.compact ? "eye" : "eye.slash") {
+                    withAnimation(Motion.toggle(reduceMotion)) { model.compact.toggle() }
                 }
+                Button(closed.contains("completed") ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle("completed") }
+                if let overdue = sections.first(where: { $0.id == "overdue" }),
+                   !isViewerScope,
+                   !model.editableTaskIds(in: overdue.tasks).isEmpty {
+                    Divider()
+                    Button("全部延到今天", systemImage: "arrow.uturn.forward") { model.postponeOverdue(tasks: overdue.tasks) }
+                }
+                if case .project(let id) = scope, let proj = model.project(id), !proj.isInbox {
+                    Divider()
+                    let isDuplicating = model.isDuplicatingProject(id)
+                    Menu("更多", systemImage: "ellipsis.circle") {
+                        Button("共享協作", systemImage: "person.2") { model.sharingProjectId = id }
+                        Button("分享", systemImage: "square.and.arrow.up") { shareText = projectShareText(proj) }
+                        Button(isDuplicating ? "複製中…" : "複製清單", systemImage: "doc.on.doc") {
+                            model.duplicateProject(id: id)
+                        }
+                        .disabled(isDuplicating)
+                    }
+                }
+            } label: {
+                ellipsisLabel
             }
-        } label: {
-            Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
+            .hoverEffect(.highlight)
+            .background(ActivityAnchor(text: $shareText))
+            .accessibilityLabel("更多選項")
+        } else {
+            ellipsisLabel.accessibilityHidden(true)
         }
-        .hoverEffect(.highlight)
-        .background(ActivityAnchor(text: $shareText))
-        .accessibilityLabel("更多選項")
     }
 
     var subtitle: String {
@@ -179,21 +193,23 @@ struct TaskListScreen: View {
         }
     }
 
-    func load() async {
+    func load(for reload: TaskReload) async {
         do {
-            let loadedSections = try await model.api.listSections(scope, limit: limits[scope], memberId: activeMemberFilter)
+            let loadedSections = try await model.api.listSections(reload.scope, limit: reload.limit, memberId: reload.memberId)
             guard !Task.isCancelled else { return }
-            let shouldAnimate = loaded && loadedScope == scope
+            let shouldAnimate = loaded && loadedScope == reload.scope
             if shouldAnimate {
                 withAnimation(Motion.layout(reduceMotion)) {
                     sections = loadedSections
                     loaded = true
-                    loadedScope = scope
+                    loadedScope = reload.scope
+                    loadedReload = reload
                 }
             } else {
                 sections = loadedSections
                 loaded = true
-                loadedScope = scope
+                loadedScope = reload.scope
+                loadedReload = reload
             }
         } catch is CancellationError {
             return
@@ -329,9 +345,10 @@ struct SectionCard: View {
             .accessibilityValue(closed ? "已收合" : "已展開")
 
             if !closed {
-                VStack(spacing: 0) {
-                    ForEach(Array(section.tasks.enumerated()), id: \.element.id) { i, t in
-                        TaskRow(task: t, separator: i > 0, sectionId: section.id, inTrash: scope == .smart(.trash), selectsInline: true, showProject: !isProjectScope)
+                let firstId = section.tasks.first?.id
+                LazyVStack(spacing: 0) {
+                    ForEach(section.tasks) { t in
+                        TaskRow(task: t, separator: t.id != firstId, sectionId: section.id, inTrash: scope == .smart(.trash), selectsInline: true, showProject: !isProjectScope)
                             .transition(Motion.rowTransition(reduceMotion))
                     }
                 }
