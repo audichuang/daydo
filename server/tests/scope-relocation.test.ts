@@ -7,6 +7,7 @@ import * as schema from '../db/schema';
 import { syncDueSources, syncSource } from '../src/ics/engine';
 import { D1IcsStore } from '../src/ics/store';
 import { handleToolCall } from '../src/mcp/registry';
+import type { ScopeRelocationStub, ScopeStub } from '../src/scope/api';
 import { isScopeRelocatingError, listRelocationTables } from '../src/scope/relocation';
 import { ensureScopeSchema, RELOCATION_PURGED_TABLE, RELOCATION_STATE_TABLE } from '../src/scope/schema';
 import { Sha256, sha256HexSync } from '../src/scope/sha256';
@@ -967,5 +968,211 @@ describe('opLogDigest prefix proof', () => {
     expect(sb.opLogDigest({}).count).toBe(3);
     expect(sc.opLogDigest({ maxRowid: src.maxRowid }).sha256).not.toBe(src.sha256);
     expect(() => sa.opLogDigest({ maxRowid: -1 })).toThrow(/maxRowid/);
+  });
+});
+
+describe('Scope DO RPC relocation policy coverage', () => {
+  type Policy = 'write' | 'read' | 'admin';
+  type ScopeRpcMethod = keyof (ScopeStub & ScopeRelocationStub);
+  type ScopeInstance = InstanceType<typeof ScopeClass>;
+  type InvokeResult = { ok: true; value: unknown } | { ok: false; error: unknown };
+
+  // Every RPC method on ScopeStub and ScopeRelocationStub must be explicitly classified here;
+  // adding a method to either interface fails typecheck until its relocation policy is covered.
+  const POLICY = {
+    push: 'write',
+    projectMember: 'write',
+    purgeProject: 'write',
+    pull: 'read',
+    getInboxProjectId: 'read',
+    getProjectInfo: 'read',
+    getAttachmentInfo: 'read',
+    relocationStatus: 'admin',
+    setRelocationState: 'admin',
+    exportPage: 'admin',
+    importPage: 'admin',
+    digest: 'admin',
+    opLogDigest: 'admin',
+    purgeFrozenData: 'admin',
+  } satisfies Record<keyof (ScopeStub & ScopeRelocationStub), Policy>;
+
+  const CALL: Record<ScopeRpcMethod, (scope: ScopeInstance, state: 'frozen' | 'importing') => unknown> = {
+    push: (scope) =>
+      scope.push({
+        scope: 'u:u-a',
+        scopeUserId: 'u-a',
+        pusherUserId: 'u-a',
+        deviceId: 'dev-a',
+        memberships: { p1: 'owner' },
+        purgedProjects: [],
+        meMemberId: null,
+        ops: [],
+      }),
+    projectMember: (scope) =>
+      scope.projectMember({ projectId: 'p1', memberId: 'm-b', role: 'editor', deleted: false }),
+    purgeProject: (scope) => scope.purgeProject({ projectId: 'p1', purgedAt: NOW_ISH + 1 }),
+    pull: (scope) =>
+      scope.pull({
+        scope: 'u:u-a',
+        scopeUserId: 'u-a',
+        requesterUserId: 'u-a',
+        since: 0,
+        limit: 500,
+        memberships: { p1: 'owner' },
+        meMemberId: 'm-a',
+      }),
+    getInboxProjectId: (scope) => scope.getInboxProjectId({ readableProjectIds: ['p1'] }),
+    getProjectInfo: (scope) => scope.getProjectInfo({ projectId: 'p1' }),
+    getAttachmentInfo: (scope) => scope.getAttachmentInfo({ attachmentId: 'a1' }),
+    relocationStatus: (scope) => scope.relocationStatus(),
+    setRelocationState: (scope, state) =>
+      state === 'frozen'
+        ? scope.setRelocationState({ state: 'live', expect: 'frozen' })
+        : scope.setRelocationState({
+            state: 'live',
+            expect: 'importing',
+            expectDigest: scope.digest().tables,
+          }),
+    exportPage: (scope) => scope.exportPage({ table: 'task' }),
+    importPage: (scope) => scope.importPage({ table: 'task', rows: [] }),
+    digest: (scope) => scope.digest(),
+    opLogDigest: (scope) => scope.opLogDigest({}),
+    purgeFrozenData: (scope) =>
+      scope.purgeFrozenData({ expectMaxServerSeq: scope.relocationStatus().maxServerSeq }),
+  };
+
+  async function createFrozenScope(): Promise<ScopeInstance> {
+    const doState = createTestDoState();
+    const scope = new ScopeClass(doState.ctx, { SYNC_FAULT: 'none' }, true);
+    const p1Row = projectRow('p1', { isInbox: true, ownerId: 'm-a' });
+    const t1Row = taskRow('t1', 'p1');
+    const a1Row = {
+      id: 'a1',
+      taskId: 't1',
+      fileName: 'doc.pdf',
+      size: 100,
+      mimeType: 'application/pdf',
+      createdAt: NOW_ISH,
+      updatedAt: NOW_ISH,
+    };
+    const seeded = await scope.push({
+      scope: 'u:u-a',
+      scopeUserId: 'u-a',
+      pusherUserId: 'u-a',
+      deviceId: 'dev-a',
+      memberships: { p1: 'owner' },
+      purgedProjects: [],
+      meMemberId: null,
+      ops: [
+        {
+          opId: 'op-p1',
+          hlc: `${Date.now()}:0000:dev-a`,
+          entity: 'project',
+          entityId: 'p1',
+          op: 'upsert',
+          fields: Object.keys(p1Row),
+          row: p1Row,
+        },
+        {
+          opId: 'op-t1',
+          hlc: `${Date.now()}:0001:dev-a`,
+          entity: 'task',
+          entityId: 't1',
+          op: 'upsert',
+          fields: Object.keys(t1Row),
+          row: t1Row,
+        },
+        {
+          opId: 'op-a1',
+          hlc: `${Date.now()}:0002:dev-a`,
+          entity: 'attachment',
+          entityId: 'a1',
+          op: 'upsert',
+          fields: Object.keys(a1Row),
+          row: a1Row,
+        },
+      ],
+    });
+    expect(seeded.results.every((r) => r.status === 'applied')).toBe(true);
+    scope.setRelocationState({ state: 'frozen', expect: 'live' });
+    return scope;
+  }
+
+  function createImportingScope(): ScopeInstance {
+    const doState = createTestDoState();
+    const scope = new ScopeClass(doState.ctx, { SYNC_FAULT: 'none' });
+    scope.setRelocationState({ state: 'importing', expect: 'live' });
+    return scope;
+  }
+
+  async function invokeMethod(
+    scope: ScopeInstance,
+    method: ScopeRpcMethod,
+    state: 'frozen' | 'importing',
+  ): Promise<InvokeResult> {
+    try {
+      const value = await Promise.resolve(CALL[method](scope, state));
+      return { ok: true, value };
+    } catch (error) {
+      return { ok: false, error };
+    }
+  }
+
+  function expectRelocatingError(result: InvokeResult, label: string): void {
+    expect(result.ok, `${label} should reject with SCOPE_RELOCATING`).toBe(false);
+    if (!result.ok) {
+      expect(isScopeRelocatingError(result.error), `${label} should fail with SCOPE_RELOCATING`).toBe(true);
+    }
+  }
+
+  it('classifies every public ScopeStub and ScopeRelocationStub RPC method', () => {
+    expect(Object.keys(POLICY).sort()).toEqual([
+      'digest',
+      'exportPage',
+      'getAttachmentInfo',
+      'getInboxProjectId',
+      'getProjectInfo',
+      'importPage',
+      'opLogDigest',
+      'projectMember',
+      'pull',
+      'purgeFrozenData',
+      'purgeProject',
+      'push',
+      'relocationStatus',
+      'setRelocationState',
+    ]);
+  });
+
+  const entries = Object.entries(POLICY) as Array<[ScopeRpcMethod, Policy]>;
+
+  it.each(entries)('enforces %s relocation policy (%s) in frozen and importing states', async (method, policy) => {
+    const frozenResult = await invokeMethod(await createFrozenScope(), method, 'frozen');
+    const importingResult = await invokeMethod(createImportingScope(), method, 'importing');
+
+    switch (policy) {
+      case 'write':
+        expectRelocatingError(frozenResult, `${method} while frozen`);
+        expectRelocatingError(importingResult, `${method} while importing`);
+        break;
+      case 'read':
+        expect(frozenResult.ok, `${method} should succeed while frozen`).toBe(true);
+        expectRelocatingError(importingResult, `${method} while importing`);
+        break;
+      case 'admin':
+        if (!frozenResult.ok) {
+          expect(
+            isScopeRelocatingError(frozenResult.error),
+            `${method} must not fail with SCOPE_RELOCATING while frozen`,
+          ).toBe(false);
+        }
+        if (!importingResult.ok) {
+          expect(
+            isScopeRelocatingError(importingResult.error),
+            `${method} must not fail with SCOPE_RELOCATING while importing`,
+          ).toBe(false);
+        }
+        break;
+    }
   });
 });
