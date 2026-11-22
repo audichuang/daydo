@@ -1,6 +1,6 @@
 # 發版（TestFlight）
 
-TestFlight 一律從合併後的 main 打包，不從 worktree 打。
+TestFlight 一律從合併後的 main 打包，不從 worktree 打。主 checkout 有別人未收的改動擋住快轉時，不動那些改動：把分支推到 `origin/main`，再從 `git worktree add --detach <路徑> origin/main` 的乾淨副本打包，打完移除。
 
 - App Store Connect app id `6834936769`，bundle id `com.audichuang.daydo`，team `37HFR5V2JJ`。
 - 群組：內部「自己」（使用者本人）；外部「家人」（使用者與家人，`tf distribute` 一律帶 `--group`）。新 build 只發給「自己」；要發給「家人」必須使用者明說這版已穩定。外部群組每個版本的第一個 build 要過 Apple 的 Beta App Review（審查聯絡資訊與測試說明已在 App Store Connect 設好）。`ios/ExportOptions.plist` 不能加回 `testFlightInternalTestingOnly`，加了上傳的 build 就不能送外部測試。

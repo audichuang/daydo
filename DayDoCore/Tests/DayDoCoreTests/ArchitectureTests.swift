@@ -179,6 +179,19 @@ private let guards: [Guard] = [
     // Guards that member filter UI and effective-filter logic use AppModel.filterMembers
     // (or MemberFilter) rather than raw model.members / members.count > 1.
     Guard(
+        name: "per-frame drag offsets live in a small observed object, not a screen's @State (CalendarScreen re-rendered every frame of a month swipe)",
+        directories: ["ios/DayDo/Screens"],
+        pattern: #"@State\s+(private\s+)?var\s+\w*[dD]rag\w*\s*:\s*CGFloat"#,
+        allow: [
+            // Light views: the drawer overlay and the root edge-drag handle.
+            "ios/DayDo/Screens/DrawerView.swift",
+            "ios/DayDo/Screens/RootView.swift",
+        ],
+        bad: [
+            "@State private var hDragOffset: CGFloat = 0",
+        ]
+    ),
+    Guard(
         name: "member filter chips use filterMembers, never raw members",
         directories: ["ios/DayDo"],
         pattern: #"MemberFilterChips\s*\(\s*members:\s*(?:\w+\.)?members\b|\bmembers\.count\s*>\s*1|selection:\s*\$(?:model\.allMemberFilter|memberFilter)\b"#,

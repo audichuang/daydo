@@ -12,6 +12,7 @@
 - 沒有板的：`ComposerSheet` 鍵盤上方的快速新增、`OtherScreens` 搜尋與設定、`SignInView`、分享與邀請的幾個 sheet（第二階段新增）。
 
 改動畫、轉場、手勢或觸覺前讀 `ios/MOTION.md`。
+找哪個動畫卡、比較改前改後的掉幀：`ios/scripts/perf/README.md`。
 
 ## Widget（`DayDoWidgets/`，板號 6a、6b）
 
@@ -26,3 +27,5 @@
 - 被 `.clipped()` 裁掉或收合起來看不見的內容仍然點得到，要另外關掉點擊（日曆收合成單週時，隱藏的那幾週曾經點得到）。
 - 深淺色：顏色只走 `Palette`（`UIColor(dynamicProvider:)`），深色值要和改版前一致；外觀只經 `AppearanceApplier` 設視窗的 override。Info.plist 不能加回 `UIUserInterfaceStyle`，加了「淺色／跟隨系統」就失效；啟動畫面的狀態列靠 `UIStatusBarStyleLightContent` 維持白字。
 - UI 測試不要假設現在的時段（日曆測試曾因此在某些時間失敗），也不要假設通知授權已處理。
+- 手機版任務／日曆／搜尋分頁造訪後常駐（`RootView` 的 `CompactTabContent`，為了切換不重建）：從別的分頁回來時畫面要和新建的一樣（選取日期、篩選、搜尋文字、捲動、鍵盤焦點都回初始），隱藏時不載入資料，查詢條件變了先清掉舊資料。第一版漏了這些，審查指出在日曆換清單後回任務頁會先顯示、也能勾到上一個清單的任務。
+- 任務列表與搜尋結果是 `LazyVStack`：UI 測試要找畫面外的任務列先捲過去。

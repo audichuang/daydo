@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		045317EF60CE505DE0087807 /* DayDoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 68A14B5281718AB2C97AE41F /* DayDoCore */; };
 		0CCFCE88645325C2F9E9DDE0 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */; };
+		0D9ADC077D5DA3C1736876FC /* DayDoPerfTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3169730DAA2FAB58744EC60A /* DayDoPerfTests.swift */; };
 		0E897BC85DA0ED546D97EB62 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3AC93921B8246DF3D1A2F32B /* Assets.xcassets */; };
 		0F335A407D2DCE82DC52398D /* ComposerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36BA7575D416B540F3E5F021 /* ComposerSheet.swift */; };
 		1B5B5057036A95B851A8C16F /* TimeBlockEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CC0B1CED20281F2431A79ED /* TimeBlockEditor.swift */; };
@@ -97,6 +98,7 @@
 		1B8A10BACD8F7752A8C5A164 /* TodayWidgetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayWidgetView.swift; sourceTree = "<group>"; };
 		27AE9AE733071F3B645C0DE2 /* DayDoTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DayDoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		2E477F2C75D83F9691F85C75 /* DayDoIPadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoIPadTests.swift; sourceTree = "<group>"; };
+		3169730DAA2FAB58744EC60A /* DayDoPerfTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoPerfTests.swift; sourceTree = "<group>"; };
 		36A61F18DDDC6C2FC166DDDB /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		36BA7575D416B540F3E5F021 /* ComposerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerSheet.swift; sourceTree = "<group>"; };
 		3AC93921B8246DF3D1A2F32B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -136,7 +138,7 @@
 		F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		F68BFC5798449FCFE7B82212 /* DayDoCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DayDoCore; path = ../DayDoCore; sourceTree = SOURCE_ROOT; };
 		F6BD3D5DF00E3413620F308D /* WeekAgendaGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeekAgendaGrid.swift; sourceTree = "<group>"; };
-		"TEMP_A6A3E165-BC13-48FC-A360-53A826E94FBA" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		"TEMP_F949D91A-ED24-4E2C-9E20-023599482675" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -310,14 +312,15 @@
 			children = (
 				93AF820DEE1E49529E90A0E0 /* DayDoFlowTests.swift */,
 				2E477F2C75D83F9691F85C75 /* DayDoIPadTests.swift */,
+				3169730DAA2FAB58744EC60A /* DayDoPerfTests.swift */,
 			);
 			path = DayDoUITests;
 			sourceTree = "<group>";
 		};
-		"TEMP_EB6A0AB9-EE40-418B-AB49-9C520F6CC012" /* ios */ = {
+		"TEMP_F29EC67A-1BA4-4B49-8A36-B4B4BD57A7AB" /* ios */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_A6A3E165-BC13-48FC-A360-53A826E94FBA" /* Config.xcconfig */,
+				"TEMP_F949D91A-ED24-4E2C-9E20-023599482675" /* Config.xcconfig */,
 			);
 			path = ios;
 			sourceTree = "<group>";
@@ -412,7 +415,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1430;
+				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					0B9A652E0E50A90A28F74D8C = {
 						DevelopmentTeam = 37HFR5V2JJ;
@@ -493,6 +496,7 @@
 			files = (
 				6241455AB6BDC69BCF835DB0 /* DayDoFlowTests.swift in Sources */,
 				71E047BD3761B4116F06B846 /* DayDoIPadTests.swift in Sources */,
+				0D9ADC077D5DA3C1736876FC /* DayDoPerfTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -611,7 +615,7 @@
 		};
 		739B74DBC48851785BC9AAA2 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_A6A3E165-BC13-48FC-A360-53A826E94FBA" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_F949D91A-ED24-4E2C-9E20-023599482675" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
@@ -724,7 +728,7 @@
 		};
 		B97B517B54A6D8DCCD7DFE92 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_A6A3E165-BC13-48FC-A360-53A826E94FBA" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_F949D91A-ED24-4E2C-9E20-023599482675" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;

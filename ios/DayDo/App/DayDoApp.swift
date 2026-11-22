@@ -1,3 +1,5 @@
+import MachO
+import os
 import GoogleSignIn
 import SwiftUI
 import UIKit
@@ -317,6 +319,30 @@ enum DebugLaunch {
                 _ = try? await model.api.createTask(CreateTaskInput(title: "全天壓測 \(n)", start: start, allDay: true))
             }
             await model.reloadData()
+        }
+        if args.contains("-DayDoSeedPerf") {
+            // Heavy-family load for hitch measurement: ~600 tasks over ±90 days, ~20 on today.
+            let projectIds = model.projects.filter(\.canEditTasks).map(\.id)
+            let tz = TimeZone.current.identifier
+            for n in 0..<600 {
+                let offset = n % 20 == 0 ? 0 : (n * 37) % 181 - 90
+                let day = model.today.adding(days: offset)
+                let schedule: Schedule = n % 3 == 0
+                    ? .allDay(day)
+                    : .timed(day, start: 480 + (n * 53) % 720, end: 480 + (n * 53) % 720 + 60, timeZone: tz)
+                _ = try? await model.api.createTask(CreateTaskInput(
+                    projectId: projectIds[n % projectIds.count], title: "壓測任務 \(n)", content: n % 4 == 0 ? "備註 \(n)" : "",
+                    priority: [Priority.none, .low, .medium, .high][n % 4], schedule: schedule,
+                    subtasks: n % 5 == 0 ? ["子任務 A", "子任務 B"] : [], tags: n % 6 == 0 ? ["壓測"] : []))
+            }
+            await model.reloadData()
+            // Image load addresses let ios/scripts/perf symbolicate with atos (xctrace can't for attached
+            // simulator apps); the signpost marks where the analysis window starts.
+            let images = (0..<_dyld_image_count()).map { i in
+                "\(UInt(bitPattern: _dyld_get_image_header(i))) \((String(cString: _dyld_get_image_name(i)) as NSString).lastPathComponent)"
+            }.joined(separator: "\n")
+            try? images.write(toFile: NSTemporaryDirectory() + "perf-images.txt", atomically: true, encoding: .utf8)
+            os_signpost(.event, log: OSLog(subsystem: "com.audichuang.daydo", category: .pointsOfInterest), name: "seedDone")
         }
 #endif
         guard let i = args.firstIndex(of: "-DayDoScreen"), i + 1 < args.count else { return }
