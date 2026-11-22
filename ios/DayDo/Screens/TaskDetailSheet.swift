@@ -69,6 +69,7 @@ struct TaskDetailContent: View {
     @State private var titleBaseline = ""
     @State private var content = ""
     @State private var contentBaseline = ""
+    @State private var editingContent = false
     @State private var page: Page = .detail
     @State private var draft = DateDraft()
     @State private var newItem = ""
@@ -138,7 +139,10 @@ struct TaskDetailContent: View {
                 model.inlineDetailSubpageTaskId = taskId
             }
         }
-        .onChange(of: focus, initial: true) { _, newFocus in
+        .onChange(of: focus, initial: true) { oldFocus, newFocus in
+            if newFocus != .content && (oldFocus == .content || newFocus != nil) {
+                editingContent = false
+            }
             guard isInline else { return }
             if newFocus == nil {
                 if model.inlineDetailFocusedTaskId == taskId {
@@ -197,14 +201,7 @@ struct TaskDetailContent: View {
                         }
                         VStack(alignment: .leading, spacing: 6) {
                             Text("描述").txt(12, .semibold).foregroundStyle(Palette.textTertiary)
-                            TextField("新增描述", text: $content, axis: .vertical)
-                                .txt(15)
-                                .lineSpacing(6)
-                                .foregroundStyle(Palette.textBody)
-                                .lineLimit(2...30)
-                                .focused($focus, equals: .content)
-                                .disabled(readOnly)
-                                .accessibilityIdentifier("taskContentField")
+                            descriptionField(readOnly: readOnly)
                         }
                         checklist(task, readOnly: readOnly)
                         attachments(task, readOnly: readOnly)
@@ -219,6 +216,46 @@ struct TaskDetailContent: View {
             }
         } else {
             ProgressView().tint(Palette.textSecondary)
+        }
+    }
+
+    @ViewBuilder
+    private func descriptionField(readOnly: Bool) -> some View {
+        // Plain-text descriptions stay a TextField so keyboard (Tab) navigation can still reach them.
+        let showsLinkified = !content.isEmpty && (readOnly || (!editingContent && focus != .content))
+            && DescriptionLinks.containsLinks(content)
+        if showsLinkified {
+            let text = Text(DescriptionLinks.linkified(content))
+                .txt(15)
+                .lineSpacing(6)
+                .foregroundStyle(Palette.textBody)
+                .tint(accent.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .contentShape(Rectangle())
+                .accessibilityIdentifier("taskContentField")
+                .accessibilityValue(content)
+            if readOnly {
+                text
+            } else {
+                text.onTapGesture {
+                    editingContent = true
+                }
+            }
+        } else {
+            TextField("新增描述", text: $content, axis: .vertical)
+                .txt(15)
+                .lineSpacing(6)
+                .foregroundStyle(Palette.textBody)
+                .lineLimit(2...30)
+                .focused($focus, equals: .content)
+                .disabled(readOnly)
+                .accessibilityIdentifier("taskContentField")
+                .onAppear {
+                    if editingContent {
+                        focus = .content
+                    }
+                }
         }
     }
 

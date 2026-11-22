@@ -2390,4 +2390,60 @@ final class DayDoFlowTests: XCTestCase {
         let expReset = XCTNSPredicateExpectation(predicate: backToTop, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [expReset], timeout: 3), .completed, "Returning to Tasks tab should reset scroll to top (topY=\(topTitle.frame.minY), initial=\(initialTopY))")
     }
+
+    @MainActor
+    func testTaskDetailDescriptionLinksAndTapToEdit() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoSkipLogin", "-DayDoSeedLinkDescription"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        let taskRow = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS '連結描述測試任務' AND NOT (label BEGINSWITH '完成：')")
+        ).firstMatch
+        XCTAssertTrue(taskRow.waitForExistence(timeout: 5), app.debugDescription)
+        taskRow.tap()
+
+        let contentField = app.descendants(matching: .any)["taskContentField"]
+        XCTAssertTrue(contentField.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(app.textFields["taskContentField"].exists, "Non-empty description should start in display mode")
+
+        // Display mode shows rendered link text without raw markdown link syntax.
+        XCTAssertTrue(contentField.label.contains("在地圖開啟"), "Expected rendered link label, got: \(contentField.label)")
+        XCTAssertFalse(contentField.label.contains("](https"), "Display mode must hide raw markdown syntax: \(contentField.label)")
+        XCTAssertTrue(((contentField.value as? String) ?? "").contains("[在地圖開啟](https://maps.apple.com/"))
+
+        // Tap the non-link top line to enter edit mode; TextField exposes raw markdown.
+        let nonLinkPoint = contentField.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.1))
+        nonLinkPoint.tap()
+
+        let editor = app.textFields["taskContentField"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(((editor.value as? String) ?? "").contains("[在地圖開啟](https://maps.apple.com/"), app.debugDescription)
+        XCTAssertTrue(
+            app.keyboards.firstMatch.waitForExistence(timeout: 3)
+                || ((editor.value(forKey: "hasKeyboardFocus") as? Bool) == true),
+            "Entering edit mode should focus the description TextField"
+        )
+
+        // Leaving focus returns to display mode.
+        let titleField = app.descendants(matching: .any)["taskTitleField"]
+        titleField.tap()
+        XCTAssertTrue(editor.waitForNonExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(contentField.label.contains("在地圖開啟"), contentField.label)
+        XCTAssertFalse(contentField.label.contains("](https"), contentField.label)
+
+        // Verify tapping the link opens it via system openURL without entering edit mode.
+        let linkPoint = contentField.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.65))
+        linkPoint.tap()
+        let leftForeground = NSPredicate { _, _ in
+            self.app.state != .runningForeground
+        }
+        let expOpen = XCTNSPredicateExpectation(predicate: leftForeground, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [expOpen], timeout: 5), .completed, "Tapping the link should open it via system openURL rather than entering edit mode (editorExists=\(editor.exists))")
+        app.activate()
+        XCTAssertTrue(contentField.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(editor.exists, "Tapping a link must not switch the description into edit mode")
+    }
 }

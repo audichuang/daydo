@@ -320,6 +320,24 @@ enum DebugLaunch {
             }
             await model.reloadData()
         }
+        if args.contains("-DayDoSeedLinkDescription") {
+            let content = """
+            12:00・3 人・冠安副理請客
+
+            台北市內湖區瑞光路 333 號 1 樓（宏匯瑞光廣場）
+            02-7756-6298
+            [在地圖開啟](https://maps.apple.com/?q=一番地壽喜燒%20內湖宏匯店&address=台北市內湖區瑞光路333號1樓)
+
+            待確認：用餐時間
+            """
+            _ = try? await model.api.createTask(CreateTaskInput(
+                title: "連結描述測試任務",
+                content: content,
+                start: model.today.description,
+                allDay: true
+            ))
+            await model.reloadData()
+        }
         if args.contains("-DayDoSeedPerf") {
             // Heavy-family load for hitch measurement: ~600 tasks over ±90 days, ~20 on today.
             let projectIds = model.projects.filter(\.canEditTasks).map(\.id)
