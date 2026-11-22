@@ -139,8 +139,8 @@ export function projectTools(): ToolDef[] {
           ...(color !== undefined && { color }),
         };
         await session.write([{ entity: 'project', entityId: id, set }]);
-        const { view, row } = session.readBack('project', id);
-        return formatProject(view, row);
+        const { view } = session.readBack('project', id);
+        return formatProject(view, liveProject(view, id));
       },
     },
     {

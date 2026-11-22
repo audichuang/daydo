@@ -23,11 +23,16 @@ import {
 } from './helpers/serverHarness';
 
 function createHarness(options: { getNow?: GetNow } = {}) {
-  // One-shot: makes the matching push throw before the scope applies it (a DO failure).
-  const hooks: { failPush?: (input: ScopePushInput) => boolean } = {};
+  // One-shot hooks: failPush makes a matching push throw; beforeMcpPush runs right before an MCP push lands.
+  const hooks: { failPush?: (input: ScopePushInput) => boolean; beforeMcpPush?: () => Promise<unknown> } = {};
   const world = createServerHarness({
     ...options,
-    onPush: (input, proceed) => {
+    onPush: async (input, proceed) => {
+      if (input.deviceId === 'mcp' && hooks.beforeMcpPush) {
+        const hook = hooks.beforeMcpPush;
+        hooks.beforeMcpPush = undefined;
+        await hook();
+      }
       if (hooks.failPush?.(input)) {
         hooks.failPush = undefined;
         return Promise.reject(new Error(`injected failure in ${input.scope}`));
@@ -185,6 +190,23 @@ describe('M10 update_project', () => {
     const snap = await h.snapshot('u-a');
     expect(snap.findRow('project', 'p1')?.row.updatedAt).toBe(PAST);
   });
+
+  it.each([
+    ['trashes', 'deletedAt'],
+    ['archives', 'archivedAt'],
+  ] as const)(
+    'errors with Unknown project_id when another device %s the project between snapshot and write',
+    async (_action, field) => {
+      const h = createHarness();
+      await seedBasic(h);
+      h.hooks.beforeMcpPush = () =>
+        h.devicePush('u-a', [{ ...deviceOp(h, 'project', { id: 'p1', [field]: NOW_ISH }), fields: [field] }]);
+      const r = await call(h, 'u-a', 'update_project', { project_id: 'p1', name: 'Renamed' });
+      expect(h.hooks.beforeMcpPush).toBeUndefined();
+      expect(r.isError).toBe(true);
+      expect(r.text).toContain("Unknown project_id 'p1'");
+    },
+  );
 });
 
 describe('M10 delete_project', () => {
