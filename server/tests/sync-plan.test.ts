@@ -2,10 +2,16 @@ import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { listScopes, projectMembership } from '../db/schema';
 import { toEnvelope, type OpEnvelope } from '../src/sync/envelope';
+import { newRowPreconditionDenial } from '../src/sync/newRow';
 import { applyPushPlan } from '../src/sync/push/apply';
 import { loadPushContext } from '../src/sync/push/context';
 import { collectPushLookups } from '../src/sync/push/parse';
-import { planPushBatch, type PlanPushContext } from '../src/sync/push/plan';
+import {
+  planPushBatch,
+  type NewEntityHomeEntry,
+  type PlanPushContext,
+  type PushPlan,
+} from '../src/sync/push/plan';
 import type { ScopePushInput } from './helpers/scopeWorld';
 import {
   createServerHarness,
@@ -160,6 +166,28 @@ function planOps(
   return planPushBatch({ pusherScope, parsedOps: parsed.ops, context });
 }
 
+function routedScopes(plan: PushPlan) {
+  return plan.ops.map((o) => (o.outcome.kind === 'routed' ? o.outcome.scope : null));
+}
+
+function rejectedResults(plan: PushPlan) {
+  return plan.ops.map((o) => (o.outcome.kind === 'rejected' ? o.outcome.result : null));
+}
+
+function newHomes(plan: PushPlan): Map<string, NewEntityHomeEntry> {
+  const map = new Map<string, NewEntityHomeEntry>();
+  for (const op of plan.ops) {
+    if (op.newHome) {
+      map.set(`${op.newHome.entity}:${op.newHome.entityId}`, op.newHome);
+    }
+  }
+  return map;
+}
+
+function listScopesWithIndex(plan: PushPlan) {
+  return plan.ops.flatMap((o, idx) => (o.listScope ? [{ idx, ...o.listScope }] : []));
+}
+
 describe('planPushBatch characterization', () => {
   it('rejects malformed ops missing entity or entityId', () => {
     const plan = planOps([
@@ -168,22 +196,22 @@ describe('planPushBatch characterization', () => {
       'not-an-object',
     ]);
 
-    expect(plan.opTargetScope).toEqual([null, null, null]);
-    expect(plan.results[0]).toEqual({
+    expect(routedScopes(plan)).toEqual([null, null, null]);
+    expect(rejectedResults(plan)[0]).toEqual({
       opId: 'op-bad-entity',
       status: 'rejected',
       reason: 'Unknown entity: bogus',
       row: null,
       clocks: {},
     });
-    expect(plan.results[1]).toEqual({
+    expect(rejectedResults(plan)[1]).toEqual({
       opId: 'op-empty-id',
       status: 'rejected',
       reason: 'entityId must be a non-empty string',
       row: null,
       clocks: {},
     });
-    expect(plan.results[2]).toEqual({
+    expect(rejectedResults(plan)[2]).toEqual({
       opId: '',
       status: 'rejected',
       reason: 'Op must be an object',
@@ -207,7 +235,7 @@ describe('planPushBatch characterization', () => {
       parsedOps: [synthetic],
       context: ctx(),
     });
-    expect(syntheticPlan.results[0]).toEqual({
+    expect(rejectedResults(syntheticPlan)[0]).toEqual({
       opId: 'op-malformed',
       status: 'rejected',
       reason: 'Malformed op',
@@ -216,12 +244,12 @@ describe('planPushBatch characterization', () => {
     });
   });
 
-  it('routes tag ops directly to pusherScope without touching entityHome or listScopeTargets', () => {
+  it('routes tag ops directly to pusherScope without touching entityHome or listScope', () => {
     const plan = planOps([fullTagOp('op-tag', 'urgent')], ctx(), 'u:alice');
-    expect(plan.opTargetScope).toEqual(['u:alice']);
-    expect(plan.results).toEqual([null]);
-    expect(plan.inBatchNewHome.size).toBe(0);
-    expect(plan.listScopeTargets).toEqual([]);
+    expect(routedScopes(plan)).toEqual(['u:alice']);
+    expect(rejectedResults(plan)).toEqual([null]);
+    expect(newHomes(plan).size).toBe(0);
+    expect(listScopesWithIndex(plan)).toEqual([]);
   });
 
   it('routes projectMember and projectInvite to knownHome, project home, or pusherScope fallback', () => {
@@ -245,7 +273,7 @@ describe('planPushBatch characterization', () => {
       'u:alice',
     );
 
-    expect(plan.opTargetScope).toEqual([
+    expect(routedScopes(plan)).toEqual([
       'u:pm-home',
       'u:owner',
       'u:alice',
@@ -253,7 +281,7 @@ describe('planPushBatch characterization', () => {
       'u:owner',
       'u:alice',
     ]);
-    expect(plan.inBatchNewHome.size).toBe(0);
+    expect(newHomes(plan).size).toBe(0);
   });
 
   it('rejects full-upsert id collisions across scopes while allowing partial updates and same-scope resends', () => {
@@ -275,11 +303,12 @@ describe('planPushBatch characterization', () => {
       'u:alice',
     );
 
-    expect(plan.opTargetScope).toEqual([null, 'u:bob', 'u:alice', null]);
-    expect(plan.results[0]?.reason).toBe('id-in-other-scope');
-    expect(plan.results[1]).toBeNull();
-    expect(plan.results[2]).toBeNull();
-    expect(plan.results[3]?.reason).toBe('id-in-other-scope');
+    expect(routedScopes(plan)).toEqual([null, 'u:bob', 'u:alice', null]);
+    const results = rejectedResults(plan);
+    expect(results[0]?.reason).toBe('id-in-other-scope');
+    expect(results[1]).toBeNull();
+    expect(results[2]).toBeNull();
+    expect(results[3]?.reason).toBe('id-in-other-scope');
   });
 
   it('checks existing child full-upsert scope against parent task home (or pusherScope when parent unknown)', () => {
@@ -312,8 +341,8 @@ describe('planPushBatch characterization', () => {
       'u:alice',
     );
 
-    expect(plan.opTargetScope).toEqual(['u:bob', null, null, 'u:alice', null, null]);
-    expect(plan.results.map((r) => r?.reason ?? null)).toEqual([
+    expect(routedScopes(plan)).toEqual(['u:bob', null, null, 'u:alice', null, null]);
+    expect(rejectedResults(plan).map((r) => r?.reason ?? null)).toEqual([
       null,
       'id-in-other-scope',
       'id-in-other-scope',
@@ -345,10 +374,11 @@ describe('planPushBatch characterization', () => {
       'u:alice',
     );
 
-    expect(plan.opTargetScope).toEqual([null, null, 'u:bob', 'u:bob']);
-    expect(plan.ownerProjectDeletes).toEqual([
-      { opIndex: 0, projectId: 'p-active', homeScope: 'u:alice', opId: 'op-active-owner' },
-      { opIndex: 1, projectId: 'p-purged-own', homeScope: 'u:alice', opId: 'op-purged-owner-replay' },
+    expect(plan.ops.map((o) => o.outcome)).toEqual([
+      { kind: 'ownerDelete', projectId: 'p-active', homeScope: 'u:alice', opId: 'op-active-owner' },
+      { kind: 'ownerDelete', projectId: 'p-purged-own', homeScope: 'u:alice', opId: 'op-purged-owner-replay' },
+      { kind: 'routed', scope: 'u:bob' },
+      { kind: 'routed', scope: 'u:bob' },
     ]);
   });
 
@@ -361,7 +391,7 @@ describe('planPushBatch characterization', () => {
         fullTaskOp('op-task-in-legacy', 't-1', 'p-legacy'),
         // Existing project where user already has membership: full upsert registers listScope, no backfill.
         fullProjectOp('op-known-member', 'p-member'),
-        // Existing project partial upsert with membership: neither backfill nor listScopeTarget.
+        // Existing project partial upsert with membership: neither backfill nor listScope.
         partialOp('op-partial-member', 'project', 'p-member', { name: 'Renamed' }),
       ],
       ctx({
@@ -374,17 +404,17 @@ describe('planPushBatch characterization', () => {
       'u:alice',
     );
 
-    expect(plan.results).toEqual([null, null, null, null]);
-    expect(plan.opTargetScope).toEqual(['u:alice', 'u:alice', 'u:alice', 'u:alice']);
+    expect(rejectedResults(plan)).toEqual([null, null, null, null]);
+    expect(routedScopes(plan)).toEqual(['u:alice', 'u:alice', 'u:alice', 'u:alice']);
     expect([...plan.projectOwnerBackfills]).toEqual(['p-legacy']);
-    expect(plan.listScopeTargets).toEqual([
-      { opIndex: 0, projectId: 'p-legacy', scope: 'u:alice' },
-      { opIndex: 1, projectId: 'p-legacy', scope: 'u:alice' },
-      { opIndex: 2, projectId: 'p-member', scope: 'u:alice' },
+    expect(listScopesWithIndex(plan)).toEqual([
+      { idx: 0, projectId: 'p-legacy', scope: 'u:alice' },
+      { idx: 1, projectId: 'p-legacy', scope: 'u:alice' },
+      { idx: 2, projectId: 'p-member', scope: 'u:alice' },
     ]);
   });
 
-  it('registers listScopeTargets for existing task moves only when target list is writable, new, or backfilled', () => {
+  it('registers listScope for existing task moves only when target list is writable, new, or backfilled', () => {
     const plan = planOps(
       [
         fullProjectOp('op-new-proj', 'p-new'),
@@ -406,9 +436,9 @@ describe('planPushBatch characterization', () => {
       'u:alice',
     );
 
-    expect(plan.listScopeTargets).toEqual([
-      { opIndex: 0, projectId: 'p-new', scope: 'u:alice' },
-      { opIndex: 1, projectId: 'p-new', scope: 'u:alice' },
+    expect(listScopesWithIndex(plan)).toEqual([
+      { idx: 0, projectId: 'p-new', scope: 'u:alice' },
+      { idx: 1, projectId: 'p-new', scope: 'u:alice' },
     ]);
   });
 
@@ -421,15 +451,15 @@ describe('planPushBatch characterization', () => {
       fullChecklistOp('op-orphan-child', 'c-orphan', 't-missing'),
     ]);
 
-    expect(plan.opTargetScope).toEqual([null, null, null, null, null]);
-    expect(plan.results.map((r) => r?.reason)).toEqual([
+    expect(routedScopes(plan)).toEqual([null, null, null, null, null]);
+    expect(rejectedResults(plan).map((r) => r?.reason)).toEqual([
       'Invalid hlc',
       'unknown-row',
       'unknown-row',
       'unknown-row',
       'unknown-row',
     ]);
-    expect(plan.inBatchNewHome.size).toBe(0);
+    expect(newHomes(plan).size).toBe(0);
   });
 
   it('rejects new purged project and propagates purged/forbidden task rejection to in-batch children', () => {
@@ -447,15 +477,15 @@ describe('planPushBatch characterization', () => {
       }),
     );
 
-    expect(plan.opTargetScope).toEqual([null, null, null, null, null]);
-    expect(plan.results.map((r) => r?.reason)).toEqual([
+    expect(routedScopes(plan)).toEqual([null, null, null, null, null]);
+    expect(rejectedResults(plan).map((r) => r?.reason)).toEqual([
       'Project is purged',
       'Project is purged',
       'Project is purged',
       'Forbidden',
       'Forbidden',
     ]);
-    expect(plan.inBatchNewHome.size).toBe(0);
+    expect(newHomes(plan).size).toBe(0);
   });
 
   it('binds new child of an existing foreign-scoped task to the parent scope and binds new member/folder/task-delete to pusherScope', () => {
@@ -472,30 +502,31 @@ describe('planPushBatch characterization', () => {
       'u:alice',
     );
 
-    expect(plan.results).toEqual([null, null, null, null]);
-    expect(plan.opTargetScope).toEqual(['u:bob', 'u:alice', 'u:alice', 'u:alice']);
-    expect(plan.inBatchNewHome.get('checklistItem:c-1')).toEqual({
+    expect(rejectedResults(plan)).toEqual([null, null, null, null]);
+    expect(routedScopes(plan)).toEqual(['u:bob', 'u:alice', 'u:alice', 'u:alice']);
+    const homes = newHomes(plan);
+    expect(homes.get('checklistItem:c-1')).toEqual({
       entity: 'checklistItem',
       entityId: 'c-1',
       desiredScope: 'u:bob',
       parentTaskId: 't-bob',
     });
-    expect(plan.inBatchNewHome.get('member:m-1')).toEqual({
+    expect(homes.get('member:m-1')).toEqual({
       entity: 'member',
       entityId: 'm-1',
       desiredScope: 'u:alice',
     });
-    expect(plan.inBatchNewHome.get('folder:f-1')).toEqual({
+    expect(homes.get('folder:f-1')).toEqual({
       entity: 'folder',
       entityId: 'f-1',
       desiredScope: 'u:alice',
     });
-    expect(plan.inBatchNewHome.get('task:t-never-seen')).toEqual({
+    expect(homes.get('task:t-never-seen')).toEqual({
       entity: 'task',
       entityId: 't-never-seen',
       desiredScope: 'u:alice',
     });
-    expect(plan.listScopeTargets).toEqual([]);
+    expect(listScopesWithIndex(plan)).toEqual([]);
   });
 
   it('plans project + task + child created in one batch without mutating input context', () => {
@@ -513,14 +544,14 @@ describe('planPushBatch characterization', () => {
       'u:alice',
     );
 
-    expect(plan.results).toEqual([null, null, null]);
-    expect(plan.opTargetScope).toEqual(['u:alice', 'u:alice', 'u:alice']);
+    expect(rejectedResults(plan)).toEqual([null, null, null]);
+    expect(routedScopes(plan)).toEqual(['u:alice', 'u:alice', 'u:alice']);
     expect([...plan.inBatchNewProjects]).toEqual(['p-new']);
-    expect(plan.listScopeTargets).toEqual([
-      { opIndex: 0, projectId: 'p-new', scope: 'u:alice' },
-      { opIndex: 1, projectId: 'p-new', scope: 'u:alice' },
+    expect(listScopesWithIndex(plan)).toEqual([
+      { idx: 0, projectId: 'p-new', scope: 'u:alice' },
+      { idx: 1, projectId: 'p-new', scope: 'u:alice' },
     ]);
-    expect(plan.inBatchNewHome.get('checklistItem:c-new')).toEqual({
+    expect(newHomes(plan).get('checklistItem:c-new')).toEqual({
       entity: 'checklistItem',
       entityId: 'c-new',
       desiredScope: 'u:alice',
@@ -571,8 +602,8 @@ describe('planPushBatch characterization', () => {
       { projectId: 'p-batch', role: 'owner' },
     ]);
 
-    // Proof of the coupling: if listScopeTargets is cleared, reconcileListScopes short-circuits
-    // without refreshing memberships from D1 before dispatch, so the DO rejects both ops.
+    // Proof of the coupling: if per-op listScope entries are cleared, reconcileListScopes
+    // short-circuits without refreshing memberships from D1 before dispatch, so the DO rejects both ops.
     const h2 = createServerHarness();
     await seedUser(h2, 'u-a', 'm-a', false);
     const ops = [
@@ -586,21 +617,90 @@ describe('planPushBatch characterization', () => {
       projectIdsToCheck: parsed.projectIdsToCheck,
     });
     const plan = planPushBatch({ pusherScope: 'u:u-a', parsedOps: parsed.ops, context });
-    expect(plan.listScopeTargets.map((t) => t.projectId)).toEqual(['p-skip', 'p-skip']);
+    expect(plan.ops.map((o) => o.listScope?.projectId)).toEqual(['p-skip', 'p-skip']);
 
     const outcome = await applyPushPlan(h2.db, {
       userId: 'u-a',
       deviceId: 'dev-a',
       pusherScope: 'u:u-a',
       nowMs: 1_700_000_000_000,
-      parsedOps: parsed.ops,
       context,
-      plan: { ...plan, listScopeTargets: [] },
+      plan: {
+        ...plan,
+        ops: plan.ops.map((o) => ({ ...o, listScope: undefined })),
+      },
       getScopeStub: h2.getScopeStub,
     });
     expect(outcome.results.map((r) => ({ status: r.status, reason: r.reason }))).toEqual([
       { status: 'rejected', reason: 'Forbidden' },
       { status: 'rejected', reason: 'Forbidden' },
     ]);
+  });
+
+  it('segments dispatch around owner project delete so earlier edits run before purge and later edits see purged state', async () => {
+    const h = createServerHarness();
+    await seedUser(h, 'u-a', 'm-a', false);
+
+    // Seed project + task in a prior push.
+    const setup = await h.devicePush('u-a', [
+      deviceOp(h, 'project', projectRow('p-seg')),
+      deviceOp(h, 'task', taskRow('t-seg', 'p-seg', { title: 'initial' })),
+    ]);
+    expect(setup.results.map((r) => r.status)).toEqual(['applied', 'applied']);
+
+    // One batch: edit before delete -> owner project delete -> edit after delete.
+    const res = await h.devicePush('u-a', [
+      { ...deviceOp(h, 'task', { id: 't-seg', title: 'before-purge' }), fields: ['title'] },
+      { opId: 'op-seg-del', hlc: h.deviceHlc(), entity: 'project', entityId: 'p-seg', op: 'delete', fields: [], row: {} },
+      { ...deviceOp(h, 'task', { id: 't-seg', title: 'after-purge' }), fields: ['title'] },
+    ]);
+
+    expect(res.results.map((r) => ({ status: r.status, reason: r.reason }))).toEqual([
+      { status: 'applied', reason: undefined },
+      { status: 'applied', reason: undefined },
+      { status: 'rejected', reason: 'Project is purged' },
+    ]);
+    expect(res.results[0].row?.title).toBe('before-purge');
+  });
+});
+
+describe('newRowPreconditionDenial', () => {
+  function validatedOf(raw: unknown) {
+    const env = toEnvelope(raw);
+    if (!env.validated.ok) throw new Error(`Expected valid op: ${env.validated.reason}`);
+    return env.validated.op;
+  }
+
+  it('enforces required fields, child delete, child parent, and optional project delete rules', () => {
+    const projDel = validatedOf(deleteOp('op-1', 'project', 'p1'));
+    expect(newRowPreconditionDenial(projDel, { rejectUnknownProjectDelete: true })).toBe(
+      'unknown-row',
+    );
+    expect(newRowPreconditionDenial(projDel)).toBeNull();
+
+    const partialTask = validatedOf(partialOp('op-2', 'task', 't1', { title: 'only' }));
+    expect(newRowPreconditionDenial(partialTask)).toBe('unknown-row');
+
+    const childDel = validatedOf(deleteOp('op-3', 'checklistItem', 'c1'));
+    expect(newRowPreconditionDenial(childDel)).toBe('unknown-row');
+
+    const childUpsert = validatedOf(fullChecklistOp('op-4', 'c1', 't1'));
+    expect(newRowPreconditionDenial(childUpsert, { checkParentTask: () => ({ ok: false }) })).toBe(
+      'unknown-row',
+    );
+    expect(
+      newRowPreconditionDenial(childUpsert, {
+        checkParentTask: () => ({ ok: false, reason: 'Forbidden' }),
+      }),
+    ).toBe('Forbidden');
+    expect(newRowPreconditionDenial(childUpsert, { checkParentTask: () => ({ ok: true }) })).toBeNull();
+
+    const childEmptyParent = validatedOf(fullChecklistOp('op-5', 'c2', ''));
+    expect(
+      newRowPreconditionDenial(childEmptyParent, { checkParentTask: () => ({ ok: true }) }),
+    ).toBe('unknown-row');
+
+    const taskDel = validatedOf(deleteOp('op-6', 'task', 't-new'));
+    expect(newRowPreconditionDenial(taskDel, { rejectUnknownProjectDelete: true })).toBeNull();
   });
 });

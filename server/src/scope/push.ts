@@ -1,5 +1,4 @@
 import {
-  hasAllRequiredFields,
   isTaskChildEntity,
   type EntityName,
   type StoredEntityState,
@@ -13,7 +12,8 @@ import {
 } from '../sync/access';
 import { mergeOp } from '../sync/merge';
 import { envelopeOf, toEnvelope, type OpEnvelope } from '../sync/envelope';
-import { REJECT_REASON, rejectedResult } from '../sync/rejectReason';
+import { newRowPreconditionDenial } from '../sync/newRow';
+import { rejectedResult } from '../sync/rejectReason';
 import { authorizeOp } from './authorize';
 import { rowView } from './rowView';
 import type { PushOpResult, ScopePushInput, ScopePushResponse } from './api';
@@ -220,14 +220,14 @@ export function processPushBatch(
 
     const existing = store.getRow(op.entity, op.entityId);
 
-    // 4. Missing row + partial upsert check
+    // 4. Missing row precondition ladder (partial upsert, child delete, child without parent)
     if (!existing) {
-      if (op.op === 'upsert' && !hasAllRequiredFields(op.entity, op.fields)) {
-        rejectOp(op.opId, REJECT_REASON.UNKNOWN_ROW, op.entity, op.entityId);
-        continue;
-      }
-      if (op.op === 'delete' && isTaskChildEntity(op.entity)) {
-        rejectOp(op.opId, REJECT_REASON.UNKNOWN_ROW, op.entity, op.entityId);
+      const denial = newRowPreconditionDenial(op, {
+        checkParentTask: (taskId) =>
+          store.getRow('task', taskId) ? { ok: true } : { ok: false },
+      });
+      if (denial) {
+        rejectOp(op.opId, denial, op.entity, op.entityId);
         continue;
       }
     }

@@ -12,7 +12,6 @@ import {
   registerListScope,
 } from '../../membership';
 import type { EntityName, MembershipRole } from '../entities';
-import type { OpEnvelope } from '../envelope';
 import type { AppDb } from '../push';
 import { REJECT_REASON, rejectedResult } from '../rejectReason';
 import { scopeOwnerId } from '../scopeName';
@@ -22,12 +21,16 @@ import {
   QUERY_CHUNK_SIZE,
   type PushContext,
 } from './context';
-import { entityHomeKey, type ParsedPushOp } from './parse';
-import type { ListScopeTarget, NewEntityHomeEntry, OwnerProjectDelete, PushPlan } from './plan';
+import { entityHomeKey } from './parse';
+import type { ListScopeTarget, NewEntityHomeEntry, PlannedPushOp, PushPlan } from './plan';
+
+interface ExecutionOp extends PlannedPushOp {
+  result: PushOpResult | null;
+}
 
 interface ScopeResponseEntry {
   scope: string;
-  group: Array<{ index: number; op: OpEnvelope }>;
+  group: ExecutionOp[];
   response: ScopePushResponse;
 }
 
@@ -36,7 +39,6 @@ export interface ApplyPushPlanParams {
   deviceId: string;
   pusherScope: string;
   nowMs: number;
-  parsedOps: readonly ParsedPushOp[];
   context: PushContext;
   plan: PushPlan;
   getScopeStub: (scope: string) => ScopeStub;
@@ -58,23 +60,18 @@ async function bindEntityHomes(
     userId: string;
     pusherScope: string;
     nowMs: number;
-    parsedOps: readonly ParsedPushOp[];
-    inBatchNewHome: ReadonlyMap<string, NewEntityHomeEntry>;
+    ops: ExecutionOp[];
     inBatchNewProjects: Set<string>;
-    opTargetScope: Array<string | null>;
-    results: Array<PushOpResult | null>;
   },
 ): Promise<void> {
-  const {
-    userId,
-    pusherScope,
-    nowMs,
-    parsedOps,
-    inBatchNewHome,
-    inBatchNewProjects,
-    opTargetScope,
-    results,
-  } = params;
+  const { userId, pusherScope, nowMs, ops, inBatchNewProjects } = params;
+
+  const inBatchNewHome = new Map<string, NewEntityHomeEntry>();
+  for (const entry of ops) {
+    if (entry.newHome) {
+      inBatchNewHome.set(entityHomeKey(entry.newHome.entity, entry.newHome.entityId), entry.newHome);
+    }
+  }
   if (inBatchNewHome.size === 0) return;
 
   const entries = Array.from(inBatchNewHome.values());
@@ -151,20 +148,22 @@ async function bindEntityHomes(
   }
 
   const orphanCleanupKeys: Array<{ entity: EntityName; entityId: string }> = [];
-  for (let i = 0; i < parsedOps.length; i += 1) {
-    const { rawOpId, entity, entityId } = parsedOps[i];
-    if (!entity || !entityId || opTargetScope[i] === null) continue;
+  for (const entry of ops) {
+    const { rawOpId, entity, entityId } = entry.parsed;
+    if (!entity || !entityId || entry.outcome.kind !== 'routed') continue;
     const key = entityHomeKey(entity, entityId);
     const newEntry = inBatchNewHome.get(key);
     if (mismatchKeys.has(key)) {
-      results[i] = rejectedResult(rawOpId, REJECT_REASON.ID_IN_OTHER_SCOPE);
-      opTargetScope[i] = null;
+      const result = rejectedResult(rawOpId, REJECT_REASON.ID_IN_OTHER_SCOPE);
+      entry.outcome = { kind: 'rejected', result };
+      entry.result = result;
       if (entity === 'project') {
         inBatchNewProjects.delete(entityId);
       }
     } else if (newEntry?.parentTaskId && mismatchTaskIds.has(newEntry.parentTaskId)) {
-      results[i] = rejectedResult(rawOpId, REJECT_REASON.ID_IN_OTHER_SCOPE);
-      opTargetScope[i] = null;
+      const result = rejectedResult(rawOpId, REJECT_REASON.ID_IN_OTHER_SCOPE);
+      entry.outcome = { kind: 'rejected', result };
+      entry.result = result;
       if (newlyWonKeys.has(key)) {
         newlyWonKeys.delete(key);
         orphanCleanupKeys.push({ entity, entityId });
@@ -202,22 +201,18 @@ async function reconcileListScopes(
     pusherScope: string;
     nowMs: number;
     projectOwnerBackfills: ReadonlySet<string>;
-    listScopeTargets: readonly ListScopeTarget[];
-    opTargetScope: readonly (string | null)[];
+    ops: readonly ExecutionOp[];
     purgedSet: Set<string>;
   },
 ): Promise<Record<string, MembershipRole> | null> {
-  const {
-    userId,
-    pusherScope,
-    nowMs,
-    projectOwnerBackfills,
-    listScopeTargets,
-    opTargetScope,
-    purgedSet,
-  } = params;
+  const { userId, pusherScope, nowMs, projectOwnerBackfills, ops, purgedSet } = params;
 
-  const activeListTargets = listScopeTargets.filter((t) => opTargetScope[t.opIndex] !== null);
+  const activeListTargets: ListScopeTarget[] = [];
+  for (const entry of ops) {
+    if (entry.outcome.kind === 'routed' && entry.listScope) {
+      activeListTargets.push(entry.listScope);
+    }
+  }
   if (projectOwnerBackfills.size === 0 && activeListTargets.length === 0) {
     return null;
   }
@@ -270,13 +265,10 @@ async function dispatchScopeBatches(
     deviceId: string;
     pusherScope: string;
     nowMs: number;
-    parsedOps: readonly ParsedPushOp[];
-    opTargetScope: readonly (string | null)[];
-    ownerProjectDeletes: readonly OwnerProjectDelete[];
+    ops: ExecutionOp[];
     purgedSet: Set<string>;
     memberships: Record<string, MembershipRole>;
     meMemberId: string | null;
-    results: Array<PushOpResult | null>;
     getScopeStub: (scope: string) => ScopeStub;
   },
 ): Promise<{
@@ -289,13 +281,10 @@ async function dispatchScopeBatches(
     deviceId,
     pusherScope,
     nowMs,
-    parsedOps,
-    opTargetScope,
-    ownerProjectDeletes,
+    ops,
     purgedSet,
     memberships,
     meMemberId,
-    results,
     getScopeStub,
   } = params;
 
@@ -303,17 +292,17 @@ async function dispatchScopeBatches(
   const scopeResponses: ScopeResponseEntry[] = [];
   let boundMeMemberId: string | null = null;
 
-  const pushRange = async (startIdx: number, endIdx: number): Promise<void> => {
-    const scopeGroups = new Map<string, Array<{ index: number; op: OpEnvelope }>>();
-    for (let i = startIdx; i < endIdx; i += 1) {
-      const scope = opTargetScope[i];
-      if (!scope) continue;
+  const pushSegment = async (segment: readonly ExecutionOp[]): Promise<void> => {
+    const scopeGroups = new Map<string, ExecutionOp[]>();
+    for (const entry of segment) {
+      if (entry.outcome.kind !== 'routed') continue;
+      const scope = entry.outcome.scope;
       let group = scopeGroups.get(scope);
       if (!group) {
         group = [];
         scopeGroups.set(scope, group);
       }
-      group.push({ index: i, op: parsedOps[i] });
+      group.push(entry);
     }
     if (scopeGroups.size === 0) return;
 
@@ -333,8 +322,8 @@ async function dispatchScopeBatches(
           memberships: membershipsSnapshot,
           purgedProjects: purgedList,
           meMemberId: scope === pusherScope ? currentMeMemberId : null,
-          ops: group.map((g) => g.op.rec),
-          validated: group.map((g) => g.op.validated),
+          ops: group.map((g) => g.parsed.rec),
+          validated: group.map((g) => g.parsed.validated),
         });
         return { scope, group, response };
       }),
@@ -343,7 +332,7 @@ async function dispatchScopeBatches(
     for (const entry of segmentResponses) {
       scopeResponses.push(entry);
       for (let j = 0; j < entry.group.length; j += 1) {
-        results[entry.group[j].index] = entry.response.results[j];
+        entry.group[j].result = entry.response.results[j];
       }
       if (entry.scope === pusherScope && entry.response.boundMeMemberId) {
         boundMeMemberId = entry.response.boundMeMemberId;
@@ -351,11 +340,17 @@ async function dispatchScopeBatches(
     }
   };
 
-  let segmentStart = 0;
-  for (const del of ownerProjectDeletes) {
-    await pushRange(segmentStart, del.opIndex);
-    segmentStart = del.opIndex + 1;
+  let pendingSegment: ExecutionOp[] = [];
+  for (const entry of ops) {
+    if (entry.outcome.kind !== 'ownerDelete') {
+      pendingSegment.push(entry);
+      continue;
+    }
 
+    await pushSegment(pendingSegment);
+    pendingSegment = [];
+
+    const del = entry.outcome;
     const homeResult = await purgeProject(db, {
       projectId: del.projectId,
       homeScope: del.homeScope,
@@ -368,14 +363,14 @@ async function dispatchScopeBatches(
     purgedSet.add(del.projectId);
     delete memberships[del.projectId];
     extraServerTimes.push(homeResult.serverTime);
-    results[del.opIndex] = {
+    entry.result = {
       opId: del.opId,
       status: 'applied',
       row: homeResult.purgedRow,
       clocks: homeResult.clocks,
     };
   }
-  await pushRange(segmentStart, parsedOps.length);
+  await pushSegment(pendingSegment);
 
   return { scopeResponses, extraServerTimes, boundMeMemberId };
 }
@@ -400,7 +395,7 @@ async function syncPusherProfile(
       if (scope !== pusherScope) continue;
       for (let j = 0; j < group.length; j += 1) {
         const res = response.results[j];
-        const opObj = group[j].op.rec;
+        const opObj = group[j].parsed.rec;
         if (
           res.status === 'applied' &&
           res.row &&
@@ -440,10 +435,12 @@ export async function applyPushPlan(
   db: AppDb,
   params: ApplyPushPlanParams,
 ): Promise<AppliedPushOutcome> {
-  const { userId, deviceId, pusherScope, nowMs, parsedOps, context, plan, getScopeStub, storage } = params;
+  const { userId, deviceId, pusherScope, nowMs, context, plan, getScopeStub, storage } = params;
 
-  const results = [...plan.results];
-  const opTargetScope = [...plan.opTargetScope];
+  const ops: ExecutionOp[] = plan.ops.map((op) => ({
+    ...op,
+    result: op.outcome.kind === 'rejected' ? op.outcome.result : null,
+  }));
   const inBatchNewProjects = new Set(plan.inBatchNewProjects);
   const purgedSet = new Set(context.purgedSet);
   let memberships: Record<string, MembershipRole> = { ...context.memberships };
@@ -452,20 +449,19 @@ export async function applyPushPlan(
     userId,
     pusherScope,
     nowMs,
-    parsedOps,
-    inBatchNewHome: plan.inBatchNewHome,
+    ops,
     inBatchNewProjects,
-    opTargetScope,
-    results,
   });
 
+  // Ordering invariant: reconcileListScopes must run after bindEntityHomes (which inserts
+  // claimOwner for new lists) and before dispatchScopeBatches so tasks targeting lists created
+  // or owner-backfilled earlier in this batch see the refreshed owner membership at the Scope DO.
   const refreshedMemberships = await reconcileListScopes(db, {
     userId,
     pusherScope,
     nowMs,
     projectOwnerBackfills: plan.projectOwnerBackfills,
-    listScopeTargets: plan.listScopeTargets,
-    opTargetScope,
+    ops,
     purgedSet,
   });
   if (refreshedMemberships !== null) {
@@ -477,13 +473,10 @@ export async function applyPushPlan(
     deviceId,
     pusherScope,
     nowMs,
-    parsedOps,
-    opTargetScope,
-    ownerProjectDeletes: plan.ownerProjectDeletes,
+    ops,
     purgedSet,
     memberships,
     meMemberId: context.meMemberId,
-    results,
     getScopeStub,
   });
 
@@ -497,13 +490,13 @@ export async function applyPushPlan(
 
   if (storage) {
     const purgedTaskIds = new Set<string>();
-    for (let i = 0; i < parsedOps.length; i += 1) {
-      const { validated } = parsedOps[i];
+    for (const entry of ops) {
+      const { validated } = entry.parsed;
       if (
         validated.ok &&
         validated.op.entity === 'task' &&
         validated.op.op === 'delete' &&
-        results[i]?.status === 'applied'
+        entry.result?.status === 'applied'
       ) {
         purgedTaskIds.add(validated.op.entityId);
       }
@@ -516,7 +509,7 @@ export async function applyPushPlan(
   }
 
   return {
-    results: results as PushOpResult[],
+    results: ops.map((entry) => entry.result!),
     scopeServerTimes: [
       ...extraServerTimes,
       ...scopeResponses.map((r) => r.response.serverTime),

@@ -139,6 +139,37 @@ const GUARDS: Guard[] = [
     bad: ['const parsed = validateSyncOp(op);', 'return envelopeOf(raw, validateSyncOp(raw));'],
   },
   {
+    name: 'no index-parallel plan constructs in src/sync/push/**',
+    dirs: ['src/sync/push'],
+    pattern: /Array\.from\(\s*\{\s*length:\s*parsedOps\.length\b|\bopIndex\s*:/,
+    allow: [],
+    bad: [
+      'const results = Array.from({ length: parsedOps.length }, () => null);',
+      'const opTargetScope = Array.from({ length: parsedOps.length }, () => null);',
+      'export interface OwnerProjectDelete { opIndex: number; projectId: string; }',
+      'listScopeTargets.push({ opIndex: i, projectId, scope });',
+    ],
+    good: [
+      'const ops: PlannedPushOp[] = [];',
+      'ops.push({ parsed, outcome: { kind: "routed", scope } });',
+    ],
+  },
+  {
+    name: 'unknown-row precondition (!hasAllRequiredFields) only in src/sync/newRow.ts',
+    dirs: ALL,
+    pattern: /!\s*hasAllRequiredFields\(/,
+    allow: ['src/sync/newRow.ts'],
+    bad: [
+      "if (op.op === 'upsert' && !hasAllRequiredFields(op.entity, op.fields)) return;",
+      'if (! hasAllRequiredFields(entity, fields)) reject();',
+    ],
+    good: [
+      'export function hasAllRequiredFields(entity: EntityName, fields: readonly string[]): boolean {',
+      'if (validated.ok && validated.op.op === "upsert" && hasAllRequiredFields(entity, validated.op.fields)) {',
+      "else if (hasAllRequiredFields('project', validated.op.fields)) {",
+    ],
+  },
+  {
     name: 'src/scope/** contains no async or await',
     dirs: ['src/scope'],
     pattern: /\b(async|await)\b/,
@@ -488,6 +519,18 @@ describe('architecture guards', () => {
         /import\s*\{[^}]*\bcanReadAttachment\b[^}]*\}\s*from\s*['"][^'"]*attachments\/access['"]|import\s*\{[^}]*\bcanReadAttachment\b[^}]*\}\s*from\s*['"]\.\/access['"]/,
       );
       expect(src, `${rel} must call canReadAttachment`).toMatch(/\bcanReadAttachment\(/);
+    }
+  });
+
+  it('src/sync/push/plan.ts and src/scope/push.ts share newRowPreconditionDenial', () => {
+    const newRowMod = readFileSync(path.join(serverDir, 'src/sync/newRow.ts'), 'utf8');
+    expect(newRowMod).toMatch(/export function newRowPreconditionDenial\b/);
+    for (const rel of ['src/sync/push/plan.ts', 'src/scope/push.ts']) {
+      const src = readFileSync(path.join(serverDir, rel), 'utf8');
+      expect(src, `${rel} must import newRowPreconditionDenial`).toMatch(
+        /import\s*\{[^}]*\bnewRowPreconditionDenial\b[^}]*\}\s*from\s*['"][^'"]*newRow['"]/,
+      );
+      expect(src, `${rel} must call newRowPreconditionDenial`).toMatch(/\bnewRowPreconditionDenial\(/);
     }
   });
 });
