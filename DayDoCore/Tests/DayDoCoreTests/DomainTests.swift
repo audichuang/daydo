@@ -188,6 +188,7 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         for base in samples {
             let baseDate = cal.date(from: DateComponents(year: base.year, month: base.month, day: base.day))!
             #expect(base.weekday == cal.component(.weekday, from: baseDate) - 1)
+            #expect(base.startOfWeek == base.adding(days: -base.weekday))
             #expect(base.daysInMonth == cal.range(of: .day, in: .month, for: baseDate)!.count)
             for delta in [-400, -31, -1, 0, 1, 28, 366, 1000] {
                 let targetDate = cal.date(byAdding: .day, value: delta, to: baseDate)!

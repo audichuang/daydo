@@ -365,7 +365,7 @@ public struct WidgetCalendarData: Sendable {
     private let orderedTasks: [TodoTask]
 
     public func twoWeekLayout(maxLanes: Int) -> MonthLayout {
-        let twoWeekStart = today.adding(days: -today.weekday)
+        let twoWeekStart = today.startOfWeek
         let twoWeekDays = (0..<14).map { twoWeekStart.adding(days: $0) }
         return MonthLayout(days: twoWeekDays, tasks: orderedTasks, maxLanes: max(1, maxLanes))
     }
@@ -376,7 +376,7 @@ public struct WidgetCalendarData: Sendable {
 
     public static func queryRange(for today: LocalDay) -> ClosedRange<LocalDay> {
         let grid = MonthLayout.gridDays(for: today)
-        let twoWeekStart = today.adding(days: -today.weekday)
+        let twoWeekStart = today.startOfWeek
         let twoWeekEnd = twoWeekStart.adding(days: 13)
         let lower = min(grid.first ?? today, twoWeekStart)
         let upper = max(grid.last ?? today, twoWeekEnd)
@@ -401,7 +401,7 @@ public struct WidgetCalendarData: Sendable {
             }
         }
 
-        let twoWeekStart = today.adding(days: -today.weekday)
+        let twoWeekStart = today.startOfWeek
         let twoWeekDays = (0..<14).map { twoWeekStart.adding(days: $0) }
         let twoWeekLayout = MonthLayout(days: twoWeekDays, tasks: orderedTasks, maxLanes: 2)
 

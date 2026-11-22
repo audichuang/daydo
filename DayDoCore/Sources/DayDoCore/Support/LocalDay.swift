@@ -118,6 +118,9 @@ public struct LocalDay: Hashable, Comparable, Codable, Sendable, CustomStringCon
         return LocalDay.calendar.component(.weekday, from: utcDate) - 1
     }
 
+    /// Sunday starting this day's week.
+    public var startOfWeek: LocalDay { adding(days: -self.weekday) }
+
     public var firstOfMonth: LocalDay { LocalDay(year: year, month: month, day: 1) }
 
     public var daysInMonth: Int {

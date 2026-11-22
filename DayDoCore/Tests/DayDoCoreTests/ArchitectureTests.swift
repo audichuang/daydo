@@ -234,6 +234,36 @@ private let guards: [Guard] = [
             "case .set(let s):\n    t.schedule = s",
         ]
     ),
+    Guard(
+        name: "start-of-week arithmetic uses LocalDay.startOfWeek",
+        directories: ["DayDoCore/Sources", "ios/DayDo", "ios/DayDoWidgets"],
+        pattern: #"adding\(days:\s*-[^)]*\.weekday\)"#,
+        allow: ["DayDoCore/Sources/DayDoCore/Support/LocalDay.swift"],
+        bad: [
+            "let start = first.adding(days: -first.weekday)",
+            "let start = sel.adding(days: -sel.weekday)",
+        ]
+    ),
+    Guard(
+        name: "column lane packing lives solely in Domain/Grouping.swift",
+        directories: ["DayDoCore/Sources", "ios/DayDo", "ios/DayDoWidgets"],
+        pattern: #"lanes\[lane\]"#,
+        allow: ["DayDoCore/Sources/DayDoCore/Domain/Grouping.swift"],
+        bad: [
+            "while lane < lanes.count, lanes[lane].contains(where: { $0.overlaps(range) }) { lane += 1 }",
+            "lanes[lane].append(a...b)",
+        ]
+    ),
+    Guard(
+        name: "calendar day-span loops live in DayDoCore CalendarProjection, not CalendarScreen",
+        directories: ["ios/DayDo/Screens"],
+        pattern: #"while\s+\w+\s*<=\s*end\b"#,
+        allow: [],
+        bad: [
+            "while d <= end {",
+            "while day <= end {",
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {

@@ -84,6 +84,46 @@ public enum TaskGrouping {
     }
 }
 
+/// Packs ordered inclusive column ranges into non-overlapping horizontal lanes
+/// using first-fit placement, optionally capping the lane count and recording
+/// per-column overflow counts.
+public enum LanePacker {
+    public struct Result: Equatable, Sendable {
+        /// Assigned lane index per input item, or `nil` when the item overflowed `maxLanes`.
+        public var lanes: [Int?]
+        /// Column index -> hidden item count for that column.
+        public var overflow: [Int: Int]
+
+        public init(lanes: [Int?], overflow: [Int: Int]) {
+            self.lanes = lanes
+            self.overflow = overflow
+        }
+    }
+
+    public static func pack(_ ranges: [ClosedRange<Int>], maxLanes: Int? = nil) -> Result {
+        var lanes: [[ClosedRange<Int>]] = []
+        var assigned: [Int?] = []
+        assigned.reserveCapacity(ranges.count)
+        var overflow: [Int: Int] = [:]
+
+        for range in ranges {
+            var lane = 0
+            while lane < lanes.count, lanes[lane].contains(where: { $0.overlaps(range) }) {
+                lane += 1
+            }
+            if let maxLanes, lane >= maxLanes {
+                for c in range { overflow[c, default: 0] += 1 }
+                assigned.append(nil)
+                continue
+            }
+            if lane == lanes.count { lanes.append([]) }
+            lanes[lane].append(range)
+            assigned.append(lane)
+        }
+        return Result(lanes: assigned, overflow: overflow)
+    }
+}
+
 /// Month layout for the event calendar (2c): spanning bars in up to 3 lanes
 /// per week, overflow counted as "+N".
 public struct MonthLayout: Sendable {
@@ -109,7 +149,7 @@ public struct MonthLayout: Sendable {
     /// Sunday-first grid covering the month of `month`.
     public static func gridDays(for month: LocalDay) -> [LocalDay] {
         let first = month.firstOfMonth
-        let start = first.adding(days: -first.weekday)
+        let start = first.startOfWeek
         let lastOfMonth = first.adding(days: first.daysInMonth - 1)
         let end = lastOfMonth.adding(days: 6 - lastOfMonth.weekday)
         return (0...start.days(until: end)).map { start.adding(days: $0) }
@@ -135,24 +175,25 @@ public struct MonthLayout: Sendable {
                 if a.1.startDay != b.1.startDay { return a.1.startDay < b.1.startDay }
                 return (a.1.startMinute ?? -1) < (b.1.startMinute ?? -1)
             }
-            var lanes: [[ClosedRange<Int>]] = []
-            var bars: [Bar] = []
-            var overflow: [Int: Int] = [:]
-            for (t, s) in items {
+            let spans: [(task: TodoTask, schedule: Schedule, range: ClosedRange<Int>)] = items.map { t, s in
                 let a = max(0, first.days(until: s.startDay))
                 let b = min(6, first.days(until: s.lastDay))
-                let range = a...b
-                var lane = 0
-                while lane < lanes.count, lanes[lane].contains(where: { $0.overlaps(range) }) { lane += 1 }
-                if lane >= maxLanes {
-                    for c in range { overflow[c, default: 0] += 1 }
-                    continue
-                }
-                if lane == lanes.count { lanes.append([]) }
-                lanes[lane].append(range)
-                bars.append(Bar(task: t, startColumn: a, endColumn: b, lane: lane, continues: s.startDay < first))
+                return (t, s, a...b)
             }
-            weeks.append(Week(days: wd, bars: bars, overflow: overflow))
+            let packed = LanePacker.pack(spans.map(\.range), maxLanes: maxLanes)
+            var bars: [Bar] = []
+            bars.reserveCapacity(spans.count)
+            for (span, lane) in zip(spans, packed.lanes) {
+                guard let lane else { continue }
+                bars.append(Bar(
+                    task: span.task,
+                    startColumn: span.range.lowerBound,
+                    endColumn: span.range.upperBound,
+                    lane: lane,
+                    continues: span.schedule.startDay < first
+                ))
+            }
+            weeks.append(Week(days: wd, bars: bars, overflow: packed.overflow))
         }
         self.weeks = weeks
     }
