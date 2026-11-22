@@ -318,27 +318,53 @@ public enum DayLayout {
         public var lanes: Int
     }
 
+    public enum BlockOrder: Sendable {
+        /// Clipped start ascending, longer clipped end first (calendar time grid).
+        case clippedStartLongestFirst
+        /// Pre-clip schedule start ascending, preserving input order on ties (time-block editor).
+        case scheduleStart
+    }
+
     /// Clips a timed schedule to `day` (0..<`dayEnd` minutes, default 1440),
     /// returning `nil` for all-day tasks or schedules outside the window.
-    public static func clippedRange(for schedule: Schedule, on day: LocalDay, dayEnd: Int = 1440) -> (start: Int, end: Int)? {
+    public static func clippedRange(
+        for schedule: Schedule,
+        on day: LocalDay,
+        dayEnd: Int = 1440,
+        minDuration: Int = 15
+    ) -> (start: Int, end: Int)? {
         guard dayEnd > 0, let sm = schedule.startMinute else { return nil }
         let windowLastDay = day.adding(days: (dayEnd - 1) / 1440)
         guard schedule.overlaps(day, windowLastDay) else { return nil }
         let offset = schedule.startDay.days(until: day) * 1440
         let rawEnd = schedule.endOffsetMinutes ?? (sm + 30)
         let start = max(0, sm - offset)
-        let end = min(dayEnd, max(rawEnd, sm + 15) - offset)
+        let end = min(dayEnd, max(rawEnd, sm + minDuration) - offset)
         guard end > start else { return nil }
         return (start, end)
     }
 
-    public static func blocks(for tasks: [TodoTask], on day: LocalDay, dayEnd: Int = 1440) -> [Block] {
-        var items: [(TodoTask, Int, Int)] = []
+    public static func blocks(
+        for tasks: [TodoTask],
+        on day: LocalDay,
+        dayEnd: Int = 1440,
+        minDuration: Int = 15,
+        order: BlockOrder = .clippedStartLongestFirst
+    ) -> [Block] {
+        var items: [(task: TodoTask, rawStart: Int, start: Int, end: Int)] = []
         for t in tasks {
-            guard let s = t.schedule, let (start, end) = clippedRange(for: s, on: day, dayEnd: dayEnd) else { continue }
-            items.append((t, start, end))
+            guard let s = t.schedule,
+                  let sm = s.startMinute,
+                  let (start, end) = clippedRange(for: s, on: day, dayEnd: dayEnd, minDuration: minDuration) else { continue }
+            let rawStart = sm - s.startDay.days(until: day) * 1440
+            items.append((t, rawStart, start, end))
         }
-        items.sort { ($0.1, -$0.2) < ($1.1, -$1.2) }
+        switch order {
+        case .clippedStartLongestFirst:
+            items.sort { ($0.start, -$0.end) < ($1.start, -$1.end) }
+        case .scheduleStart:
+            items.sort { $0.rawStart < $1.rawStart }
+        }
         var out: [Block] = []
         var cluster: [Block] = []
         var clusterEnd = -1
@@ -347,11 +373,12 @@ public enum DayLayout {
             out += cluster.map { var b = $0; b.lanes = n; return b }
             cluster = []
         }
-        for (t, s, e) in items {
+        for item in items {
+            let s = item.start, e = item.end
             if s >= clusterEnd { flush() }
             var lane = 0
             while cluster.contains(where: { $0.lane == lane && $0.end > s }) { lane += 1 }
-            cluster.append(Block(task: t, start: s, end: e, lane: lane, lanes: 1))
+            cluster.append(Block(task: item.task, start: s, end: e, lane: lane, lanes: 1))
             clusterEnd = max(clusterEnd, e)
         }
         flush()

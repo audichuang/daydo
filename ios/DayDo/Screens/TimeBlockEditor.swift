@@ -176,6 +176,8 @@ struct TimeBlockEditor: View {
                             .background(RoundedRectangle(cornerRadius: 8).fill(Palette.blockMuted))
                             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.blockMutedBorder))
                             .clipped()
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier("timeBlock.other.\(o.task.title)")
                             .offset(x: 56 + CGFloat(o.lane) * laneW, y: top + CGFloat(o.start))
                         }
                         block(width: availW)
@@ -282,7 +284,7 @@ struct TimeBlockEditor: View {
 
     /// Other timed items of the day laid out in side-by-side lanes up to the 26:00 timeline limit.
     var othersLaid: [DayLayout.Block] {
-        DayLayout.blocks(for: others, on: day, dayEnd: Self.maxEnd)
+        DayLayout.blocks(for: others, on: day, dayEnd: Self.maxEnd, minDuration: 0, order: .scheduleStart)
     }
 
     func loadDay() async {

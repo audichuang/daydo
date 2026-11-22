@@ -417,6 +417,72 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
             ("nextEarly", 1470, 1530),
         ], by: ==))
     }
+
+    @Test func editorLayoutPreservesOvernightOrderShortNonOverlapAndThreeLanes() {
+        let d = day("2026-11-15")
+        let editorEnd = 26 * 60
+
+        // (a) Previous-night overnight task starts earlier than today 00:00, so it takes lane 0
+        // regardless of input order, while default calendar-grid layout keeps longer-first order.
+        let prevOvernight = task("prev", .timed(d.adding(days: -1), start: 23 * 60 + 30, end: 30))
+        let midnight = task("mid", .timed(d, start: 0, end: 60))
+        for input in [[prevOvernight, midnight], [midnight, prevOvernight]] {
+            let overnightPair = DayLayout.blocks(for: input, on: d, dayEnd: editorEnd, minDuration: 0, order: .scheduleStart)
+            #expect(overnightPair.map { ($0.task.id, $0.start, $0.end, $0.lane, $0.lanes) }.elementsEqual([
+                ("prev", 0, 30, 0, 2),
+                ("mid", 0, 60, 1, 2),
+            ], by: ==))
+        }
+        let calendarOvernight = DayLayout.blocks(for: [prevOvernight, midnight], on: d)
+        #expect(calendarOvernight.map { ($0.task.id, $0.lane, $0.lanes) }.elementsEqual([
+            ("mid", 0, 2),
+            ("prev", 1, 2),
+        ], by: ==))
+
+        // (b) Short task (09:00-09:05) uses its real end for overlap so 09:10-09:40 (and touching
+        // 09:05-09:30) stay in lane 0, while calendar-grid default keeps its 15-minute minimum.
+        let shortTask = task("short", .timed(d, start: 9 * 60, end: 9 * 60 + 5))
+        let nextTask = task("next", .timed(d, start: 9 * 60 + 10, end: 9 * 60 + 40))
+        let shortPair = DayLayout.blocks(for: [shortTask, nextTask], on: d, dayEnd: editorEnd, minDuration: 0, order: .scheduleStart)
+        #expect(shortPair.map { ($0.task.id, $0.start, $0.end, $0.lane, $0.lanes) }.elementsEqual([
+            ("short", 540, 545, 0, 1),
+            ("next", 550, 580, 0, 1),
+        ], by: ==))
+        let touchingTask = task("touch", .timed(d, start: 9 * 60 + 5, end: 9 * 60 + 30))
+        let touchingPair = DayLayout.blocks(for: [shortTask, touchingTask], on: d, dayEnd: editorEnd, minDuration: 0, order: .scheduleStart)
+        #expect(touchingPair.map { ($0.task.id, $0.start, $0.end, $0.lane, $0.lanes) }.elementsEqual([
+            ("short", 540, 545, 0, 1),
+            ("touch", 545, 570, 0, 1),
+        ], by: ==))
+        let calendarShort = DayLayout.blocks(for: [shortTask, nextTask], on: d)
+        #expect(calendarShort.map { ($0.task.id, $0.start, $0.end, $0.lane, $0.lanes) }.elementsEqual([
+            ("short", 540, 555, 0, 2),
+            ("next", 550, 580, 1, 2),
+        ], by: ==))
+
+        // Three mutually overlapping tasks take three lanes while preserving input order for equal starts.
+        let three = DayLayout.blocks(for: [
+            task("a", .timed(d, start: 19 * 60, end: 20 * 60)),
+            task("b", .timed(d, start: 19 * 60, end: 21 * 60)),
+            task("c", .timed(d, start: 19 * 60 + 30, end: 20 * 60 + 30)),
+        ], on: d, dayEnd: editorEnd, minDuration: 0, order: .scheduleStart)
+        #expect(three.map { ($0.task.id, $0.lane, $0.lanes) }.elementsEqual([
+            ("a", 0, 3),
+            ("b", 1, 3),
+            ("c", 2, 3),
+        ], by: ==))
+
+        // Editor mode still honours the 26:00 (maxEnd) cap.
+        let capped = DayLayout.blocks(for: [
+            task("pastLimit", .timed(d, start: 1410, end: 180)),
+            task("nextEarly", .timed(d.adding(days: 1), start: 30, end: 90)),
+            task("nextAtLimit", .timed(d.adding(days: 1), start: 120, end: 180)),
+        ], on: d, dayEnd: editorEnd, minDuration: 0, order: .scheduleStart)
+        #expect(capped.map { ($0.task.id, $0.start, $0.end, $0.lane, $0.lanes) }.elementsEqual([
+            ("pastLimit", 1410, 1560, 0, 2),
+            ("nextEarly", 1470, 1530, 1, 2),
+        ], by: ==))
+    }
 }
 
 @Suite struct MemberFilterTests {
