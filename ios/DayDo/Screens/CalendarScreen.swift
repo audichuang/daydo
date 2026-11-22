@@ -1206,7 +1206,7 @@ struct AgendaRow: View {
                         Text(task.content.split(whereSeparator: \.isNewline).first.map(String.init) ?? "").txt(14).foregroundStyle(Palette.textSecondary).lineLimit(1)
                     }
                     HStack(spacing: 8) {
-                        Text(AgendaText.line(task, today: model.today, includeDay: task.schedule?.isMultiDay ?? false)).txt(14, .medium).foregroundStyle(AgendaText.color(task, today: model.today, accent: accent))
+                        Text(DateText.agendaLine(task, includeDay: task.schedule?.isMultiDay ?? false)).txt(14, .medium).foregroundStyle(AgendaText.color(task, today: model.today, accent: accent))
                         Spacer(minLength: 4)
                         if showProject {
                             Text(project?.name ?? "").txt(14).foregroundStyle(Palette.textTertiary).lineLimit(1)
@@ -1258,7 +1258,7 @@ struct TimelineAgendaRow: View {
             Button { model.openTask(task.id, inlineAvailable: false) } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .top, spacing: 6) {
-                        Text(AgendaText.line(task, today: model.today, includeDay: task.schedule?.isMultiDay ?? false))
+                        Text(DateText.agendaLine(task, includeDay: task.schedule?.isMultiDay ?? false))
                             .txt(15, .medium).foregroundStyle(AgendaText.color(task, today: model.today, accent: accent))
                         Spacer(minLength: 0)
                         if let owner {
@@ -1284,18 +1284,6 @@ struct TimelineAgendaRow: View {
 }
 
 enum AgendaText {
-    /// "11月13日, 11:00 – 12:00", "11月13日 – 11月17日", "全天".
-    static func line(_ t: TodoTask, today: LocalDay, includeDay: Bool = true) -> String {
-        if t.isCompleted { return "已完成" }
-        guard let s = t.schedule else { return "" }
-        func md(_ d: LocalDay) -> String { "\(d.month)月\(d.day)日" }
-        if s.isAllDay {
-            return s.isMultiDay ? md(s.startDay) + " – " + md(s.lastDay) : (includeDay ? md(s.startDay) : "全天")
-        }
-        let r = DateText.range(s)
-        return includeDay ? md(s.startDay) + ", " + r : r
-    }
-
     static func color(_ t: TodoTask, today: LocalDay, accent: AccentTheme) -> Color {
         if t.isCompleted { return Palette.done }
         return TaskGrouping.isOverdue(t, today: today) ? Palette.overdue : accent.text
@@ -1721,7 +1709,9 @@ struct TimeGrid: View {
     }
 
     var nowMinute: Int {
-        let c = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = model.timeZone
+        let c = cal.dateComponents([.hour, .minute], from: model.now)
         return c.hour! * 60 + c.minute!
     }
     var nowY: CGFloat { CGFloat(nowMinute) / 60 * hourH }

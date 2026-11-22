@@ -288,6 +288,32 @@ private let guards: [Guard] = [
             "guard let key = activeSearchKey, key != loadedKey else { return }",
         ]
     ),
+    Guard(
+        name: "section classification uses TaskSection.Kind, not raw section-id string comparisons",
+        directories: ["ios/DayDo"],
+        pattern: #"(?:==|!=)\s*"(?:overdue|today|tomorrow|later|nodate|completed|trash)"|\bhasPrefix\(\s*"day:"\s*\)|\bcase\s+[^:\n]*"(?:overdue|today|tomorrow|later|nodate|completed|trash)""#,
+        allow: [],
+        bad: [
+            #"visibleSections.first(where: { $0.id == "overdue" })"#,
+            #"$0.id != "completed""#,
+            #"$0.id != "trash""#,
+            #"if sectionId == "tomorrow" { return model.today.adding(days: 1) }"#,
+            #"if sectionId.hasPrefix("day:") { return LocalDay(String(sectionId.dropFirst(4))) }"#,
+            #"case "overdue": Palette.overdue"#,
+            #"case "completed", "trash": Palette.textSecondary"#,
+        ]
+    ),
+    Guard(
+        name: "screens and components read the current time through DayDoCore Clock (AppModel.now / today), not Date()",
+        directories: ["ios/DayDo/Screens", "ios/DayDo/Components"],
+        pattern: #"\bDate\(\)"#,
+        allow: [],
+        bad: [
+            "let c = Calendar.current.dateComponents([.hour, .minute], from: Date())",
+            "LocalDay(date: Date(), in: .current).year",
+            "ISO8601DateFormatter().string(from: Date())",
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {

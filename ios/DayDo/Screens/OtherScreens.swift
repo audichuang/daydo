@@ -63,7 +63,7 @@ struct SearchScreen: View {
                     let firstId = results.first?.id
                     LazyVStack(spacing: 0) {
                         ForEach(results) { t in
-                            TaskRow(task: t, separator: t.id != firstId, sectionId: "search")
+                            TaskRow(task: t, separator: t.id != firstId, sectionKind: .other("search"))
                                 .transition(Motion.rowTransition(reduceMotion))
                         }
                     }
@@ -621,7 +621,7 @@ private struct DataSettingsView: View {
             for p in projects where p.archived {
                 allTasks += try await api.listTasks(TaskQuery(projectId: p.id, includeCompleted: true))
             }
-            let payload = Export(exportedAt: ISO8601DateFormatter().string(from: Date()), projects: projects,
+            let payload = Export(exportedAt: ISO8601DateFormatter().string(from: model.now), projects: projects,
                                  folders: try await api.listFolders(), tags: try await api.listTags(), tasks: allTasks)
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("DayDo-export.json")
             try DayDoJSON.encoder.encode(payload).write(to: url)

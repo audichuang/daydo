@@ -588,6 +588,59 @@ import Testing
     }
 }
 
+@Suite struct SyncApplierSchemaGuardTests {
+    /// Guards against adding a column to a synced table in a migration without
+    /// adding a matching `SyncApplier.FieldSpec` (missing fields are silently
+    /// dropped when applying pulled rows).
+    @Test func syncApplierSpecsMatchDatabaseColumns() throws {
+        // Columns intentionally omitted from `SyncApplier.specs` because they are
+        // device-local bookkeeping (excluded from outbox `CodingKeys` and preserved
+        // manually in `SyncApplier.saveMergedDict`).
+        let intentionallyUnsyncedColumns: [String: Set<String>] = [
+            "attachment": [
+                // Local-only attachment blob upload state; never synced over the wire.
+                "fileUploadedAt",
+                "fileUploadFailed",
+            ],
+        ]
+
+        let appDB = try AppDatabase.inMemory()
+        let specFieldsByEntity = SyncApplier.specFieldNamesByEntity
+        #expect(!specFieldsByEntity.isEmpty)
+        #expect(
+            Set(intentionallyUnsyncedColumns.keys).isSubset(of: Set(specFieldsByEntity.keys)),
+            "Allow-list references unknown synced entity"
+        )
+
+        try appDB.writer.read { db in
+            for (entity, specFieldList) in specFieldsByEntity.sorted(by: { $0.key < $1.key }) {
+                let specFields = Set(specFieldList)
+                #expect(specFields.count == specFieldList.count, "Duplicate FieldSpec entries for \(entity)")
+
+                let tableColumns = Set(try db.columns(in: entity).map(\.name))
+                let allowedUnsynced = intentionallyUnsyncedColumns[entity] ?? []
+
+                #expect(
+                    allowedUnsynced.isSubset(of: tableColumns),
+                    "Stale allow-listed unsynced columns for \(entity): \(allowedUnsynced.subtracting(tableColumns).sorted())"
+                )
+                #expect(
+                    specFields.isDisjoint(with: allowedUnsynced),
+                    "Columns listed in both SyncApplier.specs and unsynced allow-list for \(entity): \(specFields.intersection(allowedUnsynced).sorted())"
+                )
+
+                let expectedSpecFields = tableColumns.subtracting(allowedUnsynced)
+                let missingFromSpec = expectedSpecFields.subtracting(specFields).sorted()
+                let extraInSpec = specFields.subtracting(expectedSpecFields).sorted()
+                #expect(
+                    specFields == expectedSpecFields,
+                    "SyncApplier.specs mismatch for \(entity): missing=\(missingFromSpec), extra=\(extraInSpec)"
+                )
+            }
+        }
+    }
+}
+
 private struct FixtureFile: Encodable {
     let ops: [FixtureOp]
 }

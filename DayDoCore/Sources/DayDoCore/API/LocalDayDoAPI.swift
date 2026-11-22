@@ -945,7 +945,7 @@ extension LocalDayDoAPI {
                     let pageLimit = limit ?? 30
                     let fetched = try self.completed(db, projectId: pid, limit: pageLimit + 1)
                     let sections = TaskGrouping.sections(for: scope, tasks: active, completed: Array(fetched.prefix(pageLimit)), today: today)
-                    return self.markingHasMore(sections, sectionId: "completed", hasMore: fetched.count > pageLimit)
+                    return self.markingHasMore(sections, kind: .completed, hasMore: fetched.count > pageLimit)
                 case .all:
                     let active = try self.fetchActive(db, query: TaskQuery(memberId: memberId), smartOnly: true)
                     return TaskGrouping.sections(for: scope, tasks: active, completed: [], today: today)
@@ -956,12 +956,12 @@ extension LocalDayDoAPI {
                     let pageLimit = limit ?? 300
                     let fetched = try self.completed(db, projectId: nil, limit: pageLimit + 1)
                     let sections = TaskGrouping.sections(for: scope, tasks: [], completed: Array(fetched.prefix(pageLimit)), today: today)
-                    return self.markingHasMore(sections, sectionId: "completed", hasMore: fetched.count > pageLimit)
+                    return self.markingHasMore(sections, kind: .completed, hasMore: fetched.count > pageLimit)
                 case .trash:
                     let pageLimit = limit ?? 300
                     let recs = try TaskRecord.filter(Column("deletedAt") != nil).order(Column("deletedAt").desc).limit(pageLimit + 1).fetchAll(db)
                     let sections = TaskGrouping.sections(for: scope, tasks: try self.tasks(db, Array(recs.prefix(pageLimit))), completed: [], today: today)
-                    return self.markingHasMore(sections, sectionId: "trash", hasMore: recs.count > pageLimit)
+                    return self.markingHasMore(sections, kind: .trash, hasMore: recs.count > pageLimit)
                 }
             case .project(let pid):
                 _ = try self.projectRecord(db, pid)
@@ -969,7 +969,7 @@ extension LocalDayDoAPI {
                 let pageLimit = limit ?? 30
                 let fetched = try self.completed(db, projectId: pid, limit: pageLimit + 1)
                 let sections = TaskGrouping.sections(for: scope, tasks: active, completed: Array(fetched.prefix(pageLimit)), today: today)
-                return self.markingHasMore(sections, sectionId: "completed", hasMore: fetched.count > pageLimit)
+                return self.markingHasMore(sections, kind: .completed, hasMore: fetched.count > pageLimit)
             case .tag(let name):
                 let active = try self.fetchActive(db, query: TaskQuery(tag: name), smartOnly: false)
                 return TaskGrouping.sections(for: scope, tasks: active, completed: [], today: today)
@@ -977,10 +977,10 @@ extension LocalDayDoAPI {
         }
     }
 
-    private func markingHasMore(_ sections: [TaskSection], sectionId: String, hasMore: Bool) -> [TaskSection] {
+    private func markingHasMore(_ sections: [TaskSection], kind: TaskSection.Kind, hasMore: Bool) -> [TaskSection] {
         guard hasMore else { return sections }
         return sections.map { sec in
-            guard sec.id == sectionId else { return sec }
+            guard sec.kind == kind else { return sec }
             var copy = sec
             copy.hasMore = true
             return copy

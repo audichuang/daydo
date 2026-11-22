@@ -84,10 +84,10 @@ public struct WidgetTodayData: Equatable, Sendable {
     }
 
     public static func build(sections: [TaskSection], today: LocalDay) -> WidgetTodayData {
-        let overdue = (sections.first(where: { $0.id == "overdue" })?.tasks ?? []).map { t in
+        let overdue = (sections.first(where: { $0.kind == .overdue })?.tasks ?? []).map { t in
             Item(task: t, isOverdue: true, timeLabel: "逾期")
         }
-        let todayTasks = (sections.first(where: { $0.id == "today" })?.tasks ?? []).map { t in
+        let todayTasks = (sections.first(where: { $0.kind == .today })?.tasks ?? []).map { t in
             Item(task: t, isOverdue: false, timeLabel: todayTimeLabel(for: t.schedule))
         }
         return WidgetTodayData(today: today, overdueItems: overdue, todayItems: todayTasks)

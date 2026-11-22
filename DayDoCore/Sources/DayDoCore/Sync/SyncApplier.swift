@@ -183,6 +183,11 @@ enum SyncApplier {
         specs[entity] != nil
     }
 
+    /// Configured `FieldSpec` names per synced entity (exposed internally for schema guard tests).
+    static var specFieldNamesByEntity: [String: [String]] {
+        specs.mapValues { $0.fields.map(\.name) }
+    }
+
     static func entityId(for entity: String, row: [String: SyncJSONValue]) -> String? {
         switch entity {
         case "projectMember":

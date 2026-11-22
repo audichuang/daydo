@@ -45,40 +45,40 @@ public enum TaskGrouping {
         }
         let overdue = active.filter { isOverdue($0, today: today) }.sorted { ($0.schedule!.lastDay, $0.sortKey) < ($1.schedule!.lastDay, $1.sortKey) }
         var out: [TaskSection] = []
-        func add(_ id: String, _ title: String, _ list: [TodoTask]) {
-            if !list.isEmpty { out.append(TaskSection(id: id, title: title, tasks: list)) }
+        func add(_ kind: TaskSection.Kind, _ title: String, _ list: [TodoTask]) {
+            if !list.isEmpty { out.append(TaskSection(kind: kind, title: title, tasks: list)) }
         }
         switch scope {
         case .smart(.today):
-            add("overdue", "已逾期", overdue)
-            add("today", "今天", on(today))
-            add("tomorrow", "明天", on(tomorrow))
-            add("completed", "已完成", completed)
+            add(.overdue, "已逾期", overdue)
+            add(.today, "今天", on(today))
+            add(.tomorrow, "明天", on(tomorrow))
+            add(.completed, "已完成", completed)
         case .smart(.tomorrow):
-            add("tomorrow", "明天", on(tomorrow))
-            add("completed", "已完成", completed)
+            add(.tomorrow, "明天", on(tomorrow))
+            add(.completed, "已完成", completed)
         case .smart(.next7):
-            add("overdue", "已逾期", overdue)
+            add(.overdue, "已逾期", overdue)
             for i in 0..<7 {
                 let d = today.adding(days: i)
-                add("day:\(d)", DateText.dayTitle(d, today: today), on(d))
+                add(.day(d), DateText.dayTitle(d, today: today), on(d))
             }
         case .smart(.completed):
-            add("completed", "已完成", completed)
+            add(.completed, "已完成", completed)
         case .smart(.trash):
-            add("trash", "垃圾桶", tasks)
+            add(.trash, "垃圾桶", tasks)
         case .smart(.all), .smart(.inbox), .smart(.assigned), .project, .tag:
             let later = sortForDay(active.filter { t in t.schedule.map { $0.startDay > tomorrow } ?? false })
                 .sorted { ($0.schedule!.startDay, $0.schedule!.startMinute ?? -1) < ($1.schedule!.startDay, $1.schedule!.startMinute ?? -1) }
             let noDate = active.filter { $0.schedule == nil }.sorted { a, b in
                 a.priority != b.priority ? a.priority > b.priority : a.sortKey < b.sortKey
             }
-            add("overdue", "已逾期", overdue)
-            add("today", "今天", on(today))
-            add("tomorrow", "明天", on(tomorrow))
-            add("later", "之後", later)
-            add("nodate", "無日期", noDate)
-            add("completed", "已完成", completed)
+            add(.overdue, "已逾期", overdue)
+            add(.today, "今天", on(today))
+            add(.tomorrow, "明天", on(tomorrow))
+            add(.later, "之後", later)
+            add(.noDate, "無日期", noDate)
+            add(.completed, "已完成", completed)
         }
         return out
     }
@@ -264,6 +264,18 @@ public enum DateText {
         }
         let r = range(s)
         return dayPart.isEmpty ? r : dayPart + " " + r
+    }
+
+    /// Agenda row subtitle: "11月13日, 11:00 – 12:00", "11月13日 – 11月17日", "全天", or "已完成".
+    public static func agendaLine(_ task: TodoTask, includeDay: Bool = true) -> String {
+        if task.isCompleted { return "已完成" }
+        guard let s = task.schedule else { return "" }
+        func md(_ d: LocalDay) -> String { "\(d.month)月\(d.day)日" }
+        if s.isAllDay {
+            return s.isMultiDay ? md(s.startDay) + " – " + md(s.lastDay) : (includeDay ? md(s.startDay) : "全天")
+        }
+        let r = range(s)
+        return includeDay ? md(s.startDay) + ", " + r : r
     }
 
     /// Calendar-day countdown badge text for a schedule relative to `today`.
