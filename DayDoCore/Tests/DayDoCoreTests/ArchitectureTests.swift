@@ -276,6 +276,16 @@ private let guards: [Guard] = [
         ]
     ),
     Guard(
+        name: "time-block editor lane layout uses DayDoCore DayLayout.blocks, not a local lane layout",
+        directories: ["ios/DayDo/Screens"],
+        pattern: #"\bstruct\s+Laid\b|\blane\s*==\s*0\b"#,
+        allow: [],
+        bad: [
+            "struct Laid { var task: TodoTask; var start: Int; var end: Int; var lane: Int }",
+            "let lane = out.contains { $0.lane == 0 && $0.start < end && $0.end > start } ? 1 : 0",
+        ]
+    ),
+    Guard(
         name: "resident-tab loader bookkeeping lives in ios/DayDo/App/ResidentQuery.swift, not Screens",
         directories: ["ios/DayDo/Screens"],
         pattern: #"@State\s+(?:private\s+)?var\s+loaded(?:Reload|Query|Key|Scope)\b|!=\s*loaded(?:Reload|Key)\b"#,

@@ -106,7 +106,7 @@ import Testing
 
     // MARK: - dayDotColors
 
-    @Test func dayDotColorsSkipsCompletedCapsAtThreeAndClipsToGrid() {
+    @Test func dayDotColorsIncludesCompletedWithActiveFirstCapsAtThreeAndClipsToGrid() {
         let grid = MonthLayout.gridDays(for: day("2026-11-01")) // 2026-11-01...2026-12-05
         let colors = [
             "p1": "#FF0000",
@@ -115,14 +115,23 @@ import Testing
             "p4": "#FFFF00",
         ]
         let tasks = [
-            // Completed task on Nov 10 should be skipped completely.
+            // Completed-only day still shows its dot when completed tasks are loaded.
             makeTask("done", projectId: "p1", schedule: .allDay(day("2026-11-10")), completed: true),
-            // Five active tasks on Nov 15: p1, p1 (dup), pNoColor (fallback), p2, p3 (4th distinct -> capped).
+            // Completed task placed before active task on Nov 12: active colour must come first.
+            makeTask("done12", projectId: "p4", schedule: .allDay(day("2026-11-12")), completed: true),
+            makeTask("active12", projectId: "p2", schedule: .allDay(day("2026-11-12"))),
+            // Completed task placed before 5 active tasks on Nov 15: active colours win all 3 slots.
+            makeTask("done15", projectId: "p4", schedule: .allDay(day("2026-11-15")), completed: true),
             makeTask("a1", projectId: "p1", schedule: .allDay(day("2026-11-15"))),
             makeTask("a2", projectId: "p1", schedule: .timed(day("2026-11-15"), start: 600, end: 660)),
             makeTask("a3", projectId: "pMissing", schedule: .allDay(day("2026-11-15"))),
             makeTask("a4", projectId: "p2", schedule: .allDay(day("2026-11-15"))),
             makeTask("a5", projectId: "p3", schedule: .allDay(day("2026-11-15"))),
+            // Two completed tasks before two active tasks on Nov 16: active colours first, completed fills 3rd slot.
+            makeTask("done16a", projectId: "p4", schedule: .allDay(day("2026-11-16")), completed: true),
+            makeTask("done16b", projectId: "p3", schedule: .allDay(day("2026-11-16")), completed: true),
+            makeTask("active16a", projectId: "p1", schedule: .allDay(day("2026-11-16"))),
+            makeTask("active16b", projectId: "p2", schedule: .allDay(day("2026-11-16"))),
             // Multi-day starting before grid (Oct 30 -> Nov 2) clipped to Nov 1..Nov 2.
             makeTask("beforeGrid", projectId: "p4", schedule: .allDay(day("2026-10-30"), through: day("2026-11-02"))),
             // Multi-day extending past grid (Dec 4 -> Dec 8) clipped to Dec 4..Dec 5.
@@ -134,8 +143,10 @@ import Testing
 
         let dots = CalendarProjection.dayDotColors(tasks: tasks, gridDays: grid, projectColors: colors)
 
-        #expect(dots[day("2026-11-10")] == nil)
+        #expect(dots[day("2026-11-10")] == ["#FF0000"])
+        #expect(dots[day("2026-11-12")] == ["#00FF00", "#FFFF00"])
         #expect(dots[day("2026-11-15")] == ["#FF0000", "#5B6461", "#00FF00"])
+        #expect(dots[day("2026-11-16")] == ["#FF0000", "#00FF00", "#FFFF00"])
         #expect(dots[day("2026-10-31")] == nil)
         #expect(dots[day("2026-11-01")] == ["#FFFF00"])
         #expect(dots[day("2026-11-02")] == ["#FFFF00"])
@@ -176,10 +187,12 @@ import Testing
 
     // MARK: - timeGridData
 
-    @Test func timeGridDataPacksAllDayInInputOrderOverlaysPendingMoveAndBuildsBlocks() {
+    @Test func timeGridDataPacksAllDayInSpanOrderOverlaysPendingMoveAndBuildsBlocks() {
         let days = [day("2026-11-15"), day("2026-11-16"), day("2026-11-17")]
-        // Short all-day task BEFORE longer overlapping all-day task: time grid keeps input order.
+        // Longer spans take upper lanes regardless of input order; equal spans tie-break by earlier start day.
         let shortFirst = makeTask("short", schedule: .allDay(day("2026-11-15")))
+        let lateSpan = makeTask("lateSpan", schedule: .allDay(day("2026-11-16"), through: day("2026-11-17")))
+        let earlySpan = makeTask("earlySpan", schedule: .allDay(day("2026-11-15"), through: day("2026-11-16")))
         let longSecond = makeTask("long", schedule: .allDay(day("2026-11-14"), through: day("2026-11-18")))
         // Extra all-day tasks on col 0 to confirm there is no 3-lane cap.
         let extra1 = makeTask("e1", schedule: .allDay(day("2026-11-15")))
@@ -187,16 +200,18 @@ import Testing
         let timed = makeTask("timed", schedule: .timed(day("2026-11-15"), start: 540, end: 600))
         let outsideAllDay = makeTask("outside", schedule: .allDay(day("2026-11-20")))
 
-        let baseTasks = [shortFirst, longSecond, extra1, extra2, timed, outsideAllDay]
+        let baseTasks = [shortFirst, lateSpan, earlySpan, longSecond, extra1, extra2, timed, outsideAllDay]
         let baseData = CalendarProjection.timeGridData(tasks: baseTasks, days: days)
 
         #expect(baseData.displayedTasks == baseTasks)
         #expect(baseData.allDayItems.map { ($0.task.id, $0.firstColumn, $0.lastColumn, $0.lane) }
             .elementsEqual([
-                ("short", 0, 0, 0),
-                ("long", 0, 2, 1),
-                ("e1", 0, 0, 2),
-                ("e2", 0, 0, 3),
+                ("long", 0, 2, 0),
+                ("earlySpan", 0, 1, 1),
+                ("lateSpan", 1, 2, 2),
+                ("short", 0, 0, 2),
+                ("e1", 0, 0, 3),
+                ("e2", 0, 0, 4),
             ], by: ==))
         #expect(baseData.blocksByDay.count == 3)
         #expect(baseData.blocksByDay[0].map { ($0.task.id, $0.start, $0.end) }.elementsEqual([("timed", 540, 600)], by: ==))

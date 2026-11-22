@@ -164,20 +164,21 @@ struct TimeBlockEditor: View {
                     .padding(.top, top)
 
                     GeometryReader { geo in
-                        let laneW = (geo.size.width - 66) / 2
+                        let availW = geo.size.width - 66
                         ForEach(Array(othersLaid.enumerated()), id: \.offset) { _, o in
+                            let laneW = availW / CGFloat(max(2, o.lanes))
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(o.task.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textNav).lineLimit(1)
                                 Text(DateText.range(o.task.schedule!)).font(.system(size: 10)).foregroundStyle(Palette.textTertiary)
                             }
                             .padding(.horizontal, 6).padding(.vertical, 4)
-                            .frame(width: laneW - 4, height: max(CGFloat(o.end - o.start), 18), alignment: .topLeading)
+                            .frame(width: max(0, laneW - 4), height: max(CGFloat(o.end - o.start), 18), alignment: .topLeading)
                             .background(RoundedRectangle(cornerRadius: 8).fill(Palette.blockMuted))
                             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.blockMutedBorder))
                             .clipped()
                             .offset(x: 56 + CGFloat(o.lane) * laneW, y: top + CGFloat(o.start))
                         }
-                        block(width: geo.size.width - 66)
+                        block(width: availW)
                             .offset(x: 56, y: top + CGFloat(s))
                     }
                 }
@@ -279,20 +280,9 @@ struct TimeBlockEditor: View {
             }
     }
 
-    struct Laid { var task: TodoTask; var start: Int; var end: Int; var lane: Int }
-
-    /// Other timed items of the day in two lanes (overlaps side by side).
-    var othersLaid: [Laid] {
-        var out: [Laid] = []
-        for o in others {
-            guard let sch = o.schedule, let os = sch.startMinute else { continue }
-            let shift = sch.startDay == day ? 0 : -1440 * sch.startDay.days(until: day)
-            let start = os + shift, end = (sch.endOffsetMinutes ?? os + 30) + shift
-            guard end > 0 else { continue }
-            let lane = out.contains { $0.lane == 0 && $0.start < end && $0.end > start } ? 1 : 0
-            out.append(Laid(task: o, start: max(0, start), end: end, lane: lane))
-        }
-        return out
+    /// Other timed items of the day laid out in side-by-side lanes up to the 26:00 timeline limit.
+    var othersLaid: [DayLayout.Block] {
+        DayLayout.blocks(for: others, on: day, dayEnd: Self.maxEnd)
     }
 
     func loadDay() async {

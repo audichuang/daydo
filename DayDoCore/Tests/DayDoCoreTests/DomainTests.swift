@@ -389,6 +389,34 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         #expect(DayLayout.blocks(for: [t], on: d).map { [$0.start, $0.end] } == [[1410, 1440]])
         #expect(DayLayout.blocks(for: [t], on: d.adding(days: 1)).map { [$0.start, $0.end] } == [[0, 30]])
     }
+
+    @Test func threeOverlappingBlocksGetThreeLanesAndHonorExtendedDayEnd() {
+        let d = day("2026-11-15")
+        let editorEnd = 26 * 60
+        let overlapping = DayLayout.blocks(for: [
+            task("a", .timed(d, start: 600, end: 720)),
+            task("b", .timed(d, start: 630, end: 690)),
+            task("c", .timed(d, start: 660, end: 780)),
+        ], on: d, dayEnd: editorEnd)
+        #expect(overlapping.map(\.task.id) == ["a", "b", "c"])
+        #expect(overlapping.map(\.lane) == [0, 1, 2])
+        #expect(overlapping.map(\.lanes) == [3, 3, 3])
+
+        // Extended dayEnd (26:00) keeps overnight tails and next-day 00:00..02:00 blocks,
+        // caps past 26:00, and still excludes previous-day point-in-time tasks.
+        let extended = DayLayout.blocks(for: [
+            task("prevPoint", .timed(d.adding(days: -1), start: 1425, end: nil)),
+            task("overnight", .timed(d, start: 1410, end: 60)),
+            task("pastLimit", .timed(d, start: 1410, end: 180)),
+            task("nextEarly", .timed(d.adding(days: 1), start: 30, end: 90)),
+            task("nextAtLimit", .timed(d.adding(days: 1), start: 120, end: 180)),
+        ], on: d, dayEnd: editorEnd)
+        #expect(extended.map { ($0.task.id, $0.start, $0.end) }.elementsEqual([
+            ("pastLimit", 1410, 1560),
+            ("overnight", 1410, 1500),
+            ("nextEarly", 1470, 1530),
+        ], by: ==))
+    }
 }
 
 @Suite struct MemberFilterTests {

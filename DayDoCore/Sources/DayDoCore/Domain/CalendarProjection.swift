@@ -129,8 +129,9 @@ public enum CalendarProjection {
         }
     }
 
-    /// Per-day dot colours for the list-mode date grid: active tasks only,
-    /// at most `maxPerDay` distinct colours per day in input task order,
+    /// Per-day dot colours for the list-mode date grid: honours the loaded task
+    /// list (including completed tasks when loaded), ordering active colours
+    /// before completed ones, at most `maxPerDay` distinct colours per day,
     /// falling back to `fallbackColor`, clipped to `gridDays.first...gridDays.last`.
     public static func dayDotColors(
         tasks: [TodoTask],
@@ -143,7 +144,10 @@ public enum CalendarProjection {
             return [:]
         }
         var out: [LocalDay: [String]] = [:]
-        for t in tasks where !t.isCompleted {
+        // Order active tasks before completed ones (matching WidgetCalendarData.build)
+        // so active colours take priority within the per-day cap.
+        let ordered = tasks.filter { !$0.isCompleted } + tasks.filter(\.isCompleted)
+        for t in ordered {
             guard let s = t.schedule, s.overlaps(gridFirst, gridLast) else { continue }
             let color = projectColors[t.projectId] ?? fallbackColor
             var d = max(s.startDay, gridFirst)
@@ -179,8 +183,8 @@ public enum CalendarProjection {
     }
 
     /// Time-grid projection: applies an optional pending-move schedule override,
-    /// packs all-day items in input order with no lane cap, and lays out timed
-    /// blocks per day via `DayLayout.blocks`.
+    /// packs all-day items in `MonthLayout`'s span order with no lane cap, and
+    /// lays out timed blocks per day via `DayLayout.blocks`.
     public static func timeGridData(
         tasks: [TodoTask],
         days: [LocalDay],
@@ -201,12 +205,14 @@ public enum CalendarProjection {
         var allDay: [TimeGridAllDayItem] = []
         if let first = days.first, let last = days.last {
             let maxCol = days.count - 1
-            var spans: [(task: TodoTask, range: ClosedRange<Int>)] = []
-            for t in displayed {
-                guard let s = t.schedule, s.isAllDay, s.overlaps(first, last) else { continue }
+            let items = displayed.compactMap { t -> (TodoTask, Schedule)? in
+                guard let s = t.schedule, s.isAllDay, s.overlaps(first, last) else { return nil }
+                return (t, s)
+            }.sorted { LanePacker.spanOrder($0.1, $1.1) }
+            let spans: [(task: TodoTask, range: ClosedRange<Int>)] = items.map { t, s in
                 let a = max(0, first.days(until: s.startDay))
                 let b = min(maxCol, first.days(until: s.lastDay))
-                spans.append((t, a...b))
+                return (t, a...b)
             }
             let packed = LanePacker.pack(spans.map(\.range))
             allDay.reserveCapacity(spans.count)

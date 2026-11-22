@@ -100,6 +100,15 @@ public enum LanePacker {
         }
     }
 
+    /// Canonical bar/all-day lane order shared by month and time-grid layouts:
+    /// longer spans first, then earlier start day, then earlier start minute.
+    public static func spanOrder(_ a: Schedule, _ b: Schedule) -> Bool {
+        let la = a.startDay.days(until: a.lastDay), lb = b.startDay.days(until: b.lastDay)
+        if la != lb { return la > lb }
+        if a.startDay != b.startDay { return a.startDay < b.startDay }
+        return (a.startMinute ?? -1) < (b.startMinute ?? -1)
+    }
+
     public static func pack(_ ranges: [ClosedRange<Int>], maxLanes: Int? = nil) -> Result {
         var lanes: [[ClosedRange<Int>]] = []
         var assigned: [Int?] = []
@@ -169,12 +178,7 @@ public struct MonthLayout: Sendable {
             let items = tasks.compactMap { t -> (TodoTask, Schedule)? in
                 guard let s = t.schedule, s.overlaps(first, last) else { return nil }
                 return (t, s)
-            }.sorted { a, b in
-                let la = a.1.startDay.days(until: a.1.lastDay), lb = b.1.startDay.days(until: b.1.lastDay)
-                if la != lb { return la > lb }
-                if a.1.startDay != b.1.startDay { return a.1.startDay < b.1.startDay }
-                return (a.1.startMinute ?? -1) < (b.1.startMinute ?? -1)
-            }
+            }.sorted { LanePacker.spanOrder($0.1, $1.1) }
             let spans: [(task: TodoTask, schedule: Schedule, range: ClosedRange<Int>)] = items.map { t, s in
                 let a = max(0, first.days(until: s.startDay))
                 let b = min(6, first.days(until: s.lastDay))
@@ -314,21 +318,24 @@ public enum DayLayout {
         public var lanes: Int
     }
 
-    /// Clips a timed schedule to `day` (0..<1440 minutes), returning `nil` for all-day tasks.
-    public static func clippedRange(for schedule: Schedule, on day: LocalDay) -> (start: Int, end: Int)? {
-        guard let sm = schedule.startMinute, schedule.occurs(on: day) else { return nil }
+    /// Clips a timed schedule to `day` (0..<`dayEnd` minutes, default 1440),
+    /// returning `nil` for all-day tasks or schedules outside the window.
+    public static func clippedRange(for schedule: Schedule, on day: LocalDay, dayEnd: Int = 1440) -> (start: Int, end: Int)? {
+        guard dayEnd > 0, let sm = schedule.startMinute else { return nil }
+        let windowLastDay = day.adding(days: (dayEnd - 1) / 1440)
+        guard schedule.overlaps(day, windowLastDay) else { return nil }
         let offset = schedule.startDay.days(until: day) * 1440
         let rawEnd = schedule.endOffsetMinutes ?? (sm + 30)
         let start = max(0, sm - offset)
-        let end = min(1440, max(rawEnd, sm + 15) - offset)
+        let end = min(dayEnd, max(rawEnd, sm + 15) - offset)
         guard end > start else { return nil }
         return (start, end)
     }
 
-    public static func blocks(for tasks: [TodoTask], on day: LocalDay) -> [Block] {
+    public static func blocks(for tasks: [TodoTask], on day: LocalDay, dayEnd: Int = 1440) -> [Block] {
         var items: [(TodoTask, Int, Int)] = []
         for t in tasks {
-            guard let s = t.schedule, let (start, end) = clippedRange(for: s, on: day) else { continue }
+            guard let s = t.schedule, let (start, end) = clippedRange(for: s, on: day, dayEnd: dayEnd) else { continue }
             items.append((t, start, end))
         }
         items.sort { ($0.1, -$0.2) < ($1.1, -$1.2) }
