@@ -10,7 +10,7 @@ import { syncDueSources, syncSource } from '../src/ics/engine';
 import { D1IcsStore } from '../src/ics/store';
 import { handleToolCall } from '../src/mcp/registry';
 import type { ScopeImportPageInput, ScopeRelocationStub, ScopeStub } from '../src/scope/api';
-import { isScopeRelocatingError, listRelocationTables, RELOCATION_CONFLICT_PREFIX } from '../src/scope/relocation';
+import { isScopeRelocatingError, listRelocationTables } from '../src/scope/relocation';
 import { ensureScopeSchema, RELOCATION_PURGED_TABLE, RELOCATION_STATE_TABLE } from '../src/scope/schema';
 import { Sha256, sha256HexSync } from '../src/scope/sha256';
 import { acceptInvite, createInvite } from '../src/sharing';
@@ -1188,7 +1188,7 @@ describe('Scope DO RPC relocation policy coverage', () => {
   }
 
   function isRelocationConflictError(error: unknown): boolean {
-    return error instanceof Error && error.message.startsWith(RELOCATION_CONFLICT_PREFIX);
+    return error instanceof Error && error.message.startsWith('RELOCATION_CONFLICT: ');
   }
 
   function assertOutcome(result: InvokeResult, expected: StateOutcome, label: string): void {
