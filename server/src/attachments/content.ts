@@ -3,12 +3,10 @@ import { entityHome } from '@schema';
 import { and, eq } from 'void/db';
 import { loadProjectAccess, requesterRoleOf } from '../membership';
 import type { ScopeStub } from '../scope/api';
-import { listWriteDenial } from '../sync/access';
+import { roleCanWrite } from '../sync/access';
 import type { AppDb } from '../sync/push';
 import { canReadAttachment } from './access';
 import { attachmentObjectKey, MAX_ATTACHMENT_BYTES } from './r2';
-
-const NO_PURGED: ReadonlySet<string> = new Set();
 
 function jsonError(status: number, error: string): Response {
   return new Response(JSON.stringify({ error }), {
@@ -117,7 +115,7 @@ export async function uploadAttachmentContent(
 
   const { info, access } = loaded;
   const role = requesterRoleOf(access);
-  if (!role || listWriteDenial(info.projectId, { memberships: { [info.projectId]: role }, purgedSet: NO_PURGED }) === 'Forbidden') {
+  if (!roleCanWrite(role)) {
     return jsonError(403, 'Forbidden');
   }
 

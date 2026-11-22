@@ -70,7 +70,6 @@ export async function executeParsedSyncPush(
     deviceId,
     pusherScope,
     nowMs,
-    parsedOps: parsed.ops,
     context,
     plan,
     getScopeStub,

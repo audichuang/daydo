@@ -114,6 +114,7 @@ describe('Scope push RPC: new Worker → old DO', () => {
       { db: world.db, userId: 'u-a', deviceId: 'mcp', getScopeStub: world.getScopeStub, clock: world.clock },
       snapshot,
       intents,
+      { nowMs: NOW_ISH },
     );
 
     const sent = inputs.flatMap((i) => i.ops) as Array<Record<string, unknown>>;
@@ -190,6 +191,7 @@ describe('Scope push RPC: new Worker → old DO', () => {
         { db: world.db, userId: 'u-a', deviceId: 'mcp', getScopeStub: world.getScopeStub, clock: world.clock },
         snapshot,
         [{ entity: 'task', entityId: 't1', set: { title: 'from mcp' } }],
+        { nowMs: NOW_ISH },
       );
       expect(outcomes.map((o) => o.status)).toEqual(['applied']);
 

@@ -45,10 +45,10 @@ export interface WriteIntent {
 
 export interface WriteOptions {
   /**
-   * Time for the createdAt/updatedAt stamps the writer fills in (defaults to now). Callers pass the
+   * Time (epoch ms) for the createdAt/updatedAt stamps the writer fills in. Callers pass the
    * value they also wrote into deletedAt or completedAt. HLCs and opIds always use the wall clock.
    */
-  nowMs?: number;
+  nowMs: number;
 }
 
 export interface WriterDeps {
@@ -285,7 +285,7 @@ function planOps(
   snapshot: Snapshot,
   intents: readonly WriteIntent[],
   clock: ServerHlcClock,
-  stampMs: number | undefined,
+  stampMs: number,
 ): PlannedOp[] {
   const nowMs = Date.now();
   const lastHlc = new Map<string, Hlc>();
@@ -299,7 +299,7 @@ function planOps(
       throw new WriteValidationError(key, `${entity}.${key} does not match ${entityId}`);
     }
     const current = snapshot.findRow(entity, entityId);
-    const set = stampedSet(intent, current?.row, stampMs ?? nowMs);
+    const set = stampedSet(intent, current?.row, stampMs);
 
     let fields: string[];
     const row: Record<string, unknown> = {};
@@ -412,13 +412,18 @@ function isFailure(o: WriteOutcome): boolean {
 
 /**
  * Pushes the intents (validated up front, nothing sent on a bad value) and returns one outcome
- * per intent, in intent order. Existing snapshot rows are refreshed from the response.
+ * per intent, in intent order.
+ *
+ * Snapshot contract: existing rows in `snapshot` are refreshed in place from each push response
+ * (row and clocks); newly created rows are not inserted into `snapshot` and are returned only in
+ * the outcomes (merge them with `withCreated`). Callers that need pre-write values across pushes
+ * must copy them before pushing.
  */
 export async function pushIntents(
   deps: WriterDeps,
   snapshot: Snapshot,
   intents: readonly WriteIntent[],
-  options: WriteOptions & { stopOnFailure?: boolean } = {},
+  options: WriteOptions & { stopOnFailure?: boolean },
 ): Promise<WriteOutcome[]> {
   assertHasData(snapshot);
   const clock = deps.clock ?? serverClock;
@@ -466,7 +471,7 @@ export async function writeOrThrow(
   deps: WriterDeps,
   snapshot: Snapshot,
   intents: readonly WriteIntent[],
-  options: WriteOptions = {},
+  options: WriteOptions,
 ): Promise<WriteOutcome[]> {
   const outcomes = await pushIntents(deps, snapshot, intents, { ...options, stopOnFailure: true });
   const failure = outcomes.find(isFailure);

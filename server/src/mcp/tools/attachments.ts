@@ -4,9 +4,16 @@ import { isScopeRelocatingError } from '../../scope/relocation';
 import { attachmentObjectKey, MAX_ATTACHMENT_BYTES } from '../../attachments/r2';
 import { uuidv7 } from '../../domain/uuid';
 import { isNil } from '../../serverops/values';
-import { assertHasData, WriteError, WriteValidationError, writeOrThrow } from '../../serverops/writer';
-import { mcpResult, nowOf, requireStr, ToolValidationError, type ToolDef } from '../toolkit';
-import { openSession, requireWritableList } from './projects';
+import { WriteError, WriteValidationError } from '../../serverops/writer';
+import {
+  mcpResult,
+  openSession,
+  openWriteSession,
+  requireStr,
+  requireWritableList,
+  ToolValidationError,
+  type ToolDef,
+} from '../toolkit';
 import { taskIn } from './tasks';
 
 const TEXT_LIMIT_BYTES = 1024 * 1024;
@@ -221,8 +228,8 @@ export function attachmentTools(): ToolDef[] {
         const contentType = parseContentType(args.content_type);
         const bytes = decodeBase64(contentBase64);
 
-        const { snapshot, deps } = await openSession(ctx);
-        assertHasData(snapshot);
+        const session = await openWriteSession(ctx);
+        const { snapshot, now } = session;
         taskIn(snapshot, taskId, projectId);
         requireWritableList(snapshot, projectId);
 
@@ -231,31 +238,24 @@ export function attachmentTools(): ToolDef[] {
           throw new Error('Attachment storage is not configured');
         }
 
-        const now = nowOf(ctx);
         const id = uuidv7(now);
         const key = attachmentObjectKey(taskId, id);
         await storage.put(key, bytes, { httpMetadata: { contentType } });
 
-        let outcomes;
         try {
-          outcomes = await writeOrThrow(
-            deps,
-            snapshot,
-            [
-              {
-                entity: 'attachment',
-                entityId: id,
-                set: {
-                  id,
-                  taskId,
-                  fileName: safeName,
-                  size: bytes.byteLength,
-                  mimeType: contentType,
-                },
+          await session.write([
+            {
+              entity: 'attachment',
+              entityId: id,
+              set: {
+                id,
+                taskId,
+                fileName: safeName,
+                size: bytes.byteLength,
+                mimeType: contentType,
               },
-            ],
-            { nowMs: now },
-          );
+            },
+          ]);
         } catch (err) {
           // Only compensate when we know the row was not written; on RPC/network errors the DO may
           // have committed before the response was lost, so keep the R2 object.
@@ -270,13 +270,13 @@ export function attachmentTools(): ToolDef[] {
           throw err;
         }
 
-        const row = outcomes[0]!.row!;
+        const { row } = session.readBack('attachment', id);
         return {
-          id: String(row.id),
-          file_name: String(row.fileName),
-          size: Number(row.size),
-          mime_type: String(row.mimeType),
-          created_at: Number(row.createdAt),
+          id: String(row.row.id),
+          file_name: String(row.row.fileName),
+          size: Number(row.row.size),
+          mime_type: String(row.row.mimeType),
+          created_at: Number(row.row.createdAt),
         };
       },
     },
