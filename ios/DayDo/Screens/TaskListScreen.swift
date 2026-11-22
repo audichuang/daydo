@@ -137,6 +137,8 @@ struct TaskListScreen: View {
         }
         .onChange(of: isActive) { _, active in
             if active {
+                // Looks redundant with ResidentQuery's isStale, but removing it left the app never
+                // idle after a tab round-trip (UI tests hung waiting for idle); keep it.
                 if let loaded = query.loadedKey, loaded.scope != scope {
                     query.reset()
                 }

@@ -1133,6 +1133,21 @@ t_no_sim_vault() {
   eq "$RC" 0 "build needs no sim-vault"
 }
 
+# The app build rewrites DayDoCore/Package.resolved; uitest.sh must put a clean file back.
+t_build_restores_resolved() {
+  set_env "$STUB_NOVAULT"
+  local r="$ROOT/DayDoCore/Package.resolved"
+  if ! git -C "$ROOT" diff --quiet -- "$r"; then echo "  skip: Package.resolved already modified"; return; fi
+  printf "printf '%%s\\n' '// stub pin' >>'%s'\n" "$r" >"$S/hook.xcodebuild"
+  run -- build
+  rm -f "$S/hook.xcodebuild"
+  eq "$RC" 0 "build rc"
+  if ! git -C "$ROOT" diff --quiet -- "$r"; then
+    fail "Package.resolved left modified after build"
+    git -C "$ROOT" checkout -q -- "$r"
+  fi
+}
+
 t_temp_device_missing() {
   rm -f "$S/udid"; : >"$S/archive"
   run -- "DD tmp x"
@@ -1654,7 +1669,7 @@ t_test_allows_legacy_owner_file_transition t_test_refuses_foreign_lease t_test_f
 t_test_child_and_teardown_rc_8_no_busy_msg t_down_releases_and_shuts_down
 t_down_legacy_owner_file_transition t_down_interleaved_lease t_down_missing_device
 t_park_transition_guard t_down_transition_guard t_park_rc_passthrough t_park_lock_timeout
-t_old_sim_vault t_no_sim_vault t_temp_device_missing t_full_name_is_resident
+t_old_sim_vault t_no_sim_vault t_build_restores_resolved t_temp_device_missing t_full_name_is_resident
 t_test_waits_for_other_xcodebuild t_teardown_failure_rc t_record_relative_path t_record_basic
 t_record_recorder_dies_midway t_record_test_failure_rc t_record_recorder_fails
 t_record_test_refused t_record_rm_log_failure_preserves_rc t_sigterm_stops_child_and_recorder

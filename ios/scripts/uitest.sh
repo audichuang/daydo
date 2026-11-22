@@ -230,6 +230,16 @@ lock_fd="${DD_UITEST_LOCK_FD:-}"
 unset DD_UITEST_LOCK_PID DD_UITEST_LOCK_FD DD_UITEST_LOCK_RC
 if [[ -n "$lock_rc" ]]; then exit "$lock_rc"; fi
 
+# Building the app workspace rewrites DayDoCore/Package.resolved with the app's own pins
+# (GoogleSignIn, AppAuth, ...). Put it back afterwards, but only if it was clean before:
+# a deliberate edit must survive.
+resolved="$root/DayDoCore/Package.resolved"
+resolved_was_clean=0
+if git -C "$root" diff --quiet -- "$resolved" 2>/dev/null; then resolved_was_clean=1; fi
+restore_resolved() {
+  if [[ $resolved_was_clean == 1 ]]; then git -C "$root" checkout -q -- "$resolved" 2>/dev/null || true; fi
+}
+
 # Drop the mode and target, keep the xcodebuild args.
 if [[ "$mode" != test ]]; then shift; fi
 if [[ "$mode" != build && $# -gt 0 ]]; then shift; fi
@@ -256,8 +266,9 @@ if [[ "$mode" == build ]]; then
   echo "編譯測試標的：generic/platform=iOS Simulator" >&2
   xcodebuild build-for-testing -project DayDo.xcodeproj -scheme DayDo \
     -destination "generic/platform=iOS Simulator" \
-    CODE_SIGNING_ALLOWED=NO "$@"
-  exit
+    CODE_SIGNING_ALLOWED=NO "$@" && build_rc=0 || build_rc=$?
+  restore_resolved
+  exit "$build_rc"
 fi
 
 # Legacy owner file from pre-4.0 `up` (read by test/down during transition; never written).
@@ -440,6 +451,7 @@ result_file="$(mktemp "${TMPDIR:-/tmp}/dd-uitest-result.XXXXXX")"
 run_pid=""
 cleanup_outer() {
   rm -f "$result_file" 2>/dev/null || true
+  restore_resolved
 }
 on_outer_signal() {
   local sig_rc="$1"
