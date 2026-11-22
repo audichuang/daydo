@@ -2,7 +2,7 @@
 // update_project, delete_project. Reads come from a fresh snapshot, writes go through the op writer.
 import { uniqueProjectKey } from '../../domain/sortKey';
 import { uuidv7 } from '../../domain/uuid';
-import type { Snapshot, SnapshotRow } from '../../serverops/snapshot';
+import { canManageLifecycle, snapshotRole, type Snapshot, type SnapshotRow } from '../../serverops/snapshot';
 import { trashTaskIntent } from '../../serverops/taskWrites';
 import { formatProject, openTasksOf, summarizeTask } from '../format';
 import { bySortKey, compareKeys } from '../../serverops/values';
@@ -132,7 +132,7 @@ export function projectTools(): ToolDef[] {
         const { snapshot } = session;
         liveProject(snapshot, id);
         if (!snapshot.canWrite(id)) {
-          throw new Error(`Project '${id}' is read-only for you (role: ${snapshot.memberships.get(id) ?? 'none'})`);
+          throw new Error(`Project '${id}' is read-only for you (role: ${snapshotRole(snapshot, id) ?? 'none'})`);
         }
         const set: Record<string, unknown> = {
           ...(name !== undefined && { name }),
@@ -158,8 +158,8 @@ export function projectTools(): ToolDef[] {
         const { snapshot, now } = session;
         const project = liveProject(snapshot, id);
         if (project.row.isInbox === true) throw new Error('The inbox cannot be deleted');
-        if (snapshot.memberships.get(id) !== 'owner') {
-          throw new Error(`Only the owner can delete project '${id}' (your role: ${snapshot.memberships.get(id) ?? 'none'})`);
+        if (!canManageLifecycle(snapshot, id)) {
+          throw new Error(`Only the owner can delete project '${id}' (your role: ${snapshotRole(snapshot, id) ?? 'none'})`);
         }
         const tasks = snapshot
           .rows('task')

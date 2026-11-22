@@ -63,6 +63,21 @@ const WRITE_ROLE_PAIR = new RegExp(
   ].join('|'),
 );
 
+// The owner-only entity triple ('member', 'folder', 'tag') compared inline, listed in an array,
+// or enumerated as a type union. ENTITY_NAMES in entities.ts has 'project' between 'folder' and 'tag'.
+const OWNER_ONLY_TRIPLE = new RegExp(
+  [
+    String.raw`(?:===|!==)\s*'member'${NEXT_TERM}'folder'${NEXT_TERM}'tag'`,
+    String.raw`'member'\s*[,|]\s*'folder'\s*[,|]\s*'tag'`,
+  ].join('|'),
+);
+
+// Owner role comparison (`=== 'owner'` / `!== 'owner'`), excluding three-way role parsers
+// (`x === 'owner' || x === 'editor' || x === 'viewer'` and `x === 'owner' ? 'owner' : ...`).
+const OWNER_ROLE_CHECK = new RegExp(
+  String.raw`(?:===|!==)\s*'owner'(?!\s*(?:\|\|[^;{}|&]*?===\s*'editor'\s*\|\|[^;{}|&]*?===\s*'viewer'|\?\s*'owner'))`,
+);
+
 interface Guard {
   name: string;
   /** Directories or files scanned (server-relative). */
@@ -152,6 +167,63 @@ const GUARDS: Guard[] = [
     bad: [
       "if (member.role !== 'owner' &&\n    member.role !== 'editor') return deny();",
       "if (member.role === 'editor' || member.role === 'owner') return ok();",
+    ],
+  },
+  {
+    name: 'owner-only entity triple (member, folder, tag) only in src/sync/access.ts',
+    dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
+    pattern: OWNER_ONLY_TRIPLE,
+    allow: ['src/sync/access.ts'],
+    bad: [
+      "if (op.entity === 'member' || op.entity === 'folder' || op.entity === 'tag') return;",
+      "if (entity !== 'member' && entity !== 'folder' && entity !== 'tag') return;",
+      "const CREATOR_ONLY = ['member', 'folder', 'tag'];",
+      "type ListEntity = Exclude<EntityName, 'member' | 'folder' | 'tag'>;",
+    ],
+    good: [
+      "if (isOwnerOnlyEntity(op.entity)) return;",
+      "const ALL = ['member', 'folder', 'project', 'tag'];",
+      "if (op.entity === 'member') return;",
+    ],
+  },
+  {
+    name: 'no single-entry fake memberships map in src (use roleCanWrite / isOwner)',
+    dirs: ['src'],
+    pattern: /\bmemberships\s*:\s*\{\s*\[/,
+    allow: [],
+    bad: [
+      'listWriteDenial(id, { memberships: { [id]: role }, purgedSet: NO_PURGED });',
+      'const access = { memberships: { [projectId]: role }, purgedSet };',
+    ],
+    good: [
+      'const access: ListAccess = { memberships: input.memberships, purgedSet };',
+      "if (!roleCanWrite(role)) return jsonError(403, 'Forbidden');",
+    ],
+  },
+  {
+    name: "owner role comparison (=== / !== 'owner') only in src/sync/access.ts and allow-listed files",
+    dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
+    pattern: OWNER_ROLE_CHECK,
+    allow: [
+      // Single source of truth for role checks.
+      'src/sync/access.ts',
+      // D1 decoder classifying removed owner rows into removedOwnerProjects (not an access check).
+      'src/membership/statements.ts',
+      // Owner-only sharing checks (:80, :240, :281, :337 — excluded from SRV-2) and target-member
+      // invariants (:288, :351 — owner cannot be demoted or removed, not requester access checks).
+      'src/sharing/index.ts',
+      // D1 planner routing owner project deletes (:154 — src/sync/push/** untouched in SRV-2).
+      'src/sync/push/plan.ts',
+    ],
+    bad: [
+      "if (snapshot.memberships.get(id) !== 'owner') throw new Error('denied');",
+      "const isOwner = roleOf(access.memberships, op.entityId) === 'owner';",
+      "if (role === 'owner' || role === 'editor') return true;",
+    ],
+    good: [
+      "const ok = role === 'owner' || role === 'editor' || role === 'viewer';",
+      "const r = raw === 'owner' ? 'owner' : raw === 'editor' ? 'editor' : 'viewer';",
+      "if (!canManageLifecycle(snapshot, id)) throw new Error('denied');",
     ],
   },
   {

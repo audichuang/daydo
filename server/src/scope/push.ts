@@ -5,7 +5,12 @@ import {
   type StoredEntityState,
 } from '../sync/entities';
 import type { clampHlc, Hlc } from '../sync/hlc';
-import type { ListAccess } from '../sync/access';
+import {
+  canRead,
+  childListId,
+  isOwnerOnlyEntity,
+  type ListAccess,
+} from '../sync/access';
 import { mergeOp } from '../sync/merge';
 import { envelopeOf, toEnvelope, type OpEnvelope } from '../sync/envelope';
 import { authorizeOp } from './authorize';
@@ -65,19 +70,22 @@ export function processPushBatch(
     entityId: string,
     state: StoredEntityState,
   ): boolean => {
-    if (entity === 'member' || entity === 'folder' || entity === 'tag') {
+    if (isOwnerOnlyEntity(entity)) {
       return isScopeOwner;
     }
     if (entity === 'project') {
-      return Boolean(input.memberships[entityId]);
+      return canRead(input.memberships, entityId);
     }
     if (entity === 'projectMember' || entity === 'projectInvite' || entity === 'task') {
-      return Boolean(input.memberships[String(state.row.projectId)]);
+      return canRead(input.memberships, String(state.row.projectId));
     }
     // Child row: check parent task's current list (or stored projectId tag).
     const parentTask = store.getRow('task', String(state.row.taskId));
-    const projectId = parentTask ? String(parentTask.row.projectId) : (state.projectId ?? '');
-    return Boolean(input.memberships[projectId]);
+    const projectId = childListId(
+      parentTask ? String(parentTask.row.projectId) : null,
+      state.projectId,
+    );
+    return canRead(input.memberships, projectId);
   };
 
   const resolveCurrentRow = (

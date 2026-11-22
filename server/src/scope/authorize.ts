@@ -1,4 +1,11 @@
-import { listWriteDenial, roleOf, type ListAccess } from '../sync/access';
+import {
+  canManageListLifecycle,
+  childListId,
+  isOwnerOnlyEntity,
+  listWriteDenial,
+  roleOf,
+  type ListAccess,
+} from '../sync/access';
 import type { StoredEntityState, ValidatedOp } from '../sync/entities';
 
 export interface AuthorizeOpInput {
@@ -45,15 +52,15 @@ export function authorizeOp(input: AuthorizeOpInput): AuthorizeOpResult {
   const { op, existing, isScopeOwner, access, getTask } = input;
   const deny = (reason: string): AuthorizeOpResult => ({ ok: false, reason });
 
-  if (op.entity === 'member' || op.entity === 'folder' || op.entity === 'tag') {
+  if (isOwnerOnlyEntity(op.entity)) {
     if (!isScopeOwner) return deny('Forbidden');
     return { ok: true, parentTask: null, childProjectId: undefined };
   }
 
   if (op.entity === 'project') {
-    const isOwner = roleOf(access.memberships, op.entityId) === 'owner';
+    const canManage = canManageListLifecycle(roleOf(access.memberships, op.entityId));
     if (op.op === 'delete') {
-      if (!isOwner) return deny('Forbidden');
+      if (!canManage) return deny('Forbidden');
       if (!access.purgedSet.has(op.entityId)) {
         return deny('Project deletion must be purged via D1');
       }
@@ -64,7 +71,7 @@ export function authorizeOp(input: AuthorizeOpInput): AuthorizeOpResult {
       const touchesLifecycle =
         changesNullableField(op, existing, 'deletedAt') ||
         changesNullableField(op, existing, 'archivedAt');
-      if (touchesLifecycle && !isOwner) return deny('Forbidden');
+      if (touchesLifecycle && !canManage) return deny('Forbidden');
     }
     return { ok: true, parentTask: null, childProjectId: undefined };
   }
@@ -107,9 +114,10 @@ export function authorizeOp(input: AuthorizeOpInput): AuthorizeOpResult {
       if (nextTaskId !== existing.row.taskId) return deny('Child taskId cannot be changed');
     }
     const parentTask = getTask(String(existing.row.taskId));
-    const currentProjectId = parentTask
-      ? String(parentTask.row.projectId)
-      : (existing.projectId ?? '');
+    const currentProjectId = childListId(
+      parentTask ? String(parentTask.row.projectId) : null,
+      existing.projectId,
+    );
     const allowEmptyTombstoneReplay =
       existing.purgedAt !== null && currentProjectId === '' && isScopeOwner;
     const denial = listWriteDenial(currentProjectId, access);
@@ -123,7 +131,7 @@ export function authorizeOp(input: AuthorizeOpInput): AuthorizeOpResult {
     Object.hasOwn(op.row, 'taskId') && typeof op.row.taskId === 'string' ? op.row.taskId : '';
   const parentTask = parentTaskId ? getTask(parentTaskId) : null;
   if (!parentTask) return deny('unknown-row');
-  const currentProjectId = String(parentTask.row.projectId);
+  const currentProjectId = childListId(String(parentTask.row.projectId));
   const allowEmptyTaskTombstone =
     parentTask.purgedAt !== null && currentProjectId === '' && isScopeOwner;
   const denial = listWriteDenial(currentProjectId, access);

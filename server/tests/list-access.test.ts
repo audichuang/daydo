@@ -1,6 +1,109 @@
 import { describe, expect, it } from 'vitest';
-import { hasWriteRole, listWriteDenial } from '../src/sync/access';
-import type { MembershipRole } from '../src/sync/entities';
+import { canManageLifecycle, snapshotRole, type Snapshot } from '../src/serverops/snapshot';
+import {
+  canManageListLifecycle,
+  canRead,
+  childListId,
+  hasWriteRole,
+  isOwner,
+  isOwnerOnlyEntity,
+  listWriteDenial,
+  OWNER_ONLY_ENTITIES,
+  roleCanWrite,
+} from '../src/sync/access';
+import { ENTITY_NAMES, type EntityName, type MembershipRole } from '../src/sync/entities';
+
+describe('OWNER_ONLY_ENTITIES / isOwnerOnlyEntity', () => {
+  it('defines the exact owner-only entity set', () => {
+    expect([...OWNER_ONLY_ENTITIES]).toEqual(['member', 'folder', 'tag']);
+  });
+
+  it.each<[EntityName, boolean]>([
+    ['member', true],
+    ['folder', true],
+    ['tag', true],
+    ['project', false],
+    ['projectMember', false],
+    ['projectInvite', false],
+    ['task', false],
+    ['checklistItem', false],
+    ['attachment', false],
+    ['comment', false],
+  ])('%s → %s', (entity, expected) => {
+    expect(isOwnerOnlyEntity(entity)).toBe(expected);
+  });
+
+  it('covers every EntityName', () => {
+    const ownerOnly = ENTITY_NAMES.filter((e) => isOwnerOnlyEntity(e));
+    expect(ownerOnly).toEqual(['member', 'folder', 'tag']);
+  });
+});
+
+describe('childListId', () => {
+  it.each<[string, string | null | undefined, string | null | undefined, string]>([
+    ['uses parent task list when present', 'p-parent', 'p-stored', 'p-parent'],
+    ['keeps empty string from a list-less parent tombstone over stored projectId', '', 'p-stored', ''],
+    ['falls back to stored projectId when parent is missing (null)', null, 'p-stored', 'p-stored'],
+    ['falls back to stored projectId when parent is missing (undefined)', undefined, 'p-stored', 'p-stored'],
+    ['returns empty string when both parent and stored projectId are absent', null, undefined, ''],
+    ['returns empty string when parent is null and stored projectId is null', null, null, ''],
+    ['returns parent list when stored projectId is omitted', 'p-parent', undefined, 'p-parent'],
+  ])('%s', (_label, parentProjectId, storedProjectId, expected) => {
+    expect(childListId(parentProjectId, storedProjectId)).toBe(expected);
+  });
+});
+
+describe('canRead', () => {
+  it.each<[MembershipRole | undefined, boolean]>([
+    ['owner', true],
+    ['editor', true],
+    ['viewer', true],
+    [undefined, false],
+  ])('%s → %s, from a record or a Map', (role, expected) => {
+    const memberships: Record<string, MembershipRole> = role ? { p: role } : {};
+    expect(canRead(memberships, 'p')).toBe(expected);
+    expect(canRead(new Map(Object.entries(memberships)), 'p')).toBe(expected);
+  });
+
+  it('is false for an empty project id', () => {
+    expect(canRead({ p: 'owner' }, '')).toBe(false);
+    expect(canRead(new Map([['p', 'owner']]), '')).toBe(false);
+  });
+});
+
+describe('single-role checks', () => {
+  it.each<[MembershipRole | null | undefined, boolean, boolean, boolean]>([
+    ['owner', true, true, true],
+    ['editor', true, false, false],
+    ['viewer', false, false, false],
+    [null, false, false, false],
+    [undefined, false, false, false],
+  ])('role %s → write=%s, owner=%s, lifecycle=%s', (role, canWrite, owner, lifecycle) => {
+    expect(roleCanWrite(role)).toBe(canWrite);
+    expect(isOwner(role)).toBe(owner);
+    expect(canManageListLifecycle(role)).toBe(lifecycle);
+  });
+});
+
+describe('snapshotRole / canManageLifecycle', () => {
+  const snap = {
+    memberships: new Map<string, MembershipRole>([
+      ['po', 'owner'],
+      ['pe', 'editor'],
+      ['pv', 'viewer'],
+    ]),
+  } as Snapshot;
+
+  it.each<[string, MembershipRole | undefined, boolean]>([
+    ['po', 'owner', true],
+    ['pe', 'editor', false],
+    ['pv', 'viewer', false],
+    ['p-none', undefined, false],
+  ])('%s → role=%s, lifecycle=%s', (projectId, expectedRole, expectedLifecycle) => {
+    expect(snapshotRole(snap, projectId)).toBe(expectedRole);
+    expect(canManageLifecycle(snap, projectId)).toBe(expectedLifecycle);
+  });
+});
 
 describe('listWriteDenial', () => {
   const memberships: Record<string, MembershipRole> = { po: 'owner', pe: 'editor', pv: 'viewer' };

@@ -4,7 +4,7 @@
 import { systemNow, type GetNow } from '../clock';
 import type { FetchIcsOptions } from '../ics/fetch';
 import type { IcsStore } from '../ics/store';
-import { loadSnapshot, withCreated, type Snapshot, type SnapshotRow } from '../serverops/snapshot';
+import { loadSnapshot, snapshotRole, withCreated, type Snapshot, type SnapshotRow } from '../serverops/snapshot';
 import { taskListDenial } from '../serverops/taskWrites';
 import {
   assertHasData,
@@ -172,6 +172,6 @@ export function requireWritableList(snapshot: Snapshot, projectId: string): void
     throw new Error(`Unknown project_id '${projectId}'; call list_projects first`);
   }
   if (denial === 'read-only') {
-    throw new Error(`Project '${projectId}' is read-only for you (role: ${snapshot.memberships.get(projectId) ?? 'none'})`);
+    throw new Error(`Project '${projectId}' is read-only for you (role: ${snapshotRole(snapshot, projectId) ?? 'none'})`);
   }
 }

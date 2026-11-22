@@ -1,7 +1,7 @@
 import { user } from '@schema';
 import { eq } from 'void/db';
 import type { PullScopeRow, ScopeStub } from '../scope/api';
-import { listWriteDenial } from '../sync/access';
+import { canManageListLifecycle, hasWriteRole, roleOf } from '../sync/access';
 import type { MembershipRole } from '../sync/entities';
 import { executeSyncPull } from '../sync/pull';
 import type { AppDb } from '../sync/push';
@@ -15,7 +15,6 @@ import type { WriteOutcome } from './writer';
  * Raise only after every Scope DO runs the budget (Workers and DOs roll out independently).
  */
 const PULL_LIMIT = 2000;
-const NO_PURGED: ReadonlySet<string> = new Set();
 /** Safety valve: a scope that keeps reporting hasMore without advancing its cursor is a bug. */
 const MAX_PAGES = 1000;
 
@@ -141,9 +140,19 @@ export async function loadSnapshot(
     },
     canWrite(projectId: string) {
       // Pulls never return purged lists' memberships, so the role decides; the Scope DO re-checks.
-      return listWriteDenial(projectId, { memberships, purgedSet: NO_PURGED }) === null;
+      return hasWriteRole(memberships, projectId);
     },
   };
+}
+
+/** The snapshot user's membership role on `projectId`, or undefined when not a member. */
+export function snapshotRole(snapshot: Snapshot, projectId: string): MembershipRole | undefined {
+  return roleOf(snapshot.memberships, projectId);
+}
+
+/** Whether the snapshot user may change `projectId`'s lifecycle (trash, restore, archive, delete). */
+export function canManageLifecycle(snapshot: Snapshot, projectId: string): boolean {
+  return canManageListLifecycle(roleOf(snapshot.memberships, projectId));
 }
 
 /** The snapshot plus rows created by a write, so a result can show new tasks and checklist items. */

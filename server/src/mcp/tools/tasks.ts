@@ -11,6 +11,7 @@ import {
 } from '../../domain/schedule';
 import { normalizeTagLabels } from '../../domain/tags';
 import { uuidv7 } from '../../domain/uuid';
+import { snapshotRole } from '../../serverops/snapshot';
 import {
   completeOccurrence,
   completeTaskIntent,
@@ -356,7 +357,7 @@ export function taskWriteTools(): ToolDef[] {
           origProject !== undefined && isNil(origProject.row.deletedAt) && isNil(origProject.row.purgedAt);
         if (origProject !== undefined && isNil(origProject.row.purgedAt) && !snapshot.canWrite(origProjectId)) {
           throw new Error(
-            `Project '${origProjectId}' is read-only for you (role: ${snapshot.memberships.get(origProjectId) ?? 'none'})`,
+            `Project '${origProjectId}' is read-only for you (role: ${snapshotRole(snapshot, origProjectId) ?? 'none'})`,
           );
         }
         if (isNil(task.row.deletedAt)) return formatTask(snapshot, task);
