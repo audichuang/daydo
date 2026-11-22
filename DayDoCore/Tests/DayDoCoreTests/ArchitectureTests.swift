@@ -1,3 +1,4 @@
+@testable import DayDoCore
 import Foundation
 import Testing
 
@@ -424,5 +425,49 @@ private let guards: [Guard] = [
         let backoffIncrements = code.components(separatedBy: "consecutiveRetryableFailures +=").count - 1
         #expect(backoffIncrements == 1, "Expected consecutiveRetryableFailures += only inside nextRetryableError")
         #expect(!code.contains("maxAttachmentUploadsPerCycle"), "Per-cycle upload cap must stay removed")
+    }
+
+    /// Guards that `SyncApplier.specs` stays in sync with `ENTITY_NAMES` in
+    /// `server/src/sync/entities.ts`. Unregistered entities are silently skipped
+    /// while advancing the pull cursor, causing silent data loss.
+    @Test func syncApplierSpecsMatchServerEntityNames() throws {
+        let source = try codeLines("server/src/sync/entities.ts")
+        let arrayRegex = try NSRegularExpression(
+            pattern: #"ENTITY_NAMES\s*=\s*\[([^\]]*)\]\s*as\s+const"#
+        )
+        let arrayMatch = try #require(
+            arrayRegex.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)),
+            "Could not find `ENTITY_NAMES = [ ... ] as const` in server/src/sync/entities.ts"
+        )
+        let bodyRange = try #require(Range(arrayMatch.range(at: 1), in: source))
+        let arrayBody = source[bodyRange]
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> Substring in
+                if let commentStart = line.range(of: "//") {
+                    return line[..<commentStart.lowerBound]
+                }
+                return line
+            }
+            .joined(separator: "\n")
+
+        let quoteRegex = try NSRegularExpression(pattern: #"['"]([^'"]+)['"]"#)
+        let parsedNames = quoteRegex.matches(
+            in: arrayBody,
+            range: NSRange(arrayBody.startIndex..., in: arrayBody)
+        ).compactMap { match -> String? in
+            Range(match.range(at: 1), in: arrayBody).map { String(arrayBody[$0]) }
+        }
+        #expect(!parsedNames.isEmpty, "Parsed zero entity names from server/src/sync/entities.ts; parser is hollow")
+
+        let serverEntities = Set(parsedNames)
+        #expect(serverEntities.count == parsedNames.count, "Duplicate entity names in server/src/sync/entities.ts ENTITY_NAMES")
+
+        let appEntities = Set(SyncApplier.specFieldNamesByEntity.keys)
+        let missingInApp = serverEntities.subtracting(appEntities).sorted()
+        let extraInApp = appEntities.subtracting(serverEntities).sorted()
+        #expect(
+            appEntities == serverEntities,
+            "SyncApplier.specs entity mismatch vs server/src/sync/entities.ts ENTITY_NAMES: missing=\(missingInApp), extra=\(extraInApp)"
+        )
     }
 }

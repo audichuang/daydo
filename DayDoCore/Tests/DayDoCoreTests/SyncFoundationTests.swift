@@ -612,7 +612,9 @@ import Testing
             "Allow-list references unknown synced entity"
         )
 
-        // Mirrors `ENTITY_NAMES` in `server/src/sync/entities.ts`.
+        // Explicit app-side entity list (second check alongside
+        // `ArchitectureTests.syncApplierSpecsMatchServerEntityNames`, which reads
+        // `ENTITY_NAMES` directly from `server/src/sync/entities.ts`).
         let expectedEntities: Set<String> = [
             "member",
             "folder",
