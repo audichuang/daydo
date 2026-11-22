@@ -1,14 +1,16 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { DurableObject } from 'cloudflare:workers';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import * as schema from '../db/schema';
+import type { Scope } from '../durable-objects/scope';
 import { syncDueSources, syncSource } from '../src/ics/engine';
 import { D1IcsStore } from '../src/ics/store';
 import { handleToolCall } from '../src/mcp/registry';
-import type { ScopeRelocationStub, ScopeStub } from '../src/scope/api';
-import { isScopeRelocatingError, listRelocationTables } from '../src/scope/relocation';
+import type { ScopeImportPageInput, ScopeRelocationStub, ScopeStub } from '../src/scope/api';
+import { isScopeRelocatingError, listRelocationTables, RELOCATION_CONFLICT_PREFIX } from '../src/scope/relocation';
 import { ensureScopeSchema, RELOCATION_PURGED_TABLE, RELOCATION_STATE_TABLE } from '../src/scope/schema';
 import { Sha256, sha256HexSync } from '../src/scope/sha256';
 import { acceptInvite, createInvite } from '../src/sharing';
@@ -972,31 +974,48 @@ describe('opLogDigest prefix proof', () => {
 });
 
 describe('Scope DO RPC relocation policy coverage', () => {
-  type Policy = 'write' | 'read' | 'admin';
-  type ScopeRpcMethod = keyof (ScopeStub & ScopeRelocationStub);
+  type StateOutcome = 'ok' | 'relocating' | 'conflict';
+  type Policy = { frozen: StateOutcome; importing: StateOutcome };
+  type ScopeGetStub = ReturnType<typeof Scope.get>;
+  type PlatformStubKey = keyof DurableObjectStub<DurableObject> | keyof DurableObject;
+  type ScopeRpcMethod = Exclude<keyof ScopeGetStub, PlatformStubKey>;
   type ScopeInstance = InstanceType<typeof ScopeClass>;
+  type CallContext = { state: 'frozen' | 'importing'; importTaskPage: ScopeImportPageInput };
   type InvokeResult = { ok: true; value: unknown } | { ok: false; error: unknown };
+  type ExactEqual<A, B> =
+    (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+  type AssertTrue<T extends true> = T;
 
-  // Every RPC method on ScopeStub and ScopeRelocationStub must be explicitly classified here;
-  // adding a method to either interface fails typecheck until its relocation policy is covered.
+  // Every public RPC method on Scope.get() (excluding platform DurableObject/stub members)
+  // must be explicitly classified with its exact outcome in both frozen and importing states;
+  // adding a method to ScopeObject fails typecheck until its relocation policy is covered.
   const POLICY = {
-    push: 'write',
-    projectMember: 'write',
-    purgeProject: 'write',
-    pull: 'read',
-    getInboxProjectId: 'read',
-    getProjectInfo: 'read',
-    getAttachmentInfo: 'read',
-    relocationStatus: 'admin',
-    setRelocationState: 'admin',
-    exportPage: 'admin',
-    importPage: 'admin',
-    digest: 'admin',
-    opLogDigest: 'admin',
-    purgeFrozenData: 'admin',
-  } satisfies Record<keyof (ScopeStub & ScopeRelocationStub), Policy>;
+    push: { frozen: 'relocating', importing: 'relocating' },
+    projectMember: { frozen: 'relocating', importing: 'relocating' },
+    purgeProject: { frozen: 'relocating', importing: 'relocating' },
+    pull: { frozen: 'ok', importing: 'relocating' },
+    getInboxProjectId: { frozen: 'ok', importing: 'relocating' },
+    getProjectInfo: { frozen: 'ok', importing: 'relocating' },
+    getAttachmentInfo: { frozen: 'ok', importing: 'relocating' },
+    relocationStatus: { frozen: 'ok', importing: 'ok' },
+    setRelocationState: { frozen: 'ok', importing: 'ok' },
+    exportPage: { frozen: 'ok', importing: 'conflict' },
+    importPage: { frozen: 'conflict', importing: 'ok' },
+    digest: { frozen: 'ok', importing: 'ok' },
+    opLogDigest: { frozen: 'ok', importing: 'ok' },
+    purgeFrozenData: { frozen: 'ok', importing: 'conflict' },
+  } satisfies Record<ScopeRpcMethod, Policy>;
 
-  const CALL: Record<ScopeRpcMethod, (scope: ScopeInstance, state: 'frozen' | 'importing') => unknown> = {
+  // Compile-time type equality: POLICY keys must match both Scope.get() RPC methods and the
+  // hand-written stub interfaces (catches methods added directly to ScopeObject).
+  type _PolicyMatchesScopeGet = AssertTrue<ExactEqual<keyof typeof POLICY, ScopeRpcMethod>>;
+  type _PolicyMatchesStubs = AssertTrue<
+    ExactEqual<keyof typeof POLICY, keyof (ScopeStub & ScopeRelocationStub)>
+  >;
+  const _typeProof: [_PolicyMatchesScopeGet, _PolicyMatchesStubs] = [true, true];
+  void _typeProof;
+
+  const CALL: Record<ScopeRpcMethod, (scope: ScopeInstance, ctx: CallContext) => unknown> = {
     push: (scope) =>
       scope.push({
         scope: 'u:u-a',
@@ -1025,7 +1044,7 @@ describe('Scope DO RPC relocation policy coverage', () => {
     getProjectInfo: (scope) => scope.getProjectInfo({ projectId: 'p1' }),
     getAttachmentInfo: (scope) => scope.getAttachmentInfo({ attachmentId: 'a1' }),
     relocationStatus: (scope) => scope.relocationStatus(),
-    setRelocationState: (scope, state) =>
+    setRelocationState: (scope, { state }) =>
       state === 'frozen'
         ? scope.setRelocationState({ state: 'live', expect: 'frozen' })
         : scope.setRelocationState({
@@ -1034,12 +1053,62 @@ describe('Scope DO RPC relocation policy coverage', () => {
             expectDigest: scope.digest().tables,
           }),
     exportPage: (scope) => scope.exportPage({ table: 'task' }),
-    importPage: (scope) => scope.importPage({ table: 'task', rows: [] }),
+    importPage: (scope, { importTaskPage }) => scope.importPage(importTaskPage),
     digest: (scope) => scope.digest(),
     opLogDigest: (scope) => scope.opLogDigest({}),
     purgeFrozenData: (scope) =>
       scope.purgeFrozenData({ expectMaxServerSeq: scope.relocationStatus().maxServerSeq }),
   };
+
+  let cachedImportTaskPage: ScopeImportPageInput | undefined;
+
+  async function getValidImportTaskPage(): Promise<ScopeImportPageInput> {
+    if (cachedImportTaskPage) return cachedImportTaskPage;
+    const doState = createTestDoState();
+    const source = new ScopeClass(doState.ctx, { SYNC_FAULT: 'none' });
+    const pRow = projectRow('p-imp', { isInbox: true, ownerId: 'm-a' });
+    const tRow = taskRow('t-imp', 'p-imp', { title: 'Imported task' });
+    const seeded = await source.push({
+      scope: 'u:u-a',
+      scopeUserId: 'u-a',
+      pusherUserId: 'u-a',
+      deviceId: 'dev-a',
+      memberships: { 'p-imp': 'owner' },
+      purgedProjects: [],
+      meMemberId: null,
+      ops: [
+        {
+          opId: 'op-imp-p',
+          hlc: `${Date.now()}:0000:dev-a`,
+          entity: 'project',
+          entityId: 'p-imp',
+          op: 'upsert',
+          fields: Object.keys(pRow),
+          row: pRow,
+        },
+        {
+          opId: 'op-imp-t',
+          hlc: `${Date.now()}:0001:dev-a`,
+          entity: 'task',
+          entityId: 't-imp',
+          op: 'upsert',
+          fields: Object.keys(tRow),
+          row: tRow,
+        },
+      ],
+    });
+    expect(seeded.results.every((r) => r.status === 'applied')).toBe(true);
+    source.setRelocationState({ state: 'frozen', expect: 'live' });
+    const page = source.exportPage({ table: 'task' });
+    expect(page.rows.length).toBeGreaterThan(0);
+    // Use a distinct rowid so importing into a seeded frozen scope would actually insert
+    // (mutating the digest) rather than hitting a PK/rowid collision if the guard regressed.
+    cachedImportTaskPage = {
+      table: 'task',
+      rows: page.rows.map((row, idx) => ({ rowid: 100 + idx, values: row.values })),
+    };
+    return cachedImportTaskPage;
+  }
 
   async function createFrozenScope(): Promise<ScopeInstance> {
     const doState = createTestDoState();
@@ -1108,71 +1177,74 @@ describe('Scope DO RPC relocation policy coverage', () => {
   async function invokeMethod(
     scope: ScopeInstance,
     method: ScopeRpcMethod,
-    state: 'frozen' | 'importing',
+    ctx: CallContext,
   ): Promise<InvokeResult> {
     try {
-      const value = await Promise.resolve(CALL[method](scope, state));
+      const value = await Promise.resolve(CALL[method](scope, ctx));
       return { ok: true, value };
     } catch (error) {
       return { ok: false, error };
     }
   }
 
-  function expectRelocatingError(result: InvokeResult, label: string): void {
-    expect(result.ok, `${label} should reject with SCOPE_RELOCATING`).toBe(false);
-    if (!result.ok) {
-      expect(isScopeRelocatingError(result.error), `${label} should fail with SCOPE_RELOCATING`).toBe(true);
+  function isRelocationConflictError(error: unknown): boolean {
+    return error instanceof Error && error.message.startsWith(RELOCATION_CONFLICT_PREFIX);
+  }
+
+  function assertOutcome(result: InvokeResult, expected: StateOutcome, label: string): void {
+    switch (expected) {
+      case 'ok':
+        expect(result.ok, `${label} should succeed`).toBe(true);
+        break;
+      case 'relocating':
+        expect(result.ok, `${label} should reject with SCOPE_RELOCATING`).toBe(false);
+        if (!result.ok) {
+          expect(isScopeRelocatingError(result.error), `${label} should fail with SCOPE_RELOCATING`).toBe(true);
+        }
+        break;
+      case 'conflict':
+        expect(result.ok, `${label} should reject with RELOCATION_CONFLICT`).toBe(false);
+        if (!result.ok) {
+          expect(isRelocationConflictError(result.error), `${label} should fail with RELOCATION_CONFLICT`).toBe(true);
+        }
+        break;
     }
   }
 
-  it('classifies every public ScopeStub and ScopeRelocationStub RPC method', () => {
-    expect(Object.keys(POLICY).sort()).toEqual([
-      'digest',
-      'exportPage',
-      'getAttachmentInfo',
-      'getInboxProjectId',
-      'getProjectInfo',
-      'importPage',
-      'opLogDigest',
-      'projectMember',
-      'pull',
-      'purgeFrozenData',
-      'purgeProject',
-      'push',
-      'relocationStatus',
-      'setRelocationState',
-    ]);
-  });
+  const entries = (Object.entries(POLICY) as Array<[ScopeRpcMethod, Policy]>).map(
+    ([method, policy]) => [method, policy.frozen, policy.importing] as const,
+  );
 
-  const entries = Object.entries(POLICY) as Array<[ScopeRpcMethod, Policy]>;
+  it.each(entries)(
+    'enforces %s relocation policy (frozen: %s, importing: %s)',
+    async (method, frozenExpected, importingExpected) => {
+      const importTaskPage = await getValidImportTaskPage();
 
-  it.each(entries)('enforces %s relocation policy (%s) in frozen and importing states', async (method, policy) => {
-    const frozenResult = await invokeMethod(await createFrozenScope(), method, 'frozen');
-    const importingResult = await invokeMethod(createImportingScope(), method, 'importing');
+      const frozenScope = await createFrozenScope();
+      const frozenDigestBefore = frozenScope.digest();
+      const frozenResult = await invokeMethod(frozenScope, method, { state: 'frozen', importTaskPage });
+      assertOutcome(frozenResult, frozenExpected, `${method} while frozen`);
+      if (frozenExpected !== 'ok') {
+        expect(frozenScope.digest(), `${method} must not mutate frozen scope`).toEqual(frozenDigestBefore);
+      }
 
-    switch (policy) {
-      case 'write':
-        expectRelocatingError(frozenResult, `${method} while frozen`);
-        expectRelocatingError(importingResult, `${method} while importing`);
-        break;
-      case 'read':
-        expect(frozenResult.ok, `${method} should succeed while frozen`).toBe(true);
-        expectRelocatingError(importingResult, `${method} while importing`);
-        break;
-      case 'admin':
-        if (!frozenResult.ok) {
-          expect(
-            isScopeRelocatingError(frozenResult.error),
-            `${method} must not fail with SCOPE_RELOCATING while frozen`,
-          ).toBe(false);
-        }
-        if (!importingResult.ok) {
-          expect(
-            isScopeRelocatingError(importingResult.error),
-            `${method} must not fail with SCOPE_RELOCATING while importing`,
-          ).toBe(false);
-        }
-        break;
-    }
-  });
+      const importingScope = createImportingScope();
+      const importingDigestBefore = importingScope.digest();
+      const importingResult = await invokeMethod(importingScope, method, {
+        state: 'importing',
+        importTaskPage,
+      });
+      assertOutcome(importingResult, importingExpected, `${method} while importing`);
+      if (importingExpected !== 'ok') {
+        expect(importingScope.digest(), `${method} must not mutate importing scope`).toEqual(importingDigestBefore);
+      }
+      if (method === 'importPage' && importingResult.ok) {
+        expect(importingResult.value).toEqual({
+          table: importTaskPage.table,
+          imported: importTaskPage.rows.length,
+        });
+        expect(importingScope.digest().tables.task.count).toBe(importTaskPage.rows.length);
+      }
+    },
+  );
 });
