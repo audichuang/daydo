@@ -1,3 +1,4 @@
+import type { OwnerOnlyEntity } from '../sync/access';
 import {
   dbRecordToState,
   ENTITY_FIELDS,
@@ -20,7 +21,7 @@ export interface OpAppliedRow {
 export type TaskChildEntity = 'checklistItem' | 'attachment' | 'comment';
 const CHILD_ENTITIES: readonly TaskChildEntity[] = ['checklistItem', 'attachment', 'comment'];
 export const LIST_SCOPED_ENTITIES: ReadonlyArray<{
-  entity: Exclude<EntityName, 'member' | 'folder' | 'tag'>;
+  entity: Exclude<EntityName, OwnerOnlyEntity>;
   listCol: 'id' | 'projectId';
 }> = [
   { entity: 'project', listCol: 'id' },

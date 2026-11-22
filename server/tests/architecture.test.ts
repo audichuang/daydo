@@ -63,6 +63,21 @@ const WRITE_ROLE_PAIR = new RegExp(
   ].join('|'),
 );
 
+// The owner-only entity triple ('member', 'folder', 'tag') compared inline, listed in an array,
+// or enumerated as a type union. ENTITY_NAMES in entities.ts has 'project' between 'folder' and 'tag'.
+const OWNER_ONLY_TRIPLE = new RegExp(
+  [
+    String.raw`(?:===|!==)\s*'member'${NEXT_TERM}'folder'${NEXT_TERM}'tag'`,
+    String.raw`'member'\s*[,|]\s*'folder'\s*[,|]\s*'tag'`,
+  ].join('|'),
+);
+
+// Owner role comparison (`=== 'owner'` / `!== 'owner'`), excluding three-way role parsers
+// (`x === 'owner' || x === 'editor' || x === 'viewer'` and `x === 'owner' ? 'owner' : ...`).
+const OWNER_ROLE_CHECK = new RegExp(
+  String.raw`(?:===|!==)\s*'owner'(?!\s*(?:\|\|[^;{}|&]*?===\s*'editor'\s*\|\|[^;{}|&]*?===\s*'viewer'|\?\s*'owner'))`,
+);
+
 interface Guard {
   name: string;
   /** Directories or files scanned (server-relative). */
@@ -124,6 +139,37 @@ const GUARDS: Guard[] = [
     bad: ['const parsed = validateSyncOp(op);', 'return envelopeOf(raw, validateSyncOp(raw));'],
   },
   {
+    name: 'no index-parallel plan constructs in src/sync/push/**',
+    dirs: ['src/sync/push'],
+    pattern: /Array\.from\(\s*\{\s*length:\s*parsedOps\.length\b|\bopIndex\s*:/,
+    allow: [],
+    bad: [
+      'const results = Array.from({ length: parsedOps.length }, () => null);',
+      'const opTargetScope = Array.from({ length: parsedOps.length }, () => null);',
+      'export interface OwnerProjectDelete { opIndex: number; projectId: string; }',
+      'listScopeTargets.push({ opIndex: i, projectId, scope });',
+    ],
+    good: [
+      'const ops: PlannedPushOp[] = [];',
+      'ops.push({ parsed, outcome: { kind: "routed", scope } });',
+    ],
+  },
+  {
+    name: 'unknown-row precondition (!hasAllRequiredFields) only in src/sync/newRow.ts',
+    dirs: ALL,
+    pattern: /!\s*hasAllRequiredFields\(/,
+    allow: ['src/sync/newRow.ts'],
+    bad: [
+      "if (op.op === 'upsert' && !hasAllRequiredFields(op.entity, op.fields)) return;",
+      'if (! hasAllRequiredFields(entity, fields)) reject();',
+    ],
+    good: [
+      'export function hasAllRequiredFields(entity: EntityName, fields: readonly string[]): boolean {',
+      'if (validated.ok && validated.op.op === "upsert" && hasAllRequiredFields(entity, validated.op.fields)) {',
+      "else if (hasAllRequiredFields('project', validated.op.fields)) {",
+    ],
+  },
+  {
     name: 'src/scope/** contains no async or await',
     dirs: ['src/scope'],
     pattern: /\b(async|await)\b/,
@@ -145,6 +191,56 @@ const GUARDS: Guard[] = [
     bad: ['return serializePublicRow(row);', 'const out = rows.map((r) => serializePublicRow(r));'],
   },
   {
+    name: 'fixed push reject reason literals only in src/sync/rejectReason.ts',
+    dirs: ['src', 'durable-objects'],
+    pattern:
+      /['"`](id-in-other-scope|unknown-row|Project is purged|Malformed op|Child taskId cannot be changed|Project deletion must be purged via D1)['"`]/,
+    allow: ['src/sync/rejectReason.ts'],
+    bad: [
+      "results[i] = rejectedResult(opId, 'id-in-other-scope');",
+      'rejectOp(op.opId, "unknown-row", op.entity, op.entityId);',
+      "const PROJECT_PURGED = 'Project is purged';",
+      "results[i] = rejectedResult(rawOpId, 'Malformed op');",
+      "return deny('Child taskId cannot be changed');",
+      "return deny('Project deletion must be purged via D1');",
+    ],
+    good: [
+      'results[i] = rejectedResult(opId, REJECT_REASON.ID_IN_OTHER_SCOPE);',
+      'if (denial === REJECT_REASON.PROJECT_PURGED) return deny(denial);',
+      '// a row homed in another scope as a foreign create (id-in-other-scope).',
+    ],
+  },
+  {
+    name: "'Forbidden' literal in sync and scope only in src/sync/rejectReason.ts",
+    dirs: ['src/sync', 'src/scope'],
+    pattern: /['"`]Forbidden['"`]/,
+    allow: ['src/sync/rejectReason.ts'],
+    bad: [
+      "if (!isScopeOwner) return deny('Forbidden');",
+      'const denial = "Forbidden";',
+      'const denial = `Forbidden`;',
+    ],
+    good: [
+      'if (!isScopeOwner) return deny(REJECT_REASON.FORBIDDEN);',
+      '// A list created or claimed earlier in this batch has no D1 role yet; that only waives Forbidden.',
+    ],
+  },
+  {
+    name: "status: 'rejected' object literals only in rejectedResult builder and src/serverops/writer.ts",
+    dirs: ['src', 'durable-objects'],
+    pattern: /\bstatus\s*:\s*['"`]rejected['"`]/,
+    allow: ['src/serverops/writer.ts', 'src/sync/rejectReason.ts'],
+    bad: [
+      "results[i] = { opId, status: 'rejected', reason: 'x', row: null, clocks: {} };",
+      'return { opId, status: "rejected", reason, row: null, clocks: {} };',
+    ],
+    good: [
+      "if (seen.status === 'rejected') return;",
+      "status: 'applied' | 'rejected';",
+      'results[i] = rejectedResult(rawOpId, REJECT_REASON.ID_IN_OTHER_SCOPE);',
+    ],
+  },
+  {
     name: 'owner-or-editor write role check only in src/sync/access.ts',
     dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
     pattern: WRITE_ROLE_PAIR,
@@ -152,6 +248,63 @@ const GUARDS: Guard[] = [
     bad: [
       "if (member.role !== 'owner' &&\n    member.role !== 'editor') return deny();",
       "if (member.role === 'editor' || member.role === 'owner') return ok();",
+    ],
+  },
+  {
+    name: 'owner-only entity triple (member, folder, tag) only in src/sync/access.ts',
+    dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
+    pattern: OWNER_ONLY_TRIPLE,
+    allow: ['src/sync/access.ts'],
+    bad: [
+      "if (op.entity === 'member' || op.entity === 'folder' || op.entity === 'tag') return;",
+      "if (entity !== 'member' && entity !== 'folder' && entity !== 'tag') return;",
+      "const CREATOR_ONLY = ['member', 'folder', 'tag'];",
+      "type ListEntity = Exclude<EntityName, 'member' | 'folder' | 'tag'>;",
+    ],
+    good: [
+      "if (isOwnerOnlyEntity(op.entity)) return;",
+      "const ALL = ['member', 'folder', 'project', 'tag'];",
+      "if (op.entity === 'member') return;",
+    ],
+  },
+  {
+    name: 'no single-entry fake memberships map in src (use roleCanWrite / isOwner)',
+    dirs: ['src'],
+    pattern: /\bmemberships\s*:\s*\{\s*\[/,
+    allow: [],
+    bad: [
+      'listWriteDenial(id, { memberships: { [id]: role }, purgedSet: NO_PURGED });',
+      'const access = { memberships: { [projectId]: role }, purgedSet };',
+    ],
+    good: [
+      'const access: ListAccess = { memberships: input.memberships, purgedSet };',
+      "if (!roleCanWrite(role)) return jsonError(403, 'Forbidden');",
+    ],
+  },
+  {
+    name: "owner role comparison (=== / !== 'owner') only in src/sync/access.ts and allow-listed files",
+    dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
+    pattern: OWNER_ROLE_CHECK,
+    allow: [
+      // Single source of truth for role checks.
+      'src/sync/access.ts',
+      // D1 decoder classifying removed owner rows into removedOwnerProjects (not an access check).
+      'src/membership/statements.ts',
+      // Owner-only sharing checks (:80, :240, :281, :337 — excluded from SRV-2) and target-member
+      // invariants (:288, :351 — owner cannot be demoted or removed, not requester access checks).
+      'src/sharing/index.ts',
+      // D1 planner routing owner project deletes (:154 — src/sync/push/** untouched in SRV-2).
+      'src/sync/push/plan.ts',
+    ],
+    bad: [
+      "if (snapshot.memberships.get(id) !== 'owner') throw new Error('denied');",
+      "const isOwner = roleOf(access.memberships, op.entityId) === 'owner';",
+      "if (role === 'owner' || role === 'editor') return true;",
+    ],
+    good: [
+      "const ok = role === 'owner' || role === 'editor' || role === 'viewer';",
+      "const r = raw === 'owner' ? 'owner' : raw === 'editor' ? 'editor' : 'viewer';",
+      "if (!canManageLifecycle(snapshot, id)) throw new Error('denied');",
     ],
   },
   {
@@ -191,6 +344,21 @@ const GUARDS: Guard[] = [
     pattern: /\bgetScopeStub\(/,
     allow: [],
     bad: ["const stub = services.getScopeStub(scope);"],
+  },
+  {
+    name: 'src/mcp/tools/** do not call writeOrThrow or pushIntents (writes go through the session module)',
+    dirs: ['src/mcp/tools'],
+    pattern: /\b(writeOrThrow|pushIntents)\(/,
+    allow: [],
+    bad: [
+      'await writeOrThrow(deps, snapshot, intents, { nowMs: now });',
+      'const outcomes = await pushIntents(deps, snapshot, intents, { nowMs: now });',
+    ],
+    good: [
+      'await session.write(intents);',
+      'const session = await openWriteSession(ctx);',
+      "import { WriteError, WriteValidationError } from '../../serverops/writer';",
+    ],
   },
   {
     name: 'Date.now only in src/clock.ts and the listed wall-clock readers',
@@ -351,6 +519,18 @@ describe('architecture guards', () => {
         /import\s*\{[^}]*\bcanReadAttachment\b[^}]*\}\s*from\s*['"][^'"]*attachments\/access['"]|import\s*\{[^}]*\bcanReadAttachment\b[^}]*\}\s*from\s*['"]\.\/access['"]/,
       );
       expect(src, `${rel} must call canReadAttachment`).toMatch(/\bcanReadAttachment\(/);
+    }
+  });
+
+  it('src/sync/push/plan.ts and src/scope/push.ts share newRowPreconditionDenial', () => {
+    const newRowMod = readFileSync(path.join(serverDir, 'src/sync/newRow.ts'), 'utf8');
+    expect(newRowMod).toMatch(/export function newRowPreconditionDenial\b/);
+    for (const rel of ['src/sync/push/plan.ts', 'src/scope/push.ts']) {
+      const src = readFileSync(path.join(serverDir, rel), 'utf8');
+      expect(src, `${rel} must import newRowPreconditionDenial`).toMatch(
+        /import\s*\{[^}]*\bnewRowPreconditionDenial\b[^}]*\}\s*from\s*['"][^'"]*newRow['"]/,
+      );
+      expect(src, `${rel} must call newRowPreconditionDenial`).toMatch(/\bnewRowPreconditionDenial\(/);
     }
   });
 });

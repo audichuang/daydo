@@ -783,16 +783,19 @@ describe('sync push plan (pure)', () => {
       context,
     });
 
-    expect(plan.opTargetScope).toEqual([null]);
-    expect(plan.results[0]).toEqual({
-      opId: 'op-1',
-      status: 'rejected',
-      reason: 'Forbidden',
-      row: null,
-      clocks: {},
+    expect(plan.ops).toHaveLength(1);
+    expect(plan.ops[0].outcome).toEqual({
+      kind: 'rejected',
+      result: {
+        opId: 'op-1',
+        status: 'rejected',
+        reason: 'Forbidden',
+        row: null,
+        clocks: {},
+      },
     });
-    expect(plan.inBatchNewHome.size).toBe(0);
-    expect(plan.listScopeTargets).toEqual([]);
+    expect(plan.ops[0].newHome).toBeUndefined();
+    expect(plan.ops[0].listScope).toBeUndefined();
   });
 
   it('accepts editor write on a new task and in-batch child without mutating context', () => {
@@ -812,20 +815,25 @@ describe('sync push plan (pure)', () => {
       context,
     });
 
-    expect(plan.results).toEqual([null, null]);
-    expect(plan.opTargetScope).toEqual(['u:editor', 'u:editor']);
-    expect(plan.inBatchNewHome.get('task:t-edit')).toEqual({
+    expect(plan.ops.map((o) => o.outcome)).toEqual([
+      { kind: 'routed', scope: 'u:editor' },
+      { kind: 'routed', scope: 'u:editor' },
+    ]);
+    expect(plan.ops[0].newHome).toEqual({
       entity: 'task',
       entityId: 't-edit',
       desiredScope: 'u:editor',
     });
-    expect(plan.inBatchNewHome.get('checklistItem:c-edit')).toEqual({
+    expect(plan.ops[1].newHome).toEqual({
       entity: 'checklistItem',
       entityId: 'c-edit',
       desiredScope: 'u:editor',
       parentTaskId: 't-edit',
     });
-    expect(plan.listScopeTargets).toEqual([{ opIndex: 0, projectId: 'p1', scope: 'u:editor' }]);
+    expect(plan.ops.map((o) => o.listScope)).toEqual([
+      { projectId: 'p1', scope: 'u:editor' },
+      undefined,
+    ]);
     // Pure planning must not mutate caller's context.knownHome
     expect(originalHome.size).toBe(1);
     expect(originalHome.has('task:t-edit')).toBe(false);
@@ -851,8 +859,16 @@ describe('sync push plan (pure)', () => {
       }),
     });
 
-    expect(plan.opTargetScope).toEqual(['u:editor', 'u:editor', 'u:editor']);
-    expect(plan.listScopeTargets).toEqual([{ opIndex: 0, projectId: 'p-gone', scope: 'u:editor' }]);
+    expect(plan.ops.map((o) => o.outcome)).toEqual([
+      { kind: 'routed', scope: 'u:editor' },
+      { kind: 'routed', scope: 'u:editor' },
+      { kind: 'routed', scope: 'u:editor' },
+    ]);
+    expect(plan.ops.map((o) => o.listScope)).toEqual([
+      { projectId: 'p-gone', scope: 'u:editor' },
+      undefined,
+      undefined,
+    ]);
   });
 
   it('rejects in-batch child when parent task is rejected (Forbidden or id-in-other-scope)', () => {
@@ -869,9 +885,10 @@ describe('sync push plan (pure)', () => {
         memberships: { p1: 'viewer' },
       }),
     });
-    expect(viewerPlan.opTargetScope).toEqual([null, null]);
-    expect(viewerPlan.results.map((r) => r?.reason)).toEqual(['Forbidden', 'Forbidden']);
-    expect(viewerPlan.inBatchNewHome.size).toBe(0);
+    expect(
+      viewerPlan.ops.map((o) => (o.outcome.kind === 'rejected' ? o.outcome.result.reason : null)),
+    ).toEqual(['Forbidden', 'Forbidden']);
+    expect(viewerPlan.ops.filter((o) => o.newHome)).toEqual([]);
 
     // 2. Existing parent full-upsert in another scope -> child inherits id-in-other-scope
     const collisionBatch = collectPushLookups([
@@ -889,14 +906,12 @@ describe('sync push plan (pure)', () => {
         memberships: { p1: 'editor' },
       }),
     });
-    expect(collisionPlan.opTargetScope).toEqual([null, null]);
-    expect(collisionPlan.results.map((r) => r?.reason)).toEqual([
-      'id-in-other-scope',
-      'id-in-other-scope',
-    ]);
+    expect(
+      collisionPlan.ops.map((o) => (o.outcome.kind === 'rejected' ? o.outcome.result.reason : null)),
+    ).toEqual(['id-in-other-scope', 'id-in-other-scope']);
   });
 
-  it('separates owner project delete into ownerProjectDeletes while routing non-owner delete to homeScope', () => {
+  it('separates owner project delete into ownerDelete outcome while routing non-owner delete to homeScope', () => {
     const deleteOp = {
       opId: 'op-del',
       hlc: hlc1,
@@ -916,9 +931,8 @@ describe('sync push plan (pure)', () => {
         memberships: { p1: 'owner' },
       }),
     });
-    expect(ownerPlan.opTargetScope).toEqual([null]);
-    expect(ownerPlan.ownerProjectDeletes).toEqual([
-      { opIndex: 0, projectId: 'p1', homeScope: 'u:owner', opId: 'op-del' },
+    expect(ownerPlan.ops.map((o) => o.outcome)).toEqual([
+      { kind: 'ownerDelete', projectId: 'p1', homeScope: 'u:owner', opId: 'op-del' },
     ]);
 
     const editorPlan = planPushBatch({
@@ -929,7 +943,8 @@ describe('sync push plan (pure)', () => {
         memberships: { p1: 'editor' },
       }),
     });
-    expect(editorPlan.opTargetScope).toEqual(['u:owner']);
-    expect(editorPlan.ownerProjectDeletes).toEqual([]);
+    expect(editorPlan.ops.map((o) => o.outcome)).toEqual([
+      { kind: 'routed', scope: 'u:owner' },
+    ]);
   });
 });

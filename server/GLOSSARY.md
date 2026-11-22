@@ -16,7 +16,8 @@
 - **OpEnvelope**：Worker 驗證過的 op（原始 op、解析出的 entity、驗證結果）。Worker 傳給 DO 的是原始 op 加上 `validated`，因為部署時新舊版本會混跑。
 - **intent**：伺服器端（MCP、ICS）想寫的結果（`WriteIntent`），由 `serverops/writer.ts` 組成 op，走和 App 一樣的 push 路徑。
 - **snapshot**：伺服器端讀到的使用者全部列，包含垃圾桶與 tombstone（`loadSnapshot`）。
-- **listWriteDenial**：清單寫入權限的判斷，回傳 `Project is purged`、`Forbidden` 或可寫（`src/sync/access.ts`）。
+- **listWriteDenial**：清單寫入權限的判斷，回傳 `Project is purged`、`Forbidden` 或可寫（`src/sync/access.ts`）。同檔亦集中其餘純同步存取規則：`OWNER_ONLY_ENTITIES`／`isOwnerOnlyEntity`（僅 scope 擁有者可見可寫的 `member`／`folder`／`tag`）、`childListId`（子列所屬清單取父任務現有清單，否則回退儲存的 `projectId`）、`canRead`、`roleCanWrite`、`isOwner`、`canManageListLifecycle`（清單垃圾桶／還原／封存／刪除僅限擁有者）。
+- **write session**：MCP 寫入工具開的執行上下文（`src/mcp/toolkit.ts` 的 `openWriteSession`，建在 `openSession` 之上）。一次載入 `snapshot`、`deps` 與單一 `now` 並檢查 `assertHasData`；`session.write` 固定帶該 `now` 呼叫 `writeOrThrow`，`session.readBack` 合併 writer 原地更新的既有列與新建列回讀。
 
 ## 刪除
 

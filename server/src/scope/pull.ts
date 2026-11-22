@@ -1,4 +1,5 @@
-import { dbRecordToState, isEntityName, type EntityName } from '../sync/entities';
+import { canRead, childListId, OWNER_ONLY_ENTITIES } from '../sync/access';
+import { dbRecordToState, isEntityName } from '../sync/entities';
 import type {
   PullScopeRow,
   ScopeAttachmentInfo,
@@ -8,8 +9,6 @@ import type {
 } from './api';
 import { rowView } from './rowView';
 import { LIST_SCOPED_ENTITIES } from './store';
-
-const CREATOR_ONLY_ENTITIES: readonly EntityName[] = ['member', 'folder', 'tag'];
 
 export function getInboxProjectId(sql: SqlStorage, input: { readableProjectIds: string[] }): string | null {
   if (!Array.isArray(input.readableProjectIds) || input.readableProjectIds.length === 0) {
@@ -61,11 +60,11 @@ export function getAttachmentInfo(
   const taskProjectId =
     typeof r.taskProjectId === 'string' && r.taskProjectId.length > 0 ? r.taskProjectId : null;
   const attachmentProjectId =
-    typeof r.attachmentProjectId === 'string' ? r.attachmentProjectId : '';
+    typeof r.attachmentProjectId === 'string' ? r.attachmentProjectId : null;
   return {
     id: String(r.id),
     taskId: String(r.taskId),
-    projectId: taskProjectId ?? attachmentProjectId,
+    projectId: childListId(taskProjectId, attachmentProjectId),
     size: Number(r.size),
     mimeType: typeof r.mimeType === 'string' ? r.mimeType : '',
     deletedAt: typeof r.deletedAt === 'number' ? r.deletedAt : null,
@@ -96,14 +95,14 @@ export function pullScope(sql: SqlStorage, input: ScopePullInput): ScopePullResp
   const isBackfill =
     Array.isArray(input.backfillProjectIds) && input.backfillProjectIds.length > 0;
   const visibleProjectIds = isBackfill
-    ? input.backfillProjectIds!.filter((pid) => Boolean(input.memberships[pid]))
+    ? input.backfillProjectIds!.filter((pid) => canRead(input.memberships, pid))
     : Object.keys(input.memberships);
   const fetchLimit = input.limit + 1;
   const isCreator = input.requesterUserId === input.scopeUserId;
   const combined: PullScopeRow[] = [];
 
   if (!isBackfill && isCreator) {
-    for (const entity of CREATOR_ONLY_ENTITIES) {
+    for (const entity of OWNER_ONLY_ENTITIES) {
       const rows = sql
         .exec(
           `SELECT * FROM "${entity}" WHERE serverSeq > ? ORDER BY serverSeq ASC LIMIT ?`,

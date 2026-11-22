@@ -4,8 +4,7 @@ import { normalizeTags } from '../../domain/tags';
 import type { Snapshot, SnapshotRow } from '../../serverops/snapshot';
 import { bySortKey, compareKeys } from '../../serverops/values';
 import { formatTask, summarizeTask } from '../format';
-import { requireStr, ToolValidationError, type ToolDef } from '../toolkit';
-import { openSession } from './projects';
+import { openSession, requireStr, ToolValidationError, type ToolDef } from '../toolkit';
 
 export const SEARCH_LIMIT = 200;
 const DEFAULT_RECENT_LIMIT = 10;

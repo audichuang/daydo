@@ -11,7 +11,7 @@ import {
 } from '../../domain/schedule';
 import { normalizeTagLabels } from '../../domain/tags';
 import { uuidv7 } from '../../domain/uuid';
-import { withCreated } from '../../serverops/snapshot';
+import { snapshotRole } from '../../serverops/snapshot';
 import {
   completeOccurrence,
   completeTaskIntent,
@@ -23,10 +23,15 @@ import {
   uncompleteTaskIntent,
 } from '../../serverops/taskWrites';
 import { isNil, rowSchedule } from '../../serverops/values';
-import { assertHasData, writeOrThrow } from '../../serverops/writer';
 import { formatTask, openTasksOf } from '../format';
-import { nowOf, requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
-import { openSession, requireWritableList } from './projects';
+import {
+  openWriteSession,
+  requireStr,
+  requireWritableList,
+  ToolValidationError,
+  type ToolContext,
+  type ToolDef,
+} from '../toolkit';
 import { idOf, num, PROJECT_ID, requireLiveProject, TASK_ID, taskIn } from './tasksRead';
 
 export { SEARCH_LIMIT, taskIn, taskReadTools } from './tasksRead';
@@ -174,18 +179,17 @@ export function taskWriteTools(): ToolDef[] {
         const reminders = reminder === undefined ? [] : parseReminderCsv(reminder);
         const repeatRule = repeat === undefined ? null : validateRepeat(repeat);
 
-        const { snapshot, deps } = await openSession(ctx);
-        assertHasData(snapshot);
+        const session = await openWriteSession(ctx);
+        const { snapshot, now } = session;
         requireWritableList(snapshot, projectId);
-        const now = nowOf(ctx);
         const id = uuidv7(now);
         const task = {
           projectId, title, content, priority, reminders, tags, subtasks, schedule, repeatRule,
           ...(countdown !== undefined && { countdown }),
         };
-        const outcomes = await writeOrThrow(deps, snapshot, newTaskIntents(snapshot, ctx.userId, id, task, now), { nowMs: now });
-        const view = withCreated(snapshot, outcomes);
-        return formatTask(view, view.findRow('task', id)!);
+        await session.write(newTaskIntents(snapshot, ctx.userId, id, task, now));
+        const { view, row } = session.readBack('task', id);
+        return formatTask(view, row);
       },
     },
     {
@@ -230,8 +234,8 @@ export function taskWriteTools(): ToolDef[] {
         const reminders = reminder === undefined ? undefined : parseReminderCsv(reminder);
         const repeatRule = repeat === undefined ? undefined : repeat.trim() === '' ? null : validateRepeat(repeat);
 
-        const { snapshot, deps } = await openSession(ctx);
-        assertHasData(snapshot);
+        const session = await openWriteSession(ctx);
+        const { snapshot, now } = session;
         const task = taskIn(snapshot, taskId, projectId);
         requireWritableList(snapshot, projectId);
         const cur = rowSchedule(task.row);
@@ -261,14 +265,13 @@ export function taskWriteTools(): ToolDef[] {
           if (repeatRule) throw new ToolValidationError('repeat', NEEDS_DATE('repeat'));
         }
 
-        const now = nowOf(ctx);
         const tags = rawTags === undefined ? undefined : normalizeTagLabels(rawTags);
         const patch = { title, content, priority, schedule: next, reminders, repeatRule, countdown, tags, subtasks };
         const intents = patchTaskIntents(snapshot, ctx.userId, task, patch, now);
         if (intents === null) throw new Error('Nothing to update: give at least one field to change');
-        const outcomes = await writeOrThrow(deps, snapshot, intents, { nowMs: now });
-        const view = withCreated(snapshot, outcomes);
-        return formatTask(view, view.findRow('task', taskId)!);
+        await session.write(intents);
+        const { view, row } = session.readBack('task', taskId);
+        return formatTask(view, row);
       },
     },
     {
@@ -283,22 +286,22 @@ export function taskWriteTools(): ToolDef[] {
       run: async (args, ctx) => {
         const projectId = requireStr(args, 'project_id');
         const taskId = requireStr(args, 'task_id');
-        const { snapshot, deps } = await openSession(ctx);
-        assertHasData(snapshot);
+        const session = await openWriteSession(ctx);
+        const { snapshot, deps, now } = session;
         const task = taskIn(snapshot, taskId, projectId);
         requireWritableList(snapshot, projectId);
         if (num(task, 'status') === 2) return formatTask(snapshot, task);
         const rule = typeof task.row.repeatRule === 'string' ? parseRecurrence(task.row.repeatRule) : null;
         const schedule = rowSchedule(task.row);
         if (rule !== null && schedule !== null) {
-          const options = { defaultTimeZone: scheduleContext(ctx).defaultTimeZone, nowMs: nowOf(ctx) };
+          const options = { defaultTimeZone: scheduleContext(ctx).defaultTimeZone, nowMs: now };
           const { copyId, outcomes } = await completeOccurrence(deps, snapshot, task, rule, schedule, options);
-          const view = withCreated(snapshot, outcomes);
-          return formatTask(view, view.findRow('task', copyId)!);
+          const { view, row } = session.readBack('task', copyId, outcomes);
+          return formatTask(view, row);
         }
-        const now = nowOf(ctx);
-        await writeOrThrow(deps, snapshot, [completeTaskIntent(taskId, now)], { nowMs: now });
-        return formatTask(snapshot, snapshot.findRow('task', taskId)!);
+        await session.write([completeTaskIntent(taskId, now)]);
+        const { view, row } = session.readBack('task', taskId);
+        return formatTask(view, row);
       },
     },
     {
@@ -313,14 +316,14 @@ export function taskWriteTools(): ToolDef[] {
       run: async (args, ctx) => {
         const projectId = requireStr(args, 'project_id');
         const taskId = requireStr(args, 'task_id');
-        const { snapshot, deps } = await openSession(ctx);
-        assertHasData(snapshot);
+        const session = await openWriteSession(ctx);
+        const { snapshot } = session;
         const task = taskIn(snapshot, taskId, projectId);
         requireWritableList(snapshot, projectId);
         if (num(task, 'status') === 0) return formatTask(snapshot, task);
-        const now = nowOf(ctx);
-        await writeOrThrow(deps, snapshot, [uncompleteTaskIntent(taskId)], { nowMs: now });
-        return formatTask(snapshot, snapshot.findRow('task', taskId)!);
+        await session.write([uncompleteTaskIntent(taskId)]);
+        const { view, row } = session.readBack('task', taskId);
+        return formatTask(view, row);
       },
     },
     {
@@ -341,8 +344,8 @@ export function taskWriteTools(): ToolDef[] {
       run: async (args, ctx) => {
         const taskId = requireStr(args, 'task_id');
         const expectedProjectId = parseOptionalProjectId(args);
-        const { snapshot, deps } = await openSession(ctx);
-        assertHasData(snapshot);
+        const session = await openWriteSession(ctx);
+        const { snapshot } = session;
         const task = snapshot.findRow('task', taskId);
         if (!task) throw new Error(`Unknown task_id '${taskId}'`);
         if (!isNil(task.row.purgedAt)) {
@@ -354,7 +357,7 @@ export function taskWriteTools(): ToolDef[] {
           origProject !== undefined && isNil(origProject.row.deletedAt) && isNil(origProject.row.purgedAt);
         if (origProject !== undefined && isNil(origProject.row.purgedAt) && !snapshot.canWrite(origProjectId)) {
           throw new Error(
-            `Project '${origProjectId}' is read-only for you (role: ${snapshot.memberships.get(origProjectId) ?? 'none'})`,
+            `Project '${origProjectId}' is read-only for you (role: ${snapshotRole(snapshot, origProjectId) ?? 'none'})`,
           );
         }
         if (isNil(task.row.deletedAt)) return formatTask(snapshot, task);
@@ -367,9 +370,9 @@ export function taskWriteTools(): ToolDef[] {
           requireWritableList(snapshot, inboxId);
           targetProjectId = inboxId;
         }
-        const now = nowOf(ctx);
-        await writeOrThrow(deps, snapshot, [restoreTaskIntent(taskId, targetProjectId)], { nowMs: now });
-        return formatTask(snapshot, snapshot.findRow('task', taskId)!);
+        await session.write([restoreTaskIntent(taskId, targetProjectId)]);
+        const { view, row } = session.readBack('task', taskId);
+        return formatTask(view, row);
       },
     },
     {
@@ -384,12 +387,11 @@ export function taskWriteTools(): ToolDef[] {
       run: async (args, ctx) => {
         const projectId = requireStr(args, 'project_id');
         const taskId = requireStr(args, 'task_id');
-        const { snapshot, deps } = await openSession(ctx);
-        assertHasData(snapshot);
+        const session = await openWriteSession(ctx);
+        const { snapshot, now } = session;
         const task = taskIn(snapshot, taskId, projectId);
         requireWritableList(snapshot, projectId);
-        const now = nowOf(ctx);
-        await writeOrThrow(deps, snapshot, [trashTaskIntent(taskId, now)], { nowMs: now });
+        await session.write([trashTaskIntent(taskId, now)]);
         return { deleted: true, task_id: taskId, title: String(task.row.title ?? '') };
       },
     },
@@ -410,16 +412,17 @@ export function taskWriteTools(): ToolDef[] {
         const taskId = requireStr(args, 'task_id');
         const from = requireStr(args, 'from_project_id');
         const to = requireStr(args, 'to_project_id');
-        const { snapshot, deps } = await openSession(ctx);
-        assertHasData(snapshot);
+        const session = await openWriteSession(ctx);
+        const { snapshot } = session;
         taskIn(snapshot, taskId, from);
         requireLiveProject(snapshot, to);
         requireWritableList(snapshot, from);
         requireWritableList(snapshot, to);
         if (from !== to) {
-          await writeOrThrow(deps, snapshot, [moveTaskIntent(taskId, to)]);
+          await session.write([moveTaskIntent(taskId, to)]);
         }
-        return formatTask(snapshot, snapshot.findRow('task', taskId)!);
+        const { view, row } = session.readBack('task', taskId);
+        return formatTask(view, row);
       },
     },
     {
@@ -437,15 +440,15 @@ export function taskWriteTools(): ToolDef[] {
       run: async (args, ctx) => {
         const from = requireStr(args, 'from_project_id');
         const to = requireStr(args, 'to_project_id');
-        const { snapshot, deps } = await openSession(ctx);
-        assertHasData(snapshot);
+        const session = await openWriteSession(ctx);
+        const { snapshot } = session;
         requireLiveProject(snapshot, from);
         requireLiveProject(snapshot, to);
         requireWritableList(snapshot, from);
         requireWritableList(snapshot, to);
         const tasks = from === to ? [] : openTasksOf(snapshot, from);
         if (tasks.length > 0) {
-          await writeOrThrow(deps, snapshot, tasks.map((t) => moveTaskIntent(idOf(t), to)));
+          await session.write(tasks.map((t) => moveTaskIntent(idOf(t), to)));
         }
         return { moved: tasks.length, from_project_id: from, to_project_id: to, task_ids: tasks.map(idOf) };
       },

@@ -472,6 +472,28 @@ describe('M11b move_task / move_all', () => {
     expect(again.json).toMatchObject({ moved: 0 });
     expect(h.calls).toEqual([]);
   });
+
+  it('move_task stamps updatedAt from the injected clock, not wall time', async () => {
+    const PAST = NOW_ISH + 60_000;
+    const h = createHarness({ getNow: () => PAST });
+    await seedBasic(h);
+    const r = await call(h, 'u-a', 'move_task', { task_id: 't1', from_project_id: 'p1', to_project_id: 'inbox-u-a' });
+    expect(r.isError, r.text).toBe(false);
+    expect(r.json.updated_at).toBe(PAST);
+    expect(pulled(await h.pull('u-a'), 'task', 't1')?.updatedAt).toBe(PAST);
+  });
+
+  it('move_all stamps updatedAt from the injected clock, not wall time', async () => {
+    const PAST = NOW_ISH + 60_000;
+    const h = createHarness({ getNow: () => PAST });
+    await seedBasic(h);
+    await h.devicePush('u-a', [deviceOp(h, 'task', taskRow('t2', 'p1', { sortKey: 'b' }))]);
+    const r = await call(h, 'u-a', 'move_all', { from_project_id: 'p1', to_project_id: 'inbox-u-a' });
+    expect(r.isError, r.text).toBe(false);
+    const res = await h.pull('u-a');
+    expect(pulled(res, 'task', 't1')?.updatedAt).toBe(PAST);
+    expect(pulled(res, 'task', 't2')?.updatedAt).toBe(PAST);
+  });
 });
 
 describe('uncomplete_task', () => {

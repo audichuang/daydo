@@ -6,9 +6,18 @@ import { ICS_MAX_WINDOW_DAYS, syncSource, type IcsEngineDeps } from '../../ics/e
 import { assertFetchableUrl } from '../../ics/fetch';
 import { D1IcsStore, MIN_SYNC_INTERVAL_SEC, type AddSourceInput, type IcsSource, type IcsStore } from '../../ics/store';
 import type { IcsFilter } from '../../ics/types';
-import { NO_DATA_MESSAGE } from '../../serverops/writer';
-import { isEmpty, nowOf, requireInt, requireStr, ToolValidationError, type ToolContext, type ToolDef, type ToolServices } from '../toolkit';
-import { openSession, requireWritableList } from './projects';
+import {
+  isEmpty,
+  nowOf,
+  openWriteSession,
+  requireInt,
+  requireStr,
+  requireWritableList,
+  ToolValidationError,
+  type ToolContext,
+  type ToolDef,
+  type ToolServices,
+} from '../toolkit';
 
 function servicesOf(ctx: ToolContext): ToolServices {
   if (!ctx.services) throw new Error('MCP tool services are not configured');
@@ -130,8 +139,7 @@ export function icsTools(): ToolDef[] {
         if (filter) input.filter = filter;
         assertFetchableUrl(url, servicesOf(ctx).ics?.fetchOptions?.insecureHosts ?? []);
 
-        const { snapshot } = await openSession(ctx);
-        if (snapshot.meMemberId === null) throw new Error(NO_DATA_MESSAGE);
+        const { snapshot } = await openWriteSession(ctx);
         requireWritableList(snapshot, projectId);
         return describeSource(await storeOf(ctx).addSource(ctx.userId, input));
       },

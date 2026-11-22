@@ -7,6 +7,8 @@ import {
   type MembershipRole,
 } from '../entities';
 import { hasWriteRole, listWriteDenial } from '../access';
+import { newRowPreconditionDenial } from '../newRow';
+import { REJECT_REASON, rejectedResult } from '../rejectReason';
 import { entityHomeKey, type ParsedPushOp } from './parse';
 
 export interface NewEntityHomeEntry {
@@ -16,17 +18,21 @@ export interface NewEntityHomeEntry {
   parentTaskId?: string;
 }
 
-export interface OwnerProjectDelete {
-  opIndex: number;
-  projectId: string;
-  homeScope: string;
-  opId: string;
-}
-
 export interface ListScopeTarget {
-  opIndex: number;
   projectId: string;
   scope: string;
+}
+
+export type PlannedOpOutcome =
+  | { kind: 'routed'; scope: string }
+  | { kind: 'rejected'; result: PushOpResult }
+  | { kind: 'ownerDelete'; projectId: string; homeScope: string; opId: string };
+
+export interface PlannedPushOp {
+  parsed: ParsedPushOp;
+  outcome: PlannedOpOutcome;
+  newHome?: NewEntityHomeEntry;
+  listScope?: ListScopeTarget;
 }
 
 export interface PlanPushContext {
@@ -43,23 +49,9 @@ export interface PlanPushInput {
 }
 
 export interface PushPlan {
-  results: Array<PushOpResult | null>;
-  opTargetScope: Array<string | null>;
-  inBatchNewHome: Map<string, NewEntityHomeEntry>;
+  ops: PlannedPushOp[];
   inBatchNewProjects: Set<string>;
   projectOwnerBackfills: Set<string>;
-  ownerProjectDeletes: OwnerProjectDelete[];
-  listScopeTargets: ListScopeTarget[];
-}
-
-function rejectedResult(opId: string, reason: string): PushOpResult {
-  return {
-    opId,
-    status: 'rejected',
-    reason,
-    row: null,
-    clocks: {},
-  };
 }
 
 /**
@@ -72,35 +64,41 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
   const { purgedSet, memberships, removedOwnerProjects } = context;
   const workingHome = new Map(context.knownHome);
 
-  const results: Array<PushOpResult | null> = Array.from({ length: parsedOps.length }, () => null);
-  const inBatchNewHome = new Map<string, NewEntityHomeEntry>();
+  const ops: PlannedPushOp[] = [];
   const inBatchRejectedTasks = new Map<string, string>();
   const inBatchNewProjects = new Set<string>();
   const projectOwnerBackfills = new Set<string>();
-  const ownerProjectDeletes: OwnerProjectDelete[] = [];
-  const listScopeTargets: ListScopeTarget[] = [];
-  const opTargetScope: Array<string | null> = Array.from({ length: parsedOps.length }, () => null);
 
-  for (let i = 0; i < parsedOps.length; i += 1) {
-    const { rec, rawOpId, entity, entityId, validated } = parsedOps[i];
+  for (const parsed of parsedOps) {
+    const { rec, rawOpId, entity, entityId, validated } = parsed;
     if (!entity || !entityId) {
-      results[i] = rejectedResult(rawOpId, validated.ok ? 'Malformed op' : validated.reason);
+      ops.push({
+        parsed,
+        outcome: {
+          kind: 'rejected',
+          result: rejectedResult(
+            rawOpId,
+            validated.ok ? REJECT_REASON.MALFORMED_OP : validated.reason,
+          ),
+        },
+      });
       continue;
     }
 
     const key = entityHomeKey(entity, entityId);
 
     if (entity === 'tag') {
-      opTargetScope[i] = pusherScope;
+      ops.push({ parsed, outcome: { kind: 'routed', scope: pusherScope } });
       continue;
     }
 
     if (entity === 'projectMember' || entity === 'projectInvite') {
+      let scope: string;
       if (workingHome.has(key)) {
-        opTargetScope[i] = workingHome.get(key)!;
+        scope = workingHome.get(key)!;
       } else if (entity === 'projectMember') {
         const pm = parseEntityId('projectMember', entityId)!;
-        opTargetScope[i] = workingHome.get(entityHomeKey('project', pm.projectId)) ?? pusherScope;
+        scope = workingHome.get(entityHomeKey('project', pm.projectId)) ?? pusherScope;
       } else {
         const pid =
           rec?.row &&
@@ -109,9 +107,9 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
           typeof (rec.row as Record<string, unknown>).projectId === 'string'
             ? ((rec.row as Record<string, unknown>).projectId as string)
             : '';
-        opTargetScope[i] =
-          (pid && workingHome.get(entityHomeKey('project', pid))) || pusherScope;
+        scope = (pid && workingHome.get(entityHomeKey('project', pid))) || pusherScope;
       }
+      ops.push({ parsed, outcome: { kind: 'routed', scope } });
       continue;
     }
 
@@ -130,19 +128,37 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
               : '';
           const parentRejectReason = taskId ? inBatchRejectedTasks.get(taskId) : undefined;
           if (parentRejectReason) {
-            results[i] = rejectedResult(validated.op.opId, parentRejectReason);
+            ops.push({
+              parsed,
+              outcome: {
+                kind: 'rejected',
+                result: rejectedResult(validated.op.opId, parentRejectReason),
+              },
+            });
             continue;
           }
           const taskHome = taskId ? workingHome.get(entityHomeKey('task', taskId)) : undefined;
           if (taskHome ? targetScope !== taskHome : targetScope !== pusherScope) {
-            results[i] = rejectedResult(validated.op.opId, 'id-in-other-scope');
+            ops.push({
+              parsed,
+              outcome: {
+                kind: 'rejected',
+                result: rejectedResult(validated.op.opId, REJECT_REASON.ID_IN_OTHER_SCOPE),
+              },
+            });
             continue;
           }
         } else if (targetScope !== pusherScope) {
           if (entity === 'task') {
-            inBatchRejectedTasks.set(entityId, 'id-in-other-scope');
+            inBatchRejectedTasks.set(entityId, REJECT_REASON.ID_IN_OTHER_SCOPE);
           }
-          results[i] = rejectedResult(validated.op.opId, 'id-in-other-scope');
+          ops.push({
+            parsed,
+            outcome: {
+              kind: 'rejected',
+              result: rejectedResult(validated.op.opId, REJECT_REASON.ID_IN_OTHER_SCOPE),
+            },
+          });
           continue;
         }
       }
@@ -156,22 +172,25 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
             removedOwnerProjects.has(entityId) &&
             targetScope === pusherScope))
       ) {
-        ownerProjectDeletes.push({
-          opIndex: i,
-          projectId: entityId,
-          homeScope: targetScope,
-          opId: validated.op.opId,
+        ops.push({
+          parsed,
+          outcome: {
+            kind: 'ownerDelete',
+            projectId: entityId,
+            homeScope: targetScope,
+            opId: validated.op.opId,
+          },
         });
         continue;
       }
 
-      opTargetScope[i] = targetScope;
+      let listScope: ListScopeTarget | undefined;
       if (entity === 'project' && validated.ok && validated.op.op === 'upsert') {
         if (targetScope === pusherScope && !memberships[entityId] && !purgedSet.has(entityId)) {
           projectOwnerBackfills.add(entityId);
-          listScopeTargets.push({ opIndex: i, projectId: entityId, scope: targetScope });
+          listScope = { projectId: entityId, scope: targetScope };
         } else if (hasAllRequiredFields('project', validated.op.fields)) {
-          listScopeTargets.push({ opIndex: i, projectId: entityId, scope: targetScope });
+          listScope = { projectId: entityId, scope: targetScope };
         }
       } else if (
         entity === 'task' &&
@@ -190,64 +209,66 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
           inBatchNewProjects.has(targetPid) ||
           projectOwnerBackfills.has(targetPid)
         ) {
-          listScopeTargets.push({
-            opIndex: i,
-            projectId: targetPid,
-            scope: targetScope,
-          });
+          listScope = { projectId: targetPid, scope: targetScope };
         }
       }
+      ops.push({
+        parsed,
+        outcome: { kind: 'routed', scope: targetScope },
+        ...(listScope ? { listScope } : {}),
+      });
       continue;
     }
 
     // New entity id (not yet in entityHome)
     if (!validated.ok) {
-      results[i] = rejectedResult(validated.opId, validated.reason);
+      ops.push({
+        parsed,
+        outcome: { kind: 'rejected', result: rejectedResult(validated.opId, validated.reason) },
+      });
       continue;
     }
 
     const op = validated.op;
-    if (op.entity === 'project' && op.op === 'delete') {
-      results[i] = rejectedResult(op.opId, 'unknown-row');
-      continue;
-    }
-
-    if (op.op === 'upsert' && !hasAllRequiredFields(op.entity, op.fields)) {
-      results[i] = rejectedResult(op.opId, 'unknown-row');
+    const preconditionDenial = newRowPreconditionDenial(op, {
+      rejectUnknownProjectDelete: true,
+      checkParentTask: (taskId) => {
+        const parentRejectReason = inBatchRejectedTasks.get(taskId);
+        if (parentRejectReason) return { ok: false, reason: parentRejectReason };
+        return workingHome.has(entityHomeKey('task', taskId)) ? { ok: true } : { ok: false };
+      },
+    });
+    if (preconditionDenial) {
+      ops.push({
+        parsed,
+        outcome: { kind: 'rejected', result: rejectedResult(op.opId, preconditionDenial) },
+      });
       continue;
     }
 
     if (isTaskChildEntity(op.entity)) {
-      if (op.op === 'delete') {
-        results[i] = rejectedResult(op.opId, 'unknown-row');
-        continue;
-      }
-      const taskId =
-        Object.hasOwn(op.row, 'taskId') && typeof op.row.taskId === 'string' ? op.row.taskId : '';
-      const parentRejectReason = taskId ? inBatchRejectedTasks.get(taskId) : undefined;
-      if (parentRejectReason) {
-        results[i] = rejectedResult(op.opId, parentRejectReason);
-        continue;
-      }
-      const parentScope = taskId ? workingHome.get(entityHomeKey('task', taskId)) : undefined;
-      if (!parentScope) {
-        results[i] = rejectedResult(op.opId, 'unknown-row');
-        continue;
-      }
+      const taskId = String(op.row.taskId);
+      const parentScope = workingHome.get(entityHomeKey('task', taskId))!;
       workingHome.set(key, parentScope);
-      inBatchNewHome.set(key, {
-        entity: op.entity,
-        entityId: op.entityId,
-        desiredScope: parentScope,
-        parentTaskId: taskId,
+      ops.push({
+        parsed,
+        outcome: { kind: 'routed', scope: parentScope },
+        newHome: {
+          entity: op.entity,
+          entityId: op.entityId,
+          desiredScope: parentScope,
+          parentTaskId: taskId,
+        },
       });
-      opTargetScope[i] = parentScope;
       continue;
     }
 
     // New top-level entity: project, task, member, folder
     if (op.entity === 'project' && purgedSet.has(op.entityId)) {
-      results[i] = rejectedResult(op.opId, 'Project is purged');
+      ops.push({
+        parsed,
+        outcome: { kind: 'rejected', result: rejectedResult(op.opId, REJECT_REASON.PROJECT_PURGED) },
+      });
       continue;
     }
     if (op.entity === 'task' && op.op === 'upsert') {
@@ -255,28 +276,28 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
         Object.hasOwn(op.row, 'projectId') && typeof op.row.projectId === 'string'
           ? op.row.projectId
           : '';
-      // A list created or claimed earlier in this batch has no D1 role yet; that only waives Forbidden.
-      const denial = targetPid ? listWriteDenial(targetPid, context) : 'Forbidden';
+      // Ordering invariant: a list created or owner-backfilled earlier in this batch has no D1 role
+      // yet; waiving Forbidden here is valid only because applyPushPlan runs reconcileListScopes
+      // (which re-reads D1 memberships after claimOwner) before dispatchScopeBatches.
+      const denial = targetPid ? listWriteDenial(targetPid, context) : REJECT_REASON.FORBIDDEN;
       if (
-        denial === 'Project is purged' ||
+        denial === REJECT_REASON.PROJECT_PURGED ||
         (denial && !inBatchNewProjects.has(targetPid) && !projectOwnerBackfills.has(targetPid))
       ) {
         inBatchRejectedTasks.set(op.entityId, denial);
-        results[i] = rejectedResult(op.opId, denial);
+        ops.push({
+          parsed,
+          outcome: { kind: 'rejected', result: rejectedResult(op.opId, denial) },
+        });
         continue;
       }
     }
-    workingHome.set(key, pusherScope);
-    inBatchNewHome.set(key, {
-      entity: op.entity,
-      entityId: op.entityId,
-      desiredScope: pusherScope,
-    });
-    opTargetScope[i] = pusherScope;
 
+    workingHome.set(key, pusherScope);
+    let listScope: ListScopeTarget | undefined;
     if (op.entity === 'project' && op.op === 'upsert') {
       inBatchNewProjects.add(op.entityId);
-      listScopeTargets.push({ opIndex: i, projectId: op.entityId, scope: pusherScope });
+      listScope = { projectId: op.entityId, scope: pusherScope };
     } else if (
       op.entity === 'task' &&
       op.op === 'upsert' &&
@@ -284,21 +305,23 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
       typeof op.row.projectId === 'string' &&
       op.row.projectId.length > 0
     ) {
-      listScopeTargets.push({
-        opIndex: i,
-        projectId: op.row.projectId,
-        scope: pusherScope,
-      });
+      listScope = { projectId: op.row.projectId, scope: pusherScope };
     }
+    ops.push({
+      parsed,
+      outcome: { kind: 'routed', scope: pusherScope },
+      newHome: {
+        entity: op.entity,
+        entityId: op.entityId,
+        desiredScope: pusherScope,
+      },
+      ...(listScope ? { listScope } : {}),
+    });
   }
 
   return {
-    results,
-    opTargetScope,
-    inBatchNewHome,
+    ops,
     inBatchNewProjects,
     projectOwnerBackfills,
-    ownerProjectDeletes,
-    listScopeTargets,
   };
 }
