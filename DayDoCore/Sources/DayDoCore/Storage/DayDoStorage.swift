@@ -30,6 +30,8 @@ public struct DeviceStore: Sendable {
 
     public var api: any DayDoAPI { localAPI }
 
+    public var now: Date { localAPI.clock.now() }
+    public var timeZone: TimeZone { localAPI.clock.timeZone() }
     public var today: LocalDay { localAPI.clock.today }
 
     public func bootstrap(meName: String = "我") async throws {

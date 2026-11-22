@@ -24,6 +24,7 @@ struct TimeBlockEditor: View {
     @GestureState private var isMoving = false
 
     static let pxPerMinute: CGFloat = 1
+    static let step = 5
     static let maxEnd = 26 * 60
     let top: CGFloat = 10
 
@@ -42,7 +43,7 @@ struct TimeBlockEditor: View {
                     draft.endDay = nil
                     draft.start = s
                     draft.end = e
-                    if draft.timeZone == nil { draft.timeZone = TimeZone.current.identifier }
+                    draft.stampTimeZoneIfFloating(TimeZone.current.identifier)
                     save()
                 }
             }
@@ -103,7 +104,7 @@ struct TimeBlockEditor: View {
                 HStack(spacing: 6) {
                     ForEach([(15, "15 分"), (30, "30 分"), (45, "45 分"), (60, "1 小時"), (90, "1.5 小時"), (120, "2 小時")], id: \.0) { d in
                         let on = e - s == d.0
-                        Button { e = min(s + d.0, Self.maxEnd) } label: {
+                        Button { e = TimeGridDrag.resizeEnd(start: s, end: s, deltaMinutes: Double(d.0), step: Self.step, maxEnd: Self.maxEnd) } label: {
                             Text(d.1).txt(12, .semibold)
                                 .foregroundStyle(on ? accent.onAccent : Palette.textBody)
                                 .padding(.horizontal, 11).frame(height: 30)
@@ -163,20 +164,23 @@ struct TimeBlockEditor: View {
                     .padding(.top, top)
 
                     GeometryReader { geo in
-                        let laneW = (geo.size.width - 66) / 2
+                        let availW = geo.size.width - 66
                         ForEach(Array(othersLaid.enumerated()), id: \.offset) { _, o in
+                            let laneW = availW / CGFloat(max(2, o.lanes))
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(o.task.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textNav).lineLimit(1)
                                 Text(DateText.range(o.task.schedule!)).font(.system(size: 10)).foregroundStyle(Palette.textTertiary)
                             }
                             .padding(.horizontal, 6).padding(.vertical, 4)
-                            .frame(width: laneW - 4, height: max(CGFloat(o.end - o.start), 18), alignment: .topLeading)
+                            .frame(width: max(0, laneW - 4), height: max(CGFloat(o.end - o.start), 18), alignment: .topLeading)
                             .background(RoundedRectangle(cornerRadius: 8).fill(Palette.blockMuted))
                             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.blockMutedBorder))
                             .clipped()
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier("timeBlock.other.\(o.task.title)")
                             .offset(x: 56 + CGFloat(o.lane) * laneW, y: top + CGFloat(o.start))
                         }
-                        block(width: geo.size.width - 66)
+                        block(width: availW)
                             .offset(x: 56, y: top + CGFloat(s))
                     }
                 }
@@ -234,13 +238,16 @@ struct TimeBlockEditor: View {
                     moveStartHaptic += 1
                 }
                 let (s0, e0) = dragStart!
-                let dm = Int((drag.translation.height / Self.pxPerMinute / 5).rounded()) * 5
-                let len = e0 - s0
-                let ns = max(0, min(1440 - 5, s0 + dm))
-                let ne = min(ns + len, Self.maxEnd)
-                if ns != s || ne != e {
-                    s = ns
-                    e = ne
+                let moved = TimeGridDrag.move(
+                    start: s0,
+                    end: e0,
+                    deltaMinutes: Double(drag.translation.height / Self.pxPerMinute),
+                    step: Self.step,
+                    maxEnd: Self.maxEnd
+                )
+                if moved.startMinute != s || moved.endMinute != e {
+                    s = moved.startMinute
+                    e = moved.endMinute
                     snapHaptic += 1
                 }
             }
@@ -254,16 +261,16 @@ struct TimeBlockEditor: View {
             .onChanged { v in
                 if dragStart == nil { dragStart = (s, e) }
                 let (s0, e0) = dragStart!
-                let dm = Int((v.translation.height / Self.pxPerMinute / 5).rounded()) * 5
+                let delta = Double(v.translation.height / Self.pxPerMinute)
                 switch kind {
                 case .start:
-                    let ns = max(0, min(s0 + dm, e0 - 5))
+                    let ns = TimeGridDrag.resizeStart(start: s0, end: e0, deltaMinutes: delta, step: Self.step, maxEnd: Self.maxEnd)
                     if ns != s {
                         s = ns
                         snapHaptic += 1
                     }
                 case .end:
-                    let ne = min(Self.maxEnd, max(e0 + dm, s0 + 5))
+                    let ne = TimeGridDrag.resizeEnd(start: s0, end: e0, deltaMinutes: delta, step: Self.step, maxEnd: Self.maxEnd)
                     if ne != e {
                         e = ne
                         snapHaptic += 1
@@ -275,20 +282,9 @@ struct TimeBlockEditor: View {
             }
     }
 
-    struct Laid { var task: TodoTask; var start: Int; var end: Int; var lane: Int }
-
-    /// Other timed items of the day in two lanes (overlaps side by side).
-    var othersLaid: [Laid] {
-        var out: [Laid] = []
-        for o in others {
-            guard let sch = o.schedule, let os = sch.startMinute else { continue }
-            let shift = sch.startDay == day ? 0 : -1440 * sch.startDay.days(until: day)
-            let start = os + shift, end = (sch.endOffsetMinutes ?? os + 30) + shift
-            guard end > 0 else { continue }
-            let lane = out.contains { $0.lane == 0 && $0.start < end && $0.end > start } ? 1 : 0
-            out.append(Laid(task: o, start: max(0, start), end: end, lane: lane))
-        }
-        return out
+    /// Other timed items of the day laid out in side-by-side lanes up to the 26:00 timeline limit.
+    var othersLaid: [DayLayout.Block] {
+        DayLayout.blocks(for: others, on: day, dayEnd: Self.maxEnd, minDuration: 1, order: .scheduleStart)
     }
 
     func loadDay() async {

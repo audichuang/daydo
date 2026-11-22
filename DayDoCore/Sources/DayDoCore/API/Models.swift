@@ -390,17 +390,70 @@ public struct TodoTask: Codable, Hashable, Sendable, Identifiable {
 }
 
 public struct TaskSection: Codable, Hashable, Sendable, Identifiable {
-    /// overdue | today | tomorrow | later | nodate | completed | day:YYYY-MM-DD
+    public enum Kind: Hashable, Sendable {
+        case overdue
+        case today
+        case tomorrow
+        case later
+        case noDate
+        case completed
+        case trash
+        case day(LocalDay)
+        case other(String)
+
+        public init(id: String) {
+            switch id {
+            case "overdue": self = .overdue
+            case "today": self = .today
+            case "tomorrow": self = .tomorrow
+            case "later": self = .later
+            case "nodate": self = .noDate
+            case "completed": self = .completed
+            case "trash": self = .trash
+            default:
+                if id.hasPrefix("day:") {
+                    let raw = String(id.dropFirst(4))
+                    if raw.count == 10, let d = LocalDay(raw), d.description == raw {
+                        self = .day(d)
+                        return
+                    }
+                }
+                self = .other(id)
+            }
+        }
+
+        public var id: String {
+            switch self {
+            case .overdue: return "overdue"
+            case .today: return "today"
+            case .tomorrow: return "tomorrow"
+            case .later: return "later"
+            case .noDate: return "nodate"
+            case .completed: return "completed"
+            case .trash: return "trash"
+            case .day(let d): return "day:\(d)"
+            case .other(let raw): return raw
+            }
+        }
+    }
+
+    /// overdue | today | tomorrow | later | nodate | completed | trash | day:YYYY-MM-DD
     public var id: String
     public var title: String
     public var tasks: [TodoTask]
     public var hasMore: Bool
+
+    public var kind: Kind { Kind(id: id) }
 
     public init(id: String, title: String, tasks: [TodoTask], hasMore: Bool = false) {
         self.id = id
         self.title = title
         self.tasks = tasks
         self.hasMore = hasMore
+    }
+
+    public init(kind: Kind, title: String, tasks: [TodoTask], hasMore: Bool = false) {
+        self.init(id: kind.id, title: title, tasks: tasks, hasMore: hasMore)
     }
 
     public init(from decoder: Decoder) throws {

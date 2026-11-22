@@ -84,10 +84,10 @@ public struct WidgetTodayData: Equatable, Sendable {
     }
 
     public static func build(sections: [TaskSection], today: LocalDay) -> WidgetTodayData {
-        let overdue = (sections.first(where: { $0.id == "overdue" })?.tasks ?? []).map { t in
+        let overdue = (sections.first(where: { $0.kind == .overdue })?.tasks ?? []).map { t in
             Item(task: t, isOverdue: true, timeLabel: "逾期")
         }
-        let todayTasks = (sections.first(where: { $0.id == "today" })?.tasks ?? []).map { t in
+        let todayTasks = (sections.first(where: { $0.kind == .today })?.tasks ?? []).map { t in
             Item(task: t, isOverdue: false, timeLabel: todayTimeLabel(for: t.schedule))
         }
         return WidgetTodayData(today: today, overdueItems: overdue, todayItems: todayTasks)
@@ -365,7 +365,7 @@ public struct WidgetCalendarData: Sendable {
     private let orderedTasks: [TodoTask]
 
     public func twoWeekLayout(maxLanes: Int) -> MonthLayout {
-        let twoWeekStart = today.adding(days: -today.weekday)
+        let twoWeekStart = today.startOfWeek
         let twoWeekDays = (0..<14).map { twoWeekStart.adding(days: $0) }
         return MonthLayout(days: twoWeekDays, tasks: orderedTasks, maxLanes: max(1, maxLanes))
     }
@@ -376,7 +376,7 @@ public struct WidgetCalendarData: Sendable {
 
     public static func queryRange(for today: LocalDay) -> ClosedRange<LocalDay> {
         let grid = MonthLayout.gridDays(for: today)
-        let twoWeekStart = today.adding(days: -today.weekday)
+        let twoWeekStart = today.startOfWeek
         let twoWeekEnd = twoWeekStart.adding(days: 13)
         let lower = min(grid.first ?? today, twoWeekStart)
         let upper = max(grid.last ?? today, twoWeekEnd)
@@ -401,7 +401,7 @@ public struct WidgetCalendarData: Sendable {
             }
         }
 
-        let twoWeekStart = today.adding(days: -today.weekday)
+        let twoWeekStart = today.startOfWeek
         let twoWeekDays = (0..<14).map { twoWeekStart.adding(days: $0) }
         let twoWeekLayout = MonthLayout(days: twoWeekDays, tasks: orderedTasks, maxLanes: 2)
 

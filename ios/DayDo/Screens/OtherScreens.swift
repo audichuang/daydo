@@ -8,12 +8,18 @@ struct SearchScreen: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var isActive: Bool = true
     @State private var text = ""
-    @State private var lastText = ""
     @State private var activeOnly = false
-    @State private var results: [TodoTask] = []
-    @State private var loadedKey: SearchKey?
+    @State private var query = ResidentQuery<SearchKey, [TodoTask]>(
+        initialValue: [],
+        debounce: { loaded, next in
+            guard !next.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .zero }
+            return loaded?.text == next.text ? .zero : .milliseconds(180)
+        }
+    )
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @FocusState private var focused: Bool
+
+    private var results: [TodoTask] { query.value }
 
     private var activeSearchKey: SearchKey? {
         isActive ? SearchKey(text: text, activeOnly: activeOnly, revision: model.revision) : nil
@@ -57,7 +63,7 @@ struct SearchScreen: View {
                     let firstId = results.first?.id
                     LazyVStack(spacing: 0) {
                         ForEach(results) { t in
-                            TaskRow(task: t, separator: t.id != firstId, sectionId: "search")
+                            TaskRow(task: t, separator: t.id != firstId, sectionKind: .other("search"))
                                 .transition(Motion.rowTransition(reduceMotion))
                         }
                     }
@@ -95,43 +101,31 @@ struct SearchScreen: View {
         .navigationTitle("搜尋")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: activeSearchKey) {
-            guard let key = activeSearchKey, key != loadedKey else { return }
-            if key.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                lastText = key.text
-                loadedKey = key
-                if !results.isEmpty {
-                    withAnimation(Motion.layout(reduceMotion)) {
-                        results = []
-                    }
+            let key = activeSearchKey
+            let isEmptyQuery = key?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+            let outcome = await query.run(activeKey: key) { key in
+                if key.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return []
                 }
-                return
+                return try await model.api.searchTasks(text: key.text, activeOnly: key.activeOnly)
+            } apply: { _, commit in
+                if !query.value.isEmpty || !isEmptyQuery {
+                    withAnimation(Motion.layout(reduceMotion)) { commit() }
+                } else {
+                    commit()
+                }
             }
-            do {
-                if key.text != lastText {
-                    try await Task.sleep(for: .milliseconds(180))
-                }
-                lastText = key.text
-                let found = try await model.api.searchTasks(text: key.text, activeOnly: key.activeOnly)
-                guard !Task.isCancelled else { return }
-                loadedKey = key
-                withAnimation(Motion.layout(reduceMotion)) {
-                    results = found
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                if !Task.isCancelled { model.errorMessage = error.localizedDescription }
+            if case .failed(let error) = outcome {
+                model.errorMessage = error.localizedDescription
             }
         }
         .onAppear { if isActive && text.isEmpty { focused = true } }
         .onChange(of: isActive) { _, active in
             if active {
                 if !text.isEmpty { text = "" }
-                if !lastText.isEmpty { lastText = "" }
                 if activeOnly { activeOnly = false }
-                if !results.isEmpty { results = [] }
-                if let key = loadedKey, !key.text.isEmpty || key.activeOnly {
-                    loadedKey = nil
+                if !query.value.isEmpty || query.loadedKey.map({ !$0.text.isEmpty || $0.activeOnly }) == true {
+                    query.reset()
                 }
                 if scrollPosition.isPositionedByUser || scrollPosition.edge != .top {
                     scrollPosition.scrollTo(edge: .top)
@@ -627,7 +621,7 @@ private struct DataSettingsView: View {
             for p in projects where p.archived {
                 allTasks += try await api.listTasks(TaskQuery(projectId: p.id, includeCompleted: true))
             }
-            let payload = Export(exportedAt: ISO8601DateFormatter().string(from: Date()), projects: projects,
+            let payload = Export(exportedAt: ISO8601DateFormatter().string(from: model.now), projects: projects,
                                  folders: try await api.listFolders(), tags: try await api.listTags(), tasks: allTasks)
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("DayDo-export.json")
             try DayDoJSON.encoder.encode(payload).write(to: url)

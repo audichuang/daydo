@@ -45,42 +45,91 @@ public enum TaskGrouping {
         }
         let overdue = active.filter { isOverdue($0, today: today) }.sorted { ($0.schedule!.lastDay, $0.sortKey) < ($1.schedule!.lastDay, $1.sortKey) }
         var out: [TaskSection] = []
-        func add(_ id: String, _ title: String, _ list: [TodoTask]) {
-            if !list.isEmpty { out.append(TaskSection(id: id, title: title, tasks: list)) }
+        func add(_ kind: TaskSection.Kind, _ title: String, _ list: [TodoTask]) {
+            if !list.isEmpty { out.append(TaskSection(kind: kind, title: title, tasks: list)) }
         }
         switch scope {
         case .smart(.today):
-            add("overdue", "已逾期", overdue)
-            add("today", "今天", on(today))
-            add("tomorrow", "明天", on(tomorrow))
-            add("completed", "已完成", completed)
+            add(.overdue, "已逾期", overdue)
+            add(.today, "今天", on(today))
+            add(.tomorrow, "明天", on(tomorrow))
+            add(.completed, "已完成", completed)
         case .smart(.tomorrow):
-            add("tomorrow", "明天", on(tomorrow))
-            add("completed", "已完成", completed)
+            add(.tomorrow, "明天", on(tomorrow))
+            add(.completed, "已完成", completed)
         case .smart(.next7):
-            add("overdue", "已逾期", overdue)
+            add(.overdue, "已逾期", overdue)
             for i in 0..<7 {
                 let d = today.adding(days: i)
-                add("day:\(d)", DateText.dayTitle(d, today: today), on(d))
+                add(.day(d), DateText.dayTitle(d, today: today), on(d))
             }
         case .smart(.completed):
-            add("completed", "已完成", completed)
+            add(.completed, "已完成", completed)
         case .smart(.trash):
-            add("trash", "垃圾桶", tasks)
+            add(.trash, "垃圾桶", tasks)
         case .smart(.all), .smart(.inbox), .smart(.assigned), .project, .tag:
             let later = sortForDay(active.filter { t in t.schedule.map { $0.startDay > tomorrow } ?? false })
                 .sorted { ($0.schedule!.startDay, $0.schedule!.startMinute ?? -1) < ($1.schedule!.startDay, $1.schedule!.startMinute ?? -1) }
             let noDate = active.filter { $0.schedule == nil }.sorted { a, b in
                 a.priority != b.priority ? a.priority > b.priority : a.sortKey < b.sortKey
             }
-            add("overdue", "已逾期", overdue)
-            add("today", "今天", on(today))
-            add("tomorrow", "明天", on(tomorrow))
-            add("later", "之後", later)
-            add("nodate", "無日期", noDate)
-            add("completed", "已完成", completed)
+            add(.overdue, "已逾期", overdue)
+            add(.today, "今天", on(today))
+            add(.tomorrow, "明天", on(tomorrow))
+            add(.later, "之後", later)
+            add(.noDate, "無日期", noDate)
+            add(.completed, "已完成", completed)
         }
         return out
+    }
+}
+
+/// Packs ordered inclusive column ranges into non-overlapping horizontal lanes
+/// using first-fit placement, optionally capping the lane count and recording
+/// per-column overflow counts.
+public enum LanePacker {
+    public struct Result: Equatable, Sendable {
+        /// Assigned lane index per input item, or `nil` when the item overflowed `maxLanes`.
+        public var lanes: [Int?]
+        /// Column index -> hidden item count for that column.
+        public var overflow: [Int: Int]
+
+        public init(lanes: [Int?], overflow: [Int: Int]) {
+            self.lanes = lanes
+            self.overflow = overflow
+        }
+    }
+
+    /// Canonical bar/all-day lane order shared by month and time-grid layouts:
+    /// longer spans first, then earlier start day, then earlier start minute.
+    public static func spanOrder(_ a: Schedule, _ b: Schedule) -> Bool {
+        let la = a.startDay.days(until: a.lastDay), lb = b.startDay.days(until: b.lastDay)
+        if la != lb { return la > lb }
+        if a.startDay != b.startDay { return a.startDay < b.startDay }
+        return (a.startMinute ?? -1) < (b.startMinute ?? -1)
+    }
+
+    public static func pack(_ ranges: [ClosedRange<Int>], maxLanes: Int? = nil) -> Result {
+        var lanes: [[ClosedRange<Int>]] = []
+        var assigned: [Int?] = []
+        assigned.reserveCapacity(ranges.count)
+        var overflow: [Int: Int] = [:]
+
+        for range in ranges {
+            var lane = 0
+            while lane < lanes.count, lanes[lane].contains(where: { $0.overlaps(range) }) {
+                lane += 1
+            }
+            if let maxLanes, lane >= maxLanes {
+                for c in range { overflow[c, default: 0] += 1 }
+                assigned.append(nil)
+                continue
+            }
+            if lane == lanes.count { lanes.append([]) }
+            lanes[lane].append(range)
+            assigned.append(lane)
+        }
+        return Result(lanes: assigned, overflow: overflow)
     }
 }
 
@@ -109,7 +158,7 @@ public struct MonthLayout: Sendable {
     /// Sunday-first grid covering the month of `month`.
     public static func gridDays(for month: LocalDay) -> [LocalDay] {
         let first = month.firstOfMonth
-        let start = first.adding(days: -first.weekday)
+        let start = first.startOfWeek
         let lastOfMonth = first.adding(days: first.daysInMonth - 1)
         let end = lastOfMonth.adding(days: 6 - lastOfMonth.weekday)
         return (0...start.days(until: end)).map { start.adding(days: $0) }
@@ -129,30 +178,26 @@ public struct MonthLayout: Sendable {
             let items = tasks.compactMap { t -> (TodoTask, Schedule)? in
                 guard let s = t.schedule, s.overlaps(first, last) else { return nil }
                 return (t, s)
-            }.sorted { a, b in
-                let la = a.1.startDay.days(until: a.1.lastDay), lb = b.1.startDay.days(until: b.1.lastDay)
-                if la != lb { return la > lb }
-                if a.1.startDay != b.1.startDay { return a.1.startDay < b.1.startDay }
-                return (a.1.startMinute ?? -1) < (b.1.startMinute ?? -1)
-            }
-            var lanes: [[ClosedRange<Int>]] = []
-            var bars: [Bar] = []
-            var overflow: [Int: Int] = [:]
-            for (t, s) in items {
+            }.sorted { LanePacker.spanOrder($0.1, $1.1) }
+            let spans: [(task: TodoTask, schedule: Schedule, range: ClosedRange<Int>)] = items.map { t, s in
                 let a = max(0, first.days(until: s.startDay))
                 let b = min(6, first.days(until: s.lastDay))
-                let range = a...b
-                var lane = 0
-                while lane < lanes.count, lanes[lane].contains(where: { $0.overlaps(range) }) { lane += 1 }
-                if lane >= maxLanes {
-                    for c in range { overflow[c, default: 0] += 1 }
-                    continue
-                }
-                if lane == lanes.count { lanes.append([]) }
-                lanes[lane].append(range)
-                bars.append(Bar(task: t, startColumn: a, endColumn: b, lane: lane, continues: s.startDay < first))
+                return (t, s, a...b)
             }
-            weeks.append(Week(days: wd, bars: bars, overflow: overflow))
+            let packed = LanePacker.pack(spans.map(\.range), maxLanes: maxLanes)
+            var bars: [Bar] = []
+            bars.reserveCapacity(spans.count)
+            for (span, lane) in zip(spans, packed.lanes) {
+                guard let lane else { continue }
+                bars.append(Bar(
+                    task: span.task,
+                    startColumn: span.range.lowerBound,
+                    endColumn: span.range.upperBound,
+                    lane: lane,
+                    continues: span.schedule.startDay < first
+                ))
+            }
+            weeks.append(Week(days: wd, bars: bars, overflow: packed.overflow))
         }
         self.weeks = weeks
     }
@@ -225,6 +270,18 @@ public enum DateText {
         return dayPart.isEmpty ? r : dayPart + " " + r
     }
 
+    /// Agenda row subtitle: "11月13日, 11:00 – 12:00", "11月13日 – 11月17日", "全天", or "已完成".
+    public static func agendaLine(_ task: TodoTask, includeDay: Bool = true) -> String {
+        if task.isCompleted { return "已完成" }
+        guard let s = task.schedule else { return "" }
+        func md(_ d: LocalDay) -> String { "\(d.month)月\(d.day)日" }
+        if s.isAllDay {
+            return s.isMultiDay ? md(s.startDay) + " – " + md(s.lastDay) : (includeDay ? md(s.startDay) : "全天")
+        }
+        let r = range(s)
+        return includeDay ? md(s.startDay) + ", " + r : r
+    }
+
     /// Calendar-day countdown badge text for a schedule relative to `today`.
     /// Returns nil when `lastDay < today`.
     public static func countdownLabel(_ s: Schedule, today: LocalDay) -> String? {
@@ -261,24 +318,53 @@ public enum DayLayout {
         public var lanes: Int
     }
 
-    /// Clips a timed schedule to `day` (0..<1440 minutes), returning `nil` for all-day tasks.
-    public static func clippedRange(for schedule: Schedule, on day: LocalDay) -> (start: Int, end: Int)? {
-        guard let sm = schedule.startMinute, schedule.occurs(on: day) else { return nil }
+    public enum BlockOrder: Sendable {
+        /// Clipped start ascending, longer clipped end first (calendar time grid).
+        case clippedStartLongestFirst
+        /// Pre-clip schedule start ascending, preserving input order on ties (time-block editor).
+        case scheduleStart
+    }
+
+    /// Clips a timed schedule to `day` (0..<`dayEnd` minutes, default 1440),
+    /// returning `nil` for all-day tasks or schedules outside the window.
+    public static func clippedRange(
+        for schedule: Schedule,
+        on day: LocalDay,
+        dayEnd: Int = 1440,
+        minDuration: Int = 15
+    ) -> (start: Int, end: Int)? {
+        guard dayEnd > 0, let sm = schedule.startMinute else { return nil }
+        let windowLastDay = day.adding(days: (dayEnd - 1) / 1440)
+        guard schedule.overlaps(day, windowLastDay) else { return nil }
         let offset = schedule.startDay.days(until: day) * 1440
         let rawEnd = schedule.endOffsetMinutes ?? (sm + 30)
         let start = max(0, sm - offset)
-        let end = min(1440, max(rawEnd, sm + 15) - offset)
+        let end = min(dayEnd, max(rawEnd, sm + max(1, minDuration)) - offset)
         guard end > start else { return nil }
         return (start, end)
     }
 
-    public static func blocks(for tasks: [TodoTask], on day: LocalDay) -> [Block] {
-        var items: [(TodoTask, Int, Int)] = []
+    public static func blocks(
+        for tasks: [TodoTask],
+        on day: LocalDay,
+        dayEnd: Int = 1440,
+        minDuration: Int = 15,
+        order: BlockOrder = .clippedStartLongestFirst
+    ) -> [Block] {
+        var items: [(task: TodoTask, rawStart: Int, start: Int, end: Int)] = []
         for t in tasks {
-            guard let s = t.schedule, let (start, end) = clippedRange(for: s, on: day) else { continue }
-            items.append((t, start, end))
+            guard let s = t.schedule,
+                  let sm = s.startMinute,
+                  let (start, end) = clippedRange(for: s, on: day, dayEnd: dayEnd, minDuration: minDuration) else { continue }
+            let rawStart = sm - s.startDay.days(until: day) * 1440
+            items.append((t, rawStart, start, end))
         }
-        items.sort { ($0.1, -$0.2) < ($1.1, -$1.2) }
+        switch order {
+        case .clippedStartLongestFirst:
+            items.sort { ($0.start, -$0.end) < ($1.start, -$1.end) }
+        case .scheduleStart:
+            items.sort { $0.rawStart < $1.rawStart }
+        }
         var out: [Block] = []
         var cluster: [Block] = []
         var clusterEnd = -1
@@ -287,11 +373,12 @@ public enum DayLayout {
             out += cluster.map { var b = $0; b.lanes = n; return b }
             cluster = []
         }
-        for (t, s, e) in items {
+        for item in items {
+            let s = item.start, e = item.end
             if s >= clusterEnd { flush() }
             var lane = 0
             while cluster.contains(where: { $0.lane == lane && $0.end > s }) { lane += 1 }
-            cluster.append(Block(task: t, start: s, end: e, lane: lane, lanes: 1))
+            cluster.append(Block(task: item.task, start: s, end: e, lane: lane, lanes: 1))
             clusterEnd = max(clusterEnd, e)
         }
         flush()

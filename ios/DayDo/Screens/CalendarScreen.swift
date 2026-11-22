@@ -2,9 +2,7 @@ import Observation
 import SwiftUI
 import DayDoCore
 
-enum CalMode: String, CaseIterable, Identifiable {
-    case list, year, month, week, threeDay, day
-    var id: String { rawValue }
+private extension CalMode {
     var label: String {
         switch self { case .list: "清單"; case .year: "年"; case .month: "月"; case .week: "週"; case .threeDay: "3日"; case .day: "日" }
     }
@@ -18,7 +16,6 @@ enum CalMode: String, CaseIterable, Identifiable {
         case .day: "rectangle"
         }
     }
-    var dayCount: Int { switch self { case .week: 7; case .threeDay: 3; default: 1 } }
 }
 
 /// 日曆: 清單 (date grid + the selected day's items, 2a/2b), 年, 月 (event
@@ -39,10 +36,10 @@ struct CalendarScreen: View {
     @State private var month: LocalDay?
     @State private var memberFilter: String?
     @State private var projectFilter: String?
-    @State private var tasks: [TodoTask] = []
-    @State private var tasksVersion = 0
-    @State private var loadedQuery: CalQueryKey?
-    @State private var loadedReload: CalReload?
+    @State private var query = ResidentQuery<CalReload, [TodoTask]>(
+        initialValue: [],
+        isSameQuery: { $0.queryKey == $1.queryKey }
+    )
     @State private var drag = CalendarDragState()
     @State private var cache = CalendarDerivedCache()
     @State private var shiftDir = 0
@@ -56,8 +53,15 @@ struct CalendarScreen: View {
     @State private var monthScrollPosition = ScrollPosition(edge: .top)
     @State private var timeGridScrollReset = 0
 
+    private var tasks: [TodoTask] { query.value }
+    private var tasksVersion: Int { query.version }
+
+    private var currentReload: CalReload {
+        CalReload(range: range, member: effectiveMemberFilter, completed: showCompleted, revision: model.revision)
+    }
+
     private var activeReload: CalReload? {
-        isActive ? CalReload(range: range, member: effectiveMemberFilter, completed: showCompleted, revision: model.revision) : nil
+        isActive ? currentReload : nil
     }
 
     var mode: CalMode { CalMode(rawValue: modeRaw) ?? .list }
@@ -106,8 +110,7 @@ struct CalendarScreen: View {
             }
         }
         .task(id: activeReload) {
-            guard let reload = activeReload, reload != loadedReload else { return }
-            await load(for: reload)
+            await load(for: activeReload)
         }
         .onAppear { applyPendingCalendarDay() }
         .onChange(of: CalActivation(isActive: isActive, navTrigger: model.calendarNavigationTrigger)) { old, new in
@@ -330,56 +333,30 @@ struct CalendarScreen: View {
 
     // MARK: Data
 
-    var rangeDays: [LocalDay] {
-        switch mode {
-        case .week:
-            let start = sel.adding(days: -sel.weekday)
-            return (0..<7).map { start.adding(days: $0) }
-        case .threeDay: return (0..<3).map { sel.adding(days: $0) }
-        case .day: return [sel]
-        default: return []
-        }
+    private var viewport: CalendarProjection.Viewport {
+        CalendarProjection.Viewport(mode: mode, selected: sel, shownMonth: shownMonth, collapsed: collapsed)
     }
+
+    var rangeDays: [LocalDay] { viewport.visibleDays }
 
     var range: ClosedRange<LocalDay> {
-        switch mode {
-        case .year:
-            return LocalDay(year: shownMonth.year, month: 1, day: 1)...LocalDay(year: shownMonth.year, month: 12, day: 31)
-        case .week, .threeDay, .day:
-            return rangeDays.first!...rangeDays.last!
-        default:
-            let g = cache.gridDays(for: shownMonth)
-            return g.first!...g.last!
-        }
+        let grid = (mode == .list || mode == .month) ? cache.gridDays(for: shownMonth) : nil
+        return viewport.queryRange(monthGridDays: grid)
     }
 
-    func load() async {
-        await load(for: CalReload(range: range, member: effectiveMemberFilter, completed: showCompleted, revision: model.revision))
-    }
-
-    private func load(for reload: CalReload) async {
-        let currentQuery = CalQueryKey(range: reload.range, member: reload.member, completed: reload.completed)
-        let q = TaskQuery(from: reload.range.lowerBound, to: reload.range.upperBound, includeCompleted: reload.completed, memberId: reload.member)
-        do {
-            let loaded = try await model.api.listTasks(q)
-            guard !Task.isCancelled else { return }
-            if loadedQuery == currentQuery {
-                withAnimation(Motion.layout(reduceMotion)) {
-                    tasks = loaded
-                    tasksVersion += 1
-                    loadedQuery = currentQuery
-                    loadedReload = reload
-                }
+    private func load(for reload: CalReload?) async {
+        let outcome = await query.run(activeKey: reload) { key in
+            let q = TaskQuery(from: key.range.lowerBound, to: key.range.upperBound, includeCompleted: key.completed, memberId: key.member)
+            return try await model.api.listTasks(q)
+        } apply: { sameQuery, commit in
+            if sameQuery {
+                withAnimation(Motion.layout(reduceMotion)) { commit() }
             } else {
-                tasks = loaded
-                tasksVersion += 1
-                loadedQuery = currentQuery
-                loadedReload = reload
+                commit()
             }
-        } catch is CancellationError {
-            return
-        } catch {
-            if !Task.isCancelled { model.errorMessage = error.localizedDescription }
+        }
+        if case .failed(let error) = outcome {
+            model.errorMessage = error.localizedDescription
         }
     }
 
@@ -421,18 +398,10 @@ struct CalendarScreen: View {
     }
 
     func applyShift(_ dir: Int) {
-        switch mode {
-        case .list where collapsed:
-            selected = sel.adding(days: 7 * dir)
-            month = selected!.firstOfMonth
-        case .list, .month:
-            month = shownMonth.adding(months: dir)
-            selected = month
-        case .year:
-            month = shownMonth.adding(months: 12 * dir)
-        case .week, .threeDay, .day:
-            selected = sel.adding(days: mode.dayCount * dir)
-            month = selected!.firstOfMonth
+        let next = viewport.shifted(by: dir)
+        month = next.shownMonth
+        if mode != .year {
+            selected = next.selected
         }
     }
 
@@ -456,7 +425,7 @@ struct CalendarScreen: View {
         let finalInput = input
         Task {
             _ = await model.perform { try await $0.updateTask(finalInput) }
-            await load()
+            await load(for: currentReload)
             if pendingMove?.token == token {
                 pendingMove = nil
             }
@@ -628,8 +597,8 @@ struct CalendarScreen: View {
                                 }
                             },
                             pickMiniDay: { d in
-                                let oldWeekStart = sel.adding(days: -sel.weekday)
-                                let newWeekStart = d.adding(days: -d.weekday)
+                                let oldWeekStart = sel.startOfWeek
+                                let newWeekStart = d.startOfWeek
                                 let weekChanged = newWeekStart != oldWeekStart
                                 let dir = weekChanged ? (newWeekStart > oldWeekStart ? 1 : -1) : 0
                                 shiftPage(direction: dir, token: Motion.page, haptic: .selection, bumpPage: weekChanged) {
@@ -844,19 +813,6 @@ private struct WeekRowModel: Equatable {
     var rowHeight: CGFloat
 }
 
-struct TimeGridAllDayItem {
-    var task: TodoTask
-    var firstColumn: Int
-    var lastColumn: Int
-    var lane: Int
-}
-
-private struct TimeGridData {
-    var displayedTasks: [TodoTask]
-    var allDayItems: [TimeGridAllDayItem]
-    var blocksByDay: [[DayLayout.Block]]
-}
-
 /// Caches derived calendar data by lightweight scalar/version keys so body
 /// re-evaluations never recompute MonthLayout, DayLayout, dot colors, or busy days.
 @MainActor
@@ -886,7 +842,7 @@ private final class CalendarDerivedCache {
     private var cachedBusyDays: Set<LocalDay> = []
 
     private var timeGridKey: (Int, String?, UUID?, [LocalDay])?
-    private var cachedTimeGrid: TimeGridData?
+    private var cachedTimeGrid: CalendarProjection.TimeGridData?
 
     func gridDays(for month: LocalDay) -> [LocalDay] {
         let first = month.firstOfMonth
@@ -939,23 +895,7 @@ private final class CalendarDerivedCache {
         }
         let days = gridDays(for: first)
         let items = filteredTasks(tasksVersion: tasksVersion, projectFilter: projectFilter, tasks: tasks)
-        var out: [LocalDay: [String]] = [:]
-        if let gridFirst = days.first, let gridLast = days.last {
-            for t in items where !t.isCompleted {
-                guard let s = t.schedule, s.overlaps(gridFirst, gridLast) else { continue }
-                let color = map[t.projectId] ?? "#5B6461"
-                var d = max(s.startDay, gridFirst)
-                let end = min(s.lastDay, gridLast)
-                while d <= end {
-                    var colors = out[d] ?? []
-                    if colors.count < 3 && !colors.contains(color) {
-                        colors.append(color)
-                        out[d] = colors
-                    }
-                    d = d.adding(days: 1)
-                }
-            }
-        }
+        let out = CalendarProjection.dayDotColors(tasks: items, gridDays: days, projectColors: map)
         dotColorsKey = (tasksVersion, projectFilter, first, cVer)
         cachedDotColors = out
         return out
@@ -1017,21 +957,10 @@ private final class CalendarDerivedCache {
             return cachedBusyDays
         }
         let items = filteredTasks(tasksVersion: tasksVersion, projectFilter: projectFilter, tasks: tasks)
-        let lower = LocalDay(year: year, month: 1, day: 1)
-        let upper = LocalDay(year: year, month: 12, day: 31)
-        var s = Set<LocalDay>()
-        for t in items {
-            guard let sch = t.schedule, sch.overlaps(lower, upper) else { continue }
-            var d = max(sch.startDay, lower)
-            let end = min(sch.lastDay, upper)
-            while d <= end {
-                s.insert(d)
-                d = d.adding(days: 1)
-            }
-        }
+        let result = CalendarProjection.busyDays(tasks: items, year: year)
         busyKey = (tasksVersion, projectFilter, year)
-        cachedBusyDays = s
-        return s
+        cachedBusyDays = result
+        return result
     }
 
     func timeGridData(
@@ -1040,42 +969,15 @@ private final class CalendarDerivedCache {
         pendingMove: PendingBlockMove?,
         days: [LocalDay],
         tasks: [TodoTask]
-    ) -> TimeGridData {
+    ) -> CalendarProjection.TimeGridData {
         let token = pendingMove?.token
         if let key = timeGridKey, let cached = cachedTimeGrid,
            key.0 == tasksVersion, key.1 == projectFilter, key.2 == token, key.3 == days {
             return cached
         }
         let base = filteredTasks(tasksVersion: tasksVersion, projectFilter: projectFilter, tasks: tasks)
-        let displayed: [TodoTask]
-        if let pending = pendingMove {
-            displayed = base.map { task in
-                guard task.id == pending.taskId else { return task }
-                var copy = task
-                copy.schedule = pending.schedule
-                return copy
-            }
-        } else {
-            displayed = base
-        }
-
-        var allDay: [TimeGridAllDayItem] = []
-        if let first = days.first, let last = days.last {
-            var lanes: [[ClosedRange<Int>]] = []
-            for t in displayed {
-                guard let s = t.schedule, s.isAllDay, s.overlaps(first, last) else { continue }
-                let a = max(0, first.days(until: s.startDay))
-                let b = min(days.count - 1, first.days(until: s.lastDay))
-                var lane = 0
-                while lane < lanes.count, lanes[lane].contains(where: { $0.overlaps(a...b) }) { lane += 1 }
-                if lane == lanes.count { lanes.append([]) }
-                lanes[lane].append(a...b)
-                allDay.append(TimeGridAllDayItem(task: t, firstColumn: a, lastColumn: b, lane: lane))
-            }
-        }
-
-        let blocksByDay = days.map { DayLayout.blocks(for: displayed, on: $0) }
-        let data = TimeGridData(displayedTasks: displayed, allDayItems: allDay, blocksByDay: blocksByDay)
+        let pending = pendingMove.map { CalendarProjection.ScheduleOverride(taskId: $0.taskId, schedule: $0.schedule) }
+        let data = CalendarProjection.timeGridData(tasks: base, days: days, pendingMove: pending)
         timeGridKey = (tasksVersion, projectFilter, token, days)
         cachedTimeGrid = data
         return data
@@ -1230,10 +1132,19 @@ private struct CalendarDayCell: View, Equatable {
     }
 }
 
-struct CalReload: Hashable { var range: ClosedRange<LocalDay>; var member: String?; var completed: Bool; var revision: Int }
+struct CalReload: Hashable {
+    var range: ClosedRange<LocalDay>
+    var member: String?
+    var completed: Bool
+    var revision: Int
+
+    fileprivate var queryKey: CalQueryKey {
+        CalQueryKey(range: range, member: member, completed: completed)
+    }
+}
 private struct CalActivation: Equatable { var isActive: Bool; var navTrigger: Int }
 private struct TimeGridScrollKey: Equatable { var days: [LocalDay]; var resetToken: Int }
-private struct CalQueryKey: Equatable { var range: ClosedRange<LocalDay>; var member: String?; var completed: Bool }
+fileprivate struct CalQueryKey: Equatable { var range: ClosedRange<LocalDay>; var member: String?; var completed: Bool }
 private struct CalAgendaContext: Hashable { var day: LocalDay; var member: String?; var project: String?; var completed: Bool }
 
 func partnerOwner(for task: TodoTask, show: Bool, members: [Member]) -> Member? {
@@ -1295,7 +1206,7 @@ struct AgendaRow: View {
                         Text(task.content.split(whereSeparator: \.isNewline).first.map(String.init) ?? "").txt(14).foregroundStyle(Palette.textSecondary).lineLimit(1)
                     }
                     HStack(spacing: 8) {
-                        Text(AgendaText.line(task, today: model.today, includeDay: task.schedule?.isMultiDay ?? false)).txt(14, .medium).foregroundStyle(AgendaText.color(task, today: model.today, accent: accent))
+                        Text(DateText.agendaLine(task, includeDay: task.schedule?.isMultiDay ?? false)).txt(14, .medium).foregroundStyle(AgendaText.color(task, today: model.today, accent: accent))
                         Spacer(minLength: 4)
                         if showProject {
                             Text(project?.name ?? "").txt(14).foregroundStyle(Palette.textTertiary).lineLimit(1)
@@ -1347,7 +1258,7 @@ struct TimelineAgendaRow: View {
             Button { model.openTask(task.id, inlineAvailable: false) } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .top, spacing: 6) {
-                        Text(AgendaText.line(task, today: model.today, includeDay: task.schedule?.isMultiDay ?? false))
+                        Text(DateText.agendaLine(task, includeDay: task.schedule?.isMultiDay ?? false))
                             .txt(15, .medium).foregroundStyle(AgendaText.color(task, today: model.today, accent: accent))
                         Spacer(minLength: 0)
                         if let owner {
@@ -1373,18 +1284,6 @@ struct TimelineAgendaRow: View {
 }
 
 enum AgendaText {
-    /// "11月13日, 11:00 – 12:00", "11月13日 – 11月17日", "全天".
-    static func line(_ t: TodoTask, today: LocalDay, includeDay: Bool = true) -> String {
-        if t.isCompleted { return "已完成" }
-        guard let s = t.schedule else { return "" }
-        func md(_ d: LocalDay) -> String { "\(d.month)月\(d.day)日" }
-        if s.isAllDay {
-            return s.isMultiDay ? md(s.startDay) + " – " + md(s.lastDay) : (includeDay ? md(s.startDay) : "全天")
-        }
-        let r = DateText.range(s)
-        return includeDay ? md(s.startDay) + ", " + r : r
-    }
-
     static func color(_ t: TodoTask, today: LocalDay, accent: AccentTheme) -> Color {
         if t.isCompleted { return Palette.done }
         return TaskGrouping.isOverdue(t, today: today) ? Palette.overdue : accent.text
@@ -1596,7 +1495,7 @@ struct TimeGrid: View {
     @Environment(AppModel.self) private var model
     var days: [LocalDay]
     var tasks: [TodoTask]
-    var allDayItems: [TimeGridAllDayItem]
+    var allDayItems: [CalendarProjection.TimeGridAllDayItem]
     var blocksByDay: [[DayLayout.Block]]
     var today: LocalDay
     var selected: LocalDay
@@ -1810,7 +1709,9 @@ struct TimeGrid: View {
     }
 
     var nowMinute: Int {
-        let c = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = model.timeZone
+        let c = cal.dateComponents([.hour, .minute], from: model.now)
         return c.hour! * 60 + c.minute!
     }
     var nowY: CGFloat { CGFloat(nowMinute) / 60 * hourH }

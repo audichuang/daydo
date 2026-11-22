@@ -83,6 +83,45 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         #expect(DateText.taskLine(.allDay(today), on: today, today: today) == "全天")
     }
 
+    @Test func agendaLines() {
+        func makeTask(status: Int = 0, schedule: Schedule?) -> TodoTask {
+            TodoTask(
+                id: "t1", projectId: "p1", title: "Test", content: "", priority: .none, status: status,
+                schedule: schedule, start: nil, due: nil, allDay: schedule?.isAllDay ?? false, timeZone: nil,
+                reminders: [], repeat: nil, tags: [], items: [], assigneeId: nil,
+                sortKey: "a0", completedAt: status == 2 ? 1000 : nil, createdAt: 1000, updatedAt: 1000,
+                deletedAt: nil, attachments: [], commentCount: 0, sourceRaw: nil, importNote: nil
+            )
+        }
+
+        let timed = makeTask(schedule: .timed(day("2026-11-13"), start: 11 * 60, end: 12 * 60))
+        #expect(DateText.agendaLine(timed) == "11月13日, 11:00 – 12:00")
+        #expect(DateText.agendaLine(timed, includeDay: false) == "11:00 – 12:00")
+
+        let pointInTime = makeTask(schedule: .timed(day("2026-11-13"), start: 11 * 60, end: nil))
+        #expect(DateText.agendaLine(pointInTime) == "11月13日, 11:00")
+        #expect(DateText.agendaLine(pointInTime, includeDay: false) == "11:00")
+
+        let crossMidnight = makeTask(schedule: .timed(day("2026-11-13"), start: 23 * 60 + 30, end: 30))
+        #expect(DateText.agendaLine(crossMidnight) == "11月13日, 23:30 – 隔日 00:30")
+        #expect(DateText.agendaLine(crossMidnight, includeDay: false) == "23:30 – 隔日 00:30")
+
+        let multiDay = makeTask(schedule: .allDay(day("2026-11-13"), through: day("2026-11-17")))
+        #expect(DateText.agendaLine(multiDay) == "11月13日 – 11月17日")
+        #expect(DateText.agendaLine(multiDay, includeDay: false) == "11月13日 – 11月17日")
+
+        let singleAllDay = makeTask(schedule: .allDay(day("2026-11-13")))
+        #expect(DateText.agendaLine(singleAllDay) == "11月13日")
+        #expect(DateText.agendaLine(singleAllDay, includeDay: false) == "全天")
+
+        let completed = makeTask(status: 2, schedule: .timed(day("2026-11-13"), start: 11 * 60, end: 12 * 60))
+        #expect(DateText.agendaLine(completed) == "已完成")
+        #expect(DateText.agendaLine(completed, includeDay: false) == "已完成")
+        #expect(DateText.agendaLine(makeTask(status: 2, schedule: nil)) == "已完成")
+
+        #expect(DateText.agendaLine(makeTask(schedule: nil)) == "")
+    }
+
     @Test func countdownLabels() {
         let today = day("2026-11-18")
         // Future start
@@ -188,6 +227,7 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         for base in samples {
             let baseDate = cal.date(from: DateComponents(year: base.year, month: base.month, day: base.day))!
             #expect(base.weekday == cal.component(.weekday, from: baseDate) - 1)
+            #expect(base.startOfWeek == base.adding(days: -base.weekday))
             #expect(base.daysInMonth == cal.range(of: .day, in: .month, for: baseDate)!.count)
             for delta in [-400, -31, -1, 0, 1, 28, 366, 1000] {
                 let targetDate = cal.date(byAdding: .day, value: delta, to: baseDate)!
@@ -248,6 +288,66 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         #expect(s[1].tasks.map(\.id) == ["allday", "late"])
     }
 
+    @Test func sectionKindParsingCoversAllGroupingIdsAndUnknown() throws {
+        let today = day("2026-11-15")
+        let undated = TodoTask(
+            id: "nodate", projectId: "p", title: "nodate", content: "", priority: .none, status: 0,
+            schedule: nil, start: nil, due: nil, allDay: false, timeZone: nil,
+            reminders: [], repeat: nil, tags: [], items: [], assigneeId: nil, sortKey: "z",
+            completedAt: nil, createdAt: 0, updatedAt: 0, deletedAt: nil, attachments: [],
+            commentCount: 0, sourceRaw: nil, importNote: nil
+        )
+        var done = task("done", .allDay(today))
+        done.status = 2
+
+        let allTasks = [
+            task("over", .allDay(today.adding(days: -1))),
+            task("now", .allDay(today)),
+            task("tmr", .allDay(today.adding(days: 1))),
+            task("later", .allDay(today.adding(days: 3))),
+            undated,
+        ]
+        let allSections = TaskGrouping.sections(for: .smart(.all), tasks: allTasks, completed: [done], today: today)
+        #expect(allSections.map(\.id) == ["overdue", "today", "tomorrow", "later", "nodate", "completed"])
+        #expect(allSections.map(\.kind) == [.overdue, .today, .tomorrow, .later, .noDate, .completed])
+        for sec in allSections {
+            #expect(sec.kind.id == sec.id)
+        }
+
+        let next7Tasks = [task("over", .allDay(today.adding(days: -1)))] + (0..<7).map { i in
+            task("d\(i)", .allDay(today.adding(days: i)))
+        }
+        let next7Sections = TaskGrouping.sections(for: .smart(.next7), tasks: next7Tasks, completed: [], today: today)
+        let expectedNext7Kinds: [TaskSection.Kind] = [.overdue] + (0..<7).map { .day(today.adding(days: $0)) }
+        #expect(next7Sections.map(\.kind) == expectedNext7Kinds)
+        #expect(next7Sections[1].id == "day:2026-11-15")
+        for sec in next7Sections {
+            #expect(sec.kind.id == sec.id)
+        }
+
+        let trashSections = TaskGrouping.sections(for: .smart(.trash), tasks: [task("del", .allDay(today))], completed: [], today: today)
+        #expect(trashSections.map(\.id) == ["trash"])
+        #expect(trashSections.map(\.kind) == [.trash])
+
+        #expect(TaskSection.Kind(id: "day:2026-11-15") == .day(day("2026-11-15")))
+        #expect(TaskSection.Kind.noDate.id == "nodate")
+
+        for unknown in ["search", "custom", "noDate", "day:", "day:not-a-date", "day:2026-11-15-extra"] {
+            let kind = TaskSection.Kind(id: unknown)
+            #expect(kind == .other(unknown))
+            #expect(kind.id == unknown)
+        }
+
+        // JSON wire format keeps `id` as a string and does not encode `kind`.
+        let encoded = try DayDoJSON.encoder.encode(allSections[4])
+        let json = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(json["id"] as? String == "nodate")
+        #expect(json["kind"] == nil)
+        let decoded = try DayDoJSON.decoder.decode(TaskSection.self, from: encoded)
+        #expect(decoded.id == "nodate")
+        #expect(decoded.kind == .noDate)
+    }
+
     @Test func calendarDayTasksClipsCrossMidnightAndPlacesCompletedLast() {
         let d0 = day("2026-11-15")
         let d1 = day("2026-11-16")
@@ -288,6 +388,119 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         let t = task("late", .timed(d, start: 1410, end: 30))
         #expect(DayLayout.blocks(for: [t], on: d).map { [$0.start, $0.end] } == [[1410, 1440]])
         #expect(DayLayout.blocks(for: [t], on: d.adding(days: 1)).map { [$0.start, $0.end] } == [[0, 30]])
+    }
+
+    @Test func threeOverlappingBlocksGetThreeLanesAndHonorExtendedDayEnd() {
+        let d = day("2026-11-15")
+        let editorEnd = 26 * 60
+        let overlapping = DayLayout.blocks(for: [
+            task("a", .timed(d, start: 600, end: 720)),
+            task("b", .timed(d, start: 630, end: 690)),
+            task("c", .timed(d, start: 660, end: 780)),
+        ], on: d, dayEnd: editorEnd)
+        #expect(overlapping.map(\.task.id) == ["a", "b", "c"])
+        #expect(overlapping.map(\.lane) == [0, 1, 2])
+        #expect(overlapping.map(\.lanes) == [3, 3, 3])
+
+        // Extended dayEnd (26:00) keeps overnight tails and next-day 00:00..02:00 blocks,
+        // caps past 26:00, and still excludes previous-day point-in-time tasks.
+        let extended = DayLayout.blocks(for: [
+            task("prevPoint", .timed(d.adding(days: -1), start: 1425, end: nil)),
+            task("overnight", .timed(d, start: 1410, end: 60)),
+            task("pastLimit", .timed(d, start: 1410, end: 180)),
+            task("nextEarly", .timed(d.adding(days: 1), start: 30, end: 90)),
+            task("nextAtLimit", .timed(d.adding(days: 1), start: 120, end: 180)),
+        ], on: d, dayEnd: editorEnd)
+        #expect(extended.map { ($0.task.id, $0.start, $0.end) }.elementsEqual([
+            ("pastLimit", 1410, 1560),
+            ("overnight", 1410, 1500),
+            ("nextEarly", 1470, 1530),
+        ], by: ==))
+    }
+
+    @Test func editorLayoutPreservesOvernightOrderShortNonOverlapAndThreeLanes() {
+        let d = day("2026-11-15")
+        let editorEnd = 26 * 60
+
+        // (a) Previous-night overnight task starts earlier than today 00:00, so it takes lane 0
+        // regardless of input order, while default calendar-grid layout keeps longer-first order.
+        let prevOvernight = task("prev", .timed(d.adding(days: -1), start: 23 * 60 + 30, end: 30))
+        let midnight = task("mid", .timed(d, start: 0, end: 60))
+        for input in [[prevOvernight, midnight], [midnight, prevOvernight]] {
+            let overnightPair = DayLayout.blocks(for: input, on: d, dayEnd: editorEnd, minDuration: 1, order: .scheduleStart)
+            #expect(overnightPair.map { ($0.task.id, $0.start, $0.end, $0.lane, $0.lanes) }.elementsEqual([
+                ("prev", 0, 30, 0, 2),
+                ("mid", 0, 60, 1, 2),
+            ], by: ==))
+        }
+        let calendarOvernight = DayLayout.blocks(for: [prevOvernight, midnight], on: d)
+        #expect(calendarOvernight.map { ($0.task.id, $0.lane, $0.lanes) }.elementsEqual([
+            ("mid", 0, 2),
+            ("prev", 1, 2),
+        ], by: ==))
+
+        // (b) Short task (09:00-09:05) uses its real end for overlap so 09:10-09:40 (and touching
+        // 09:05-09:30) stay in lane 0, while calendar-grid default keeps its 15-minute minimum.
+        let shortTask = task("short", .timed(d, start: 9 * 60, end: 9 * 60 + 5))
+        let nextTask = task("next", .timed(d, start: 9 * 60 + 10, end: 9 * 60 + 40))
+        let shortPair = DayLayout.blocks(for: [shortTask, nextTask], on: d, dayEnd: editorEnd, minDuration: 1, order: .scheduleStart)
+        #expect(shortPair.map { ($0.task.id, $0.start, $0.end, $0.lane, $0.lanes) }.elementsEqual([
+            ("short", 540, 545, 0, 1),
+            ("next", 550, 580, 0, 1),
+        ], by: ==))
+        let touchingTask = task("touch", .timed(d, start: 9 * 60 + 5, end: 9 * 60 + 30))
+        let touchingPair = DayLayout.blocks(for: [shortTask, touchingTask], on: d, dayEnd: editorEnd, minDuration: 1, order: .scheduleStart)
+        #expect(touchingPair.map { ($0.task.id, $0.start, $0.end, $0.lane, $0.lanes) }.elementsEqual([
+            ("short", 540, 545, 0, 1),
+            ("touch", 545, 570, 0, 1),
+        ], by: ==))
+        let calendarShort = DayLayout.blocks(for: [shortTask, nextTask], on: d)
+        #expect(calendarShort.map { ($0.task.id, $0.start, $0.end, $0.lane, $0.lanes) }.elementsEqual([
+            ("short", 540, 555, 0, 2),
+            ("next", 550, 580, 1, 2),
+        ], by: ==))
+
+        // Three mutually overlapping tasks take three lanes while preserving input order for equal starts.
+        let three = DayLayout.blocks(for: [
+            task("a", .timed(d, start: 19 * 60, end: 20 * 60)),
+            task("b", .timed(d, start: 19 * 60, end: 21 * 60)),
+            task("c", .timed(d, start: 19 * 60 + 30, end: 20 * 60 + 30)),
+        ], on: d, dayEnd: editorEnd, minDuration: 1, order: .scheduleStart)
+        #expect(three.map { ($0.task.id, $0.lane, $0.lanes) }.elementsEqual([
+            ("a", 0, 3),
+            ("b", 1, 3),
+            ("c", 2, 3),
+        ], by: ==))
+
+        // Editor mode still honours the 26:00 (maxEnd) cap.
+        let capped = DayLayout.blocks(for: [
+            task("pastLimit", .timed(d, start: 1410, end: 180)),
+            task("nextEarly", .timed(d.adding(days: 1), start: 30, end: 90)),
+            task("nextAtLimit", .timed(d.adding(days: 1), start: 120, end: 180)),
+        ], on: d, dayEnd: editorEnd, minDuration: 1, order: .scheduleStart)
+        #expect(capped.map { ($0.task.id, $0.start, $0.end, $0.lane, $0.lanes) }.elementsEqual([
+            ("pastLimit", 1410, 1560, 0, 2),
+            ("nextEarly", 1470, 1530, 1, 2),
+        ], by: ==))
+    }
+
+    @Test func dstFallBackZeroWallClockBlockIsNotDropped() throws {
+        let d = day("2026-11-01")
+        let ny = try #require(TimeZone(identifier: "America/New_York"))
+        let localized = Schedule.timed(d, start: 5 * 60 + 30, end: 6 * 60 + 30, timeZone: "UTC").localized(to: ny)
+        #expect(localized.startDay == d)
+        #expect(localized.startMinute == 90)
+        #expect(localized.endDay == d)
+        #expect(localized.endMinute == 90)
+
+        let t = task("dst", localized)
+        for minDuration in [0, 1] {
+            let blocks = DayLayout.blocks(for: [t], on: d, dayEnd: 26 * 60, minDuration: minDuration, order: .scheduleStart)
+            #expect(blocks.count == 1)
+            #expect(blocks.first?.task.id == "dst")
+            #expect(blocks.first?.start == 90)
+            #expect(blocks.first?.end == 91)
+        }
     }
 }
 

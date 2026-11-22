@@ -1,3 +1,4 @@
+@testable import DayDoCore
 import Foundation
 import Testing
 
@@ -214,6 +215,116 @@ private let guards: [Guard] = [
             "try await model.api.duplicateProject(id: id)",
         ]
     ),
+    Guard(
+        name: "timed draft zone-stamping uses DateDraft.stampTimeZoneIfFloating",
+        directories: ["ios/DayDo"],
+        pattern: #"\.timeZone\s*=\s*TimeZone\.current"#,
+        allow: [],
+        bad: [
+            "draft.timeZone = TimeZone.current.identifier",
+            "if draft.timeZone == nil { draft.timeZone = TimeZone.current.identifier }",
+        ]
+    ),
+    Guard(
+        name: "updateTask ignores schedules equal to the localized stored schedule",
+        directories: ["DayDoCore/Sources/DayDoCore/API"],
+        pattern: #"case\s+let\s+\.set\(\s*(\w+)\s*\)\s*:\s*t\.schedule\s*=\s*\1\b|case\s+\.set\(\s*let\s+(\w+)\s*\)\s*:\s*t\.schedule\s*=\s*\2\b"#,
+        allow: [],
+        bad: [
+            "case let .set(s): t.schedule = s",
+            "case .set(let s):\n    t.schedule = s",
+        ]
+    ),
+    Guard(
+        name: "start-of-week arithmetic uses LocalDay.startOfWeek",
+        directories: ["DayDoCore/Sources", "ios/DayDo", "ios/DayDoWidgets"],
+        pattern: #"adding\(days:\s*-[^)]*\.weekday\)"#,
+        allow: ["DayDoCore/Sources/DayDoCore/Support/LocalDay.swift"],
+        bad: [
+            "let start = first.adding(days: -first.weekday)",
+            "let start = sel.adding(days: -sel.weekday)",
+        ]
+    ),
+    Guard(
+        name: "column lane packing lives solely in Domain/Grouping.swift",
+        directories: ["DayDoCore/Sources", "ios/DayDo", "ios/DayDoWidgets"],
+        pattern: #"lanes\[lane\]"#,
+        allow: ["DayDoCore/Sources/DayDoCore/Domain/Grouping.swift"],
+        bad: [
+            "while lane < lanes.count, lanes[lane].contains(where: { $0.overlaps(range) }) { lane += 1 }",
+            "lanes[lane].append(a...b)",
+        ]
+    ),
+    Guard(
+        name: "calendar day-span loops live in DayDoCore CalendarProjection, not CalendarScreen",
+        directories: ["ios/DayDo/Screens"],
+        pattern: #"while\s+\w+\s*<=\s*end\b"#,
+        allow: [],
+        bad: [
+            "while d <= end {",
+            "while day <= end {",
+        ]
+    ),
+    Guard(
+        name: "time-block editor drag snap and clamp live in DayDoCore TimeGridDrag, not TimeBlockEditor",
+        directories: ["ios/DayDo/Screens"],
+        pattern: #"\.rounded\(\)\)\s*\*|min\(1440"#,
+        allow: [],
+        bad: [
+            "let dm = Int((drag.translation.height / Self.pxPerMinute / 5).rounded()) * 5",
+            "let ns = max(0, min(1440 - 5, s0 + dm))",
+        ]
+    ),
+    Guard(
+        name: "time-block editor lane layout uses DayDoCore DayLayout.blocks, not a local lane layout",
+        directories: ["ios/DayDo/Screens"],
+        pattern: #"\bstruct\s+Laid\b|\blane\s*==\s*0\b"#,
+        allow: [],
+        bad: [
+            "struct Laid { var task: TodoTask; var start: Int; var end: Int; var lane: Int }",
+            "let lane = out.contains { $0.lane == 0 && $0.start < end && $0.end > start } ? 1 : 0",
+        ]
+    ),
+    Guard(
+        name: "resident-tab loader bookkeeping lives in ios/DayDo/App/ResidentQuery.swift, not Screens",
+        directories: ["ios/DayDo/Screens"],
+        pattern: #"@State\s+(?:private\s+)?var\s+loaded(?:Reload|Query|Key|Scope)\b|!=\s*loaded(?:Reload|Key)\b"#,
+        allow: [],
+        bad: [
+            "@State private var loadedReload: TaskReload?",
+            "@State private var loadedQuery: CalQueryKey?",
+            "@State private var loadedKey: SearchKey?",
+            "@State private var loadedScope: TaskScope?",
+            "guard let reload = activeReload, reload != loadedReload else { return }",
+            "guard let key = activeSearchKey, key != loadedKey else { return }",
+        ]
+    ),
+    Guard(
+        name: "section classification uses TaskSection.Kind, not raw section-id string comparisons",
+        directories: ["ios/DayDo"],
+        pattern: #"(?:==|!=)\s*"(?:overdue|today|tomorrow|later|nodate|completed|trash)"|\bhasPrefix\(\s*"day:"\s*\)|\bcase\s+[^:\n]*"(?:overdue|today|tomorrow|later|nodate|completed|trash)""#,
+        allow: [],
+        bad: [
+            #"visibleSections.first(where: { $0.id == "overdue" })"#,
+            #"$0.id != "completed""#,
+            #"$0.id != "trash""#,
+            #"if sectionId == "tomorrow" { return model.today.adding(days: 1) }"#,
+            #"if sectionId.hasPrefix("day:") { return LocalDay(String(sectionId.dropFirst(4))) }"#,
+            #"case "overdue": Palette.overdue"#,
+            #"case "completed", "trash": Palette.textSecondary"#,
+        ]
+    ),
+    Guard(
+        name: "screens and components read the current time through DayDoCore Clock (AppModel.now / today), not Date()",
+        directories: ["ios/DayDo/Screens", "ios/DayDo/Components"],
+        pattern: #"\bDate\(\)"#,
+        allow: [],
+        bad: [
+            "let c = Calendar.current.dateComponents([.hour, .minute], from: Date())",
+            "LocalDay(date: Date(), in: .current).year",
+            "ISO8601DateFormatter().string(from: Date())",
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {
@@ -324,5 +435,49 @@ private let guards: [Guard] = [
         let backoffIncrements = code.components(separatedBy: "consecutiveRetryableFailures +=").count - 1
         #expect(backoffIncrements == 1, "Expected consecutiveRetryableFailures += only inside nextRetryableError")
         #expect(!code.contains("maxAttachmentUploadsPerCycle"), "Per-cycle upload cap must stay removed")
+    }
+
+    /// Guards that `SyncApplier.specs` stays in sync with `ENTITY_NAMES` in
+    /// `server/src/sync/entities.ts`. Unregistered entities are silently skipped
+    /// while advancing the pull cursor, causing silent data loss.
+    @Test func syncApplierSpecsMatchServerEntityNames() throws {
+        let source = try codeLines("server/src/sync/entities.ts")
+        let arrayRegex = try NSRegularExpression(
+            pattern: #"ENTITY_NAMES\s*=\s*\[([^\]]*)\]\s*as\s+const"#
+        )
+        let arrayMatch = try #require(
+            arrayRegex.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)),
+            "Could not find `ENTITY_NAMES = [ ... ] as const` in server/src/sync/entities.ts"
+        )
+        let bodyRange = try #require(Range(arrayMatch.range(at: 1), in: source))
+        let arrayBody = source[bodyRange]
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> Substring in
+                if let commentStart = line.range(of: "//") {
+                    return line[..<commentStart.lowerBound]
+                }
+                return line
+            }
+            .joined(separator: "\n")
+
+        let quoteRegex = try NSRegularExpression(pattern: #"['"]([^'"]+)['"]"#)
+        let parsedNames = quoteRegex.matches(
+            in: arrayBody,
+            range: NSRange(arrayBody.startIndex..., in: arrayBody)
+        ).compactMap { match -> String? in
+            Range(match.range(at: 1), in: arrayBody).map { String(arrayBody[$0]) }
+        }
+        #expect(!parsedNames.isEmpty, "Parsed zero entity names from server/src/sync/entities.ts; parser is hollow")
+
+        let serverEntities = Set(parsedNames)
+        #expect(serverEntities.count == parsedNames.count, "Duplicate entity names in server/src/sync/entities.ts ENTITY_NAMES")
+
+        let appEntities = Set(SyncApplier.specFieldNamesByEntity.keys)
+        let missingInApp = serverEntities.subtracting(appEntities).sorted()
+        let extraInApp = appEntities.subtracting(serverEntities).sorted()
+        #expect(
+            appEntities == serverEntities,
+            "SyncApplier.specs entity mismatch vs server/src/sync/entities.ts ENTITY_NAMES: missing=\(missingInApp), extra=\(extraInApp)"
+        )
     }
 }

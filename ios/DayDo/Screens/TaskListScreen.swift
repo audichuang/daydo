@@ -11,14 +11,15 @@ struct TaskListScreen: View {
     var scope: TaskScope
     var isActive: Bool = true
 
-    @State private var sections: [TaskSection] = []
-    @State private var loaded = false
-    @State private var loadedScope: TaskScope?
-    @State private var loadedReload: TaskReload?
+    @State private var query = ResidentQuery<TaskReload, [TaskSection]>(
+        initialValue: [],
+        isStale: { $0.scope != $1.scope },
+        isSameQuery: { $0.scope == $1.scope }
+    )
     @State private var limits: [TaskScope: Int] = [:]
     @State private var shareText: String?
     @State private var scrollPosition = ScrollPosition(edge: .top)
-    @AppStorage("closedSections") private var closedRaw = "completed"
+    @AppStorage("closedSections") private var closedRaw = TaskSection.Kind.completed.id
 
     private var activeReload: TaskReload? {
         isActive ? TaskReload(scope: scope, revision: model.revision, limit: limits[scope], memberId: activeMemberFilter) : nil
@@ -27,11 +28,11 @@ struct TaskListScreen: View {
     /// Only expose sections matching the current `scope` so switching lists while
     /// hidden (or while a load is in flight / fails) never shows or acts on old rows.
     private var visibleSections: [TaskSection] {
-        loadedScope == scope ? sections : []
+        query.loadedKey?.scope == scope ? query.value : []
     }
 
     private var isScopeLoaded: Bool {
-        loaded && loadedScope == scope
+        query.loadedKey?.scope == scope
     }
 
     var closed: Set<String> { Set(closedRaw.split(separator: ",").map(String.init)) }
@@ -60,7 +61,7 @@ struct TaskListScreen: View {
                                 .txt(14)
                                 .foregroundStyle(Palette.textSecondary)
                                 .contentTransition(reduceMotion ? .identity : .numericText())
-                                .animation(loadedScope == scope ? Motion.count(reduceMotion) : nil, value: subtitle)
+                                .animation(isScopeLoaded ? Motion.count(reduceMotion) : nil, value: subtitle)
                             if scope == .smart(.all) && model.filterMembers.count > 1 {
                                 MemberFilterChips(
                                     members: model.filterMembers,
@@ -73,12 +74,12 @@ struct TaskListScreen: View {
 
                         if isScopeLoaded && visibleSections.isEmpty {
                             EmptyState(scope: scope)
-                                .id(SectionViewID(scope: loadedScope, sectionId: "__empty"))
+                                .id(SectionViewID(scope: query.loadedKey?.scope, sectionId: "__empty"))
                                 .transition(.opacity)
                         }
                         ForEach(visibleSections) { sec in
                             SectionCard(section: sec, scope: scope, closed: closed.contains(sec.id)) { toggle(sec.id) }
-                                .id(SectionViewID(scope: loadedScope, sectionId: sec.id))
+                                .id(SectionViewID(scope: query.loadedKey?.scope, sectionId: sec.id))
                                 .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
                         }
                         if visibleSections.contains(where: \.hasMore) {
@@ -132,11 +133,13 @@ struct TaskListScreen: View {
             }
         }
         .task(id: activeReload) {
-            guard let reload = activeReload, reload != loadedReload else { return }
-            await load(for: reload)
+            await load(for: activeReload)
         }
         .onChange(of: isActive) { _, active in
             if active {
+                if let loaded = query.loadedKey, loaded.scope != scope {
+                    query.reset()
+                }
                 if !limits.isEmpty { limits = [:] }
                 if scrollPosition.isPositionedByUser || scrollPosition.edge != .top {
                     scrollPosition.scrollTo(edge: .top)
@@ -172,8 +175,8 @@ struct TaskListScreen: View {
                 Button(model.compact ? "顯示詳情" : "隱藏詳情", systemImage: model.compact ? "eye" : "eye.slash") {
                     withAnimation(Motion.toggle(reduceMotion)) { model.compact.toggle() }
                 }
-                Button(closed.contains("completed") ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle("completed") }
-                if let overdue = visibleSections.first(where: { $0.id == "overdue" }),
+                Button(closed.contains(TaskSection.Kind.completed.id) ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle(TaskSection.Kind.completed.id) }
+                if let overdue = visibleSections.first(where: { $0.kind == .overdue }),
                    !isViewerScope,
                    !model.editableTaskIds(in: overdue.tasks).isEmpty {
                     Divider()
@@ -204,7 +207,7 @@ struct TaskListScreen: View {
 
     var subtitle: String {
         // A multi-day task sits in both 今天 and 明天; count it once.
-        let active = Set(visibleSections.filter { $0.id != "completed" && $0.id != "trash" }.flatMap { $0.tasks.map(\.id) }).count
+        let active = Set(visibleSections.filter { $0.kind != .completed && $0.kind != .trash }.flatMap { $0.tasks.map(\.id) }).count
         switch scope {
         case .smart(.today): return "\(DateText.full(model.today)) · \(model.counts.today) 項待辦"
         case .smart(.completed): return "\(visibleSections.first?.tasks.count ?? 0) 項"
@@ -213,33 +216,17 @@ struct TaskListScreen: View {
         }
     }
 
-    func load(for reload: TaskReload) async {
-        if loadedScope != reload.scope {
-            sections = []
-            loaded = false
-            loadedScope = nil
-            loadedReload = nil
-        }
-        do {
-            let loadedSections = try await model.api.listSections(reload.scope, limit: reload.limit, memberId: reload.memberId)
-            guard !Task.isCancelled else { return }
-            let shouldAnimate = loaded && loadedScope == reload.scope
-            if shouldAnimate {
-                withAnimation(Motion.layout(reduceMotion)) {
-                    sections = loadedSections
-                    loaded = true
-                    loadedScope = reload.scope
-                    loadedReload = reload
-                }
+    func load(for reload: TaskReload?) async {
+        let outcome = await query.run(activeKey: reload) { key in
+            try await model.api.listSections(key.scope, limit: key.limit, memberId: key.memberId)
+        } apply: { sameQuery, commit in
+            if sameQuery {
+                withAnimation(Motion.layout(reduceMotion)) { commit() }
             } else {
-                sections = loadedSections
-                loaded = true
-                loadedScope = reload.scope
-                loadedReload = reload
+                commit()
             }
-        } catch is CancellationError {
-            return
-        } catch {
+        }
+        if case .failed(let error) = outcome {
             // A list deleted from another screen: fall back to Today.
             if case DayDoError.notFound = error { model.scope = .smart(.today) } else { model.errorMessage = error.localizedDescription }
         }
@@ -293,7 +280,7 @@ struct TaskListScreen: View {
     }
 
     func projectShareText(_ project: Project) -> String {
-        let active = visibleSections.filter { $0.id != "completed" && $0.id != "trash" }.flatMap(\.tasks)
+        let active = visibleSections.filter { $0.kind != .completed && $0.kind != .trash }.flatMap(\.tasks)
         let lines = active.map { t in
             if let sched = t.schedule {
                 return "□ \(t.title)  \(DateText.taskLine(sched, today: model.today))"
@@ -321,9 +308,9 @@ struct SectionCard: View {
     var toggle: () -> Void
 
     var titleColor: Color {
-        switch section.id {
-        case "overdue": Palette.overdue
-        case "completed", "trash": Palette.textSecondary
+        switch section.kind {
+        case .overdue: Palette.overdue
+        case .completed, .trash: Palette.textSecondary
         default: Palette.text
         }
     }
@@ -347,7 +334,7 @@ struct SectionCard: View {
                 HStack(spacing: 8) {
                     Text(section.title).txt(15, .bold).foregroundStyle(titleColor)
                     Spacer()
-                    if section.id == "overdue",
+                    if section.kind == .overdue,
                        !isViewerScope,
                        !model.editableTaskIds(in: section.tasks).isEmpty {
                         Button("全部延到今天") {
@@ -375,7 +362,7 @@ struct SectionCard: View {
                 let firstId = section.tasks.first?.id
                 LazyVStack(spacing: 0) {
                     ForEach(section.tasks) { t in
-                        TaskRow(task: t, separator: t.id != firstId, sectionId: section.id, inTrash: scope == .smart(.trash), selectsInline: true, showProject: !isProjectScope)
+                        TaskRow(task: t, separator: t.id != firstId, sectionKind: section.kind, inTrash: scope == .smart(.trash), selectsInline: true, showProject: !isProjectScope)
                             .transition(Motion.rowTransition(reduceMotion))
                     }
                 }
@@ -394,7 +381,7 @@ struct TaskRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var task: TodoTask
     var separator: Bool
-    var sectionId: String
+    var sectionKind: TaskSection.Kind
     var inTrash = false
     var selectsInline = false
     var showProject = true
@@ -509,9 +496,11 @@ struct TaskRow: View {
 
     /// Day a single-day section stands for (明天, 未來 7 天 day groups); its header already names it.
     private var sectionDay: LocalDay? {
-        if sectionId == "tomorrow" { return model.today.adding(days: 1) }
-        if sectionId.hasPrefix("day:") { return LocalDay(String(sectionId.dropFirst(4))) }
-        return nil
+        switch sectionKind {
+        case .tomorrow: return model.today.adding(days: 1)
+        case .day(let day): return day
+        default: return nil
+        }
     }
 
     var dateLine: String {
@@ -528,7 +517,7 @@ struct TaskRow: View {
 
     var dateColor: Color {
         guard let s = task.schedule else { return Palette.textMuted }
-        if sectionId == "overdue" || TaskGrouping.isOverdue(task, today: model.today) { return Palette.overdue }
+        if sectionKind == .overdue || TaskGrouping.isOverdue(task, today: model.today) { return Palette.overdue }
         if s.occurs(on: model.today) { return accent.text }
         return s.startDay > model.today ? accent.text.opacity(0.85) : Palette.textMuted
     }

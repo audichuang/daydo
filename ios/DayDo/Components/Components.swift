@@ -401,7 +401,7 @@ struct MonthPicker: View {
             HStack {
                 Button { month = month.adding(months: -1) } label: { Image(systemName: "chevron.left").frame(width: 36, height: 32) }
                 Spacer()
-                Text(month.year == LocalDay(date: Date(), in: .current).year ? "\(month.month)月" : "\(String(month.year)) 年 \(month.month) 月").txt(17, .bold).foregroundStyle(Palette.text)
+                Text(month.year == today.year ? "\(month.month)月" : "\(String(month.year)) 年 \(month.month) 月").txt(17, .bold).foregroundStyle(Palette.text)
                 Spacer()
                 Button { month = month.adding(months: 1) } label: { Image(systemName: "chevron.right").frame(width: 36, height: 32) }
             }

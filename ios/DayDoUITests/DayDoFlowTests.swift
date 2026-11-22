@@ -208,6 +208,67 @@ final class DayDoFlowTests: XCTestCase {
             listScroll.swipeUp()
         }
         XCTAssertTrue(updatedRow.waitForExistence(timeout: 3), app.debugDescription)
+
+        // Move the edited task back to today as 19:00–20:00 so today has three mutually overlapping
+        // timed tasks (19:00–20:00, 19:00–21:00, 19:30–20:30), then verify 3 side-by-side lanes in
+        // TimeBlockEditor opened from the composer (excludeTaskId == nil).
+        updatedRow.tap()
+        let dateRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '設定日期與時間'")).firstMatch
+        XCTAssertTrue(dateRow.waitForExistence(timeout: 3), app.debugDescription)
+        dateRow.tap()
+        let todayBtn = app.buttons["monthDay.\(dayString(offset: 0))"].firstMatch
+        XCTAssertTrue(todayBtn.waitForExistence(timeout: 3), app.debugDescription)
+        todayBtn.tap()
+        app.buttons["durationTab"].tap()
+        let oneHour = app.buttons["1 小時"].firstMatch
+        XCTAssertTrue(oneHour.waitForExistence(timeout: 3), app.debugDescription)
+        oneHour.tap()
+        app.buttons["確定"].tap()
+        XCTAssertTrue(
+            app.buttons.matching(NSPredicate(format: "label BEGINSWITH '設定日期與時間' AND label CONTAINS '19:00 – 20:00'"))
+                .firstMatch.waitForExistence(timeout: 3),
+            app.debugDescription
+        )
+        if collapseBtn.exists {
+            collapseBtn.tap()
+        }
+        XCTAssertTrue(expandBtn.waitForExistence(timeout: 3), app.debugDescription)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap()
+        XCTAssertTrue(expandBtn.waitForNonExistence(timeout: 3), app.debugDescription)
+
+        app.buttons["新增任務"].firstMatch.tap()
+        let composerDate = app.buttons["composerDate"]
+        XCTAssertTrue(composerDate.waitForExistence(timeout: 3), app.debugDescription)
+        composerDate.tap()
+        XCTAssertTrue(app.buttons["durationTab"].waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["durationTab"].tap()
+        let allDay = app.switches["allDayToggle"].firstMatch
+        XCTAssertTrue(allDay.waitForExistence(timeout: 3), app.debugDescription)
+        allDay.tap()
+        XCTAssertTrue(openTimeline.waitForExistence(timeout: 3), app.debugDescription)
+        openTimeline.tap()
+        XCTAssertTrue(block.waitForExistence(timeout: 3), app.debugDescription)
+
+        let briefOther = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'timeBlock.other.' AND label CONTAINS '準備週一產品會議簡報'")
+        ).firstMatch
+        let dinnerOther = app.descendants(matching: .any)["timeBlock.other.晚餐：巷口火鍋"].firstMatch
+        let gymOther = app.descendants(matching: .any)["timeBlock.other.健身房 — 腿部訓練"].firstMatch
+        let timelineScroll = app.scrollViews.allElementsBoundByIndex.max(by: { $0.frame.height < $1.frame.height }) ?? app.scrollViews.firstMatch
+        for _ in 0..<6 where !(briefOther.isHittable && dinnerOther.isHittable && gymOther.isHittable) {
+            timelineScroll.swipeUp()
+        }
+        XCTAssertTrue(briefOther.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(dinnerOther.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(gymOther.waitForExistence(timeout: 3), app.debugDescription)
+        shot("09b-time-block-three-lanes")
+
+        let frames = [briefOther.frame, dinnerOther.frame, gymOther.frame].sorted { $0.minX < $1.minX }
+        XCTAssertLessThanOrEqual(frames[0].maxX, frames[1].minX + 1, "Lane 0 and lane 1 overlap: \(frames)")
+        XCTAssertLessThanOrEqual(frames[1].maxX, frames[2].minX + 1, "Lane 1 and lane 2 overlap: \(frames)")
+        XCTAssertEqual(frames[0].width, frames[1].width, accuracy: 2, "Expected equal 3-lane widths: \(frames)")
+        XCTAssertEqual(frames[1].width, frames[2].width, accuracy: 2, "Expected equal 3-lane widths: \(frames)")
+        XCTAssertGreaterThan(gymOther.frame.minX, max(briefOther.frame.minX, dinnerOther.frame.minX), "19:30 task should take lane 2")
     }
 
     @MainActor

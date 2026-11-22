@@ -57,7 +57,7 @@ public struct Recurrence: Hashable, Sendable {
             var d = day.adding(days: 1)
             for _ in 0..<(7 * interval + 7) {
                 // Weeks are anchored on the Sunday of `day`'s week.
-                let weeksApart = (day.adding(days: -day.weekday)).days(until: d.adding(days: -d.weekday)) / 7
+                let weeksApart = day.startOfWeek.days(until: d.startOfWeek) / 7
                 if byWeekday.contains(d.weekday) && weeksApart % interval == 0 { return d }
                 d = d.adding(days: 1)
             }

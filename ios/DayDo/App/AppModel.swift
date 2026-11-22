@@ -422,6 +422,8 @@ final class AppModel {
 
     var accent: AccentTheme { AccentTheme(hex: accentHex) }
     var me: Member? { members.first(where: \.isMe) }
+    var now: Date { store.now }
+    var timeZone: TimeZone { store.timeZone }
     var today: LocalDay { store.today }
     var editableProjects: [Project] { projects.filter { !$0.isViewer } }
 
