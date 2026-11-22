@@ -11,10 +11,11 @@ struct TaskListScreen: View {
     var scope: TaskScope
     var isActive: Bool = true
 
-    @State private var sections: [TaskSection] = []
-    @State private var loaded = false
-    @State private var loadedScope: TaskScope?
-    @State private var loadedReload: TaskReload?
+    @State private var query = ResidentQuery<TaskReload, [TaskSection]>(
+        initialValue: [],
+        isStale: { $0.scope != $1.scope },
+        isSameQuery: { $0.scope == $1.scope }
+    )
     @State private var limits: [TaskScope: Int] = [:]
     @State private var shareText: String?
     @State private var scrollPosition = ScrollPosition(edge: .top)
@@ -27,11 +28,11 @@ struct TaskListScreen: View {
     /// Only expose sections matching the current `scope` so switching lists while
     /// hidden (or while a load is in flight / fails) never shows or acts on old rows.
     private var visibleSections: [TaskSection] {
-        loadedScope == scope ? sections : []
+        query.loadedKey?.scope == scope ? query.value : []
     }
 
     private var isScopeLoaded: Bool {
-        loaded && loadedScope == scope
+        query.loadedKey?.scope == scope
     }
 
     var closed: Set<String> { Set(closedRaw.split(separator: ",").map(String.init)) }
@@ -60,7 +61,7 @@ struct TaskListScreen: View {
                                 .txt(14)
                                 .foregroundStyle(Palette.textSecondary)
                                 .contentTransition(reduceMotion ? .identity : .numericText())
-                                .animation(loadedScope == scope ? Motion.count(reduceMotion) : nil, value: subtitle)
+                                .animation(isScopeLoaded ? Motion.count(reduceMotion) : nil, value: subtitle)
                             if scope == .smart(.all) && model.filterMembers.count > 1 {
                                 MemberFilterChips(
                                     members: model.filterMembers,
@@ -73,12 +74,12 @@ struct TaskListScreen: View {
 
                         if isScopeLoaded && visibleSections.isEmpty {
                             EmptyState(scope: scope)
-                                .id(SectionViewID(scope: loadedScope, sectionId: "__empty"))
+                                .id(SectionViewID(scope: query.loadedKey?.scope, sectionId: "__empty"))
                                 .transition(.opacity)
                         }
                         ForEach(visibleSections) { sec in
                             SectionCard(section: sec, scope: scope, closed: closed.contains(sec.id)) { toggle(sec.id) }
-                                .id(SectionViewID(scope: loadedScope, sectionId: sec.id))
+                                .id(SectionViewID(scope: query.loadedKey?.scope, sectionId: sec.id))
                                 .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
                         }
                         if visibleSections.contains(where: \.hasMore) {
@@ -132,11 +133,13 @@ struct TaskListScreen: View {
             }
         }
         .task(id: activeReload) {
-            guard let reload = activeReload, reload != loadedReload else { return }
-            await load(for: reload)
+            await load(for: activeReload)
         }
         .onChange(of: isActive) { _, active in
             if active {
+                if let loaded = query.loadedKey, loaded.scope != scope {
+                    query.reset()
+                }
                 if !limits.isEmpty { limits = [:] }
                 if scrollPosition.isPositionedByUser || scrollPosition.edge != .top {
                     scrollPosition.scrollTo(edge: .top)
@@ -213,33 +216,17 @@ struct TaskListScreen: View {
         }
     }
 
-    func load(for reload: TaskReload) async {
-        if loadedScope != reload.scope {
-            sections = []
-            loaded = false
-            loadedScope = nil
-            loadedReload = nil
-        }
-        do {
-            let loadedSections = try await model.api.listSections(reload.scope, limit: reload.limit, memberId: reload.memberId)
-            guard !Task.isCancelled else { return }
-            let shouldAnimate = loaded && loadedScope == reload.scope
-            if shouldAnimate {
-                withAnimation(Motion.layout(reduceMotion)) {
-                    sections = loadedSections
-                    loaded = true
-                    loadedScope = reload.scope
-                    loadedReload = reload
-                }
+    func load(for reload: TaskReload?) async {
+        let outcome = await query.run(activeKey: reload) { key in
+            try await model.api.listSections(key.scope, limit: key.limit, memberId: key.memberId)
+        } apply: { sameQuery, commit in
+            if sameQuery {
+                withAnimation(Motion.layout(reduceMotion)) { commit() }
             } else {
-                sections = loadedSections
-                loaded = true
-                loadedScope = reload.scope
-                loadedReload = reload
+                commit()
             }
-        } catch is CancellationError {
-            return
-        } catch {
+        }
+        if case .failed(let error) = outcome {
             // A list deleted from another screen: fall back to Today.
             if case DayDoError.notFound = error { model.scope = .smart(.today) } else { model.errorMessage = error.localizedDescription }
         }

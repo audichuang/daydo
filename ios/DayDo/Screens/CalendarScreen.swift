@@ -36,10 +36,10 @@ struct CalendarScreen: View {
     @State private var month: LocalDay?
     @State private var memberFilter: String?
     @State private var projectFilter: String?
-    @State private var tasks: [TodoTask] = []
-    @State private var tasksVersion = 0
-    @State private var loadedQuery: CalQueryKey?
-    @State private var loadedReload: CalReload?
+    @State private var query = ResidentQuery<CalReload, [TodoTask]>(
+        initialValue: [],
+        isSameQuery: { $0.queryKey == $1.queryKey }
+    )
     @State private var drag = CalendarDragState()
     @State private var cache = CalendarDerivedCache()
     @State private var shiftDir = 0
@@ -53,8 +53,15 @@ struct CalendarScreen: View {
     @State private var monthScrollPosition = ScrollPosition(edge: .top)
     @State private var timeGridScrollReset = 0
 
+    private var tasks: [TodoTask] { query.value }
+    private var tasksVersion: Int { query.version }
+
+    private var currentReload: CalReload {
+        CalReload(range: range, member: effectiveMemberFilter, completed: showCompleted, revision: model.revision)
+    }
+
     private var activeReload: CalReload? {
-        isActive ? CalReload(range: range, member: effectiveMemberFilter, completed: showCompleted, revision: model.revision) : nil
+        isActive ? currentReload : nil
     }
 
     var mode: CalMode { CalMode(rawValue: modeRaw) ?? .list }
@@ -103,8 +110,7 @@ struct CalendarScreen: View {
             }
         }
         .task(id: activeReload) {
-            guard let reload = activeReload, reload != loadedReload else { return }
-            await load(for: reload)
+            await load(for: activeReload)
         }
         .onAppear { applyPendingCalendarDay() }
         .onChange(of: CalActivation(isActive: isActive, navTrigger: model.calendarNavigationTrigger)) { old, new in
@@ -338,33 +344,19 @@ struct CalendarScreen: View {
         return viewport.queryRange(monthGridDays: grid)
     }
 
-    func load() async {
-        await load(for: CalReload(range: range, member: effectiveMemberFilter, completed: showCompleted, revision: model.revision))
-    }
-
-    private func load(for reload: CalReload) async {
-        let currentQuery = CalQueryKey(range: reload.range, member: reload.member, completed: reload.completed)
-        let q = TaskQuery(from: reload.range.lowerBound, to: reload.range.upperBound, includeCompleted: reload.completed, memberId: reload.member)
-        do {
-            let loaded = try await model.api.listTasks(q)
-            guard !Task.isCancelled else { return }
-            if loadedQuery == currentQuery {
-                withAnimation(Motion.layout(reduceMotion)) {
-                    tasks = loaded
-                    tasksVersion += 1
-                    loadedQuery = currentQuery
-                    loadedReload = reload
-                }
+    private func load(for reload: CalReload?) async {
+        let outcome = await query.run(activeKey: reload) { key in
+            let q = TaskQuery(from: key.range.lowerBound, to: key.range.upperBound, includeCompleted: key.completed, memberId: key.member)
+            return try await model.api.listTasks(q)
+        } apply: { sameQuery, commit in
+            if sameQuery {
+                withAnimation(Motion.layout(reduceMotion)) { commit() }
             } else {
-                tasks = loaded
-                tasksVersion += 1
-                loadedQuery = currentQuery
-                loadedReload = reload
+                commit()
             }
-        } catch is CancellationError {
-            return
-        } catch {
-            if !Task.isCancelled { model.errorMessage = error.localizedDescription }
+        }
+        if case .failed(let error) = outcome {
+            model.errorMessage = error.localizedDescription
         }
     }
 
@@ -433,7 +425,7 @@ struct CalendarScreen: View {
         let finalInput = input
         Task {
             _ = await model.perform { try await $0.updateTask(finalInput) }
-            await load()
+            await load(for: currentReload)
             if pendingMove?.token == token {
                 pendingMove = nil
             }
@@ -1140,10 +1132,19 @@ private struct CalendarDayCell: View, Equatable {
     }
 }
 
-struct CalReload: Hashable { var range: ClosedRange<LocalDay>; var member: String?; var completed: Bool; var revision: Int }
+struct CalReload: Hashable {
+    var range: ClosedRange<LocalDay>
+    var member: String?
+    var completed: Bool
+    var revision: Int
+
+    fileprivate var queryKey: CalQueryKey {
+        CalQueryKey(range: range, member: member, completed: completed)
+    }
+}
 private struct CalActivation: Equatable { var isActive: Bool; var navTrigger: Int }
 private struct TimeGridScrollKey: Equatable { var days: [LocalDay]; var resetToken: Int }
-private struct CalQueryKey: Equatable { var range: ClosedRange<LocalDay>; var member: String?; var completed: Bool }
+fileprivate struct CalQueryKey: Equatable { var range: ClosedRange<LocalDay>; var member: String?; var completed: Bool }
 private struct CalAgendaContext: Hashable { var day: LocalDay; var member: String?; var project: String?; var completed: Bool }
 
 func partnerOwner(for task: TodoTask, show: Bool, members: [Member]) -> Member? {

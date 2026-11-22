@@ -274,6 +274,20 @@ private let guards: [Guard] = [
             "let ns = max(0, min(1440 - 5, s0 + dm))",
         ]
     ),
+    Guard(
+        name: "resident-tab loader bookkeeping lives in ios/DayDo/App/ResidentQuery.swift, not Screens",
+        directories: ["ios/DayDo/Screens"],
+        pattern: #"@State\s+(?:private\s+)?var\s+loaded(?:Reload|Query|Key|Scope)\b|!=\s*loaded(?:Reload|Key)\b"#,
+        allow: [],
+        bad: [
+            "@State private var loadedReload: TaskReload?",
+            "@State private var loadedQuery: CalQueryKey?",
+            "@State private var loadedKey: SearchKey?",
+            "@State private var loadedScope: TaskScope?",
+            "guard let reload = activeReload, reload != loadedReload else { return }",
+            "guard let key = activeSearchKey, key != loadedKey else { return }",
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {

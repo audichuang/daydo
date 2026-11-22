@@ -21,6 +21,7 @@
 		2B68D0A20FBE89F153D00562 /* KeychainSyncTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */; };
 		36614013B8857F519ECCE7DC /* WidgetTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9A02351805458F23E7DB226 /* WidgetTheme.swift */; };
 		36C06F0D17D9C8A91549B2E6 /* TaskListScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBE69B8A39D6026F6C72A644 /* TaskListScreen.swift */; };
+		3F27EE784851A2577C7BF4FF /* ResidentQueryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75E4376438156BEAE4728779 /* ResidentQueryTests.swift */; };
 		4461E85D6F754C9A7FCD0A48 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 7E101714C88520768756EA09 /* GoogleSignIn */; };
 		458D9DE291EF0F7CB9D9E7D0 /* DrawerMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B891DFDE4EE9759CC78BA7E9 /* DrawerMetricsTests.swift */; };
 		4F90194F10CE45A1E8CE79A4 /* WeekAgendaGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6BD3D5DF00E3413620F308D /* WeekAgendaGrid.swift */; };
@@ -48,6 +49,7 @@
 		D5B392650E0271184B023696 /* DayDoWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D30F5C2B4335B32BA231501 /* DayDoWidgetsBundle.swift */; };
 		D6E8515463547C7474484DF0 /* DayDoWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 90C4A324F918B192D9D68EE1 /* DayDoWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		EAB896BF06D1DA77E283DF5E /* DayDoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4677FEEE4764DF9B66BB6C5A /* DayDoCore */; };
+		EB87665C4CBCDAD8E36016DD /* ResidentQuery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ACE4B8D0A80E51B00BC93D5 /* ResidentQuery.swift */; };
 		EF57A429289CCBCFF71EB323 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = B385BD7500B9C55FC5E7A64A /* Components.swift */; };
 		F22D59FD9BEA7AC96C0306A0 /* NextWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4977F811E6EBE5878C8AC687 /* NextWidgetView.swift */; };
 		FA871EBC37232DE4894D7FCE /* CalendarScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 423EDB9F8B70C6CE2D2E3326 /* CalendarScreen.swift */; };
@@ -114,10 +116,12 @@
 		6DAF0DFE366B2DF89B894383 /* DemoData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoData.swift; sourceTree = "<group>"; };
 		723C6FDF68327E755BBBC400 /* EditListSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditListSheet.swift; sourceTree = "<group>"; };
 		75740C90A3D93DC752FAB1DE /* DayDoUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DayDoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		75E4376438156BEAE4728779 /* ResidentQueryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResidentQueryTests.swift; sourceTree = "<group>"; };
 		769FB898F8CB816D3209FD16 /* WidgetSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshotTests.swift; sourceTree = "<group>"; };
 		804D37B4E777C0B7FFBAECAA /* DayDoWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DayDoWidgets.entitlements; sourceTree = "<group>"; };
 		85E2F4237AF4F16976307DCE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		87A6EE2C31E3EA193622C3D4 /* MeProfileSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeProfileSheet.swift; sourceTree = "<group>"; };
+		8ACE4B8D0A80E51B00BC93D5 /* ResidentQuery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResidentQuery.swift; sourceTree = "<group>"; };
 		90C4A324F918B192D9D68EE1 /* DayDoWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = DayDoWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		93AF820DEE1E49529E90A0E0 /* DayDoFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoFlowTests.swift; sourceTree = "<group>"; };
 		A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainSyncTokenStore.swift; sourceTree = "<group>"; };
@@ -138,7 +142,7 @@
 		F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		F68BFC5798449FCFE7B82212 /* DayDoCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DayDoCore; path = ../DayDoCore; sourceTree = SOURCE_ROOT; };
 		F6BD3D5DF00E3413620F308D /* WeekAgendaGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeekAgendaGrid.swift; sourceTree = "<group>"; };
-		"TEMP_F949D91A-ED24-4E2C-9E20-023599482675" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		"TEMP_F1B7FADD-CA69-4259-8DD5-E47915C39C07" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -177,6 +181,7 @@
 				615E31EA2D033F846C07B08E /* DayDoApp.swift */,
 				6DAF0DFE366B2DF89B894383 /* DemoData.swift */,
 				A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */,
+				8ACE4B8D0A80E51B00BC93D5 /* ResidentQuery.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -225,6 +230,7 @@
 			children = (
 				EC3484874C0CCBD966338B4D /* AppModelTests.swift */,
 				B891DFDE4EE9759CC78BA7E9 /* DrawerMetricsTests.swift */,
+				75E4376438156BEAE4728779 /* ResidentQueryTests.swift */,
 				550EFD129C4C0E515133339B /* TestClock.swift */,
 				769FB898F8CB816D3209FD16 /* WidgetSnapshotTests.swift */,
 			);
@@ -317,10 +323,10 @@
 			path = DayDoUITests;
 			sourceTree = "<group>";
 		};
-		"TEMP_F29EC67A-1BA4-4B49-8A36-B4B4BD57A7AB" /* ios */ = {
+		"TEMP_AC1A3A64-E816-4D7F-89DA-6123A061DD29" /* ios */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_F949D91A-ED24-4E2C-9E20-023599482675" /* Config.xcconfig */,
+				"TEMP_F1B7FADD-CA69-4259-8DD5-E47915C39C07" /* Config.xcconfig */,
 			);
 			path = ios;
 			sourceTree = "<group>";
@@ -483,6 +489,7 @@
 				B6932C6011DDA88EB6338216 /* CalendarWidgetView.swift in Sources */,
 				458D9DE291EF0F7CB9D9E7D0 /* DrawerMetricsTests.swift in Sources */,
 				971DBD236D629470649D00B3 /* NextWidgetView.swift in Sources */,
+				3F27EE784851A2577C7BF4FF /* ResidentQueryTests.swift in Sources */,
 				6A2386BB97D9807DFD337605 /* TestClock.swift in Sources */,
 				5383CF711DC6E85AA7EF56EF /* TodayWidgetView.swift in Sources */,
 				BA3665B45AB6639B842BBA89 /* WidgetSnapshotTests.swift in Sources */,
@@ -530,6 +537,7 @@
 				7D0D980B5B52B78EF1CA32AF /* MeProfileSheet.swift in Sources */,
 				C71F91C87DBE76BFE8A2BC0C /* Motion.swift in Sources */,
 				7454858BA67E1C4407B53A26 /* OtherScreens.swift in Sources */,
+				EB87665C4CBCDAD8E36016DD /* ResidentQuery.swift in Sources */,
 				23FCC3E72501BB4E763CA638 /* RootView.swift in Sources */,
 				291183E9EBCB11282851A4F3 /* ShareListSheet.swift in Sources */,
 				0CCFCE88645325C2F9E9DDE0 /* SignInView.swift in Sources */,
@@ -615,7 +623,7 @@
 		};
 		739B74DBC48851785BC9AAA2 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_F949D91A-ED24-4E2C-9E20-023599482675" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_F1B7FADD-CA69-4259-8DD5-E47915C39C07" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
@@ -728,7 +736,7 @@
 		};
 		B97B517B54A6D8DCCD7DFE92 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_F949D91A-ED24-4E2C-9E20-023599482675" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_F1B7FADD-CA69-4259-8DD5-E47915C39C07" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
