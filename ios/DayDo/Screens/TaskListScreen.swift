@@ -137,6 +137,9 @@ struct TaskListScreen: View {
         }
         .onChange(of: isActive) { _, active in
             if active {
+                if let loaded = query.loadedKey, loaded.scope != scope {
+                    query.reset()
+                }
                 if !limits.isEmpty { limits = [:] }
                 if scrollPosition.isPositionedByUser || scrollPosition.edge != .top {
                     scrollPosition.scrollTo(edge: .top)
