@@ -612,6 +612,27 @@ import Testing
             "Allow-list references unknown synced entity"
         )
 
+        // Mirrors `ENTITY_NAMES` in `server/src/sync/entities.ts`.
+        let expectedEntities: Set<String> = [
+            "member",
+            "folder",
+            "project",
+            "projectMember",
+            "projectInvite",
+            "task",
+            "checklistItem",
+            "tag",
+            "attachment",
+            "comment",
+        ]
+        let actualEntities = Set(specFieldsByEntity.keys)
+        let missingEntities = expectedEntities.subtracting(actualEntities).sorted()
+        let extraEntities = actualEntities.subtracting(expectedEntities).sorted()
+        #expect(
+            actualEntities == expectedEntities,
+            "SyncApplier.specs entity mismatch: missing=\(missingEntities), extra=\(extraEntities)"
+        )
+
         try appDB.writer.read { db in
             for (entity, specFieldList) in specFieldsByEntity.sorted(by: { $0.key < $1.key }) {
                 let specFields = Set(specFieldList)
