@@ -55,10 +55,10 @@ import Testing
         #expect(found[0].url == URL(string: "tel:+886277566298"))
     }
 
-    @Test func containsLinksOnlyWhenSomethingIsTappable() {
-        #expect(!DescriptionLinks.containsLinks("待確認：用餐時間"))
-        #expect(DescriptionLinks.containsLinks("[地圖](https://maps.apple.com/?q=x)"))
-        #expect(DescriptionLinks.containsLinks("02-7756-6298"))
+    @Test func phoneExtensionDialsAfterPause() {
+        let found = links(in: DescriptionLinks.linkified("(415) 555-2671 ext. 42"))
+        #expect(found.count == 1)
+        #expect(found[0].url == URL(string: "tel:4155552671,42"))
     }
 
     @Test func plainTextAndOtherMarkdownSyntaxStayUnchanged() {

@@ -39,11 +39,6 @@ public enum DescriptionLinks {
         return result
     }
 
-    /// True when `linkified(text)` would contain at least one tappable link.
-    public static func containsLinks(_ text: String) -> Bool {
-        linkified(text).runs.contains { $0.link != nil }
-    }
-
     private static func validLinkURL(_ raw: String) -> URL? {
         guard let url = parseURL(raw),
               let scheme = url.scheme?.lowercased(),
@@ -133,10 +128,16 @@ public enum DescriptionLinks {
                 }
             case .phoneNumber:
                 if let phone = match.phoneNumber {
-                    let digits = phone.filter { $0.isASCII && $0.isNumber }
+                    // NSDataDetector reports an extension as "main;ext"; dial the main number,
+                    // then the extension after a pause (",") instead of gluing the digits together.
+                    let parts = phone.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
+                    let digitsOnly = { (s: Substring) in s.filter { $0.isASCII && $0.isNumber } }
+                    let digits = digitsOnly(parts[0])
+                    let ext = parts.count > 1 ? digitsOnly(parts[1]) : ""
                     // Keep a leading "+" so international numbers dial correctly.
                     let prefix = phone.trimmingCharacters(in: .whitespaces).hasPrefix("+") ? "+" : ""
-                    if !digits.isEmpty, let url = URL(string: "tel:\(prefix)\(digits)") {
+                    let target = ext.isEmpty ? "\(prefix)\(digits)" : "\(prefix)\(digits),\(ext)"
+                    if !digits.isEmpty, let url = URL(string: "tel:\(target)") {
                         attributed[attrRange].link = url
                     }
                 }

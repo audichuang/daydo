@@ -222,10 +222,10 @@ struct TaskDetailContent: View {
     @ViewBuilder
     private func descriptionField(readOnly: Bool) -> some View {
         // Plain-text descriptions stay a TextField so keyboard (Tab) navigation can still reach them.
-        let showsLinkified = !content.isEmpty && (readOnly || (!editingContent && focus != .content))
-            && DescriptionLinks.containsLinks(content)
-        if showsLinkified {
-            let text = Text(DescriptionLinks.linkified(content))
+        let linked: AttributedString? = !content.isEmpty && (readOnly || (!editingContent && focus != .content))
+            ? DescriptionLinks.linkified(content) : nil
+        if let linked, linked.runs.contains(where: { $0.link != nil }) {
+            let text = Text(linked)
                 .txt(15)
                 .lineSpacing(6)
                 .foregroundStyle(Palette.textBody)
