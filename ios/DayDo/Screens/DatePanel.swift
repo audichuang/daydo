@@ -143,7 +143,7 @@ struct DatePanel: View {
         if draft.allDay {
             draft.allDay = false
             draft.endDay = nil
-            if draft.timeZone == nil { draft.timeZone = TimeZone.current.identifier }
+            draft.stampTimeZoneIfFloating(TimeZone.current.identifier)
             draft.reminders = draft.reminders.isEmpty ? [] : [Reminder(offsetSeconds: 0).trigger]
         }
         draft.start = m

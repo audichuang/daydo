@@ -214,6 +214,26 @@ private let guards: [Guard] = [
             "try await model.api.duplicateProject(id: id)",
         ]
     ),
+    Guard(
+        name: "timed draft zone-stamping uses DateDraft.stampTimeZoneIfFloating",
+        directories: ["ios/DayDo"],
+        pattern: #"\.timeZone\s*=\s*TimeZone\.current"#,
+        allow: [],
+        bad: [
+            "draft.timeZone = TimeZone.current.identifier",
+            "if draft.timeZone == nil { draft.timeZone = TimeZone.current.identifier }",
+        ]
+    ),
+    Guard(
+        name: "updateTask ignores schedules equal to the localized stored schedule",
+        directories: ["DayDoCore/Sources/DayDoCore/API"],
+        pattern: #"case\s+let\s+\.set\(\s*(\w+)\s*\)\s*:\s*t\.schedule\s*=\s*\1\b|case\s+\.set\(\s*let\s+(\w+)\s*\)\s*:\s*t\.schedule\s*=\s*\2\b"#,
+        allow: [],
+        bad: [
+            "case let .set(s): t.schedule = s",
+            "case .set(let s):\n    t.schedule = s",
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {

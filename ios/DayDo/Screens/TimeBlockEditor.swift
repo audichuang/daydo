@@ -42,7 +42,7 @@ struct TimeBlockEditor: View {
                     draft.endDay = nil
                     draft.start = s
                     draft.end = e
-                    if draft.timeZone == nil { draft.timeZone = TimeZone.current.identifier }
+                    draft.stampTimeZoneIfFloating(TimeZone.current.identifier)
                     save()
                 }
             }

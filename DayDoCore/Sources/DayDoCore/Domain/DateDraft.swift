@@ -49,6 +49,15 @@ public struct DateDraft: Equatable, Sendable {
 
     public var duration: Int { end - start }
 
+    /// Stamps `timeZone` when currently floating (`nil`), used when a draft
+    /// becomes timed so it pins to the given zone without overwriting an
+    /// existing zone.
+    public mutating func stampTimeZoneIfFloating(_ identifier: String) {
+        if timeZone == nil {
+            timeZone = identifier
+        }
+    }
+
     /// Fills `input` with only the schedule, reminders, and repeat fields that
     /// changed relative to `task`. Sends `schedule` only when date, time, or
     /// timezone actually changed so updating reminders or repeat alone preserves

@@ -104,7 +104,7 @@ struct ComposerSheet: View {
                     draft.allDay = false
                     draft.start = m
                     draft.end = request.endMinute ?? (m + 60)
-                    draft.timeZone = TimeZone.current.identifier
+                    draft.stampTimeZoneIfFloating(TimeZone.current.identifier)
                 }
             }
             focus = .title

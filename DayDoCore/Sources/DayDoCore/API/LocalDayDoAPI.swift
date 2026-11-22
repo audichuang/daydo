@@ -1107,7 +1107,10 @@ extension LocalDayDoAPI {
 
             // Schedule
             switch input.schedule {
-            case let .set(s): t.schedule = s
+            case let .set(s):
+                if s != t.schedule?.localized(to: clock.timeZone()) {
+                    t.schedule = s
+                }
             case .clear: t.schedule = nil
             case .unset:
                 switch input.start {
