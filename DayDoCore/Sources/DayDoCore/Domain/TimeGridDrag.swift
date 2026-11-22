@@ -143,4 +143,47 @@ public enum TimeGridDrag {
         }
         return nil
     }
+
+    /// Moves a single-day editor block by `deltaMinutes` (snapped to `step`), preserving
+    /// its length, clamping start to `0...(1440 - step)`, and capping end at `maxEnd`.
+    public static func move(
+        start: Int,
+        end: Int,
+        deltaMinutes: Double,
+        step: Int,
+        maxEnd: Int
+    ) -> RangeResult {
+        let dm = snap(deltaMinutes, step: step)
+        let len = end - start
+        let ns = max(0, min(1440 - step, start + dm))
+        let ne = min(ns + len, maxEnd)
+        return RangeResult(startMinute: ns, endMinute: ne)
+    }
+
+    /// Resizes a single-day editor block's start by `deltaMinutes` (snapped to `step`),
+    /// clamping the new start to `0...(end - step)`.
+    public static func resizeStart(
+        start: Int,
+        end: Int,
+        deltaMinutes: Double,
+        step: Int,
+        maxEnd: Int
+    ) -> Int {
+        _ = maxEnd
+        let dm = snap(deltaMinutes, step: step)
+        return max(0, min(start + dm, end - step))
+    }
+
+    /// Resizes a single-day editor block's end by `deltaMinutes` (snapped to `step`),
+    /// clamping the new end to `(start + step)...maxEnd`.
+    public static func resizeEnd(
+        start: Int,
+        end: Int,
+        deltaMinutes: Double,
+        step: Int,
+        maxEnd: Int
+    ) -> Int {
+        let dm = snap(deltaMinutes, step: step)
+        return min(maxEnd, max(end + dm, start + step))
+    }
 }

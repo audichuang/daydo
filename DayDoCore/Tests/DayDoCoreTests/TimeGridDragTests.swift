@@ -236,4 +236,80 @@ import Testing
         #expect(TimeGridDrag.hitTestBlock(x: 20, y: 630, days: [d0, d1], tasks: [a, b, c], gutter: 40, columnWidth: 100, hourHeight: 60) == nil)
         #expect(TimeGridDrag.hitTestBlock(x: 160, y: 800, days: [d0, d1], tasks: [a, b, c], gutter: 40, columnWidth: 100, hourHeight: 60) == nil)
     }
+
+    @Test func editorMoveCharacterization() {
+        let step = 5
+        let maxEnd = 1560
+        let cases: [(label: String, start: Int, end: Int, delta: Double, expectedStart: Int, expectedEnd: Int)] = [
+            ("normal downward move keeps length", 600, 660, 30, 630, 690),
+            ("normal upward move keeps length", 600, 660, -30, 570, 630),
+            ("positive delta below half-step snaps to 0", 600, 660, 2.4, 600, 660),
+            ("positive delta at half-step snaps to +5", 600, 660, 2.5, 605, 665),
+            ("negative delta above -half-step snaps to 0", 600, 660, -2.4, 600, 660),
+            ("negative delta at -half-step snaps to -5", 600, 660, -2.5, 595, 655),
+            ("arbitrary delta snaps to nearest multiple of 5", 600, 660, 12.6, 615, 675),
+            ("huge upward move stops start at 0", 600, 660, -2000, 0, 60),
+            ("huge downward move stops start at 1435 keeping length within maxEnd", 600, 660, 2000, 1435, 1495),
+            ("huge downward move stops start at 1435 and caps end at 1560", 600, 780, 2000, 1435, 1560),
+            ("evening move caps end at 1560 before start reaches 1435", 1320, 1500, 90, 1410, 1560),
+        ]
+        for c in cases {
+            let actual = TimeGridDrag.move(start: c.start, end: c.end, deltaMinutes: c.delta, step: step, maxEnd: maxEnd)
+            #expect(actual == .init(startMinute: c.expectedStart, endMinute: c.expectedEnd), "\(c.label)")
+        }
+
+        // Custom step and maxEnd are respected.
+        #expect(
+            TimeGridDrag.move(start: 600, end: 690, deltaMinutes: 2000, step: 15, maxEnd: 1440)
+                == .init(startMinute: 1425, endMinute: 1440)
+        )
+    }
+
+    @Test func editorResizeStartCharacterization() {
+        let step = 5
+        let maxEnd = 1560
+        let cases: [(label: String, start: Int, end: Int, delta: Double, expectedStart: Int)] = [
+            ("normal upward resize", 600, 660, -30, 570),
+            ("normal downward resize", 600, 660, 20, 620),
+            ("positive delta below half-step snaps to 0", 600, 660, 2.4, 600),
+            ("positive delta at half-step snaps to +5", 600, 660, 2.5, 605),
+            ("negative delta above -half-step snaps to 0", 600, 660, -2.4, 600),
+            ("negative delta at -half-step snaps to -5", 600, 660, -2.5, 595),
+            ("huge upward resize stops at 0", 600, 660, -2000, 0),
+            ("huge downward resize stops at end - 5", 600, 660, 2000, 655),
+            ("overnight block resizeStart stops at end - 5", 1380, 1500, 500, 1495),
+        ]
+        for c in cases {
+            let actual = TimeGridDrag.resizeStart(start: c.start, end: c.end, deltaMinutes: c.delta, step: step, maxEnd: maxEnd)
+            #expect(actual == c.expectedStart, "\(c.label)")
+        }
+
+        #expect(TimeGridDrag.resizeStart(start: 600, end: 660, deltaMinutes: 200, step: 15, maxEnd: 1440) == 645)
+    }
+
+    @Test func editorResizeEndCharacterization() {
+        let step = 5
+        let maxEnd = 1560
+        let cases: [(label: String, start: Int, end: Int, delta: Double, expectedEnd: Int)] = [
+            ("normal extend", 600, 660, 30, 690),
+            ("normal shrink", 600, 660, -20, 640),
+            ("positive delta below half-step snaps to 0", 600, 660, 2.4, 660),
+            ("positive delta at half-step snaps to +5", 600, 660, 2.5, 665),
+            ("negative delta above -half-step snaps to 0", 600, 660, -2.4, 660),
+            ("negative delta at -half-step snaps to -5", 600, 660, -2.5, 655),
+            ("huge upward resize floors at start + 5", 600, 660, -2000, 605),
+            ("huge downward resize caps at 1560", 600, 660, 2000, 1560),
+            ("duration chip from aligned start", 600, 600, 30, 630),
+            ("duration chip from non-5-minute start preserves exact duration", 603, 603, 30, 633),
+            ("duration chip near midnight stays within 1560", 1435, 1435, 120, 1555),
+            ("duration chip beyond maxEnd caps at 1560", 1450, 1450, 120, 1560),
+        ]
+        for c in cases {
+            let actual = TimeGridDrag.resizeEnd(start: c.start, end: c.end, deltaMinutes: c.delta, step: step, maxEnd: maxEnd)
+            #expect(actual == c.expectedEnd, "\(c.label)")
+        }
+
+        #expect(TimeGridDrag.resizeEnd(start: 600, end: 660, deltaMinutes: -200, step: 15, maxEnd: 1440) == 615)
+        #expect(TimeGridDrag.resizeEnd(start: 600, end: 660, deltaMinutes: 2000, step: 15, maxEnd: 1440) == 1440)
+    }
 }

@@ -264,6 +264,16 @@ private let guards: [Guard] = [
             "while day <= end {",
         ]
     ),
+    Guard(
+        name: "time-block editor drag snap and clamp live in DayDoCore TimeGridDrag, not TimeBlockEditor",
+        directories: ["ios/DayDo/Screens"],
+        pattern: #"\.rounded\(\)\)\s*\*|min\(1440"#,
+        allow: [],
+        bad: [
+            "let dm = Int((drag.translation.height / Self.pxPerMinute / 5).rounded()) * 5",
+            "let ns = max(0, min(1440 - 5, s0 + dm))",
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {
