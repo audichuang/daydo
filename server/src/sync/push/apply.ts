@@ -14,6 +14,7 @@ import {
 import type { EntityName, MembershipRole } from '../entities';
 import type { OpEnvelope } from '../envelope';
 import type { AppDb } from '../push';
+import { REJECT_REASON, rejectedResult } from '../rejectReason';
 import { scopeOwnerId } from '../scopeName';
 import {
   chunkArray,
@@ -156,25 +157,13 @@ async function bindEntityHomes(
     const key = entityHomeKey(entity, entityId);
     const newEntry = inBatchNewHome.get(key);
     if (mismatchKeys.has(key)) {
-      results[i] = {
-        opId: rawOpId,
-        status: 'rejected',
-        reason: 'id-in-other-scope',
-        row: null,
-        clocks: {},
-      };
+      results[i] = rejectedResult(rawOpId, REJECT_REASON.ID_IN_OTHER_SCOPE);
       opTargetScope[i] = null;
       if (entity === 'project') {
         inBatchNewProjects.delete(entityId);
       }
     } else if (newEntry?.parentTaskId && mismatchTaskIds.has(newEntry.parentTaskId)) {
-      results[i] = {
-        opId: rawOpId,
-        status: 'rejected',
-        reason: 'id-in-other-scope',
-        row: null,
-        clocks: {},
-      };
+      results[i] = rejectedResult(rawOpId, REJECT_REASON.ID_IN_OTHER_SCOPE);
       opTargetScope[i] = null;
       if (newlyWonKeys.has(key)) {
         newlyWonKeys.delete(key);

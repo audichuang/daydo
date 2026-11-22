@@ -19,6 +19,7 @@ import { isNil, rowSchedule, sameValue, scheduleColumns } from '../serverops/val
 import { assertHasData, pushIntents, type WriteIntent, type WriteOutcome } from '../serverops/writer';
 import type { ServerHlcClock } from '../sync/hlc';
 import type { AppDb } from '../sync/push';
+import { REJECT_REASON } from '../sync/rejectReason';
 import type { ScopeStub } from '../scope/api';
 import { fetchIcs, type FetchIcsOptions } from './fetch';
 import { applyFilter } from './filters';
@@ -42,7 +43,7 @@ const CANCELLED_PREFIX = '[已取消] ';
 /** Abort a run that would remove most of the imported set (e.g. an empty or truncated-but-valid feed). */
 const MASS_DELETE_RATIO = 0.5;
 const MASS_DELETE_MIN = 5;
-const PROJECT_PURGED = 'Project is purged';
+const PROJECT_PURGED = REJECT_REASON.PROJECT_PURGED;
 const SINGLE_TO_SERIES = 'A single event became a recurring series; review before writing (original task preserved)';
 const SERIES_REDEFINED = 'Recurring series definition changed; review correspondence before writing';
 

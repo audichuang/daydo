@@ -12,6 +12,7 @@ import {
   roleCanWrite,
 } from '../src/sync/access';
 import { ENTITY_NAMES, type EntityName, type MembershipRole } from '../src/sync/entities';
+import { REJECT_REASON, rejectedResult } from '../src/sync/rejectReason';
 
 describe('OWNER_ONLY_ENTITIES / isOwnerOnlyEntity', () => {
   it('defines the exact owner-only entity set', () => {
@@ -145,5 +146,54 @@ describe('hasWriteRole', () => {
     const memberships: Record<string, MembershipRole> = role ? { p: role } : {};
     expect(hasWriteRole(memberships, 'p')).toBe(expected);
     expect(hasWriteRole(new Map(Object.entries(memberships)), 'p')).toBe(expected);
+  });
+});
+
+describe('REJECT_REASON / rejectedResult', () => {
+  it('exports the exact fixed push reject reason wire strings', () => {
+    expect(Object.values(REJECT_REASON).sort()).toEqual([
+      'Child taskId cannot be changed',
+      'Forbidden',
+      'Malformed op',
+      'Project deletion must be purged via D1',
+      'Project is purged',
+      'id-in-other-scope',
+      'unknown-row',
+    ]);
+  });
+
+  it('builds a rejected PushOpResult with optional row, clocks, and gone', () => {
+    const minimal = rejectedResult('op-1', REJECT_REASON.FORBIDDEN);
+    expect(minimal).toEqual({
+      opId: 'op-1',
+      status: 'rejected',
+      reason: 'Forbidden',
+      row: null,
+      clocks: {},
+    });
+    expect('gone' in minimal).toBe(false);
+
+    const withRow = rejectedResult('op-2', REJECT_REASON.PROJECT_PURGED, { id: 'p1' }, { name: '1:0:a' });
+    expect(withRow).toEqual({
+      opId: 'op-2',
+      status: 'rejected',
+      reason: 'Project is purged',
+      row: { id: 'p1' },
+      clocks: { name: '1:0:a' },
+    });
+    expect('gone' in withRow).toBe(false);
+
+    const withGone = rejectedResult('op-3', REJECT_REASON.FORBIDDEN, null, {}, true);
+    expect(withGone).toEqual({
+      opId: 'op-3',
+      status: 'rejected',
+      reason: 'Forbidden',
+      row: null,
+      clocks: {},
+      gone: true,
+    });
+
+    const withGoneFalse = rejectedResult('op-4', REJECT_REASON.UNKNOWN_ROW, null, {}, false);
+    expect('gone' in withGoneFalse).toBe(false);
   });
 });

@@ -13,6 +13,7 @@ import {
 } from '../sync/access';
 import { mergeOp } from '../sync/merge';
 import { envelopeOf, toEnvelope, type OpEnvelope } from '../sync/envelope';
+import { REJECT_REASON, rejectedResult } from '../sync/rejectReason';
 import { authorizeOp } from './authorize';
 import { rowView } from './rowView';
 import type { PushOpResult, ScopePushInput, ScopePushResponse } from './api';
@@ -114,24 +115,18 @@ export function processPushBatch(
     entity: EntityName | null,
     entityId: string | null,
   ) => {
+    const current = resolveCurrentRow(entity, entityId);
+    const result = rejectedResult(opId, reason, current.row, current.clocks, current.gone);
     if (opId.length > 0) {
       store.insertOpApplied({
         opId,
         userId: input.pusherUserId,
-        status: 'rejected',
+        status: result.status,
         reason,
         serverSeq: currentSeq,
       });
     }
-    const current = resolveCurrentRow(entity, entityId);
-    results.push({
-      opId,
-      status: 'rejected',
-      reason,
-      row: current.row,
-      clocks: current.clocks,
-      ...(current.gone ? { gone: true } : {}),
-    });
+    results.push(result);
   };
 
   for (const envelope of pushEnvelopes(input)) {
@@ -144,25 +139,20 @@ export function processPushBatch(
       const seen = store.getOpApplied(rawOpId);
       if (seen) {
         if (seen.userId !== input.pusherUserId) {
-          results.push({
-            opId: rawOpId,
-            status: 'rejected',
-            reason: 'opId already used by another user',
-            row: null,
-            clocks: {},
-          });
+          results.push(rejectedResult(rawOpId, 'opId already used by another user'));
           continue;
         }
         if (seen.status === 'rejected') {
           const current = resolveCurrentRow(rawEntity, rawEntityId);
-          results.push({
-            opId: rawOpId,
-            status: 'rejected',
-            reason: seen.reason ?? 'Previously rejected',
-            row: current.row,
-            clocks: current.clocks,
-            ...(current.gone ? { gone: true } : {}),
-          });
+          results.push(
+            rejectedResult(
+              rawOpId,
+              seen.reason ?? 'Previously rejected',
+              current.row,
+              current.clocks,
+              current.gone,
+            ),
+          );
           continue;
         }
         // Previously applied replay
@@ -233,11 +223,11 @@ export function processPushBatch(
     // 4. Missing row + partial upsert check
     if (!existing) {
       if (op.op === 'upsert' && !hasAllRequiredFields(op.entity, op.fields)) {
-        rejectOp(op.opId, 'unknown-row', op.entity, op.entityId);
+        rejectOp(op.opId, REJECT_REASON.UNKNOWN_ROW, op.entity, op.entityId);
         continue;
       }
       if (op.op === 'delete' && isTaskChildEntity(op.entity)) {
-        rejectOp(op.opId, 'unknown-row', op.entity, op.entityId);
+        rejectOp(op.opId, REJECT_REASON.UNKNOWN_ROW, op.entity, op.entityId);
         continue;
       }
     }

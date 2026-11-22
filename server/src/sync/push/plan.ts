@@ -7,6 +7,7 @@ import {
   type MembershipRole,
 } from '../entities';
 import { hasWriteRole, listWriteDenial } from '../access';
+import { REJECT_REASON, rejectedResult } from '../rejectReason';
 import { entityHomeKey, type ParsedPushOp } from './parse';
 
 export interface NewEntityHomeEntry {
@@ -52,16 +53,6 @@ export interface PushPlan {
   listScopeTargets: ListScopeTarget[];
 }
 
-function rejectedResult(opId: string, reason: string): PushOpResult {
-  return {
-    opId,
-    status: 'rejected',
-    reason,
-    row: null,
-    clocks: {},
-  };
-}
-
 /**
  * Pure planning pass over parsed ops and loaded D1 context.
  * Resolves per-op scope routing, in-batch parent/child rejections, owner deletes,
@@ -84,7 +75,10 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
   for (let i = 0; i < parsedOps.length; i += 1) {
     const { rec, rawOpId, entity, entityId, validated } = parsedOps[i];
     if (!entity || !entityId) {
-      results[i] = rejectedResult(rawOpId, validated.ok ? 'Malformed op' : validated.reason);
+      results[i] = rejectedResult(
+        rawOpId,
+        validated.ok ? REJECT_REASON.MALFORMED_OP : validated.reason,
+      );
       continue;
     }
 
@@ -135,14 +129,14 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
           }
           const taskHome = taskId ? workingHome.get(entityHomeKey('task', taskId)) : undefined;
           if (taskHome ? targetScope !== taskHome : targetScope !== pusherScope) {
-            results[i] = rejectedResult(validated.op.opId, 'id-in-other-scope');
+            results[i] = rejectedResult(validated.op.opId, REJECT_REASON.ID_IN_OTHER_SCOPE);
             continue;
           }
         } else if (targetScope !== pusherScope) {
           if (entity === 'task') {
-            inBatchRejectedTasks.set(entityId, 'id-in-other-scope');
+            inBatchRejectedTasks.set(entityId, REJECT_REASON.ID_IN_OTHER_SCOPE);
           }
-          results[i] = rejectedResult(validated.op.opId, 'id-in-other-scope');
+          results[i] = rejectedResult(validated.op.opId, REJECT_REASON.ID_IN_OTHER_SCOPE);
           continue;
         }
       }
@@ -208,18 +202,18 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
 
     const op = validated.op;
     if (op.entity === 'project' && op.op === 'delete') {
-      results[i] = rejectedResult(op.opId, 'unknown-row');
+      results[i] = rejectedResult(op.opId, REJECT_REASON.UNKNOWN_ROW);
       continue;
     }
 
     if (op.op === 'upsert' && !hasAllRequiredFields(op.entity, op.fields)) {
-      results[i] = rejectedResult(op.opId, 'unknown-row');
+      results[i] = rejectedResult(op.opId, REJECT_REASON.UNKNOWN_ROW);
       continue;
     }
 
     if (isTaskChildEntity(op.entity)) {
       if (op.op === 'delete') {
-        results[i] = rejectedResult(op.opId, 'unknown-row');
+        results[i] = rejectedResult(op.opId, REJECT_REASON.UNKNOWN_ROW);
         continue;
       }
       const taskId =
@@ -231,7 +225,7 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
       }
       const parentScope = taskId ? workingHome.get(entityHomeKey('task', taskId)) : undefined;
       if (!parentScope) {
-        results[i] = rejectedResult(op.opId, 'unknown-row');
+        results[i] = rejectedResult(op.opId, REJECT_REASON.UNKNOWN_ROW);
         continue;
       }
       workingHome.set(key, parentScope);
@@ -247,7 +241,7 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
 
     // New top-level entity: project, task, member, folder
     if (op.entity === 'project' && purgedSet.has(op.entityId)) {
-      results[i] = rejectedResult(op.opId, 'Project is purged');
+      results[i] = rejectedResult(op.opId, REJECT_REASON.PROJECT_PURGED);
       continue;
     }
     if (op.entity === 'task' && op.op === 'upsert') {
@@ -256,9 +250,9 @@ export function planPushBatch(input: PlanPushInput): PushPlan {
           ? op.row.projectId
           : '';
       // A list created or claimed earlier in this batch has no D1 role yet; that only waives Forbidden.
-      const denial = targetPid ? listWriteDenial(targetPid, context) : 'Forbidden';
+      const denial = targetPid ? listWriteDenial(targetPid, context) : REJECT_REASON.FORBIDDEN;
       if (
-        denial === 'Project is purged' ||
+        denial === REJECT_REASON.PROJECT_PURGED ||
         (denial && !inBatchNewProjects.has(targetPid) && !projectOwnerBackfills.has(targetPid))
       ) {
         inBatchRejectedTasks.set(op.entityId, denial);

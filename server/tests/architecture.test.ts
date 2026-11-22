@@ -160,6 +160,56 @@ const GUARDS: Guard[] = [
     bad: ['return serializePublicRow(row);', 'const out = rows.map((r) => serializePublicRow(r));'],
   },
   {
+    name: 'fixed push reject reason literals only in src/sync/rejectReason.ts',
+    dirs: ['src', 'durable-objects'],
+    pattern:
+      /['"`](id-in-other-scope|unknown-row|Project is purged|Malformed op|Child taskId cannot be changed|Project deletion must be purged via D1)['"`]/,
+    allow: ['src/sync/rejectReason.ts'],
+    bad: [
+      "results[i] = rejectedResult(opId, 'id-in-other-scope');",
+      'rejectOp(op.opId, "unknown-row", op.entity, op.entityId);',
+      "const PROJECT_PURGED = 'Project is purged';",
+      "results[i] = rejectedResult(rawOpId, 'Malformed op');",
+      "return deny('Child taskId cannot be changed');",
+      "return deny('Project deletion must be purged via D1');",
+    ],
+    good: [
+      'results[i] = rejectedResult(opId, REJECT_REASON.ID_IN_OTHER_SCOPE);',
+      'if (denial === REJECT_REASON.PROJECT_PURGED) return deny(denial);',
+      '// a row homed in another scope as a foreign create (id-in-other-scope).',
+    ],
+  },
+  {
+    name: "'Forbidden' literal in sync and scope only in src/sync/rejectReason.ts",
+    dirs: ['src/sync', 'src/scope'],
+    pattern: /['"`]Forbidden['"`]/,
+    allow: ['src/sync/rejectReason.ts'],
+    bad: [
+      "if (!isScopeOwner) return deny('Forbidden');",
+      'const denial = "Forbidden";',
+      'const denial = `Forbidden`;',
+    ],
+    good: [
+      'if (!isScopeOwner) return deny(REJECT_REASON.FORBIDDEN);',
+      '// A list created or claimed earlier in this batch has no D1 role yet; that only waives Forbidden.',
+    ],
+  },
+  {
+    name: "status: 'rejected' object literals only in rejectedResult builder and src/serverops/writer.ts",
+    dirs: ['src', 'durable-objects'],
+    pattern: /\bstatus\s*:\s*['"`]rejected['"`]/,
+    allow: ['src/serverops/writer.ts', 'src/sync/rejectReason.ts'],
+    bad: [
+      "results[i] = { opId, status: 'rejected', reason: 'x', row: null, clocks: {} };",
+      'return { opId, status: "rejected", reason, row: null, clocks: {} };',
+    ],
+    good: [
+      "if (seen.status === 'rejected') return;",
+      "status: 'applied' | 'rejected';",
+      'results[i] = rejectedResult(rawOpId, REJECT_REASON.ID_IN_OTHER_SCOPE);',
+    ],
+  },
+  {
     name: 'owner-or-editor write role check only in src/sync/access.ts',
     dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
     pattern: WRITE_ROLE_PAIR,

@@ -1,4 +1,5 @@
 import type { EntityName, MembershipRole } from './entities';
+import { REJECT_REASON, type RejectReason } from './rejectReason';
 
 /** Entities that belong solely to the scope owner and are never shared across lists. */
 export const OWNER_ONLY_ENTITIES = ['member', 'folder', 'tag'] as const;
@@ -30,7 +31,10 @@ export interface ListAccess {
   purgedSet: ReadonlySet<string>;
 }
 
-export type ListWriteDenial = 'Project is purged' | 'Forbidden';
+export type ListWriteDenial = Extract<
+  RejectReason,
+  typeof REJECT_REASON.PROJECT_PURGED | typeof REJECT_REASON.FORBIDDEN
+>;
 
 export function roleOf(memberships: RoleLookup, projectId: string): MembershipRole | undefined {
   return memberships instanceof Map
@@ -69,7 +73,7 @@ export function hasWriteRole(memberships: RoleLookup, projectId: string): boolea
  * the D1 planner and server-side writers use the same rule to fail early.
  */
 export function listWriteDenial(projectId: string, access: ListAccess): ListWriteDenial | null {
-  if (access.purgedSet.has(projectId)) return 'Project is purged';
-  if (!hasWriteRole(access.memberships, projectId)) return 'Forbidden';
+  if (access.purgedSet.has(projectId)) return REJECT_REASON.PROJECT_PURGED;
+  if (!hasWriteRole(access.memberships, projectId)) return REJECT_REASON.FORBIDDEN;
   return null;
 }
