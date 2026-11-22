@@ -284,7 +284,7 @@ struct TimeBlockEditor: View {
 
     /// Other timed items of the day laid out in side-by-side lanes up to the 26:00 timeline limit.
     var othersLaid: [DayLayout.Block] {
-        DayLayout.blocks(for: others, on: day, dayEnd: Self.maxEnd, minDuration: 0, order: .scheduleStart)
+        DayLayout.blocks(for: others, on: day, dayEnd: Self.maxEnd, minDuration: 1, order: .scheduleStart)
     }
 
     func loadDay() async {

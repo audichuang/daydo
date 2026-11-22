@@ -427,7 +427,7 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         let prevOvernight = task("prev", .timed(d.adding(days: -1), start: 23 * 60 + 30, end: 30))
         let midnight = task("mid", .timed(d, start: 0, end: 60))
         for input in [[prevOvernight, midnight], [midnight, prevOvernight]] {
-            let overnightPair = DayLayout.blocks(for: input, on: d, dayEnd: editorEnd, minDuration: 0, order: .scheduleStart)
+            let overnightPair = DayLayout.blocks(for: input, on: d, dayEnd: editorEnd, minDuration: 1, order: .scheduleStart)
             #expect(overnightPair.map { ($0.task.id, $0.start, $0.end, $0.lane, $0.lanes) }.elementsEqual([
                 ("prev", 0, 30, 0, 2),
                 ("mid", 0, 60, 1, 2),
@@ -443,13 +443,13 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         // 09:05-09:30) stay in lane 0, while calendar-grid default keeps its 15-minute minimum.
         let shortTask = task("short", .timed(d, start: 9 * 60, end: 9 * 60 + 5))
         let nextTask = task("next", .timed(d, start: 9 * 60 + 10, end: 9 * 60 + 40))
-        let shortPair = DayLayout.blocks(for: [shortTask, nextTask], on: d, dayEnd: editorEnd, minDuration: 0, order: .scheduleStart)
+        let shortPair = DayLayout.blocks(for: [shortTask, nextTask], on: d, dayEnd: editorEnd, minDuration: 1, order: .scheduleStart)
         #expect(shortPair.map { ($0.task.id, $0.start, $0.end, $0.lane, $0.lanes) }.elementsEqual([
             ("short", 540, 545, 0, 1),
             ("next", 550, 580, 0, 1),
         ], by: ==))
         let touchingTask = task("touch", .timed(d, start: 9 * 60 + 5, end: 9 * 60 + 30))
-        let touchingPair = DayLayout.blocks(for: [shortTask, touchingTask], on: d, dayEnd: editorEnd, minDuration: 0, order: .scheduleStart)
+        let touchingPair = DayLayout.blocks(for: [shortTask, touchingTask], on: d, dayEnd: editorEnd, minDuration: 1, order: .scheduleStart)
         #expect(touchingPair.map { ($0.task.id, $0.start, $0.end, $0.lane, $0.lanes) }.elementsEqual([
             ("short", 540, 545, 0, 1),
             ("touch", 545, 570, 0, 1),
@@ -465,7 +465,7 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
             task("a", .timed(d, start: 19 * 60, end: 20 * 60)),
             task("b", .timed(d, start: 19 * 60, end: 21 * 60)),
             task("c", .timed(d, start: 19 * 60 + 30, end: 20 * 60 + 30)),
-        ], on: d, dayEnd: editorEnd, minDuration: 0, order: .scheduleStart)
+        ], on: d, dayEnd: editorEnd, minDuration: 1, order: .scheduleStart)
         #expect(three.map { ($0.task.id, $0.lane, $0.lanes) }.elementsEqual([
             ("a", 0, 3),
             ("b", 1, 3),
@@ -477,11 +477,30 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
             task("pastLimit", .timed(d, start: 1410, end: 180)),
             task("nextEarly", .timed(d.adding(days: 1), start: 30, end: 90)),
             task("nextAtLimit", .timed(d.adding(days: 1), start: 120, end: 180)),
-        ], on: d, dayEnd: editorEnd, minDuration: 0, order: .scheduleStart)
+        ], on: d, dayEnd: editorEnd, minDuration: 1, order: .scheduleStart)
         #expect(capped.map { ($0.task.id, $0.start, $0.end, $0.lane, $0.lanes) }.elementsEqual([
             ("pastLimit", 1410, 1560, 0, 2),
             ("nextEarly", 1470, 1530, 1, 2),
         ], by: ==))
+    }
+
+    @Test func dstFallBackZeroWallClockBlockIsNotDropped() throws {
+        let d = day("2026-11-01")
+        let ny = try #require(TimeZone(identifier: "America/New_York"))
+        let localized = Schedule.timed(d, start: 5 * 60 + 30, end: 6 * 60 + 30, timeZone: "UTC").localized(to: ny)
+        #expect(localized.startDay == d)
+        #expect(localized.startMinute == 90)
+        #expect(localized.endDay == d)
+        #expect(localized.endMinute == 90)
+
+        let t = task("dst", localized)
+        for minDuration in [0, 1] {
+            let blocks = DayLayout.blocks(for: [t], on: d, dayEnd: 26 * 60, minDuration: minDuration, order: .scheduleStart)
+            #expect(blocks.count == 1)
+            #expect(blocks.first?.task.id == "dst")
+            #expect(blocks.first?.start == 90)
+            #expect(blocks.first?.end == 91)
+        }
     }
 }
 

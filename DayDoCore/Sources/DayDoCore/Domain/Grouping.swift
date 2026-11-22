@@ -339,7 +339,7 @@ public enum DayLayout {
         let offset = schedule.startDay.days(until: day) * 1440
         let rawEnd = schedule.endOffsetMinutes ?? (sm + 30)
         let start = max(0, sm - offset)
-        let end = min(dayEnd, max(rawEnd, sm + minDuration) - offset)
+        let end = min(dayEnd, max(rawEnd, sm + max(1, minDuration)) - offset)
         guard end > start else { return nil }
         return (start, end)
     }
