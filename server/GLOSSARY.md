@@ -17,6 +17,7 @@
 - **intent**：伺服器端（MCP、ICS）想寫的結果（`WriteIntent`），由 `serverops/writer.ts` 組成 op，走和 App 一樣的 push 路徑。
 - **snapshot**：伺服器端讀到的使用者全部列，包含垃圾桶與 tombstone（`loadSnapshot`）。
 - **listWriteDenial**：清單寫入權限的判斷，回傳 `Project is purged`、`Forbidden` 或可寫（`src/sync/access.ts`）。
+- **write session**：MCP 寫入工具開的執行上下文（`src/mcp/toolkit.ts` 的 `openWriteSession`，建在 `openSession` 之上）。一次載入 `snapshot`、`deps` 與單一 `now` 並檢查 `assertHasData`；`session.write` 固定帶該 `now` 呼叫 `writeOrThrow`，`session.readBack` 合併 writer 原地更新的既有列與新建列回讀。
 
 ## 刪除
 

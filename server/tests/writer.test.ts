@@ -27,9 +27,12 @@ describe('M9b writer: no-data account', () => {
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
     await expect(
-      writeOrThrow(h.deps('u-a'), snap, [
-        { entity: 'task', entityId: 't-new', set: taskRow('t-new', 'inbox-u-a') },
-      ]),
+      writeOrThrow(
+        h.deps('u-a'),
+        snap,
+        [{ entity: 'task', entityId: 't-new', set: taskRow('t-new', 'inbox-u-a') }],
+        { nowMs: NOW_ISH },
+      ),
     ).rejects.toThrow(NO_DATA_MESSAGE);
     expect(h.calls).toEqual([]);
   });
@@ -38,7 +41,7 @@ describe('M9b writer: no-data account', () => {
     const h = createServerHarness();
     await seedUser(h, 'u-a', 'm-a', false);
     const snap = await h.snapshot('u-a');
-    await expect(pushIntents(h.deps('u-a'), snap, [])).rejects.toThrow(NO_DATA_MESSAGE);
+    await expect(pushIntents(h.deps('u-a'), snap, [], { nowMs: NOW_ISH })).rejects.toThrow(NO_DATA_MESSAGE);
     expect(h.calls).toEqual([]);
   });
 });
@@ -49,9 +52,12 @@ describe('M9b writer: ops and HLC', () => {
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
-    const [out] = await writeOrThrow(h.deps('u-a'), snap, [
-      { entity: 'task', entityId: 't-new', set: taskRow('t-new', 'p1', { title: 'hello', sortKey: 'h' }) },
-    ]);
+    const [out] = await writeOrThrow(
+      h.deps('u-a'),
+      snap,
+      [{ entity: 'task', entityId: 't-new', set: taskRow('t-new', 'p1', { title: 'hello', sortKey: 'h' }) }],
+      { nowMs: NOW_ISH },
+    );
     expect(out?.status).toBe('applied');
     expect(out?.row?.title).toBe('hello');
     const op = h.calls[0]!.ops[0]!;
@@ -70,9 +76,12 @@ describe('M9b writer: ops and HLC', () => {
     expect(res.results[0]?.status).toBe('applied');
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
-    const [out] = await writeOrThrow(h.deps('u-a'), snap, [
-      { entity: 'task', entityId: 't1', set: { title: 'mcp' } },
-    ]);
+    const [out] = await writeOrThrow(
+      h.deps('u-a'),
+      snap,
+      [{ entity: 'task', entityId: 't1', set: { title: 'mcp' } }],
+      { nowMs: NOW_ISH },
+    );
     expect(out?.status).toBe('applied');
     expect(out?.row?.title).toBe('mcp');
     const hlc = parseHlc(String(h.calls[0]!.ops[0]!.hlc))!;
@@ -92,7 +101,7 @@ describe('M9b writer: ops and HLC', () => {
     ]);
     h.calls.length = 0;
     const intents: WriteIntent[] = [{ entity: 'task', entityId: 't1', set: { title: 'mcp', priority: 3 } }];
-    const [out] = await pushIntents(h.deps('u-a'), snap, intents);
+    const [out] = await pushIntents(h.deps('u-a'), snap, intents, { nowMs: NOW_ISH });
     expect(out?.status).toBe('unapplied');
     expect(out?.unappliedFields).toEqual(['title']);
     expect(out?.row?.title).toBe('phone');
@@ -107,9 +116,12 @@ describe('M9b writer: ops and HLC', () => {
         fields: ['title'],
       },
     ]);
-    const err = await writeOrThrow(h.deps('u-a'), snap2, [
-      { entity: 'task', entityId: 't1', set: { title: 'mcp2' } },
-    ]).catch((e: unknown) => e);
+    const err = await writeOrThrow(
+      h.deps('u-a'),
+      snap2,
+      [{ entity: 'task', entityId: 't1', set: { title: 'mcp2' } }],
+      { nowMs: NOW_ISH },
+    ).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(WriteError);
     expect((err as WriteError).outcome.unappliedFields).toEqual(['title']);
     expect((err as Error).message).toContain('title');
@@ -121,10 +133,15 @@ describe('M9b writer: ops and HLC', () => {
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
-    await writeOrThrow(h.deps('u-a'), snap, [
-      { entity: 'task', entityId: 't1', set: { title: 'a' } },
-      { entity: 'task', entityId: 't1', set: { content: 'b' } },
-    ]);
+    await writeOrThrow(
+      h.deps('u-a'),
+      snap,
+      [
+        { entity: 'task', entityId: 't1', set: { title: 'a' } },
+        { entity: 'task', entityId: 't1', set: { content: 'b' } },
+      ],
+      { nowMs: NOW_ISH },
+    );
     const [a, b] = h.calls[0]!.ops.map((o) => parseHlc(String(o.hlc))!);
     expect(b!.ms).toBe(a!.ms);
     expect(b!.counter).toBe(a!.counter + 1);
@@ -144,10 +161,15 @@ describe('M9b writer: ops and HLC', () => {
         createdAt: NOW_ISH, updatedAt: NOW_ISH,
       },
     }));
-    const outs = await writeOrThrow(h.deps('u-a'), snap, [
-      ...items,
-      { entity: 'task', entityId: 't-big', set: taskRow('t-big', 'p1', { sortKey: 'h' }) },
-    ]);
+    const outs = await writeOrThrow(
+      h.deps('u-a'),
+      snap,
+      [
+        ...items,
+        { entity: 'task', entityId: 't-big', set: taskRow('t-big', 'p1', { sortKey: 'h' }) },
+      ],
+      { nowMs: NOW_ISH },
+    );
     expect(MAX_OPS_PER_PUSH).toBe(200);
     expect(h.calls.map((c) => c.ops.length)).toEqual([200, 6]);
     expect(h.calls[0]!.ops[0]!.entity).toBe('task');
@@ -164,15 +186,21 @@ describe('M9b writer: ops and HLC', () => {
     await h.devicePush('u-a', [
       { opId: 'dev-del-t1', hlc: h.deviceHlc(), entity: 'task', entityId: 't1', op: 'delete', fields: [], row: {} },
     ]);
-    const [out] = await pushIntents(h.deps('u-a'), snap, [
-      { entity: 'task', entityId: 't1', set: { title: 'late' } },
-    ]);
+    const [out] = await pushIntents(
+      h.deps('u-a'),
+      snap,
+      [{ entity: 'task', entityId: 't1', set: { title: 'late' } }],
+      { nowMs: NOW_ISH },
+    );
     expect(out?.status).toBe('purged');
     expect(out?.row?.purgedAt).toBeTypeOf('number');
- 
-    const err = await writeOrThrow(h.deps('u-a'), snap, [
-      { entity: 'task', entityId: 't1', set: { title: 'later' } },
-    ]).catch((e: unknown) => e);
+
+    const err = await writeOrThrow(
+      h.deps('u-a'),
+      snap,
+      [{ entity: 'task', entityId: 't1', set: { title: 'later' } }],
+      { nowMs: NOW_ISH },
+    ).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(WriteError);
     expect((err as WriteError).outcome.status).toBe('purged');
   });
@@ -183,10 +211,15 @@ describe('M9b writer: ops and HLC', () => {
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
     const now = Date.now();
-    await writeOrThrow(h.deps('u-a'), snap, [
-      { entity: 'task', entityId: 't1', set: { deletedAt: now, updatedAt: now } },
-      { entity: 'project', entityId: 'p1', set: { deletedAt: now, updatedAt: now } },
-    ]);
+    await writeOrThrow(
+      h.deps('u-a'),
+      snap,
+      [
+        { entity: 'task', entityId: 't1', set: { deletedAt: now, updatedAt: now } },
+        { entity: 'project', entityId: 'p1', set: { deletedAt: now, updatedAt: now } },
+      ],
+      { nowMs: now },
+    );
     expect(h.calls[0]!.ops.map((o) => o.entity)).toEqual(['task', 'project']);
   });
 });
@@ -205,14 +238,17 @@ describe('M9b writer: permissions', () => {
     const snap = await h.snapshot('u-b');
     expect(snap.findRow('task', 't1')).toBeDefined();
     h.calls.length = 0;
-    const [out] = await pushIntents(h.deps('u-b'), snap, [
-      { entity: 'task', entityId: 't1', set: { title: 'nope' } },
-    ]);
+    const [out] = await pushIntents(
+      h.deps('u-b'),
+      snap,
+      [{ entity: 'task', entityId: 't1', set: { title: 'nope' } }],
+      { nowMs: NOW_ISH },
+    );
     expect(h.calls).toHaveLength(1);
     expect(out?.status).toBe('rejected');
     expect(out?.reason).toBe('Forbidden');
     await expect(
-      writeOrThrow(h.deps('u-b'), snap, [{ entity: 'task', entityId: 't1', set: { title: 'nope' } }]),
+      writeOrThrow(h.deps('u-b'), snap, [{ entity: 'task', entityId: 't1', set: { title: 'nope' } }], { nowMs: NOW_ISH }),
     ).rejects.toThrow('Forbidden');
   });
 });
@@ -223,9 +259,12 @@ describe('M9b writer: schedule group', () => {
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
-    const [out] = await writeOrThrow(h.deps('u-a'), snap, [
-      { entity: 'task', entityId: 't1', set: { endDay: '2026-11-21', endMinute: 660 } },
-    ]);
+    const [out] = await writeOrThrow(
+      h.deps('u-a'),
+      snap,
+      [{ entity: 'task', entityId: 't1', set: { endDay: '2026-11-21', endMinute: 660 } }],
+      { nowMs: NOW_ISH },
+    );
     const op = h.calls[0]!.ops[0]!;
     expect([...(op.fields as string[])].sort()).toEqual(
       ['endDay', 'endMinute', 'startDay', 'startMinute', 'timeZone', 'updatedAt'],
@@ -245,9 +284,12 @@ describe('M9b writer: schedule group', () => {
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
-    await writeOrThrow(h.deps('u-a'), snap, [
-      { entity: 'task', entityId: 't1', set: { id: 't1', createdAt: 5, title: 'x', updatedAt: Date.now() } },
-    ]);
+    await writeOrThrow(
+      h.deps('u-a'),
+      snap,
+      [{ entity: 'task', entityId: 't1', set: { id: 't1', createdAt: 5, title: 'x', updatedAt: Date.now() } }],
+      { nowMs: NOW_ISH },
+    );
     expect([...(h.calls[0]!.ops[0]!.fields as string[])].sort()).toEqual(['title', 'updatedAt']);
   });
 });
@@ -296,9 +338,9 @@ describe('writer: createdAt and updatedAt stamps', () => {
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
     for (const set of [{}, { id: 't1', createdAt: 5 }]) {
-      await expect(writeOrThrow(h.deps('u-a'), snap, [{ entity: 'task', entityId: 't1', set }])).rejects.toThrow(
-        'Nothing to write for task t1',
-      );
+      await expect(
+        writeOrThrow(h.deps('u-a'), snap, [{ entity: 'task', entityId: 't1', set }], { nowMs: LATER }),
+      ).rejects.toThrow('Nothing to write for task t1');
     }
     expect(h.calls).toEqual([]);
   });
@@ -363,7 +405,9 @@ describe('M9b writer: value validation', () => {
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     h.calls.length = 0;
-    await expect(writeOrThrow(h.deps('u-a'), snap, [intent])).rejects.toBeInstanceOf(WriteValidationError);
+    await expect(writeOrThrow(h.deps('u-a'), snap, [intent], { nowMs: NOW_ISH })).rejects.toBeInstanceOf(
+      WriteValidationError,
+    );
     expect(h.calls).toEqual([]);
   });
 
@@ -372,27 +416,32 @@ describe('M9b writer: value validation', () => {
     await seedBasic(h);
     const snap = await h.snapshot('u-a');
     const now = Date.now();
-    const outs = await writeOrThrow(h.deps('u-a'), snap, [
-      // t1 keeps its App sortKey 'a0' (ends in 0) and is still editable.
-      { entity: 'task', entityId: 't1', set: { status: 2, completedAt: now, priority: 5 } },
-      {
-        entity: 'task', entityId: 't-copy',
-        set: taskRow('t-copy', 'p1', { status: 2, completedAt: now, sortKey: 'a0' }),
-        verbatim: ['sortKey'],
-      },
-      {
-        entity: 'task', entityId: 't-rep',
-        set: taskRow('t-rep', 'p1', {
-          sortKey: 'h', startDay: '2026-11-20', startMinute: null, endDay: null, endMinute: null,
-          timeZone: null, repeatRule: 'RRULE:FREQ=WEEKLY;BYDAY=MO', reminders: ['TRIGGER:-P1D'],
-        }),
-      },
-      {
-        entity: 'checklistItem', entityId: 'c1',
-        set: { id: 'c1', taskId: 't1', title: 'c', status: 1, sortKey: 'i', createdAt: now, updatedAt: now },
-      },
-      { entity: 'project', entityId: 'p-x', set: projectRow('p-x', { sortKey: 'b' }) },
-    ]);
+    const outs = await writeOrThrow(
+      h.deps('u-a'),
+      snap,
+      [
+        // t1 keeps its App sortKey 'a0' (ends in 0) and is still editable.
+        { entity: 'task', entityId: 't1', set: { status: 2, completedAt: now, priority: 5 } },
+        {
+          entity: 'task', entityId: 't-copy',
+          set: taskRow('t-copy', 'p1', { status: 2, completedAt: now, sortKey: 'a0' }),
+          verbatim: ['sortKey'],
+        },
+        {
+          entity: 'task', entityId: 't-rep',
+          set: taskRow('t-rep', 'p1', {
+            sortKey: 'h', startDay: '2026-11-20', startMinute: null, endDay: null, endMinute: null,
+            timeZone: null, repeatRule: 'RRULE:FREQ=WEEKLY;BYDAY=MO', reminders: ['TRIGGER:-P1D'],
+          }),
+        },
+        {
+          entity: 'checklistItem', entityId: 'c1',
+          set: { id: 'c1', taskId: 't1', title: 'c', status: 1, sortKey: 'i', createdAt: now, updatedAt: now },
+        },
+        { entity: 'project', entityId: 'p-x', set: projectRow('p-x', { sortKey: 'b' }) },
+      ],
+      { nowMs: now },
+    );
     expect(outs.map((o) => o.status)).toEqual(['applied', 'applied', 'applied', 'applied', 'applied']);
   });
 });

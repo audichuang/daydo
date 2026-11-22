@@ -174,6 +174,17 @@ describe('M10 update_project', () => {
     await seedBasic(h);
     expect((await call(h, 'u-a', 'update_project', { project_id: 'p1' })).isError).toBe(true);
   });
+
+  it('stamps updatedAt from the injected clock, not wall time', async () => {
+    const PAST = NOW_ISH + 60_000;
+    const h = createHarness({ getNow: () => PAST });
+    await seedBasic(h);
+    const r = await call(h, 'u-a', 'update_project', { project_id: 'p1', name: 'Renamed' });
+    expect(r.isError, r.text).toBe(false);
+    expect(r.json.updated_at).toBe(PAST);
+    const snap = await h.snapshot('u-a');
+    expect(snap.findRow('project', 'p1')?.row.updatedAt).toBe(PAST);
+  });
 });
 
 describe('M10 delete_project', () => {

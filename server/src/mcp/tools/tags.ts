@@ -2,11 +2,10 @@
 import { normalizeTagLabels } from '../../domain/tags';
 import { after } from '../../domain/sortKey';
 import type { Snapshot, SnapshotRow } from '../../serverops/snapshot';
-import { writeOrThrow } from '../../serverops/writer';
 import { userScope } from '../../sync/scopeName';
 import { bySortKey, compareKeys } from '../../serverops/values';
-import { nowOf, requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
-import { openSession, parseColor } from './projects';
+import { openSession, openWriteSession, requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
+import { parseColor } from './projects';
 
 function ownTags(snapshot: Snapshot, userId: string): SnapshotRow[] {
   return snapshot.rows('tag').filter((t) => t.scope === userScope(userId));
@@ -53,11 +52,11 @@ export function tagTools(): ToolDef[] {
         const color = parseColor(args.color);
         const [tag] = normalizeTagLabels([raw]);
         if (!tag) throw new ToolValidationError('name', "Argument 'name' must contain more than '#'");
-        const { snapshot, deps } = await openSession(ctx);
+        const session = await openWriteSession(ctx);
+        const { snapshot } = session;
         const own = ownTags(snapshot, ctx.userId);
         const existing = own.find((t) => t.row.name === tag.name);
         if (existing && isLive(existing)) return formatTag(snapshot, existing.row);
-        const now = nowOf(ctx);
         // A trashed tag is revived; its key (the name) cannot be reused for a new row.
         const set: Record<string, unknown> = existing
           ? { label: tag.label, deletedAt: null, ...(color !== undefined && { color }) }
@@ -67,8 +66,9 @@ export function tagTools(): ToolDef[] {
               sortKey: after(own.length === 0 ? null : own.map((t) => String(t.row.sortKey ?? '')).reduce((a, b) => (compareKeys(a, b) >= 0 ? a : b))),
               ...(color !== undefined && { color }),
             };
-        const [out] = await writeOrThrow(deps, snapshot, [{ entity: 'tag', entityId: tag.name, set }], { nowMs: now });
-        return formatTag(snapshot, out!.row!);
+        await session.write([{ entity: 'tag', entityId: tag.name, set }]);
+        const { view, row } = session.readBack('tag', tag.name);
+        return formatTag(view, row.row);
       },
     },
   ];

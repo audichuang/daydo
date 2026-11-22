@@ -193,6 +193,21 @@ const GUARDS: Guard[] = [
     bad: ["const stub = services.getScopeStub(scope);"],
   },
   {
+    name: 'src/mcp/tools/** do not call writeOrThrow or pushIntents (writes go through the session module)',
+    dirs: ['src/mcp/tools'],
+    pattern: /\b(writeOrThrow|pushIntents)\(/,
+    allow: [],
+    bad: [
+      'await writeOrThrow(deps, snapshot, intents, { nowMs: now });',
+      'const outcomes = await pushIntents(deps, snapshot, intents, { nowMs: now });',
+    ],
+    good: [
+      'await session.write(intents);',
+      'const session = await openWriteSession(ctx);',
+      "import { WriteError, WriteValidationError } from '../../serverops/writer';",
+    ],
+  },
+  {
     name: 'Date.now only in src/clock.ts and the listed wall-clock readers',
     dirs: ['src', 'routes', 'crons', 'middleware', 'durable-objects'],
     pattern: /\bDate\.now\b|\bnew Date\(\s*\)/,

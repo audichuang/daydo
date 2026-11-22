@@ -76,6 +76,7 @@ describe('validateSyncOp runs once per op', () => {
       { db: world.db, userId: 'u-a', deviceId: 'mcp', getScopeStub: world.getScopeStub, clock: world.clock },
       snapshot,
       intents,
+      { nowMs: NOW_ISH },
     );
 
     expect(outcomes.map((o) => o.status)).toEqual(['applied', 'applied', 'applied', 'applied']);

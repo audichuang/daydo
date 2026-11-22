@@ -2,38 +2,11 @@
 // update_project, delete_project. Reads come from a fresh snapshot, writes go through the op writer.
 import { uniqueProjectKey } from '../../domain/sortKey';
 import { uuidv7 } from '../../domain/uuid';
-import { loadSnapshot, type Snapshot, type SnapshotRow } from '../../serverops/snapshot';
-import { taskListDenial, trashTaskIntent } from '../../serverops/taskWrites';
-import { writeOrThrow, type WriterDeps } from '../../serverops/writer';
-import { userScope } from '../../sync/scopeName';
+import type { Snapshot, SnapshotRow } from '../../serverops/snapshot';
+import { trashTaskIntent } from '../../serverops/taskWrites';
 import { formatProject, openTasksOf, summarizeTask } from '../format';
 import { bySortKey, compareKeys } from '../../serverops/values';
-import { nowOf, requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
-
-export interface Session {
-  snapshot: Snapshot;
-  deps: WriterDeps;
-}
-
-/** Loads the caller's snapshot and writer deps; every tool call reads fresh data. */
-export async function openSession(ctx: ToolContext): Promise<Session> {
-  const services = ctx.services;
-  if (!services) throw new Error('MCP tool services are not configured');
-  const deps: WriterDeps = { db: services.db, userId: ctx.userId, deviceId: 'mcp', getScopeStub: services.getScopeStub };
-  const snapshot = await loadSnapshot(services.db, ctx.userId, services.getScopeStub);
-  return { snapshot, deps };
-}
-
-/** For task writes: refuses a list that is not live (unknown, trashed, or archived: list_projects hides it) or that the caller may only read. */
-export function requireWritableList(snapshot: Snapshot, projectId: string): void {
-  const denial = taskListDenial(snapshot, projectId);
-  if (denial === 'missing' || denial === 'archived') {
-    throw new Error(`Unknown project_id '${projectId}'; call list_projects first`);
-  }
-  if (denial === 'read-only') {
-    throw new Error(`Project '${projectId}' is read-only for you (role: ${snapshot.memberships.get(projectId) ?? 'none'})`);
-  }
-}
+import { openSession, openWriteSession, requireStr, ToolValidationError, type ToolDef } from '../toolkit';
 
 const COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
@@ -115,10 +88,10 @@ export function projectTools(): ToolDef[] {
       run: async (args, ctx) => {
         const name = requireStr(args, 'name').trim();
         const color = parseColor(args.color);
-        const { snapshot, deps } = await openSession(ctx);
+        const session = await openWriteSession(ctx);
+        const { snapshot, now } = session;
         const sortKeys = snapshot.liveProjects().map((p) => String(p.row.sortKey ?? ''));
         const max = sortKeys.length === 0 ? null : sortKeys.reduce((a, b) => (compareKeys(a, b) >= 0 ? a : b));
-        const now = nowOf(ctx);
         const id = uuidv7(now);
         const set: Record<string, unknown> = {
           id,
@@ -132,8 +105,9 @@ export function projectTools(): ToolDef[] {
           notifyMode: 'all',
           ...(color !== undefined && { color }),
         };
-        const [out] = await writeOrThrow(deps, snapshot, [{ entity: 'project', entityId: id, set }], { nowMs: now });
-        return { ...formatProject(snapshot, { entity: 'project', scope: userScope(ctx.userId), row: out!.row!, clocks: out!.clocks, serverSeq: 0 }), role: 'owner', can_write: true };
+        await session.write([{ entity: 'project', entityId: id, set }]);
+        const { view, row } = session.readBack('project', id);
+        return { ...formatProject(view, row), role: 'owner', can_write: true };
       },
     },
     {
@@ -154,7 +128,8 @@ export function projectTools(): ToolDef[] {
         const name = typeof args.name === 'string' ? args.name.trim() : undefined;
         if (name === '') throw new ToolValidationError('name', "Argument 'name' must not be empty");
         if (name === undefined && color === undefined) throw new Error('Nothing to update: give name or color');
-        const { snapshot, deps } = await openSession(ctx);
+        const session = await openWriteSession(ctx);
+        const { snapshot } = session;
         liveProject(snapshot, id);
         if (!snapshot.canWrite(id)) {
           throw new Error(`Project '${id}' is read-only for you (role: ${snapshot.memberships.get(id) ?? 'none'})`);
@@ -163,8 +138,9 @@ export function projectTools(): ToolDef[] {
           ...(name !== undefined && { name }),
           ...(color !== undefined && { color }),
         };
-        await writeOrThrow(deps, snapshot, [{ entity: 'project', entityId: id, set }]);
-        return formatProject(snapshot, liveProject(snapshot, id));
+        await session.write([{ entity: 'project', entityId: id, set }]);
+        const { view, row } = session.readBack('project', id);
+        return formatProject(view, row);
       },
     },
     {
@@ -178,13 +154,13 @@ export function projectTools(): ToolDef[] {
       },
       run: async (args, ctx) => {
         const id = requireStr(args, 'project_id');
-        const { snapshot, deps } = await openSession(ctx);
+        const session = await openWriteSession(ctx);
+        const { snapshot, now } = session;
         const project = liveProject(snapshot, id);
         if (project.row.isInbox === true) throw new Error('The inbox cannot be deleted');
         if (snapshot.memberships.get(id) !== 'owner') {
           throw new Error(`Only the owner can delete project '${id}' (your role: ${snapshot.memberships.get(id) ?? 'none'})`);
         }
-        const now = nowOf(ctx);
         const tasks = snapshot
           .rows('task')
           .filter((t) => t.row.projectId === id && t.row.deletedAt == null && t.row.purgedAt == null);
@@ -192,9 +168,9 @@ export function projectTools(): ToolDef[] {
         // does not apply atomically. The list goes only once every task is trashed, so a failed
         // run leaves the list live and a retry can finish it.
         if (tasks.length > 0) {
-          await writeOrThrow(deps, snapshot, tasks.map((t) => trashTaskIntent(String(t.row.id), now)), { nowMs: now });
+          await session.write(tasks.map((t) => trashTaskIntent(String(t.row.id), now)));
         }
-        await writeOrThrow(deps, snapshot, [{ entity: 'project', entityId: id, set: { deletedAt: now } }], { nowMs: now });
+        await session.write([{ entity: 'project', entityId: id, set: { deletedAt: now } }]);
         return { deleted: true, project_id: id, name: String(project.row.name ?? ''), trashed_tasks: tasks.length };
       },
     },
