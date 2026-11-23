@@ -73,6 +73,9 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2,6"
         SUPPORTS_MACCATALYST: YES
         DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
+        # Developer ID (Homebrew) profiles for Catalyst cannot carry Sign in with Apple.
+        CODE_SIGN_ENTITLEMENTS[sdk=macosx*]: DayDo/DayDo-mac.entitlements
+        ENABLE_HARDENED_RUNTIME[sdk=macosx*]: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_PREVIEWS: YES
   DayDoWidgets:
@@ -101,6 +104,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2,6"
         SUPPORTS_MACCATALYST: YES
         DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
+        ENABLE_HARDENED_RUNTIME[sdk=macosx*]: YES
         SKIP_INSTALL: YES
   DayDoTests:
     type: bundle.unit-test

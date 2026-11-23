@@ -1,22 +1,19 @@
 # macOS 版（Mac Catalyst）
 
-方向（使用者 2026-11-23 定）：整體沿用 iPad 版面，只針對鍵盤與滑鼠優化。TickTick Mac 截圖是互動參考：月份標題與「‹ 今天 ›」在頂列、清單頂端的「添加任務至…」輸入框、日曆裡點任務跳浮動小卡。
+方向（使用者 2026-11-23 定）：沿用同一個 target 與 iPad 的三欄架構，但 Mac 上要像桌面 App，不能看起來是放大的 iPad；鍵盤與滑鼠優先。TickTick Mac 截圖是互動參考：月份標題與「‹ 今天 ›」在頂列、清單頂端的「添加任務至…」輸入框、日曆裡點任務跳浮動小卡。發佈走 Homebrew tap（Developer ID）。
 
-已驗證（spike）：只改 `ios/project.yml` 就能編過並執行；三欄、任務詳情、月曆可用；右鍵選單與 hover 沿用 iPad 的 `.contextMenu`／`.hoverEffect`。
+已驗證：只改 `ios/project.yml` 就能編過並執行；Developer ID 匯出、公證、Gatekeeper 都過（Mac 用 `DayDo/DayDo-mac.entitlements`，不含 Sign in with Apple：Catalyst 的 Developer ID profile 不支援）。簽章用的 Developer ID 在 `codexbar-signing` 鑰匙圈，鎖著時 codesign 會跳密碼視窗把 xcodebuild 卡住。
 
 ## 票
 
-每張票：改完用 `-DayDoSkipLogin -DayDoDemo` 開 Mac 版實際操作並截圖；iPad UI 測試不能壞。
+每張票：改完開 Mac 版實際操作並截圖；動到 `ios/DayDo/Screens` 的跑 iPad UI 測試。
 
-1. **專案設定進 main**：Catalyst 開關、視窗最小尺寸、`uitest.sh build` 加 Mac 編譯。先確認不影響 iOS archive。
-2. **日曆翻頁**：觸控板雙指左右滑翻月／週／日（UIKit pan 要接受捲動事件）；工具列顯示月份標題與「‹ 今天 ›」（`.principal` 在 Mac 不顯示）；⌘← ⌘→ 翻頁、⌘T 回今天。
-3. **按鈕樣式**：Menu 按鈕在 Mac 多出的下拉箭頭拿掉。
-4. **清單頂端快速新增**：Mac 上清單頂部常駐「新增任務至 <清單>」輸入框，Enter 建立、焦點留著可連續輸入；浮動 + 按鈕在 Mac 隱藏。
-5. **鍵盤操作清單**：↑↓ 移動選取、Space 完成、Esc 關詳情（Return 開啟與 Delete 刪除已有）。
-6. **日曆點任務跳小卡**：週／月／日裡點任務改成就地 popover（標題、日期、清單），不開整頁詳情。
-7. **（待定）月曆格內顯示任務條**：TickTick 月曆每格列出任務，DayDo 現在是點點＋右側清單；版面變動大，前面做完再問。
-
-## 未決
-
-- 簽章：Mac mini 沒註冊在 Apple 開發者帳號，簽章版（登入、同步、Keychain）跑不起來；票 1–6 用 SkipLogin 不簽章驗收即可。
-- 要不要上 TestFlight Mac。
+1. **Mac Debug 資料隔離**：Debug 與 brew 正式版共用 App Group 容器；Mac Debug 改用獨立目錄與 Keychain service，之後才能放心用 `-DayDoReset`／`-DayDoDemo`。
+2. **帳號連結**（使用者要求：一個帳號可綁多種登入方式）：spec（`/auth/link`）→ server → 三端設定頁「登入方式」。已屬於別的帳號的身分拒絕綁定、不合併。要部署 Worker、發 iOS TestFlight（自己）。
+3. **Mac 登入頁重新設計**：桌面版雙欄、Google ＋ Email 驗證碼（server 已支援 App 的 email 登入，App 還沒有入口），Mac 不顯示 Apple 登入。
+4. **桌面化**：大標題改工具列標題、浮動 + 改清單頂端快速新增、Menu 下拉箭頭、sheet 改 popover 或較小視窗、側欄底部大按鈕改列。
+5. **日曆**：觸控板翻頁（UIKit pan 收捲動事件）、工具列月份標題與「‹ 今天 ›」、⌘← ⌘→、⌘T；點任務跳小卡。
+6. **鍵盤操作清單**：↑↓、Space 完成、Esc。
+7. **發版**：`ios/scripts/mac-release.sh`、`ios/ExportOptions-mac.plist`、tap 的 `Casks/daydo.rb`、`ios/RELEASE.md` Mac 節；從 main 打包（需要 `gen-secrets.sh` 產生的 Access token）。
+8. **固化**：依 Fable 的放置規範更新根 AGENTS.md、`ios/AGENTS.md`（同一 target、`Platform.isMac` 一般 `if`、`#if targetEnvironment(macCatalyst)` 只包 iOS 編不過的 API、`uitest.sh mac`）。待建的名稱等實物進 main 才寫。
+9. **（待定）月曆格內顯示任務條**。
