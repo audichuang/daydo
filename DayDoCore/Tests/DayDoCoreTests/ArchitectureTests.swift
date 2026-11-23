@@ -325,6 +325,16 @@ private let guards: [Guard] = [
             "ISO8601DateFormatter().string(from: Date())",
         ]
     ),
+    Guard(
+        name: "screen platform branches use Platform.isMac, not #if targetEnvironment(macCatalyst)",
+        directories: ["ios/DayDo/Screens", "ios/DayDo/Components"],
+        pattern: #"targetEnvironment\s*\(\s*macCatalyst\s*\)"#,
+        allow: [],
+        bad: [
+            "#if !targetEnvironment(macCatalyst)",
+            "#if targetEnvironment(macCatalyst)",
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {
@@ -398,7 +408,23 @@ private let guards: [Guard] = [
     private func functionBody(named name: String, in code: String) throws -> String {
         let marker = "func \(name)("
         let startRange = try #require(code.range(of: marker), "Function \(name) not found")
-        let openBrace = try #require(code[startRange.upperBound...].firstIndex(of: "{"), "Opening brace for \(name) not found")
+        // Advance past the balanced parameter list so closure defaults like `{ $0.status == 401 }`
+        // are not mistaken for the function body's opening brace.
+        var parenDepth = 0
+        var scan = code.index(before: startRange.upperBound)
+        while scan < code.endIndex {
+            let ch = code[scan]
+            if ch == "(" { parenDepth += 1 }
+            else if ch == ")" {
+                parenDepth -= 1
+                if parenDepth == 0 {
+                    scan = code.index(after: scan)
+                    break
+                }
+            }
+            scan = code.index(after: scan)
+        }
+        let openBrace = try #require(code[scan...].firstIndex(of: "{"), "Opening brace for \(name) not found")
         var depth = 0
         var idx = openBrace
         while idx < code.endIndex {
@@ -435,6 +461,18 @@ private let guards: [Guard] = [
         let backoffIncrements = code.components(separatedBy: "consecutiveRetryableFailures +=").count - 1
         #expect(backoffIncrements == 1, "Expected consecutiveRetryableFailures += only inside nextRetryableError")
         #expect(!code.contains("maxAttachmentUploadsPerCycle"), "Per-cycle upload cap must stay removed")
+    }
+
+    /// Guards that authorized requests (including `/auth/link`) share `sendAuthorizedRequest`
+    /// rather than maintaining a second refresh/retry copy that can drift on generation guards.
+    @Test func authorizedRequestsShareSingleRefreshPath() throws {
+        let code = try codeLines("DayDoCore/Sources/DayDoCore/Sync/SyncEngine.swift")
+        let sendAuthorizedBody = try functionBody(named: "sendAuthorizedRequest", in: code)
+        let totalRefreshCalls = code.components(separatedBy: "refreshAccessToken(").count - 1
+        let refreshCallsInSendAuthorized = sendAuthorizedBody.components(separatedBy: "refreshAccessToken(").count - 1
+        // 1 definition + 2 calls inside sendAuthorizedRequest (missing access token + 401 retry)
+        #expect(totalRefreshCalls == 3, "Expected refreshAccessToken( only in sendAuthorizedRequest, found \(totalRefreshCalls) total")
+        #expect(refreshCallsInSendAuthorized == 2, "Expected 2 refreshAccessToken( calls in sendAuthorizedRequest")
     }
 
     /// Guards that `SyncApplier.specs` stays in sync with `ENTITY_NAMES` in

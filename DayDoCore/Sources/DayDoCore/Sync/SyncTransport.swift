@@ -196,3 +196,28 @@ public enum SharingError: Error, LocalizedError, Sendable, Equatable {
         }
     }
 }
+
+/// Errors surfaced by auth and account-linking API calls.
+public enum AuthError: Error, LocalizedError, Sendable, Equatable {
+    case identityInUse
+    case invalidCode
+    case invalidCredentials(String)
+    case badRequest(String)
+    case differentAccount(AuthLoginResponse)
+    case linkUnconfirmed([LinkedIdentity])
+
+    public var errorDescription: String? {
+        switch self {
+        case .identityInUse:
+            return "這個登入方式已經屬於另一個 DayDo 帳號"
+        case .invalidCode:
+            return "驗證碼錯誤或已過期，請再試一次"
+        case .invalidCredentials, .badRequest:
+            return "驗證失敗，請再試一次"
+        case .differentAccount:
+            return "已登入其他帳號，請先登出"
+        case .linkUnconfirmed:
+            return "無法確認是否已連結，請看上方清單"
+        }
+    }
+}

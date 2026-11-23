@@ -157,6 +157,10 @@ struct SettingsScreen: View {
     @State private var confirmSignOut = false
     @State private var unsyncedCount = 0
     @State private var editingMeProfile = false
+    @State private var linkingEmail = false
+    @State private var linkingProvider: AuthProvider?
+    @State private var linkError: String?
+    @State private var identitiesLoadFailed = false
 
     private var showAccountSection: Bool {
 #if DEBUG
@@ -164,6 +168,10 @@ struct SettingsScreen: View {
 #else
         return model.syncEnabled && model.isSignedIn
 #endif
+    }
+
+    private var showLoginMethodsSection: Bool {
+        model.syncEnabled && model.isSignedIn
     }
 
     private var versionText: String {
@@ -230,9 +238,22 @@ struct SettingsScreen: View {
                 model.cancelSignOutConfirmation()
             }
         }
+        .task(id: model.isSignedIn) {
+            await fetchIdentities()
+        }
         .sheet(isPresented: $editingMeProfile) {
             MeProfileSheet(mode: .edit)
                 .environment(model)
+        }
+        .sheet(isPresented: $linkingEmail) {
+            EmailCodeSheet(mode: .link) { email, code in
+                do {
+                    try await model.linkIdentity(with: .email(email: email, code: code))
+                    linkError = nil
+                } catch let AuthError.linkUnconfirmed(refreshed) {
+                    linkError = AuthErrorMessage.text(for: AuthError.linkUnconfirmed(refreshed))
+                }
+            }
         }
     }
 
@@ -302,6 +323,10 @@ struct SettingsScreen: View {
                         .card()
                     }
 
+                    if showLoginMethodsSection {
+                        loginMethodsSection
+                    }
+
                     VStack(spacing: 0) {
                         NavigationLink(value: SettingsRoute.appearance) {
                             row(icon: "paintpalette", title: "外觀")
@@ -346,6 +371,234 @@ struct SettingsScreen: View {
 
     private var divider: some View {
         Rectangle().fill(Palette.separatorSoft).frame(height: 1).padding(.leading, 50)
+    }
+
+    private var loginMethodsSection: some View {
+        let linked = model.linkedIdentities
+        let linkedProviders = Set(linked.map(\.provider))
+        let unlinkedProviders: [AuthProvider] = [.google, .email, .apple].filter { provider in
+            if provider == .apple && Platform.isMac { return false }
+            return !linkedProviders.contains(provider)
+        }
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("登入方式")
+                .txt(12, .semibold)
+                .foregroundStyle(Palette.textTertiary)
+                .padding(.leading, 4)
+
+            VStack(spacing: 0) {
+                if !model.identitiesLoaded && identitiesLoadFailed {
+                    HStack(spacing: 12) {
+                        Text("無法載入登入方式")
+                            .txt(14)
+                            .foregroundStyle(Palette.textSecondary)
+                        Spacer()
+                        Button("重試") {
+                            Task { await fetchIdentities() }
+                        }
+                        .txt(14, .semibold)
+                        .foregroundStyle(accent.text)
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("settings.identity.retry")
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 52)
+                } else if !model.identitiesLoaded {
+                    HStack(spacing: 12) {
+                        ProgressView().tint(Palette.textSecondary)
+                        Text("正在載入登入方式…")
+                            .txt(14)
+                            .foregroundStyle(Palette.textSecondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 52)
+                } else {
+                    ForEach(Array(linked.enumerated()), id: \.element.id) { index, identity in
+                        if index > 0 { divider }
+                        linkedIdentityRow(identity)
+                    }
+
+                    ForEach(Array(unlinkedProviders.enumerated()), id: \.element) { index, provider in
+                        if !linked.isEmpty || index > 0 { divider }
+                        linkProviderButton(provider)
+                    }
+
+                    if identitiesLoadFailed {
+                        if !linked.isEmpty || !unlinkedProviders.isEmpty { divider }
+                        HStack(spacing: 12) {
+                            Text("更新失敗")
+                                .txt(13)
+                                .foregroundStyle(Palette.textSecondary)
+                            Spacer()
+                            Button("重試") {
+                                Task { await fetchIdentities() }
+                            }
+                            .txt(13, .semibold)
+                            .foregroundStyle(accent.text)
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("settings.identity.retry")
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 44)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("settings.identity.refreshFailed")
+                    }
+                }
+            }
+            .card()
+
+            if let linkError {
+                Text(linkError)
+                    .txt(13)
+                    .foregroundStyle(Palette.danger)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .card(12, color: Palette.raised)
+                    .accessibilityIdentifier("settings.identity.error")
+            }
+        }
+    }
+
+    private func linkedIdentityRow(_ identity: LinkedIdentity) -> some View {
+        HStack(spacing: 12) {
+            providerIcon(identity.provider)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(providerTitle(identity.provider))
+                    .txt(15)
+                    .foregroundStyle(Palette.text)
+                if let email = identity.email, !email.isEmpty {
+                    Text(email)
+                        .txt(12)
+                        .foregroundStyle(Palette.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            Spacer()
+            Text("已連結")
+                .txt(13)
+                .foregroundStyle(Palette.textSecondary)
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 52)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("settings.identity.linked.\(identity.provider.rawValue)")
+    }
+
+    private func linkProviderButton(_ provider: AuthProvider) -> some View {
+        Button {
+            handleLinkProviderTap(provider)
+        } label: {
+            HStack(spacing: 12) {
+                providerIcon(provider)
+                Text(linkButtonTitle(provider))
+                    .txt(15)
+                    .foregroundStyle(Palette.text)
+                Spacer()
+                if linkingProvider == provider {
+                    ProgressView().tint(Palette.textSecondary)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Palette.textTertiary)
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.press(scale: 0.985, opacity: 0.92, highlight: Palette.pressHighlight))
+        .hoverEffect(.highlight)
+        .disabled(linkingProvider != nil)
+        .accessibilityIdentifier("settings.identity.link.\(provider.rawValue)")
+    }
+
+    @ViewBuilder
+    private func providerIcon(_ provider: AuthProvider) -> some View {
+        switch provider {
+        case .apple:
+            Image(systemName: "apple.logo")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(Palette.text)
+                .frame(width: 24)
+        case .google:
+            Text("G")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(Palette.text)
+                .frame(width: 24)
+        case .email:
+            Image(systemName: "envelope")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(accent.text)
+                .frame(width: 24)
+        }
+    }
+
+    private func providerTitle(_ provider: AuthProvider) -> String {
+        switch provider {
+        case .apple: "Apple"
+        case .google: "Google"
+        case .email: "Email"
+        }
+    }
+
+    private func linkButtonTitle(_ provider: AuthProvider) -> String {
+        switch provider {
+        case .apple: "連結 Apple"
+        case .google: "連結 Google"
+        case .email: "連結 Email"
+        }
+    }
+
+    private func fetchIdentities() async {
+        guard showLoginMethodsSection else { return }
+        identitiesLoadFailed = false
+        do {
+            _ = try await model.loadLinkedIdentities()
+        } catch is CancellationError {
+            return
+        } catch {
+            if !Task.isCancelled {
+                identitiesLoadFailed = true
+            }
+        }
+    }
+
+    private func handleLinkProviderTap(_ provider: AuthProvider) {
+        linkError = nil
+        switch provider {
+        case .email:
+            linkingEmail = true
+        case .google:
+            linkingProvider = .google
+            Task {
+                defer {
+                    AuthPresentationHelper.signOutGoogleSession()
+                    linkingProvider = nil
+                }
+                do {
+                    guard let payload = try await AuthPresentationHelper.signInWithGoogle() else { return }
+                    _ = try await model.linkIdentity(with: .google(idToken: payload.idToken))
+                } catch {
+                    linkError = AuthErrorMessage.text(for: error)
+                }
+            }
+        case .apple:
+            guard !Platform.isMac else { return }
+            linkingProvider = .apple
+            Task {
+                defer { linkingProvider = nil }
+                do {
+                    guard let payload = try await AuthPresentationHelper.signInWithApple() else { return }
+                    _ = try await model.linkIdentity(with: .apple(identityToken: payload.identityToken, nonce: payload.nonce))
+                } catch {
+                    linkError = AuthErrorMessage.text(for: error)
+                }
+            }
+        }
     }
 
     private func row(icon: String, title: String, value: String? = nil, chevron: Bool = true) -> some View {

@@ -24,6 +24,7 @@
 		3F27EE784851A2577C7BF4FF /* ResidentQueryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75E4376438156BEAE4728779 /* ResidentQueryTests.swift */; };
 		4461E85D6F754C9A7FCD0A48 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 7E101714C88520768756EA09 /* GoogleSignIn */; };
 		458D9DE291EF0F7CB9D9E7D0 /* DrawerMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B891DFDE4EE9759CC78BA7E9 /* DrawerMetricsTests.swift */; };
+		47522C6A267E5A9289A56315 /* EmailCodeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED1721ADC0EF24328067A7A9 /* EmailCodeSheet.swift */; };
 		4F90194F10CE45A1E8CE79A4 /* WeekAgendaGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6BD3D5DF00E3413620F308D /* WeekAgendaGrid.swift */; };
 		509C4CA0873E1CAB038DFEA4 /* AppModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC3484874C0CCBD966338B4D /* AppModelTests.swift */; };
 		52E699F2CDF260B54AE329F5 /* DebugAvatar.png in Resources */ = {isa = PBXBuildFile; fileRef = 6797E97CCA68C6FB31E5196E /* DebugAvatar.png */; };
@@ -39,6 +40,7 @@
 		7D0D980B5B52B78EF1CA32AF /* MeProfileSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87A6EE2C31E3EA193622C3D4 /* MeProfileSheet.swift */; };
 		8E2D7343DA9825517D9845EF /* InviteConfirmSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40ED13459CB865ADD6D54F4 /* InviteConfirmSheet.swift */; };
 		971DBD236D629470649D00B3 /* NextWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4977F811E6EBE5878C8AC687 /* NextWidgetView.swift */; };
+		9803CD51FA1D1364EDA06C05 /* AuthHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79993C7D027C693E1C9C59F6 /* AuthHelpers.swift */; };
 		A087FC82AD3BEED279F6F0D4 /* DayDoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4148E35FBA61D1882A2ED98F /* DayDoCore */; };
 		A76CA81AB7C79056C7BBF883 /* WidgetTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9A02351805458F23E7DB226 /* WidgetTheme.swift */; };
 		AE2BF5BFEF228940A02802F7 /* DemoData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DAF0DFE366B2DF89B894383 /* DemoData.swift */; };
@@ -119,6 +121,7 @@
 		75740C90A3D93DC752FAB1DE /* DayDoUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DayDoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		75E4376438156BEAE4728779 /* ResidentQueryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResidentQueryTests.swift; sourceTree = "<group>"; };
 		769FB898F8CB816D3209FD16 /* WidgetSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshotTests.swift; sourceTree = "<group>"; };
+		79993C7D027C693E1C9C59F6 /* AuthHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthHelpers.swift; sourceTree = "<group>"; };
 		804D37B4E777C0B7FFBAECAA /* DayDoWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DayDoWidgets.entitlements; sourceTree = "<group>"; };
 		85E2F4237AF4F16976307DCE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		87A6EE2C31E3EA193622C3D4 /* MeProfileSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeProfileSheet.swift; sourceTree = "<group>"; };
@@ -141,11 +144,12 @@
 		DFFE20E498B56F159D6BDC5C /* DayDo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DayDo.entitlements; sourceTree = "<group>"; };
 		E45AF04A64333352B5667B17 /* DrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerView.swift; sourceTree = "<group>"; };
 		EC3484874C0CCBD966338B4D /* AppModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelTests.swift; sourceTree = "<group>"; };
+		ED1721ADC0EF24328067A7A9 /* EmailCodeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailCodeSheet.swift; sourceTree = "<group>"; };
 		EDC36FD5853DC2385FA65F35 /* Motion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Motion.swift; sourceTree = "<group>"; };
 		F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		F68BFC5798449FCFE7B82212 /* DayDoCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DayDoCore; path = ../DayDoCore; sourceTree = SOURCE_ROOT; };
 		F6BD3D5DF00E3413620F308D /* WeekAgendaGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeekAgendaGrid.swift; sourceTree = "<group>"; };
-		"TEMP_71477870-BBE1-4468-B2B6-F96993C0CAD8" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		"TEMP_A951F843-7EDC-41B4-900A-D26A7231E9B3" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -181,6 +185,7 @@
 			isa = PBXGroup;
 			children = (
 				6984AFAE49745EDDDFF3BDB4 /* AppModel.swift */,
+				79993C7D027C693E1C9C59F6 /* AuthHelpers.swift */,
 				615E31EA2D033F846C07B08E /* DayDoApp.swift */,
 				6DAF0DFE366B2DF89B894383 /* DemoData.swift */,
 				A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */,
@@ -292,6 +297,7 @@
 				A3ADCB55D80C898953405EA4 /* DatePanel.swift */,
 				E45AF04A64333352B5667B17 /* DrawerView.swift */,
 				723C6FDF68327E755BBBC400 /* EditListSheet.swift */,
+				ED1721ADC0EF24328067A7A9 /* EmailCodeSheet.swift */,
 				B40ED13459CB865ADD6D54F4 /* InviteConfirmSheet.swift */,
 				87A6EE2C31E3EA193622C3D4 /* MeProfileSheet.swift */,
 				586710AA91D1F8A386C4DA0F /* OtherScreens.swift */,
@@ -328,10 +334,10 @@
 			path = DayDoUITests;
 			sourceTree = "<group>";
 		};
-		"TEMP_BFD278C5-DA21-4217-9C20-1986A8321468" /* ios */ = {
+		"TEMP_5A4C293F-4E41-43F5-96C5-37F859266259" /* ios */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_71477870-BBE1-4468-B2B6-F96993C0CAD8" /* Config.xcconfig */,
+				"TEMP_A951F843-7EDC-41B4-900A-D26A7231E9B3" /* Config.xcconfig */,
 			);
 			path = ios;
 			sourceTree = "<group>";
@@ -529,6 +535,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BA526A6B810BD3379EC9BA14 /* AppModel.swift in Sources */,
+				9803CD51FA1D1364EDA06C05 /* AuthHelpers.swift in Sources */,
 				FA871EBC37232DE4894D7FCE /* CalendarScreen.swift in Sources */,
 				EF57A429289CCBCFF71EB323 /* Components.swift in Sources */,
 				0F335A407D2DCE82DC52398D /* ComposerSheet.swift in Sources */,
@@ -537,6 +544,7 @@
 				AE2BF5BFEF228940A02802F7 /* DemoData.swift in Sources */,
 				FE3382C49FF0F62208E3B7C7 /* DrawerView.swift in Sources */,
 				2586B4711A3F7B5A08BFC598 /* EditListSheet.swift in Sources */,
+				47522C6A267E5A9289A56315 /* EmailCodeSheet.swift in Sources */,
 				8E2D7343DA9825517D9845EF /* InviteConfirmSheet.swift in Sources */,
 				2B68D0A20FBE89F153D00562 /* KeychainSyncTokenStore.swift in Sources */,
 				7D0D980B5B52B78EF1CA32AF /* MeProfileSheet.swift in Sources */,
@@ -632,7 +640,7 @@
 		};
 		739B74DBC48851785BC9AAA2 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_71477870-BBE1-4468-B2B6-F96993C0CAD8" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_A951F843-7EDC-41B4-900A-D26A7231E9B3" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
@@ -749,7 +757,7 @@
 		};
 		B97B517B54A6D8DCCD7DFE92 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_71477870-BBE1-4468-B2B6-F96993C0CAD8" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_A951F843-7EDC-41B4-900A-D26A7231E9B3" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;

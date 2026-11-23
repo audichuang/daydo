@@ -1689,4 +1689,135 @@ final class AppModelTests: XCTestCase {
         pendingDismissCompletion?()
         XCTAssertNotNil(model.composing)
     }
+
+    func testStaleLoadLinkedIdentitiesDoesNotOverwriteCompletedLink() async throws {
+        actor GatedIdentitiesTransport: SyncTransport {
+            private var releaseLoad: CheckedContinuation<Void, Never>?
+            private var loadStartedContinuation: CheckedContinuation<Void, Never>?
+            private var loadStarted = false
+
+            func waitForLoadStart() async {
+                if loadStarted { return }
+                await withCheckedContinuation { cont in
+                    loadStartedContinuation = cont
+                }
+            }
+
+            func finishLoad() {
+                releaseLoad?.resume()
+                releaseLoad = nil
+            }
+
+            func send(method: String, path: String, headers: [String: String], body: Data?) async throws -> SyncHTTPResponse {
+                switch (method, path) {
+                case ("GET", "/me/identities"):
+                    loadStarted = true
+                    loadStartedContinuation?.resume()
+                    loadStartedContinuation = nil
+                    await withCheckedContinuation { cont in
+                        releaseLoad = cont
+                    }
+                    let data = try JSONSerialization.data(withJSONObject: [
+                        ["provider": "apple", "email": "old@privaterelay.appleid.com", "createdAt": 1000],
+                    ])
+                    return SyncHTTPResponse(status: 200, body: data)
+                case ("POST", "/auth/link"):
+                    let data = try JSONSerialization.data(withJSONObject: [
+                        ["provider": "apple", "email": "old@privaterelay.appleid.com", "createdAt": 1000],
+                        ["provider": "google", "email": "new@gmail.com", "createdAt": 2000],
+                    ])
+                    return SyncHTTPResponse(status: 200, body: data)
+                default:
+                    return SyncHTTPResponse(status: 404, body: Data())
+                }
+            }
+        }
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-identities-race-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = try DayDoStorage.openForApp(in: dir)
+        let transport = GatedIdentitiesTransport()
+        let tokens = InMemorySyncTokenStore(accessToken: "acc", refreshToken: "ref")
+        let suite = "daydo.test.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let model = AppModel(
+            store: store,
+            tokenStore: tokens,
+            syncEnabled: true,
+            transport: transport,
+            defaults: defaults,
+            sharedDefaults: nil,
+            arguments: []
+        )
+        model.isSignedIn = true
+
+        // Start a slow GET /me/identities that will return stale [apple].
+        let loadTask = Task { try await model.loadLinkedIdentities() }
+        await transport.waitForLoadStart()
+
+        // Meanwhile, linking Google succeeds and updates model.linkedIdentities to [apple, google].
+        let linked = try await model.linkIdentity(with: .google(idToken: "g-tok"))
+        XCTAssertEqual(linked.map(\.provider), [.apple, .google])
+        XCTAssertEqual(model.linkedIdentities.map(\.provider), [.apple, .google])
+
+        // Now release the earlier GET /me/identities response; it must be discarded.
+        await transport.finishLoad()
+        _ = try await loadTask.value
+        XCTAssertEqual(model.linkedIdentities.map(\.provider), [.apple, .google])
+        XCTAssertTrue(model.identitiesLoaded)
+    }
+
+    func testLinkUnconfirmedRefreshesIdentitiesAndThrowsUnconfirmedError() async throws {
+        actor UnconfirmedLinkTransport: SyncTransport {
+            func send(method: String, path: String, headers: [String: String], body: Data?) async throws -> SyncHTTPResponse {
+                switch (method, path) {
+                case ("POST", "/auth/link"):
+                    return SyncHTTPResponse(status: 500, body: Data("{\"error\":\"timeout\"}".utf8))
+                case ("GET", "/me/identities"):
+                    let data = try JSONSerialization.data(withJSONObject: [
+                        ["provider": "apple", "email": "a@privaterelay.appleid.com", "createdAt": 1000],
+                        ["provider": "google", "email": "other@gmail.com", "createdAt": 1500],
+                    ])
+                    return SyncHTTPResponse(status: 200, body: data)
+                default:
+                    return SyncHTTPResponse(status: 404, body: Data())
+                }
+            }
+        }
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("daydo-identities-unconfirmed-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = try DayDoStorage.openForApp(in: dir)
+        let tokens = InMemorySyncTokenStore(accessToken: "acc", refreshToken: "ref")
+        let suite = "daydo.test.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let model = AppModel(
+            store: store,
+            tokenStore: tokens,
+            syncEnabled: true,
+            transport: UnconfirmedLinkTransport(),
+            defaults: defaults,
+            sharedDefaults: nil,
+            arguments: []
+        )
+        model.isSignedIn = true
+
+        do {
+            _ = try await model.linkIdentity(with: .google(idToken: "g-tok"))
+            XCTFail("Expected AuthError.linkUnconfirmed")
+        } catch let AuthError.linkUnconfirmed(refreshed) {
+            XCTAssertEqual(refreshed.map(\.provider), [.apple, .google])
+            XCTAssertEqual(AuthErrorMessage.text(for: AuthError.linkUnconfirmed(refreshed)), "無法確認是否已連結，請看上方清單")
+        }
+        XCTAssertEqual(model.linkedIdentities.map(\.provider), [.apple, .google])
+        XCTAssertTrue(model.identitiesLoaded)
+    }
 }

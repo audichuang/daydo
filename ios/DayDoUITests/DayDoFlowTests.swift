@@ -738,7 +738,157 @@ final class DayDoFlowTests: XCTestCase {
         XCTAssertTrue(appleButton.waitForExistence(timeout: 5), app.debugDescription)
         let googleButton = app.buttons["signIn.google"]
         XCTAssertTrue(googleButton.waitForExistence(timeout: 3), app.debugDescription)
+        let emailButton = app.buttons["signIn.email"]
+        XCTAssertTrue(emailButton.waitForExistence(timeout: 3), app.debugDescription)
         shot("35-sign-in")
+    }
+
+    @MainActor
+    func testEmailSignInFlow() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoDebugSignedOut"]
+        app.launch()
+
+        let emailButton = app.buttons["signIn.email"]
+        XCTAssertTrue(emailButton.waitForExistence(timeout: 5), app.debugDescription)
+        emailButton.tap()
+
+        let emailField = app.textFields["emailAuth.emailField"]
+        XCTAssertTrue(emailField.waitForExistence(timeout: 5), app.debugDescription)
+        emailField.tap()
+        emailField.typeText("family@example.com")
+
+        let sendButton = app.buttons["emailAuth.sendCode"]
+        XCTAssertTrue(sendButton.isEnabled, app.debugDescription)
+        sendButton.tap()
+
+        let codeField = app.textFields["emailAuth.codeField"]
+        XCTAssertTrue(codeField.waitForExistence(timeout: 5), app.debugDescription)
+        shot("38-email-sign-in")
+
+        // Wrong code shows inline error and stays on code step.
+        codeField.tap()
+        codeField.typeText("000000")
+        app.buttons["emailAuth.submit"].tap()
+        let errorLabel = app.staticTexts["emailAuth.error"]
+        XCTAssertTrue(errorLabel.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(errorLabel.label.contains("驗證碼錯誤"), errorLabel.label)
+
+        // Valid code completes sign-in and leaves SignInView.
+        app.buttons["清除驗證碼"].tap()
+        codeField.tap()
+        codeField.typeText("123456")
+        app.buttons["emailAuth.submit"].tap()
+
+        XCTAssertTrue(emailButton.waitForNonExistence(timeout: 8), app.debugDescription)
+        let namePrompt = app.textFields["meProfile.nameField"]
+        XCTAssertTrue(namePrompt.waitForExistence(timeout: 5), app.debugDescription)
+    }
+
+    @MainActor
+    func testForcedSignOutEmailSwitchAccountAlertCancelAndConfirm() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoDebugForcedSignOut"]
+        app.launch()
+
+        let emailButton = app.buttons["signIn.email"]
+        XCTAssertTrue(emailButton.waitForExistence(timeout: 5), app.debugDescription)
+
+        func submitEmailCode(_ email: String) {
+            emailButton.tap()
+            let emailField = app.textFields["emailAuth.emailField"]
+            XCTAssertTrue(emailField.waitForExistence(timeout: 5), app.debugDescription)
+            emailField.tap()
+            emailField.typeText(email)
+            app.buttons["emailAuth.sendCode"].tap()
+            let codeField = app.textFields["emailAuth.codeField"]
+            XCTAssertTrue(codeField.waitForExistence(timeout: 5), app.debugDescription)
+            codeField.tap()
+            codeField.typeText("123456")
+            app.buttons["emailAuth.submit"].tap()
+        }
+
+        // First attempt: after EmailCodeSheet dismisses, the switch-account alert must appear; canceling stays on SignInView.
+        submitEmailCode("other@example.com")
+        let alertMsg = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS '這支手機上還有另一個帳號的資料。要清除這些資料並改用這個帳號登入嗎？'")
+        ).firstMatch
+        XCTAssertTrue(alertMsg.waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["取消"].tap()
+        XCTAssertTrue(alertMsg.waitForNonExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(emailButton.exists, "Cancel should keep user on sign-in screen")
+
+        // Second attempt: confirm "清除並登入" completes login without re-sending the single-use email code.
+        submitEmailCode("other@example.com")
+        XCTAssertTrue(alertMsg.waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["清除並登入"].tap()
+
+        XCTAssertTrue(emailButton.waitForNonExistence(timeout: 8), app.debugDescription)
+        let namePrompt = app.textFields["meProfile.nameField"]
+        XCTAssertTrue(namePrompt.waitForExistence(timeout: 5), app.debugDescription)
+    }
+
+    @MainActor
+    func testSettingsLinkedIdentitiesAndEmailLink() {
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoScreen", "settings"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        let linkedApple = app.staticTexts["settings.identity.linked.apple"]
+        XCTAssertTrue(linkedApple.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(linkedApple.label.contains("test@privaterelay.appleid.com"), linkedApple.label)
+
+        let linkGoogle = app.buttons["settings.identity.link.google"]
+        let linkEmail = app.buttons["settings.identity.link.email"]
+        XCTAssertTrue(linkGoogle.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(linkEmail.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(app.buttons["settings.identity.link.apple"].exists, app.debugDescription)
+        shot("39-settings-identities")
+
+        // Link Google via debug stub.
+        linkGoogle.tap()
+        let linkedGoogle = app.staticTexts["settings.identity.linked.google"]
+        XCTAssertTrue(linkedGoogle.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(linkedGoogle.label.contains("linked@gmail.com"), linkedGoogle.label)
+        XCTAssertFalse(linkGoogle.exists, app.debugDescription)
+
+        // Link Email: 409 conflict displays required Chinese message, then valid email succeeds.
+        linkEmail.tap()
+        let emailField = app.textFields["emailAuth.emailField"]
+        XCTAssertTrue(emailField.waitForExistence(timeout: 5), app.debugDescription)
+        emailField.tap()
+        emailField.typeText("inuse@example.com")
+        app.buttons["emailAuth.sendCode"].tap()
+
+        let codeField = app.textFields["emailAuth.codeField"]
+        XCTAssertTrue(codeField.waitForExistence(timeout: 5), app.debugDescription)
+        codeField.tap()
+        codeField.typeText("123456")
+        app.buttons["emailAuth.submit"].tap()
+
+        let conflictError = app.staticTexts["emailAuth.error"]
+        XCTAssertTrue(conflictError.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(conflictError.label, "這個登入方式已經屬於另一個 DayDo 帳號")
+
+        app.buttons["emailAuth.changeEmail"].tap()
+        XCTAssertTrue(emailField.waitForExistence(timeout: 3), app.debugDescription)
+        app.buttons["清除 Email"].tap()
+        emailField.tap()
+        emailField.typeText("me@example.com")
+        app.buttons["emailAuth.sendCode"].tap()
+
+        XCTAssertTrue(codeField.waitForExistence(timeout: 5), app.debugDescription)
+        codeField.tap()
+        codeField.typeText("123456")
+        app.buttons["emailAuth.submit"].tap()
+
+        let linkedEmail = app.staticTexts["settings.identity.linked.email"]
+        XCTAssertTrue(linkedEmail.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(linkedEmail.label.contains("me@example.com"), linkedEmail.label)
+        XCTAssertFalse(linkEmail.exists, app.debugDescription)
+        shot("40-settings-identities-linked")
     }
 
     @MainActor
