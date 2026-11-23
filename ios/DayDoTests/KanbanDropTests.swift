@@ -191,6 +191,28 @@ final class KanbanDropTests: XCTestCase {
         )
     }
 
+    func testRegularSplitVisibilityLeavingKanbanToNonTaskTabDefersToTabSync() {
+        // Leaving Kanban for Calendar / Search / Settings: isKanban change must NOT overwrite visibility.
+        XCTAssertNil(
+            RegularSplitVisibility.translatedForKanbanToggle(current: .all, toKanban: false, wide: false, isTasks: false)
+        )
+        XCTAssertNil(
+            RegularSplitVisibility.translatedForKanbanToggle(current: .detailOnly, toKanban: false, wide: false, isTasks: false)
+        )
+        XCTAssertNil(
+            RegularSplitVisibility.translatedForKanbanToggle(current: .all, toKanban: false, wide: true, isTasks: false)
+        )
+        // Tab-change sync decides visibility once: .detailOnly on narrow, .all on wide.
+        XCTAssertEqual(
+            RegularSplitVisibility.defaultVisibility(wide: false, isTasks: false, isKanban: false),
+            .detailOnly
+        )
+        XCTAssertEqual(
+            RegularSplitVisibility.defaultVisibility(wide: true, isTasks: false, isKanban: false),
+            .all
+        )
+    }
+
     func testMacMonthMaxLanesAllowsZeroAndMonthLayoutCountsAllInOverflow() {
         XCTAssertEqual(CalendarMonthMetrics.macMonthMaxLanes(forCellHeight: 40), 0)
         XCTAssertEqual(CalendarMonthMetrics.macMonthMaxLanes(forCellHeight: 69), 0)

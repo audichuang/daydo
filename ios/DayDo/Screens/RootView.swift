@@ -414,11 +414,14 @@ private struct RegularSplitView: View {
             syncColumnVisibility(wide: isWide, isTasks: isTasks)
         }
         .onChange(of: isKanban) { _, newIsKanban in
-            columnVisibility = RegularSplitVisibility.translatedForKanbanToggle(
+            if let next = RegularSplitVisibility.translatedForKanbanToggle(
                 current: columnVisibility,
                 toKanban: newIsKanban,
-                wide: isWide
-            )
+                wide: isWide,
+                isTasks: model.tab == .tasks
+            ) {
+                columnVisibility = next
+            }
         }
     }
 
@@ -449,7 +452,7 @@ private struct RegularSplitView: View {
 
                 if let taskId = model.selectedTaskId {
                     Rectangle().fill(Palette.separator).frame(width: 1).ignoresSafeArea()
-                    TaskDetailContent(taskId: taskId, isInline: true) {
+                    TaskDetailContent(taskId: taskId, isInline: true, showCloseButton: true) {
                         model.selectedTaskId = nil
                     }
                     .id(taskId)
@@ -501,11 +504,7 @@ private struct RegularSplitView: View {
 
     private func syncColumnVisibility(wide: Bool, isTasks: Bool) {
         if Platform.isMac && !isTasks { return }
-        if wide {
-            columnVisibility = .all
-        } else {
-            columnVisibility = (isTasks && !isKanban) ? .doubleColumn : .detailOnly
-        }
+        columnVisibility = RegularSplitVisibility.defaultVisibility(wide: wide, isTasks: isTasks, isKanban: isKanban)
     }
 
     private var sidebar: some View {
@@ -522,14 +521,26 @@ private struct RegularSplitView: View {
 /// Converts `NavigationSplitViewVisibility` between 3-column list mode and 2-column
 /// Kanban mode while preserving whether the user currently has the sidebar open.
 enum RegularSplitVisibility {
+    static func defaultVisibility(
+        wide: Bool,
+        isTasks: Bool,
+        isKanban: Bool
+    ) -> NavigationSplitViewVisibility {
+        if wide { return .all }
+        return (isTasks && !isKanban) ? .doubleColumn : .detailOnly
+    }
+
+    /// Returns the translated visibility when toggling Kanban while on the Tasks tab,
+    /// or `nil` when leaving the Tasks tab (tab-change sync decides visibility once).
     static func translatedForKanbanToggle(
         current: NavigationSplitViewVisibility,
         toKanban: Bool,
-        wide: Bool
-    ) -> NavigationSplitViewVisibility {
+        wide: Bool,
+        isTasks: Bool = true
+    ) -> NavigationSplitViewVisibility? {
+        guard isTasks else { return nil }
         if current == .automatic {
-            if wide { return .all }
-            return toKanban ? .detailOnly : .doubleColumn
+            return defaultVisibility(wide: wide, isTasks: true, isKanban: toKanban)
         }
         if toKanban {
             // 3-column -> 2-column: only `.all` had the sidebar visible.

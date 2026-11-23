@@ -441,7 +441,9 @@ struct TaskListScreen: View {
                 Button(model.compact ? "顯示詳情" : "隱藏詳情", systemImage: model.compact ? "eye" : "eye.slash") {
                     withAnimation(Motion.toggle(reduceMotion)) { model.compact.toggle() }
                 }
-                Button(closed.contains(TaskSection.Kind.completed.id) ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle(TaskSection.Kind.completed.id) }
+                if !isKanbanMode {
+                    Button(closed.contains(TaskSection.Kind.completed.id) ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle(TaskSection.Kind.completed.id) }
+                }
                 if let overdue = visibleSections.first(where: { $0.kind == .overdue }),
                    !isViewerScope,
                    !model.editableTaskIds(in: overdue.tasks).isEmpty {

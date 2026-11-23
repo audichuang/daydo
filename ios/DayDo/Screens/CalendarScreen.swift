@@ -1605,6 +1605,10 @@ private struct WeekRow: View, Equatable {
                 HStack(spacing: 0) {
                     ForEach(Array(week.days.enumerated()), id: \.offset) { i, d in
                         let isToday = d == today
+                        let overflowValue = week.overflow[i].map { n in
+                            let hasBar = week.bars.contains { $0.startColumn <= i && i <= $0.endColumn }
+                            return hasBar ? "還有 \(n) 項任務，點按切換至單日檢視" : "\(n) 項任務，點按切換至單日檢視"
+                        } ?? ""
                         Button { pick(d) } label: {
                             VStack(spacing: 0) {
                                 Text("\(d.day)")
@@ -1630,6 +1634,7 @@ private struct WeekRow: View, Equatable {
                             }
                         }
                         .accessibilityLabel(DateText.full(d))
+                        .accessibilityValue(overflowValue)
                     }
                 }
                 ForEach(Array(week.bars.enumerated()), id: \.offset) { _, bar in

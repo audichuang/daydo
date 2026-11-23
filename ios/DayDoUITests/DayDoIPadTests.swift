@@ -475,6 +475,40 @@ final class DayDoIPadTests: XCTestCase {
         XCTAssertTrue(app.otherElements["kanban.column.today"].waitForNonExistence(timeout: 3))
     }
 
+    @MainActor
+    func testIPadKanbanInlineDetailCloseButton() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "iPad only")
+        launchDemo(orientation: .landscapeLeft)
+        openListWorkFromSidebar()
+
+        let moreOptions = app.buttons["更多選項"]
+        XCTAssertTrue(moreOptions.waitForExistence(timeout: 3), app.debugDescription)
+        moreOptions.tap()
+        let viewMenu = app.buttons["視圖"]
+        XCTAssertTrue(viewMenu.waitForExistence(timeout: 3), app.debugDescription)
+        viewMenu.tap()
+        let kanbanItem = app.buttons["看板"]
+        XCTAssertTrue(kanbanItem.waitForExistence(timeout: 3), app.debugDescription)
+        kanbanItem.tap()
+
+        let todayCol = app.otherElements["kanban.column.today"]
+        XCTAssertTrue(todayCol.waitForExistence(timeout: 4), app.debugDescription)
+
+        let card = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).element(boundBy: 1)
+        XCTAssertTrue(card.waitForExistence(timeout: 3), app.debugDescription)
+        card.tap()
+
+        let titleField = app.descendants(matching: .any)["taskTitleField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 3), app.debugDescription)
+        let closeBtn = app.buttons["taskDetailClose"]
+        XCTAssertTrue(closeBtn.waitForExistence(timeout: 3), app.debugDescription)
+
+        closeBtn.tap()
+        XCTAssertTrue(titleField.waitForNonExistence(timeout: 3), "Tapping close should dismiss Kanban inline detail")
+        XCTAssertTrue(todayCol.exists, "Closing detail should remain on the same Kanban board")
+        XCTAssertTrue(app.staticTexts["工作"].exists, "Closing detail should stay in the 工作 list")
+    }
+
     private func assertSystemShareSheetPresented(context: String, file: StaticString = #filePath, line: UInt = #line) {
         let activityList = app.otherElements["ActivityListView"]
         let copyAction = app.buttons.matching(NSPredicate(format: "label == '拷貝' OR label == 'Copy'")).firstMatch

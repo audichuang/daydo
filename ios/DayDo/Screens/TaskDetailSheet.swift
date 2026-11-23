@@ -56,6 +56,7 @@ struct TaskDetailContent: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var taskId: String
     var isInline: Bool = false
+    var showCloseButton: Bool = false
     var isLargeDetent: Bool = false
     var onToggleDetent: (() -> Void)? = nil
     var onExpandForDate: (() -> Void)? = nil
@@ -330,6 +331,21 @@ struct TaskDetailContent: View {
                 }
                 .hoverEffect(.highlight)
                 .accessibilityLabel("更多選項")
+            }
+
+            if showCloseButton {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Palette.textDay)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Palette.control))
+                }
+                .buttonStyle(.press)
+                .hoverEffect(.highlight)
+                .help("關閉")
+                .accessibilityLabel("關閉詳情")
+                .accessibilityIdentifier("taskDetailClose")
             }
         }
         .padding(.horizontal, 14)
