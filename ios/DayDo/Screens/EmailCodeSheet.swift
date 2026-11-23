@@ -1,6 +1,122 @@
+import Observation
 import SwiftUI
 import UIKit
 import DayDoCore
+
+/// Shared two-step email verification code state and logic used by both
+/// `EmailCodeSheet` (iOS/iPadOS sign-in and account linking) and the inline
+/// Mac sign-in card in `SignInView`.
+@MainActor
+@Observable
+final class EmailCodeFlow {
+    enum Step {
+        case enterEmail
+        case enterCode
+    }
+
+    var step: Step = .enterEmail
+    var email = ""
+    private(set) var sentEmail = ""
+    var code = ""
+    private(set) var busy = false
+    var errorText: String?
+    var infoText: String?
+    private var lastAutoSubmittedCode: String?
+
+    var trimmedEmail: String {
+        email.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var canSendCode: Bool {
+        guard !busy else { return false }
+        let parts = trimmedEmail.split(separator: "@", omittingEmptySubsequences: false)
+        return parts.count == 2 && !parts[0].isEmpty && !parts[1].isEmpty && !trimmedEmail.contains(where: \.isWhitespace)
+    }
+
+    var canSubmitCode: Bool {
+        !busy && code.count == 6
+    }
+
+    func sanitizeCode(_ raw: String) -> String {
+        let filtered = String(raw.filter(\.isNumber).prefix(6))
+        if filtered != code {
+            code = filtered
+        }
+        if filtered.count < 6 {
+            lastAutoSubmittedCode = nil
+        }
+        return filtered
+    }
+
+    func shouldAutoSubmit(code value: String) -> Bool {
+        !busy && value.count == 6 && value != lastAutoSubmittedCode
+    }
+
+    func backToEmail() {
+        guard !busy else { return }
+        errorText = nil
+        infoText = nil
+        code = ""
+        lastAutoSubmittedCode = nil
+        step = .enterEmail
+    }
+
+    func sendCode(using model: AppModel) async -> Bool {
+        let target = trimmedEmail
+        guard canSendCode else { return false }
+        busy = true
+        errorText = nil
+        infoText = nil
+        defer { busy = false }
+        do {
+            try await model.startEmailSignIn(email: target)
+            sentEmail = target
+            code = ""
+            lastAutoSubmittedCode = nil
+            step = .enterCode
+            return true
+        } catch {
+            errorText = AuthErrorMessage.text(for: error)
+            return false
+        }
+    }
+
+    func resendCode(using model: AppModel) async -> Bool {
+        guard !busy, !sentEmail.isEmpty else { return false }
+        busy = true
+        errorText = nil
+        infoText = nil
+        defer { busy = false }
+        do {
+            try await model.startEmailSignIn(email: sentEmail)
+            code = ""
+            lastAutoSubmittedCode = nil
+            infoText = "已重新寄送驗證碼。"
+            return true
+        } catch {
+            errorText = AuthErrorMessage.text(for: error)
+            return false
+        }
+    }
+
+    func submitCode(_ action: (_ email: String, _ code: String) async throws -> Void) async -> Bool {
+        guard canSubmitCode else { return false }
+        let targetEmail = sentEmail
+        let targetCode = code
+        lastAutoSubmittedCode = targetCode
+        busy = true
+        errorText = nil
+        infoText = nil
+        defer { busy = false }
+        do {
+            try await action(targetEmail, targetCode)
+            return true
+        } catch {
+            errorText = AuthErrorMessage.text(for: error)
+            return false
+        }
+    }
+}
 
 /// Shared two-step email verification code sheet for both sign-in (`SignInView`)
 /// and account linking (`SettingsScreen`).
@@ -8,11 +124,6 @@ struct EmailCodeSheet: View {
     enum Mode {
         case signIn
         case link
-    }
-
-    private enum Step {
-        case enterEmail
-        case enterCode
     }
 
     private enum Field: Hashable {
@@ -29,28 +140,8 @@ struct EmailCodeSheet: View {
     /// throwing displays the error inline inside the sheet.
     let onSubmitCode: (_ email: String, _ code: String) async throws -> Void
 
-    @State private var step: Step = .enterEmail
-    @State private var email = ""
-    @State private var sentEmail = ""
-    @State private var code = ""
-    @State private var busy = false
-    @State private var errorText: String?
-    @State private var infoText: String?
+    @State private var flow = EmailCodeFlow()
     @FocusState private var focusedField: Field?
-
-    private var trimmedEmail: String {
-        email.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var canSendCode: Bool {
-        guard !busy else { return false }
-        let parts = trimmedEmail.split(separator: "@", omittingEmptySubsequences: false)
-        return parts.count == 2 && !parts[0].isEmpty && !parts[1].isEmpty && !trimmedEmail.contains(where: \.isWhitespace)
-    }
-
-    private var canSubmitCode: Bool {
-        !busy && code.count == 6
-    }
 
     private var title: String {
         mode == .signIn ? "使用 Email 登入" : "連結 Email"
@@ -68,7 +159,7 @@ struct EmailCodeSheet: View {
                     .foregroundStyle(Palette.text)
                 HStack {
                     PillButton(title: "取消") { dismiss() }
-                        .disabled(busy)
+                        .disabled(flow.busy)
                         .accessibilityIdentifier("emailAuth.cancel")
                     Spacer()
                 }
@@ -88,7 +179,7 @@ struct EmailCodeSheet: View {
         }
         .background(Palette.card)
         .adaptiveSheet(detents: [.large])
-        .interactiveDismissDisabled(busy)
+        .interactiveDismissDisabled(flow.busy)
         .onAppear {
             focusedField = .email
         }
@@ -96,8 +187,9 @@ struct EmailCodeSheet: View {
 
     @ViewBuilder
     private var formContent: some View {
+        @Bindable var flow = flow
         VStack(alignment: .leading, spacing: 14) {
-            if let errorText {
+            if let errorText = flow.errorText {
                 Text(errorText)
                     .txt(13)
                     .foregroundStyle(Palette.danger)
@@ -109,14 +201,14 @@ struct EmailCodeSheet: View {
                     .accessibilityIdentifier("emailAuth.error")
             }
 
-            if step == .enterEmail {
+            if flow.step == .enterEmail {
                 Text("輸入你的 Email，我們會寄送 6 位數驗證碼。")
                     .txt(14)
                     .foregroundStyle(Palette.textSecondary)
                     .padding(.horizontal, 2)
 
                 HStack(spacing: 10) {
-                    TextField("name@example.com", text: $email)
+                    TextField("name@example.com", text: $flow.email)
                         .txt(16)
                         .foregroundStyle(Palette.text)
                         .tint(accent.color)
@@ -127,12 +219,12 @@ struct EmailCodeSheet: View {
                         .focused($focusedField, equals: .email)
                         .submitLabel(.continue)
                         .onSubmit {
-                            if canSendCode { sendCode() }
+                            if flow.canSendCode { sendCode() }
                         }
                         .accessibilityIdentifier("emailAuth.emailField")
 
-                    if !email.isEmpty && !busy {
-                        Button { email = "" } label: {
+                    if !flow.email.isEmpty && !flow.busy {
+                        Button { flow.email = "" } label: {
                             Image(systemName: "xmark")
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundStyle(Palette.textSecondary)
@@ -151,32 +243,32 @@ struct EmailCodeSheet: View {
                     sendCode()
                 } label: {
                     HStack(spacing: 8) {
-                        if busy {
+                        if flow.busy {
                             ProgressView().tint(accent.onAccent)
                         }
-                        Text(busy ? "正在寄送…" : "寄送驗證碼")
+                        Text(flow.busy ? "正在寄送…" : "寄送驗證碼")
                             .txt(16, .semibold)
-                            .foregroundStyle(canSendCode ? accent.onAccent : Palette.textTertiary)
+                            .foregroundStyle(flow.canSendCode ? accent.onAccent : Palette.textTertiary)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
                     .background(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(canSendCode ? accent.color : Palette.control)
+                            .fill(flow.canSendCode ? accent.color : Palette.control)
                     )
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.press)
                 .hoverEffect(.highlight)
-                .disabled(!canSendCode)
+                .disabled(!flow.canSendCode)
                 .accessibilityIdentifier("emailAuth.sendCode")
             } else {
-                Text("已寄出 6 位數驗證碼至 \(sentEmail)，10 分鐘內有效。")
+                Text("已寄出 6 位數驗證碼至 \(flow.sentEmail)，10 分鐘內有效。")
                     .txt(14)
                     .foregroundStyle(Palette.textSecondary)
                     .padding(.horizontal, 2)
 
-                if let infoText {
+                if let infoText = flow.infoText {
                     Text(infoText)
                         .txt(13)
                         .foregroundStyle(accent.text)
@@ -184,7 +276,7 @@ struct EmailCodeSheet: View {
                 }
 
                 HStack(spacing: 10) {
-                    TextField("6 位數驗證碼", text: $code)
+                    TextField("6 位數驗證碼", text: $flow.code)
                         .txt(20, .semibold)
                         .foregroundStyle(Palette.text)
                         .tint(accent.color)
@@ -192,19 +284,16 @@ struct EmailCodeSheet: View {
                         .textContentType(.oneTimeCode)
                         .focused($focusedField, equals: .code)
                         .submitLabel(.done)
-                        .onChange(of: code) { _, newValue in
-                            let filtered = String(newValue.filter(\.isNumber).prefix(6))
-                            if filtered != newValue {
-                                code = filtered
-                            }
+                        .onChange(of: flow.code) { _, newValue in
+                            _ = flow.sanitizeCode(newValue)
                         }
                         .onSubmit {
-                            if canSubmitCode { submitCode() }
+                            if flow.canSubmitCode { submitCode() }
                         }
                         .accessibilityIdentifier("emailAuth.codeField")
 
-                    if !code.isEmpty && !busy {
-                        Button { code = "" } label: {
+                    if !flow.code.isEmpty && !flow.busy {
+                        Button { flow.code = "" } label: {
                             Image(systemName: "xmark")
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundStyle(Palette.textSecondary)
@@ -223,38 +312,35 @@ struct EmailCodeSheet: View {
                     submitCode()
                 } label: {
                     HStack(spacing: 8) {
-                        if busy {
+                        if flow.busy {
                             ProgressView().tint(accent.onAccent)
                         }
-                        Text(busy ? "正在驗證…" : submitTitle)
+                        Text(flow.busy ? "正在驗證…" : submitTitle)
                             .txt(16, .semibold)
-                            .foregroundStyle(canSubmitCode ? accent.onAccent : Palette.textTertiary)
+                            .foregroundStyle(flow.canSubmitCode ? accent.onAccent : Palette.textTertiary)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
                     .background(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(canSubmitCode ? accent.color : Palette.control)
+                            .fill(flow.canSubmitCode ? accent.color : Palette.control)
                     )
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.press)
                 .hoverEffect(.highlight)
-                .disabled(!canSubmitCode)
+                .disabled(!flow.canSubmitCode)
                 .accessibilityIdentifier("emailAuth.submit")
 
                 HStack {
                     Button("更換信箱") {
-                        errorText = nil
-                        infoText = nil
-                        code = ""
-                        step = .enterEmail
+                        flow.backToEmail()
                         focusedField = .email
                     }
                     .txt(14, .medium)
                     .foregroundStyle(Palette.textSecondary)
                     .buttonStyle(.plain)
-                    .disabled(busy)
+                    .disabled(flow.busy)
                     .accessibilityIdentifier("emailAuth.changeEmail")
 
                     Spacer()
@@ -265,7 +351,7 @@ struct EmailCodeSheet: View {
                     .txt(14, .medium)
                     .foregroundStyle(accent.text)
                     .buttonStyle(.plain)
-                    .disabled(busy)
+                    .disabled(flow.busy)
                     .accessibilityIdentifier("emailAuth.resend")
                 }
                 .padding(.horizontal, 4)
@@ -278,57 +364,25 @@ struct EmailCodeSheet: View {
     }
 
     private func sendCode() {
-        let target = trimmedEmail
-        guard canSendCode else { return }
-        busy = true
-        errorText = nil
-        infoText = nil
         Task {
-            defer { busy = false }
-            do {
-                try await model.startEmailSignIn(email: target)
-                sentEmail = target
-                code = ""
-                step = .enterCode
+            if await flow.sendCode(using: model) {
                 focusedField = .code
-            } catch {
-                errorText = AuthErrorMessage.text(for: error)
             }
         }
     }
 
     private func resendCode() {
-        guard !busy, !sentEmail.isEmpty else { return }
-        busy = true
-        errorText = nil
-        infoText = nil
         Task {
-            defer { busy = false }
-            do {
-                try await model.startEmailSignIn(email: sentEmail)
-                code = ""
-                infoText = "已重新寄送驗證碼。"
+            if await flow.resendCode(using: model) {
                 focusedField = .code
-            } catch {
-                errorText = AuthErrorMessage.text(for: error)
             }
         }
     }
 
     private func submitCode() {
-        guard canSubmitCode else { return }
-        let targetEmail = sentEmail
-        let targetCode = code
-        busy = true
-        errorText = nil
-        infoText = nil
         Task {
-            defer { busy = false }
-            do {
-                try await onSubmitCode(targetEmail, targetCode)
+            if await flow.submitCode(onSubmitCode) {
                 dismiss()
-            } catch {
-                errorText = AuthErrorMessage.text(for: error)
             }
         }
     }
