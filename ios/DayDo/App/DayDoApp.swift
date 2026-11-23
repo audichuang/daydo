@@ -486,6 +486,17 @@ actor DebugStubTransport: SyncTransport {
             ])
         }
 
+        if method == "POST" && path == "/auth/refresh" {
+            return try jsonResponse(200, [
+                "accessToken": "debug-access-refreshed",
+                "refreshToken": "debug-refresh-refreshed",
+                "hasData": false,
+                "meMemberId": NSNull(),
+                "inboxProjectId": NSNull(),
+                "avatarUrl": NSNull(),
+            ])
+        }
+
         if method == "GET" && path == "/me/identities" {
             if linkedIdentities.isEmpty {
                 linkedIdentities = [

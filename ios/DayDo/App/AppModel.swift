@@ -70,6 +70,7 @@ final class AppModel {
     var linkedIdentities: [LinkedIdentity] = []
     var isLoadingIdentities = false
     var identitiesLoaded = false
+    private var identitiesGeneration: UInt64 = 0
     private(set) var isConfirmingSignOut = false
     private var isSigningOut = false
     private(set) var duplicationLocks: [String: UUID] = [:]
@@ -719,15 +720,27 @@ final class AppModel {
     @discardableResult
     func loadLinkedIdentities() async throws -> [LinkedIdentity] {
         guard syncEnabled, isSignedIn else { return [] }
+        identitiesGeneration &+= 1
+        let generation = identitiesGeneration
         isLoadingIdentities = true
-        defer { isLoadingIdentities = false }
+        defer {
+            if identitiesGeneration == generation {
+                isLoadingIdentities = false
+            }
+        }
         do {
             let list = try await syncEngine.listIdentities()
+            guard identitiesGeneration == generation else {
+                return linkedIdentities
+            }
             linkedIdentities = list
             identitiesLoaded = true
             return list
         } catch {
             _ = await handleErrorIfSignedOut(error)
+            guard identitiesGeneration == generation else {
+                return linkedIdentities
+            }
             throw error
         }
     }
@@ -736,9 +749,15 @@ final class AppModel {
     func linkIdentity(with credential: SyncAuthCredential) async throws -> [LinkedIdentity] {
         do {
             let list = try await syncEngine.linkIdentity(with: credential)
+            identitiesGeneration &+= 1
             linkedIdentities = list
             identitiesLoaded = true
             return list
+        } catch let AuthError.linkUnconfirmed(refreshed) {
+            identitiesGeneration &+= 1
+            linkedIdentities = refreshed
+            identitiesLoaded = true
+            throw AuthError.linkUnconfirmed(refreshed)
         } catch {
             _ = await handleErrorIfSignedOut(error)
             throw error
@@ -800,8 +819,7 @@ final class AppModel {
 
     private func syncGoogleAvatarOnLaunchIfNeeded() {
         guard syncEnabled, isSignedIn, !didAttemptGoogleAvatarSyncOnLaunch else { return }
-        if let provider = defaults.string(forKey: Self.signedInProviderKey),
-           provider != AuthProvider.google.rawValue {
+        guard defaults.string(forKey: Self.signedInProviderKey) == AuthProvider.google.rawValue else {
             return
         }
 #if DEBUG
@@ -919,6 +937,9 @@ final class AppModel {
             isSigningIn = false
             isSigningOut = false
         }
+        // Fetch fresh hasData/inboxProjectId/meMemberId and rotated tokens before wiping local data.
+        // If refresh fails, existing local data stays untouched.
+        let freshAuth = syncEnabled ? try await syncEngine.refreshLoginState(for: auth) : auth
         cancelProjectDuplications()
         stopSyncObservers()
         if case .google = credential {
@@ -931,7 +952,7 @@ final class AppModel {
         }
         resetLocalUIState()
         try await runSignInFlow(credential: credential, displayName: displayName, avatarUrl: avatarUrl) {
-            try await self.syncEngine.completeSignIn(with: auth)
+            try await self.syncEngine.completeSignIn(with: freshAuth, refreshFirst: false)
         }
     }
 
@@ -961,6 +982,7 @@ final class AppModel {
         isConfirmingSignOut = false
         cancelProjectDuplications()
         defaults.removeObject(forKey: Self.signedInProviderKey)
+        identitiesGeneration &+= 1
         linkedIdentities = []
         isLoadingIdentities = false
         identitiesLoaded = false

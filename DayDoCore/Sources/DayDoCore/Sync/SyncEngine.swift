@@ -192,17 +192,57 @@ public actor SyncEngine {
         }
         let data = try validateHTTPResponse(response)
         let auth = try decode(AuthLoginResponse.self, from: data)
-        return try await completeSignIn(with: auth, generation: generation)
+        return try await finishSignIn(with: auth, generation: generation)
+    }
+
+    /// Calls `POST /auth/refresh` using a pending `AuthLoginResponse`'s refresh token to fetch fresh
+    /// tokens and latest `hasData`/`meMemberId`/`inboxProjectId` without touching local DB or `tokenStore`.
+    public func refreshLoginState(for auth: AuthLoginResponse) async throws -> AuthLoginResponse {
+        let requestBody = try encoder.encode(AuthRefreshRequest(refreshToken: auth.refreshToken))
+        let response = try await sendWithNetworkRetryable(
+            method: "POST",
+            path: "/auth/refresh",
+            headers: [:],
+            body: requestBody
+        )
+        if response.status == 400 || response.status == 401 || response.status == 403 {
+            throw AuthError.invalidCredentials(parseErrorMessage(from: response))
+        }
+        let data = try validateHTTPResponse(response)
+        let decoded = try decode(AuthRefreshResponse.self, from: data)
+        return AuthLoginResponse(
+            accessToken: decoded.accessToken,
+            refreshToken: decoded.refreshToken,
+            user: auth.user,
+            isNewAccount: auth.isNewAccount,
+            hasData: decoded.hasData ?? auth.hasData,
+            meMemberId: decoded.meMemberId,
+            inboxProjectId: decoded.inboxProjectId,
+            avatarUrl: decoded.avatarUrl ?? auth.avatarUrl
+        )
     }
 
     /// Completes sign-in using an already-authenticated `AuthLoginResponse` (e.g. after the user
     /// confirms replacing another local account, without re-sending one-time credentials).
+    ///
+    /// When `refreshFirst` is true (default), refreshes the pending response via `/auth/refresh`
+    /// first to obtain the latest `hasData`/`inboxProjectId`/`meMemberId` and rotated tokens, and
+    /// only wipes any previous local account after refresh succeeds.
     @discardableResult
-    public func completeSignIn(with auth: AuthLoginResponse) async throws -> SyncSummary {
-        try await completeSignIn(with: auth, generation: sessionGeneration)
+    public func completeSignIn(with auth: AuthLoginResponse, refreshFirst: Bool = true) async throws -> SyncSummary {
+        let targetAuth: AuthLoginResponse
+        if refreshFirst {
+            targetAuth = try await refreshLoginState(for: auth)
+            if let existingUserId = try await signedInUserId, existingUserId != targetAuth.user.id {
+                try await signOut()
+            }
+        } else {
+            targetAuth = auth
+        }
+        return try await finishSignIn(with: targetAuth, generation: sessionGeneration)
     }
 
-    private func completeSignIn(with auth: AuthLoginResponse, generation: UInt64) async throws -> SyncSummary {
+    private func finishSignIn(with auth: AuthLoginResponse, generation: UInt64) async throws -> SyncSummary {
         guard generation == sessionGeneration else {
             throw SyncError.signedOut
         }
@@ -400,9 +440,11 @@ public actor SyncEngine {
                statusCode == nil || (500...599).contains(statusCode ?? 0),
                generation == sessionGeneration,
                !Task.isCancelled,
-               let confirmed = try? await listIdentities(),
-               Self.identities(confirmed, contain: credential) {
-                return confirmed
+               let refreshed = try? await listIdentities() {
+                if Self.identities(refreshed, confirmExactEmailFor: credential) {
+                    return refreshed
+                }
+                throw AuthError.linkUnconfirmed(refreshed)
             }
             throw error
         }
@@ -416,16 +458,14 @@ public actor SyncEngine {
         return parsed.error == "Unauthorized"
     }
 
-    private static func identities(_ list: [LinkedIdentity], contain credential: SyncAuthCredential) -> Bool {
-        switch credential {
-        case .apple:
-            return list.contains { $0.provider == .apple }
-        case .google:
-            return list.contains { $0.provider == .google }
-        case let .email(email, _):
-            let normalized = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            return list.contains { $0.provider == .email && $0.email?.lowercased() == normalized }
+    /// Only email linking can be confirmed by `GET /me/identities`, because the response carries
+    /// the exact email address (not a provider `sub` for Apple/Google).
+    private static func identities(_ list: [LinkedIdentity], confirmExactEmailFor credential: SyncAuthCredential) -> Bool {
+        guard case let .email(email, _) = credential else {
+            return false
         }
+        let normalized = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return list.contains { $0.provider == .email && $0.email?.lowercased() == normalized }
     }
 
     private func parseErrorMessage(from response: SyncHTTPResponse) -> String {

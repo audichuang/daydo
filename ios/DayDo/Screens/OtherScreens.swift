@@ -246,8 +246,12 @@ struct SettingsScreen: View {
         }
         .sheet(isPresented: $linkingEmail) {
             EmailCodeSheet(mode: .link) { email, code in
-                try await model.linkIdentity(with: .email(email: email, code: code))
-                linkError = nil
+                do {
+                    try await model.linkIdentity(with: .email(email: email, code: code))
+                    linkError = nil
+                } catch let AuthError.linkUnconfirmed(refreshed) {
+                    linkError = AuthErrorMessage.text(for: AuthError.linkUnconfirmed(refreshed))
+                }
             }
         }
     }

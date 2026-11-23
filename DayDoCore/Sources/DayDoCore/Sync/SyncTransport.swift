@@ -204,6 +204,7 @@ public enum AuthError: Error, LocalizedError, Sendable, Equatable {
     case invalidCredentials(String)
     case badRequest(String)
     case differentAccount(AuthLoginResponse)
+    case linkUnconfirmed([LinkedIdentity])
 
     public var errorDescription: String? {
         switch self {
@@ -215,6 +216,8 @@ public enum AuthError: Error, LocalizedError, Sendable, Equatable {
             return "驗證失敗，請再試一次"
         case .differentAccount:
             return "已登入其他帳號，請先登出"
+        case .linkUnconfirmed:
+            return "無法確認是否已連結，請看上方清單"
         }
     }
 }

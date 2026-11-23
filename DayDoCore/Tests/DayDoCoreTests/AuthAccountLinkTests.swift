@@ -219,6 +219,15 @@ private func jsonHTTP(_ status: Int, _ object: Any) -> SyncHTTPResponse {
 
         actor SingleUseEmailServer {
             var verifyCalls = 0
+            var refreshCalls = 0
+            var failRefresh = false
+            var refreshHasData = false
+
+            func setRefreshBehavior(fail: Bool, hasData: Bool) {
+                failRefresh = fail
+                refreshHasData = hasData
+            }
+
             func handle(_ req: RecordingAuthTransport.RecordedRequest) -> SyncHTTPResponse {
                 switch (req.method, req.path) {
                 case ("POST", "/auth/apple"):
@@ -246,6 +255,19 @@ private func jsonHTTP(_ status: Int, _ object: Any) -> SyncHTTPResponse {
                         "hasData": false,
                         "meMemberId": NSNull(),
                         "inboxProjectId": NSNull(),
+                        "avatarUrl": NSNull(),
+                    ])
+                case ("POST", "/auth/refresh"):
+                    refreshCalls += 1
+                    if failRefresh {
+                        return jsonHTTP(500, ["error": "Temporary refresh failure"])
+                    }
+                    return jsonHTTP(200, [
+                        "accessToken": "acc-b-fresh",
+                        "refreshToken": "ref-b-fresh",
+                        "hasData": refreshHasData,
+                        "meMemberId": refreshHasData ? "srv-me-b" : NSNull(),
+                        "inboxProjectId": refreshHasData ? "srv-inbox-b" : NSNull(),
                         "avatarUrl": NSNull(),
                     ])
                 case ("POST", "/sync/push"):
@@ -289,6 +311,7 @@ private func jsonHTTP(_ status: Int, _ object: Any) -> SyncHTTPResponse {
         }
         let authB = try #require(capturedAuth)
         #expect(authB.user.id == "user-b")
+        #expect(authB.hasData == false)
         #expect(await server.verifyCalls == 1)
 
         // Cancel branch: User A's local data and signedInUserId remain intact.
@@ -296,21 +319,38 @@ private func jsonHTTP(_ status: Int, _ object: Any) -> SyncHTTPResponse {
         let tasksBeforeConfirm = try await api.listTasks(TaskQuery(includeCompleted: true))
         #expect(tasksBeforeConfirm.contains { $0.id == savedTask.id })
 
-        // Confirm branch: wipe old account and finish sign-in using the already-received AuthLoginResponse
-        // without re-sending /auth/email/verify.
-        try await engine.signOut()
+        // Confirm branch when /auth/refresh fails: must NOT wipe User A's local data.
+        await server.setRefreshBehavior(fail: true, hasData: false)
+        var refreshFailed = false
+        do {
+            _ = try await engine.completeSignIn(with: authB)
+            Issue.record("Expected refresh failure")
+        } catch SyncError.retryable {
+            refreshFailed = true
+        }
+        #expect(refreshFailed)
+        #expect(try await engine.signedInUserId == "user-a")
+        #expect((try await api.listTasks(TaskQuery(includeCompleted: true))).contains { $0.id == savedTask.id })
+
+        // Confirm branch when another device finished initial sync in the meantime (`hasData` flipped to true):
+        // completeSignIn refreshes via /auth/refresh first, wipes User A, does NOT bootstrap duplicate default lists,
+        // and does NOT re-send /auth/email/verify.
+        await server.setRefreshBehavior(fail: false, hasData: true)
         _ = try await engine.completeSignIn(with: authB)
         #expect(try await engine.signedInUserId == "user-b")
-        #expect(tokens.accessToken == "acc-b")
-        #expect(tokens.refreshToken == "ref-b")
+        #expect(tokens.accessToken == "acc-b-fresh")
+        #expect(tokens.refreshToken == "ref-b-fresh")
         #expect(await server.verifyCalls == 1)
+        #expect(await server.refreshCalls == 2)
+        // Because fresh `hasData` was true and local DB was wiped, no default inbox/lists were bootstrapped locally.
+        #expect(try await api.listProjects(includeArchived: true).isEmpty)
         let tasksAfterConfirm = try await api.listTasks(TaskQuery(includeCompleted: true))
         #expect(!tasksAfterConfirm.contains { $0.id == savedTask.id })
     }
 
     @Test func link5xxOrLostResponseConfirmsViaIdentitiesEndpoint() async throws {
-        // 1. POST /auth/link fails with 500, but GET /me/identities shows email was already linked -> succeeds.
-        let (engine500, transport500, _) = try makeEngine { req in
+        // 1. Email POST /auth/link fails with 500, GET /me/identities has the exact email -> succeeds.
+        let (engineEmailOk, transportEmailOk, _) = try makeEngine { req in
             switch (req.method, req.path) {
             case ("POST", "/auth/link"):
                 return jsonHTTP(500, ["error": "D1 timeout"])
@@ -324,19 +364,84 @@ private func jsonHTTP(_ status: Int, _ object: Any) -> SyncHTTPResponse {
             }
         }
 
-        let confirmed = try await engine500.linkIdentity(with: .email(email: "Me@Example.com ", code: "123456"))
+        let confirmed = try await engineEmailOk.linkIdentity(with: .email(email: "Me@Example.com ", code: "123456"))
         #expect(confirmed.map(\.provider) == [.apple, .email])
-        #expect(await transport500.allRequests().map(\.path) == ["/auth/link", "/me/identities"])
+        #expect(await transportEmailOk.allRequests().map(\.path) == ["/auth/link", "/me/identities"])
 
-        // 2. POST /auth/link drops connection, GET /me/identities does NOT show the identity -> throws retryable.
-        let (engineLost, transportLost, _) = try makeEngine { req in
+        // 2. Email POST /auth/link fails with 500, GET /me/identities has a DIFFERENT email -> unconfirmed (NOT success).
+        let otherEmailList = [
+            LinkedIdentity(provider: .apple, email: nil, createdAt: 1000),
+            LinkedIdentity(provider: .email, email: "other@example.com", createdAt: 2000),
+        ]
+        let (engineOtherEmail, _, _) = try makeEngine { req in
+            switch (req.method, req.path) {
+            case ("POST", "/auth/link"):
+                return jsonHTTP(500, ["error": "D1 timeout"])
+            case ("GET", "/me/identities"):
+                return jsonHTTP(200, [
+                    ["provider": "apple", "createdAt": 1000],
+                    ["provider": "email", "email": "other@example.com", "createdAt": 2000],
+                ])
+            default:
+                return jsonHTTP(404, ["error": "Not found"])
+            }
+        }
+        await #expect(throws: AuthError.linkUnconfirmed(otherEmailList)) {
+            try await engineOtherEmail.linkIdentity(with: .email(email: "me@example.com", code: "123456"))
+        }
+
+        // 3. Google POST /auth/link fails with 500, GET /me/identities already contains a Google identity
+        // (which could be a different Google account linked on another device) -> unconfirmed (NOT success).
+        let googleList = [
+            LinkedIdentity(provider: .apple, email: nil, createdAt: 1000),
+            LinkedIdentity(provider: .google, email: "someone-else@gmail.com", createdAt: 1500),
+        ]
+        let (engineGoogle, _, _) = try makeEngine { req in
+            switch (req.method, req.path) {
+            case ("POST", "/auth/link"):
+                return jsonHTTP(500, ["error": "D1 timeout"])
+            case ("GET", "/me/identities"):
+                return jsonHTTP(200, [
+                    ["provider": "apple", "createdAt": 1000],
+                    ["provider": "google", "email": "someone-else@gmail.com", "createdAt": 1500],
+                ])
+            default:
+                return jsonHTTP(404, ["error": "Not found"])
+            }
+        }
+        await #expect(throws: AuthError.linkUnconfirmed(googleList)) {
+            try await engineGoogle.linkIdentity(with: .google(idToken: "my-google-token"))
+        }
+
+        // 4. Apple POST /auth/link drops connection, GET /me/identities contains an Apple identity -> unconfirmed.
+        let appleList = [
+            LinkedIdentity(provider: .google, email: "me@gmail.com", createdAt: 1000),
+            LinkedIdentity(provider: .apple, email: "other@privaterelay.appleid.com", createdAt: 1500),
+        ]
+        let (engineApple, _, _) = try makeEngine { req in
             switch (req.method, req.path) {
             case ("POST", "/auth/link"):
                 throw URLError(.networkConnectionLost)
             case ("GET", "/me/identities"):
                 return jsonHTTP(200, [
-                    ["provider": "apple", "createdAt": 1000],
+                    ["provider": "google", "email": "me@gmail.com", "createdAt": 1000],
+                    ["provider": "apple", "email": "other@privaterelay.appleid.com", "createdAt": 1500],
                 ])
+            default:
+                return jsonHTTP(404, ["error": "Not found"])
+            }
+        }
+        await #expect(throws: AuthError.linkUnconfirmed(appleList)) {
+            try await engineApple.linkIdentity(with: .apple(identityToken: "tok", nonce: "n"))
+        }
+
+        // 5. Both POST /auth/link and fallback GET /me/identities fail -> surfaces retryable error.
+        let (engineBothLost, transportBothLost, _) = try makeEngine { req in
+            switch (req.method, req.path) {
+            case ("POST", "/auth/link"):
+                throw URLError(.networkConnectionLost)
+            case ("GET", "/me/identities"):
+                throw URLError(.notConnectedToInternet)
             default:
                 return jsonHTTP(404, ["error": "Not found"])
             }
@@ -344,13 +449,13 @@ private func jsonHTTP(_ status: Int, _ object: Any) -> SyncHTTPResponse {
 
         var caughtRetryable = false
         do {
-            _ = try await engineLost.linkIdentity(with: .email(email: "me@example.com", code: "123456"))
-            Issue.record("Expected retryable error when identity was not persisted")
+            _ = try await engineBothLost.linkIdentity(with: .email(email: "me@example.com", code: "123456"))
+            Issue.record("Expected retryable error when both link and identities check fail")
         } catch SyncError.retryable {
             caughtRetryable = true
         }
         #expect(caughtRetryable)
-        #expect(await transportLost.allRequests().map(\.path) == ["/auth/link", "/me/identities"])
+        #expect(await transportBothLost.allRequests().map(\.path) == ["/auth/link", "/me/identities"])
     }
 
     @Test func credentialErrorsUseFixedLocalizedChineseMessage() {
@@ -358,5 +463,6 @@ private func jsonHTTP(_ status: Int, _ object: Any) -> SyncHTTPResponse {
         #expect(AuthError.badRequest("Invalid JSON body").errorDescription == "驗證失敗，請再試一次")
         #expect(AuthError.invalidCode.errorDescription == "驗證碼錯誤或已過期，請再試一次")
         #expect(AuthError.identityInUse.errorDescription == "這個登入方式已經屬於另一個 DayDo 帳號")
+        #expect(AuthError.linkUnconfirmed([]).errorDescription == "無法確認是否已連結，請看上方清單")
     }
 }
