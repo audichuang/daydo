@@ -2,7 +2,7 @@
 
 ## 我們在做什麼
 
-DayDo 是待辦加日曆的 iPhone App，給自己和家人用，互動對標 TickTick。分三個階段：
+DayDo 是待辦加日曆的 iPhone／iPad／Mac App，給自己和家人用，互動對標 TickTick。分三個階段：
 
 1. **單機 App**（已完成，在 TestFlight）：資料只存在手機的 SQLite；今天、清單、任務詳情、日期面板、時間區塊、日曆（清單／年／月／週／3日／日）、搜尋、垃圾桶。
 2. **同步與多人**（進行中）：Cloudflare Worker + D1 + Durable Objects，註冊登入、多裝置同步、共享清單、成員指派。
@@ -14,7 +14,7 @@ DayDo 是待辦加日曆的 iPhone App，給自己和家人用，互動對標 Ti
 
 ```
 DayDoCore/   Swift Package：資料模型、SQLite（GRDB）、DayDoAPI 指令層、日期/重複/提醒邏輯
-ios/         SwiftUI App（iOS 26+，iOS 27.2 SDK），XcodeGen 產生專案（project.yml）
+ios/         SwiftUI App（iOS 26+，iOS 27.2 SDK），XcodeGen 產生專案（project.yml）；Mac 版是同一個 target 的 Mac Catalyst，沒有另外的 macOS target
 server/      第二階段同步後端：Void（Cloudflare Workers，底層 Hono）＋ D1 ＋ 每位使用者的範圍 Durable Object
 spec/        openapi.yaml：DayDoAPI 的 HTTP 合約，第二階段 Worker 與 MCP 共用；sync.md：同步協議；mcp.md：MCP 伺服器、OAuth 與 ICS 同步設計；fixtures/sync-ops.json：App 實際編出的 op，server 測試直接讀
 design/      設計稿
@@ -39,6 +39,7 @@ cd DayDoCore && swift test                       # 核心單元測試
 cd server && npm ci && npm run check              # 同步後端：lint＋型別檢查＋單元測試＋本機 dev server 上的登入與同步 e2e
 cd ios && xcodegen generate                      # 改了 project.yml 或增刪檔案後
 ios/scripts/uitest.sh [build|iphone|ipad] [xcodebuild 參數…]  # 編譯檢查或 UI 流程測試，單一測試加 -only-testing:DayDoUITests/<類別>/<方法>
+ios/scripts/uitest.sh mac                        # Mac 版編譯檢查（不碰模擬器、不拿鎖），印出 .app 路徑；改了 #if targetEnvironment(macCatalyst) 區塊或 project.yml 後
 bash ios/scripts/tests/test_uitest_sh.sh         # 改了 uitest.sh／record-uitest.sh／flock-exec.py 後（stub，不碰模擬器）
 ```
 
@@ -62,9 +63,9 @@ repo 沒有 GitHub Actions：push 後不等 CI，合併前以本機測試結果�
 - 平行 UI 測試才開臨時機，命名 `DD tmp <任務名>`，用 `ios/scripts/uitest.sh "DD tmp <任務名>"` 跑。
 - 互動驗收：跑測試時設 `TEST_RUNNER_DAYDO_SHOTS=<目錄>`，`DayDoUITests` 的 `shot()` 會把截圖寫進去，再和 `design/shots` 或使用者給的參考圖對照。
 
-## 發版（TestFlight）
+## 發版
 
-發版前讀 `ios/RELEASE.md`。一律從合併後的 main 打包；新 build 只發「自己」，發給「家人」要使用者明說這版已穩定。
+發版前讀 `ios/RELEASE.md`。一律從合併後的 main 打包；新 build 只發「自己」，發給「家人」要使用者明說這版已穩定。「發版」沒指明平台時只發 TestFlight；Mac 版（Homebrew）要使用者明說。
 
 ## 第二階段（進行中）
 
