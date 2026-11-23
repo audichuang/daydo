@@ -72,6 +72,8 @@ else
   # Developer ID 私鑰在獨立的 codexbar-signing 鑰匙圈；鎖著時 codesign 會跳密碼視窗，xcodebuild 就無聲卡住。
   set -a; . ~/.config/op/agent-sa.env; set +a
   KC_PW="$(op read 'op://Agent/codexbar-signing keychain password/password')"
+  # 鑰匙圈曾卡在「拒絕正確密碼」的狀態，先鎖上再解鎖才恢復（2026-11-24）。
+  security lock-keychain ~/Library/Keychains/codexbar-signing.keychain-db
   security unlock-keychain -p "$KC_PW" ~/Library/Keychains/codexbar-signing.keychain-db
   unset KC_PW
 
