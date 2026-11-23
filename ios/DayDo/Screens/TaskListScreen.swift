@@ -35,7 +35,23 @@ struct TaskListScreen: View {
         query.loadedKey?.scope == scope ? query.value : []
     }
 
+    private var isKanbanMode: Bool {
+        model.isKanbanScope(scope)
+    }
+
+    private var kanbanSections: [TaskSection] {
+        let hideCompleted = closed.contains(TaskSection.Kind.completed.id)
+        return visibleSections.filter { sec in
+            sec.kind != .completed || !hideCompleted
+        }
+    }
+
     private var orderedVisibleTaskRows: [TaskRowSelection] {
+        if isKanbanMode {
+            return kanbanSections.flatMap { sec in
+                sec.tasks.map { TaskRowSelection(sectionId: sec.id, taskId: $0.id) }
+            }
+        }
         let closedSet = closed
         return visibleSections
             .filter { !closedSet.contains($0.id) }
@@ -61,6 +77,14 @@ struct TaskListScreen: View {
         Platform.isMac && model.canCompose(in: scope)
     }
 
+    private var editableCustomProject: Project? {
+        guard case .project(let id) = scope,
+              let proj = model.project(id),
+              !proj.isInbox,
+              !proj.isViewer else { return nil }
+        return proj
+    }
+
     var body: some View {
         @Bindable var model = model
         ZStack(alignment: .bottomTrailing) {
@@ -68,82 +92,10 @@ struct TaskListScreen: View {
                 Palette.background.ignoresSafeArea()
             }
             ZStack(alignment: .top) {
-                ScrollViewReader { scrollProxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: Platform.isMac ? 10 : 16) {
-                            if Platform.isMac {
-                                Text(subtitle)
-                                    .txt(12)
-                                    .foregroundStyle(Palette.textSecondary)
-                                    .contentTransition(reduceMotion ? .identity : .numericText())
-                                    .animation(isScopeLoaded ? Motion.count(reduceMotion) : nil, value: subtitle)
-                                    .padding(.horizontal, 4)
-                                if scope == .smart(.all) && model.filterMembers.count > 1 {
-                                    MemberFilterChips(
-                                        members: model.filterMembers,
-                                        selection: Binding(get: { model.effectiveAllMemberFilter }, set: { model.allMemberFilter = $0 })
-                                    )
-                                }
-                                if showQuickAdd {
-                                    quickAddBar
-                                }
-                            } else {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(model.scopeTitle(scope)).txt(30, .bold).foregroundStyle(Palette.text)
-                                    Text(subtitle)
-                                        .txt(14)
-                                        .foregroundStyle(Palette.textSecondary)
-                                        .contentTransition(reduceMotion ? .identity : .numericText())
-                                        .animation(isScopeLoaded ? Motion.count(reduceMotion) : nil, value: subtitle)
-                                    if scope == .smart(.all) && model.filterMembers.count > 1 {
-                                        MemberFilterChips(
-                                            members: model.filterMembers,
-                                            selection: Binding(get: { model.effectiveAllMemberFilter }, set: { model.allMemberFilter = $0 })
-                                        )
-                                            .padding(.top, 10)
-                                    }
-                                }
-                                .padding(.horizontal, 4)
-                            }
-
-                            if isScopeLoaded && visibleSections.isEmpty {
-                                EmptyState(scope: scope)
-                                    .id(SectionViewID(scope: query.loadedKey?.scope, sectionId: "__empty"))
-                                    .transition(.opacity)
-                            }
-                            ForEach(visibleSections) { sec in
-                                SectionCard(section: sec, scope: scope, closed: closed.contains(sec.id)) { toggle(sec.id) }
-                                    .id(SectionViewID(scope: query.loadedKey?.scope, sectionId: sec.id))
-                                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
-                            }
-                            if visibleSections.contains(where: \.hasMore) {
-                                Button { loadMore() } label: {
-                                    Text("載入更多").txt(13, .semibold).foregroundStyle(accent.text)
-                                        .frame(maxWidth: .infinity, minHeight: 36)
-                                }
-                                .buttonStyle(.press)
-                                .hoverEffect(.highlight)
-                            } else if !visibleSections.isEmpty {
-                                Text("已顯示全部").txt(12).foregroundStyle(Palette.textFaint).frame(maxWidth: .infinity).padding(.vertical, 4)
-                            }
-                        }
-                        .padding(.horizontal, Platform.isMac ? 12 : 16)
-                        .padding(.top, isRegular ? (Platform.isMac ? 8 : 12) : 60)
-                        .padding(.bottom, isRegular ? (showComposeFAB ? 96 : 24) : 170)
-                        .enclosingScrollsToTop(isActive)
-                    }
-                    .scrollPosition($scrollPosition)
-                    .scrollIndicators(.hidden)
-                    .onChange(of: model.selectionScrollTrigger) { _, _ in
-                        guard isActive else { return }
-                        let target = model.selectedTaskRow ?? model.selectedTaskId.flatMap { id in
-                            orderedVisibleTaskRows.first { $0.taskId == id }
-                        }
-                        guard let target else { return }
-                        withAnimation(Motion.layout(reduceMotion)) {
-                            scrollProxy.scrollTo(target)
-                        }
-                    }
+                if isKanbanMode {
+                    kanbanContent
+                } else {
+                    listContent
                 }
 
                 if !isRegular {
@@ -171,6 +123,11 @@ struct TaskListScreen: View {
                 if !Platform.isMac && isDuplicatingCurrentProject {
                     ToolbarItem(placement: .principal) {
                         duplicatingStatusView
+                    }
+                }
+                if Platform.isMac, let proj = editableCustomProject {
+                    ToolbarItem(placement: .topBarLeading) {
+                        projectViewModeSwitcher(for: proj)
                     }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -217,6 +174,171 @@ struct TaskListScreen: View {
                 quickAddFocused = false
             }
         }
+    }
+
+    private var listContent: some View {
+        @Bindable var model = model
+        return ScrollViewReader { scrollProxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: Platform.isMac ? 10 : 16) {
+                    if Platform.isMac {
+                        Text(subtitle)
+                            .txt(12)
+                            .foregroundStyle(Palette.textSecondary)
+                            .contentTransition(reduceMotion ? .identity : .numericText())
+                            .animation(isScopeLoaded ? Motion.count(reduceMotion) : nil, value: subtitle)
+                            .padding(.horizontal, 4)
+                        if scope == .smart(.all) && model.filterMembers.count > 1 {
+                            MemberFilterChips(
+                                members: model.filterMembers,
+                                selection: Binding(get: { model.effectiveAllMemberFilter }, set: { model.allMemberFilter = $0 })
+                            )
+                        }
+                        if showQuickAdd {
+                            quickAddBar
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(model.scopeTitle(scope)).txt(30, .bold).foregroundStyle(Palette.text)
+                            Text(subtitle)
+                                .txt(14)
+                                .foregroundStyle(Palette.textSecondary)
+                                .contentTransition(reduceMotion ? .identity : .numericText())
+                                .animation(isScopeLoaded ? Motion.count(reduceMotion) : nil, value: subtitle)
+                            if scope == .smart(.all) && model.filterMembers.count > 1 {
+                                MemberFilterChips(
+                                    members: model.filterMembers,
+                                    selection: Binding(get: { model.effectiveAllMemberFilter }, set: { model.allMemberFilter = $0 })
+                                )
+                                    .padding(.top, 10)
+                            }
+                        }
+                        .padding(.horizontal, 4)
+                    }
+
+                    if isScopeLoaded && visibleSections.isEmpty {
+                        EmptyState(scope: scope)
+                            .id(SectionViewID(scope: query.loadedKey?.scope, sectionId: "__empty"))
+                            .transition(.opacity)
+                    }
+                    ForEach(visibleSections) { sec in
+                        SectionCard(section: sec, scope: scope, closed: closed.contains(sec.id)) { toggle(sec.id) }
+                            .id(SectionViewID(scope: query.loadedKey?.scope, sectionId: sec.id))
+                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                    }
+                    if visibleSections.contains(where: \.hasMore) {
+                        Button { loadMore() } label: {
+                            Text("載入更多").txt(13, .semibold).foregroundStyle(accent.text)
+                                .frame(maxWidth: .infinity, minHeight: 36)
+                        }
+                        .buttonStyle(.press)
+                        .hoverEffect(.highlight)
+                    } else if !visibleSections.isEmpty {
+                        Text("已顯示全部").txt(12).foregroundStyle(Palette.textFaint).frame(maxWidth: .infinity).padding(.vertical, 4)
+                    }
+                }
+                .padding(.horizontal, Platform.isMac ? 12 : 16)
+                .padding(.top, isRegular ? (Platform.isMac ? 8 : 12) : 60)
+                .padding(.bottom, isRegular ? (showComposeFAB ? 96 : 24) : 170)
+                .enclosingScrollsToTop(isActive)
+            }
+            .scrollPosition($scrollPosition)
+            .scrollIndicators(.hidden)
+            .onChange(of: model.selectionScrollTrigger) { _, _ in
+                guard isActive else { return }
+                let target = model.selectedTaskRow ?? model.selectedTaskId.flatMap { id in
+                    orderedVisibleTaskRows.first { $0.taskId == id }
+                }
+                guard let target else { return }
+                withAnimation(Motion.layout(reduceMotion)) {
+                    scrollProxy.scrollTo(target)
+                }
+            }
+        }
+    }
+
+    private var kanbanContent: some View {
+        VStack(alignment: .leading, spacing: Platform.isMac ? 10 : 12) {
+            VStack(alignment: .leading, spacing: Platform.isMac ? 10 : 2) {
+                if Platform.isMac {
+                    Text(subtitle)
+                        .txt(12)
+                        .foregroundStyle(Palette.textSecondary)
+                        .contentTransition(reduceMotion ? .identity : .numericText())
+                        .animation(isScopeLoaded ? Motion.count(reduceMotion) : nil, value: subtitle)
+                        .padding(.horizontal, 4)
+                    if showQuickAdd {
+                        quickAddBar
+                    }
+                } else {
+                    Text(model.scopeTitle(scope)).txt(30, .bold).foregroundStyle(Palette.text)
+                    Text(subtitle)
+                        .txt(14)
+                        .foregroundStyle(Palette.textSecondary)
+                        .contentTransition(reduceMotion ? .identity : .numericText())
+                        .animation(isScopeLoaded ? Motion.count(reduceMotion) : nil, value: subtitle)
+                }
+            }
+            .padding(.horizontal, Platform.isMac ? 12 : 16)
+            .padding(.top, isRegular ? (Platform.isMac ? 8 : 12) : 60)
+
+            if isScopeLoaded && kanbanSections.isEmpty {
+                EmptyState(scope: scope)
+                    .padding(.horizontal, Platform.isMac ? 12 : 16)
+                Spacer(minLength: 0)
+            } else {
+                GeometryReader { geo in
+                    let colWidth: CGFloat = isRegular ? 272 : max(240, min(320, geo.size.width * 0.8))
+                    ScrollView(.horizontal) {
+                        HStack(alignment: .top, spacing: 12) {
+                            ForEach(kanbanSections) { sec in
+                                KanbanColumn(
+                                    section: sec,
+                                    columnWidth: colWidth,
+                                    isViewerScope: isViewerScope,
+                                    bottomPadding: isRegular ? (showComposeFAB ? 96 : 16) : 150,
+                                    onLoadMore: sec.hasMore ? { loadMore() } : nil,
+                                    onDropTask: { taskId in handleKanbanDrop(taskId: taskId, onto: sec) }
+                                )
+                                .id(SectionViewID(scope: query.loadedKey?.scope, sectionId: sec.id))
+                            }
+                        }
+                        .padding(.horizontal, Platform.isMac ? 12 : 16)
+                        .padding(.bottom, 12)
+                    }
+                    .scrollIndicators(.hidden)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func handleKanbanDrop(taskId: String, onto targetSection: TaskSection) -> Bool {
+        guard !isViewerScope else { return false }
+        guard !targetSection.tasks.contains(where: { $0.id == taskId }) else { return false }
+        guard let sourceSection = visibleSections.first(where: { $0.tasks.contains { $0.id == taskId } }),
+              let task = sourceSection.tasks.first(where: { $0.id == taskId }) else {
+            return false
+        }
+        guard !model.isViewer(projectId: task.projectId) else { return false }
+        guard let action = KanbanDrop.action(
+            for: task,
+            from: sourceSection.kind,
+            to: targetSection.kind,
+            today: model.today
+        ) else {
+            return false
+        }
+        switch action {
+        case .moveSchedule(let schedule):
+            Task { await model.moveTask(task, to: schedule) }
+        case .clearSchedule:
+            model.updateTask(task.id) { $0.schedule = .clear }
+        case .complete:
+            guard !model.displaysCompleted(task) else { return false }
+            model.toggleComplete(task)
+        }
+        return true
     }
 
     private var quickAddBar: some View {
@@ -294,10 +416,12 @@ struct TaskListScreen: View {
                     let currentView = proj?.viewMode ?? "list"
                     if !(proj?.isViewer ?? false) {
                         Button("編輯", systemImage: "slider.horizontal.3") { model.editingProjectId = id }
-                        Menu("視圖", systemImage: "rectangle.grid.1x2") {
-                            viewMenuItem("列表", mode: "list", current: currentView, projectId: id)
-                            viewMenuItem("看板", mode: "kanban", current: currentView, projectId: id)
-                            viewMenuItem("時間軸", mode: "timeline", current: currentView, projectId: id)
+                        if !Platform.isMac {
+                            Menu("視圖", systemImage: "rectangle.grid.1x2") {
+                                viewMenuItem("列表", mode: "list", current: currentView, projectId: id)
+                                viewMenuItem("看板", mode: "kanban", current: currentView, projectId: id)
+                                viewMenuItem("時間軸", mode: "timeline", current: currentView, projectId: id)
+                            }
                         }
                     }
                 }
@@ -374,13 +498,43 @@ struct TaskListScreen: View {
         withAnimation(Motion.layout(reduceMotion)) { closedRaw = c.sorted().joined(separator: ",") }
     }
 
+    private func setProjectViewMode(_ mode: String, projectId: String) {
+        var u = UpdateProjectInput(projectId: projectId)
+        u.viewMode = mode
+        let input = u
+        Task { await model.perform { try await $0.updateProject(input) } }
+    }
+
+    @ViewBuilder
+    private func projectViewModeSwitcher(for project: Project) -> some View {
+        let current = project.viewMode == "kanban" ? "kanban" : "list"
+        Picker("視圖", selection: Binding(
+            get: { current },
+            set: { mode in
+                guard mode != current else { return }
+                setProjectViewMode(mode, projectId: project.id)
+            }
+        )) {
+            Image(systemName: "list.bullet")
+                .help("列表")
+                .accessibilityLabel("列表")
+                .tag("list")
+            Image(systemName: "rectangle.split.3x1")
+                .help("看板")
+                .accessibilityLabel("看板")
+                .tag("kanban")
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+        .fixedSize()
+        .accessibilityIdentifier("taskList.viewModeSwitcher")
+    }
+
     @ViewBuilder
     func viewMenuItem(_ title: String, mode: String, current: String, projectId: String) -> some View {
         Button {
-            var u = UpdateProjectInput(projectId: projectId)
-            u.viewMode = mode
-            let input = u
-            Task { await model.perform { try await $0.updateProject(input) } }
+            setProjectViewMode(mode, projectId: projectId)
         } label: {
             if current == mode {
                 Label(title, systemImage: "checkmark")
@@ -427,6 +581,189 @@ struct TaskListScreen: View {
 
 struct TaskReload: Hashable { var scope: TaskScope; var revision: Int; var limit: Int?; var memberId: String? }
 private struct SectionViewID: Hashable { var scope: TaskScope?; var sectionId: String }
+
+/// Pure drag-and-drop rules for Kanban columns, shared by the UI and unit tests.
+enum KanbanDrop {
+    enum Action: Equatable, Sendable {
+        case moveSchedule(Schedule)
+        case clearSchedule
+        case complete
+    }
+
+    static func acceptsDrops(sectionKind: TaskSection.Kind) -> Bool {
+        switch sectionKind {
+        case .today, .tomorrow, .noDate, .completed:
+            return true
+        case .overdue, .later, .trash, .day, .other:
+            return false
+        }
+    }
+
+    static func action(
+        for task: TodoTask,
+        from sourceSection: TaskSection.Kind?,
+        to targetSection: TaskSection.Kind,
+        today: LocalDay
+    ) -> Action? {
+        guard acceptsDrops(sectionKind: targetSection) else { return nil }
+        if sourceSection == targetSection { return nil }
+        if sourceSection == .completed || task.isCompleted { return nil }
+
+        switch targetSection {
+        case .today:
+            return .moveSchedule(task.schedule?.moved(to: today) ?? .allDay(today))
+        case .tomorrow:
+            let tomorrow = today.adding(days: 1)
+            return .moveSchedule(task.schedule?.moved(to: tomorrow) ?? .allDay(tomorrow))
+        case .noDate:
+            guard task.schedule != nil else { return nil }
+            return .clearSchedule
+        case .completed:
+            return .complete
+        case .overdue, .later, .trash, .day, .other:
+            return nil
+        }
+    }
+}
+
+private struct KanbanColumn: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.accent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var section: TaskSection
+    var columnWidth: CGFloat
+    var isViewerScope: Bool
+    var bottomPadding: CGFloat
+    var onLoadMore: (() -> Void)?
+    var onDropTask: (String) -> Bool
+
+    @State private var isDropTargeted = false
+
+    private var cornerRadius: CGFloat { Platform.isMac ? 12 : 16 }
+    private var cardRadius: CGFloat { Platform.isMac ? 8 : 12 }
+
+    private var titleColor: Color {
+        switch section.kind {
+        case .overdue: Palette.overdue
+        case .completed, .trash: Palette.textSecondary
+        default: Palette.text
+        }
+    }
+
+    private var acceptsDrops: Bool {
+        !isViewerScope && KanbanDrop.acceptsDrops(sectionKind: section.kind)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text(section.title).txt(15, .bold).foregroundStyle(titleColor)
+                Spacer()
+                if section.kind == .overdue,
+                   !isViewerScope,
+                   !model.editableTaskIds(in: section.tasks).isEmpty {
+                    Button("全部延到今天") {
+                        model.postponeOverdue(tasks: section.tasks)
+                    }
+                    .txt(12, .semibold).foregroundStyle(accent.text).buttonStyle(.press)
+                    .hoverEffect(.highlight)
+                }
+                Text("\(section.tasks.count)")
+                    .txt(13)
+                    .foregroundStyle(Palette.textTertiary)
+                    .contentTransition(reduceMotion ? .identity : .numericText())
+            }
+            .padding(.horizontal, Platform.isMac ? 12 : 14)
+            .frame(minHeight: Platform.isMac ? 38 : 44)
+
+            ScrollView(.vertical) {
+                LazyVStack(spacing: 8) {
+                    ForEach(section.tasks) { t in
+                        let draggable = !isViewerScope && !model.isViewer(projectId: t.projectId)
+                        TaskRow(
+                            task: t,
+                            separator: false,
+                            sectionKind: section.kind,
+                            sectionId: section.id,
+                            inTrash: false,
+                            selectsInline: true,
+                            showProject: false
+                        )
+                        .background(Palette.raised, in: RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
+                                .strokeBorder(Palette.separatorSoft, lineWidth: 1)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
+                        .kanbanDraggable(t.id, enabled: draggable)
+                        .id(TaskRowSelection(sectionId: section.id, taskId: t.id))
+                        .transition(Motion.rowTransition(reduceMotion))
+                    }
+                    if let onLoadMore {
+                        Button(action: onLoadMore) {
+                            Text("載入更多").txt(13, .semibold).foregroundStyle(accent.text)
+                                .frame(maxWidth: .infinity, minHeight: 34)
+                        }
+                        .buttonStyle(.press)
+                        .hoverEffect(.highlight)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 2)
+                .padding(.bottom, bottomPadding)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .frame(width: columnWidth)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(isDropTargeted ? accent.soft.opacity(0.6) : Palette.card, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(accent.color, lineWidth: 2)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .animation(Motion.toggle(reduceMotion), value: isDropTargeted)
+        .modifier(KanbanColumnDropModifier(
+            enabled: acceptsDrops,
+            isTargeted: $isDropTargeted,
+            onDropTaskId: onDropTask
+        ))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("kanban.column.\(section.id)")
+    }
+}
+
+private struct KanbanColumnDropModifier: ViewModifier {
+    var enabled: Bool
+    @Binding var isTargeted: Bool
+    var onDropTaskId: (String) -> Bool
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.dropDestination(for: String.self) { items, _ in
+                guard let taskId = items.first else { return false }
+                return onDropTaskId(taskId)
+            } isTargeted: { targeted in
+                isTargeted = targeted
+            }
+        } else {
+            content
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func kanbanDraggable(_ taskId: String, enabled: Bool) -> some View {
+        if enabled {
+            self.draggable(taskId)
+        } else {
+            self
+        }
+    }
+}
 
 struct SectionCard: View {
     @Environment(AppModel.self) private var model

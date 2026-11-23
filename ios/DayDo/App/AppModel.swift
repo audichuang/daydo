@@ -226,6 +226,14 @@ final class AppModel {
         }
     }
 
+    /// Whether `scope` renders as a Kanban board (custom non-inbox lists with `viewMode == "kanban"`).
+    func isKanbanScope(_ scope: TaskScope) -> Bool {
+        guard case .project(let id) = scope,
+              let proj = project(id),
+              !proj.isInbox else { return false }
+        return proj.viewMode == "kanban"
+    }
+
     func composeRequest(for scope: TaskScope) -> ComposeRequest {
         var req = ComposeRequest()
         switch scope {

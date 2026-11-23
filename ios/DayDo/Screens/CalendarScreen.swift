@@ -639,20 +639,36 @@ struct CalendarScreen: View {
                 .scrollPosition($yearScrollPosition)
                 .gesture(horizontalOnlySwipe)
             case .month:
-                ScrollView {
-                    ZStack {
-                        eventMonth
-                            .id("month-\(pageSequence)")
-                            .transition(pageTransition)
+                if Platform.isMac {
+                    GeometryReader { geo in
+                        ZStack {
+                            macEventMonth(availableHeight: geo.size.height)
+                                .id("month-\(pageSequence)")
+                                .transition(pageTransition)
+                        }
+                        .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+                        .modifier(HorizontalDragOffsetModifier(drag: drag, reduceMotion: reduceMotion))
+                        .clipped()
                     }
-                    .modifier(HorizontalDragOffsetModifier(drag: drag, reduceMotion: reduceMotion))
-                    .clipped()
-                    .padding(.horizontal, isRegular ? 16 : 8)
-                    .padding(.bottom, isRegular ? 32 : 170)
-                    .enclosingScrollsToTop(isActive)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+                    .gesture(horizontalOnlySwipe)
+                } else {
+                    ScrollView {
+                        ZStack {
+                            eventMonth
+                                .id("month-\(pageSequence)")
+                                .transition(pageTransition)
+                        }
+                        .modifier(HorizontalDragOffsetModifier(drag: drag, reduceMotion: reduceMotion))
+                        .clipped()
+                        .padding(.horizontal, isRegular ? 16 : 8)
+                        .padding(.bottom, isRegular ? 32 : 170)
+                        .enclosingScrollsToTop(isActive)
+                    }
+                    .scrollPosition($monthScrollPosition)
+                    .gesture(horizontalOnlySwipe)
                 }
-                .scrollPosition($monthScrollPosition)
-                .gesture(horizontalOnlySwipe)
             case .week, .threeDay, .day:
                 let days = rangeDays
                 let timeGrid = cache.timeGridData(
@@ -837,6 +853,8 @@ struct CalendarScreen: View {
 
     // MARK: 月 — event bars
 
+    private static let macMonthWeekdayHeaderHeight: CGFloat = 26
+
     var eventMonth: some View {
         let weeks = cache.monthWeeks(
             tasksVersion: tasksVersion,
@@ -860,6 +878,47 @@ struct CalendarScreen: View {
                     openTaskOrPopover(id, rect: rect)
                 }
                 .equatable()
+            }
+        }
+    }
+
+    private func macEventMonth(availableHeight: CGFloat) -> some View {
+        let weekCount = max(1, cache.gridDays(for: shownMonth).count / 7)
+        let gridHeight = max(0, availableHeight - Self.macMonthWeekdayHeaderHeight)
+        let cellHeight = gridHeight / CGFloat(weekCount)
+        let maxLanes = CalendarDerivedCache.macMonthMaxLanes(forCellHeight: cellHeight)
+        let weeks = cache.monthWeeks(
+            tasksVersion: tasksVersion,
+            projectFilter: projectFilter,
+            month: shownMonth,
+            projects: model.projects,
+            tasks: tasks,
+            maxLanes: maxLanes
+        )
+        return VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(LocalDay.weekdaySymbols, id: \.self) {
+                    Text($0).txt(12, .medium).foregroundStyle(Palette.textTertiary).frame(maxWidth: .infinity)
+                }
+            }
+            .frame(height: Self.macMonthWeekdayHeaderHeight)
+
+            VStack(spacing: 0) {
+                ForEach(Array(weeks.enumerated()), id: \.offset) { _, w in
+                    WeekRow(week: w, month: shownMonth, today: model.today, reduceMotion: reduceMotion, fillHeight: true) { d in
+                        shiftPage(direction: 0) {
+                            selected = d
+                            modeRaw = CalMode.day.rawValue
+                        }
+                    } open: { id, rect in
+                        openTaskOrPopover(id, rect: rect)
+                    }
+                    .equatable()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay {
+                Rectangle().strokeBorder(Palette.separator, lineWidth: 1)
             }
         }
     }
@@ -889,6 +948,7 @@ private struct WeekRowBar: Equatable {
     var colorHex: String?
     var isCompleted: Bool
     var timedPrefix: String
+    var startTimeText: String?
     var startColumn: Int
     var endColumn: Int
     var lane: Int
@@ -907,6 +967,14 @@ private struct WeekRowModel: Equatable {
 @MainActor
 private final class CalendarDerivedCache {
     private static let laneHeight: CGFloat = 17
+    static let macMonthLaneHeight: CGFloat = 18
+    static let macMonthTopInset: CGFloat = 34
+    static let macMonthOverflowReserve: CGFloat = 18
+
+    static func macMonthMaxLanes(forCellHeight cellHeight: CGFloat) -> Int {
+        let available = cellHeight - macMonthTopInset - macMonthOverflowReserve
+        return max(1, Int(floor(available / macMonthLaneHeight)))
+    }
 
     private var gridMonth: LocalDay?
     private var cachedGridDays: [LocalDay] = []
@@ -924,7 +992,7 @@ private final class CalendarDerivedCache {
     private var dayItemsKey: (Int, String?, LocalDay)?
     private var cachedDayItems: [TodoTask] = []
 
-    private var monthWeeksKey: (Int, String?, LocalDay, Int)?
+    private var monthWeeksKey: (Int, String?, LocalDay, Int, Int)?
     private var cachedMonthWeeks: [WeekRowModel] = []
 
     private var busyKey: (Int, String?, Int)?
@@ -1006,16 +1074,23 @@ private final class CalendarDerivedCache {
         projectFilter: String?,
         month: LocalDay,
         projects: [Project],
-        tasks: [TodoTask]
+        tasks: [TodoTask],
+        maxLanes: Int = 5
     ) -> [WeekRowModel] {
         let first = month.firstOfMonth
         let (cVer, map) = resolveColorMap(for: projects)
-        if let key = monthWeeksKey, key.0 == tasksVersion, key.1 == projectFilter, key.2 == first, key.3 == cVer {
+        let clampedLanes = max(1, maxLanes)
+        if let key = monthWeeksKey,
+           key.0 == tasksVersion,
+           key.1 == projectFilter,
+           key.2 == first,
+           key.3 == cVer,
+           key.4 == clampedLanes {
             return cachedMonthWeeks
         }
         let days = gridDays(for: first)
         let items = filteredTasks(tasksVersion: tasksVersion, projectFilter: projectFilter, tasks: tasks)
-        let layout = MonthLayout(days: days, tasks: items, maxLanes: 5)
+        let layout = MonthLayout(days: days, tasks: items, maxLanes: clampedLanes)
         let weeks = layout.weeks.map { week -> WeekRowModel in
             let bars = week.bars.map { bar in
                 WeekRowBar(
@@ -1024,6 +1099,7 @@ private final class CalendarDerivedCache {
                     colorHex: map[bar.task.projectId],
                     isCompleted: bar.task.isCompleted,
                     timedPrefix: bar.task.schedule?.startMinute.map { "[\(DateText.hm($0))] " } ?? "",
+                    startTimeText: bar.task.schedule?.startMinute.map { DateText.hm($0) },
                     startColumn: bar.startColumn,
                     endColumn: bar.endColumn,
                     lane: bar.lane,
@@ -1036,7 +1112,7 @@ private final class CalendarDerivedCache {
             let rowHeight = 36 + Self.laneHeight * CGFloat(visibleLanes) + bottomPad
             return WeekRowModel(days: week.days, bars: bars, overflow: week.overflow, rowHeight: rowHeight)
         }
-        monthWeeksKey = (tasksVersion, projectFilter, first, cVer)
+        monthWeeksKey = (tasksVersion, projectFilter, first, cVer, clampedLanes)
         cachedMonthWeeks = weeks
         return weeks
     }
@@ -1499,16 +1575,24 @@ private struct WeekRow: View, Equatable {
     var month: LocalDay
     var today: LocalDay
     var reduceMotion: Bool
+    var fillHeight: Bool = false
     var pick: (LocalDay) -> Void
     var open: (String, CGRect) -> Void
 
-    let laneH: CGFloat = 17
+    private var laneH: CGFloat {
+        fillHeight ? CalendarDerivedCache.macMonthLaneHeight : 17
+    }
+
+    private var topInset: CGFloat {
+        fillHeight ? CalendarDerivedCache.macMonthTopInset : 36
+    }
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.week == rhs.week
             && lhs.month == rhs.month
             && lhs.today == rhs.today
             && lhs.reduceMotion == rhs.reduceMotion
+            && lhs.fillHeight == rhs.fillHeight
     }
 
     var body: some View {
@@ -1521,12 +1605,12 @@ private struct WeekRow: View, Equatable {
                         Button { pick(d) } label: {
                             VStack(spacing: 0) {
                                 Text("\(d.day)")
-                                    .font(.system(size: 14, weight: isToday ? .bold : .semibold))
+                                    .font(.system(size: fillHeight ? 13 : 14, weight: isToday ? .bold : .semibold))
                                     .foregroundStyle(isToday ? accent.onAccent : Palette.textDay)
-                                    .frame(width: 28, height: 28)
+                                    .frame(width: fillHeight ? 26 : 28, height: fillHeight ? 26 : 28)
                                     .background(Circle().fill(isToday ? accent.color : .clear))
                                     .padding(.top, 4)
-                                Spacer()
+                                Spacer(minLength: 0)
                                 if let n = week.overflow[i] {
                                     Text("+\(n)").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.textSecondary)
                                         .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 4).padding(.bottom, 2)
@@ -1537,12 +1621,21 @@ private struct WeekRow: View, Equatable {
                         }
                         .buttonStyle(.press(scale: 0.94, opacity: 0.88))
                         .opacity(d.month == month.month ? 1 : 0.4)
+                        .overlay(alignment: .leading) {
+                            if fillHeight && i > 0 {
+                                Rectangle().fill(Palette.separator).frame(width: 1)
+                            }
+                        }
                         .accessibilityLabel(DateText.full(d))
                     }
                 }
                 ForEach(Array(week.bars.enumerated()), id: \.offset) { _, bar in
                     let color = Palette.listColor(bar.colorHex)
                     let done = bar.isCompleted
+                    let barWidth = max(0, colW * CGFloat(bar.endColumn - bar.startColumn + 1) - 3)
+                    let showTrailingTime = fillHeight
+                        && bar.startTimeText != nil
+                        && barWidth >= (bar.startColumn == bar.endColumn ? 124 : 96)
                     CalendarTaskAnchorButton(action: { rect in open(bar.taskId, rect) }) {
                         HStack(spacing: 0) {
                             Rectangle().fill(color).frame(width: 2)
@@ -1551,19 +1644,34 @@ private struct WeekRow: View, Equatable {
                                 .foregroundStyle(done ? Palette.done : Palette.text.opacity(0.92))
                                 .strikethrough(done)
                                 .lineLimit(1)
-                                .padding(.horizontal, 3)
+                                .padding(.leading, 3)
+                                .padding(.trailing, showTrailingTime ? 4 : 3)
                             Spacer(minLength: 0)
+                            if showTrailingTime, let timeText = bar.startTimeText {
+                                Text(timeText)
+                                    .font(.system(size: 10, weight: .regular))
+                                    .monospacedDigit()
+                                    .foregroundStyle(Palette.textSecondary)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                    .padding(.trailing, 4)
+                            }
                         }
-                        .frame(width: colW * CGFloat(bar.endColumn - bar.startColumn + 1) - 3, height: laneH - 2, alignment: .leading)
+                        .frame(width: barWidth, height: laneH - 2, alignment: .leading)
                         .background(RoundedRectangle(cornerRadius: 3).fill(color.opacity(done ? 0.1 : 0.28)))
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
                     .buttonStyle(.press(scale: 0.96, opacity: 0.88))
-                    .offset(x: colW * CGFloat(bar.startColumn) + 1.5, y: 36 + CGFloat(bar.lane) * laneH)
+                    .offset(x: colW * CGFloat(bar.startColumn) + 1.5, y: topInset + CGFloat(bar.lane) * laneH)
                 }
             }
         }
-        .frame(height: week.rowHeight)
+        .frame(height: fillHeight ? nil : week.rowHeight)
+        .frame(maxHeight: fillHeight ? .infinity : nil)
+        .overlay(alignment: .top) {
+            if fillHeight {
+                Rectangle().fill(Palette.separator).frame(height: 1)
+            }
+        }
     }
 }
 

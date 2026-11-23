@@ -22,4 +22,11 @@ enum Platform {
         scene.requestGeometryUpdate(.Mac(systemFrame: target))
 #endif
     }
+
+    @MainActor
+    static func hideMacWindowTitle(in scene: UIWindowScene) {
+#if targetEnvironment(macCatalyst)
+        scene.titlebar?.titleVisibility = .hidden
+#endif
+    }
 }

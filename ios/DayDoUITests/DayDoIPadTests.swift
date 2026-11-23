@@ -429,6 +429,50 @@ final class DayDoIPadTests: XCTestCase {
         assertSystemShareSheetPresented(context: "iPad ShareListSheet")
     }
 
+    @MainActor
+    func testIPadCustomListKanbanView() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "iPad only")
+        launchDemo(orientation: .landscapeLeft)
+        openListWorkFromSidebar()
+
+        let moreOptions = app.buttons["更多選項"]
+        XCTAssertTrue(moreOptions.waitForExistence(timeout: 3), app.debugDescription)
+        moreOptions.tap()
+        let viewMenu = app.buttons["視圖"]
+        XCTAssertTrue(viewMenu.waitForExistence(timeout: 3), app.debugDescription)
+        viewMenu.tap()
+        let kanbanItem = app.buttons["看板"]
+        XCTAssertTrue(kanbanItem.waitForExistence(timeout: 3), app.debugDescription)
+        kanbanItem.tap()
+
+        // Columns and cards from DemoData's 工作 list (已逾期 / 今天 / 明天 / 之後).
+        XCTAssertTrue(app.otherElements["kanban.column.overdue"].waitForExistence(timeout: 4), app.debugDescription)
+        XCTAssertTrue(app.otherElements["kanban.column.today"].exists, app.debugDescription)
+        XCTAssertTrue(app.otherElements["kanban.column.tomorrow"].exists, app.debugDescription)
+        XCTAssertTrue(app.staticTexts["今天"].exists)
+        XCTAssertTrue(app.staticTexts["明天"].exists)
+        let card = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).element(boundBy: 1)
+        XCTAssertTrue(card.waitForExistence(timeout: 3), app.debugDescription)
+        shot("ipad-landscape-kanban")
+
+        // Tapping a Kanban card opens inline detail on regular layout.
+        card.tap()
+        let titleField = app.descendants(matching: .any)["taskTitleField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(app.buttons["展開為全屏"].exists)
+
+        // Switch back to list view and verify Kanban columns disappear.
+        let navMoreOptions = app.navigationBars.buttons["更多選項"].firstMatch
+        XCTAssertTrue(navMoreOptions.waitForExistence(timeout: 3))
+        navMoreOptions.tap()
+        XCTAssertTrue(viewMenu.waitForExistence(timeout: 3))
+        viewMenu.tap()
+        let listItem = app.buttons["列表"]
+        XCTAssertTrue(listItem.waitForExistence(timeout: 3))
+        listItem.tap()
+        XCTAssertTrue(app.otherElements["kanban.column.today"].waitForNonExistence(timeout: 3))
+    }
+
     private func assertSystemShareSheetPresented(context: String, file: StaticString = #filePath, line: UInt = #line) {
         let activityList = app.otherElements["ActivityListView"]
         let copyAction = app.buttons.matching(NSPredicate(format: "label == '拷貝' OR label == 'Copy'")).firstMatch

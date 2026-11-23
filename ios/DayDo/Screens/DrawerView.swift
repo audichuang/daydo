@@ -177,7 +177,9 @@ struct DrawerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            if !(Platform.isMac && isSidebar) {
+                header
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     smartRow(.today, "今天", "sun.max", model.counts.today)
@@ -189,7 +191,7 @@ struct DrawerView: View {
                         smartRow(.assigned, "指派給我", "person", model.counts.assignedToMe)
                     }
 
-                    if isSidebar {
+                    if isSidebar && !Platform.isMac {
                         Rectangle().fill(Palette.separatorSoft).frame(height: 1)
                             .padding(.vertical, 6)
                             .padding(.horizontal, 8)
@@ -245,6 +247,7 @@ struct DrawerView: View {
                     }
                 }
                 .padding(.horizontal, 8)
+                .padding(.top, Platform.isMac && isSidebar ? 8 : 0)
                 .padding(.bottom, 20)
             }
             .background {
