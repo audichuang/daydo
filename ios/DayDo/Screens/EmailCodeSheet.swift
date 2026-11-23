@@ -33,9 +33,13 @@ final class EmailCodeFlow {
         return parts.count == 2 && !parts[0].isEmpty && !parts[1].isEmpty && !trimmedEmail.contains(where: \.isWhitespace)
     }
 
+    var isCurrentCodeAttempted: Bool {
+        code.count == 6 && attemptedCodes.contains(code)
+    }
+
     /// Single submission gate shared by auto-submit (Mac), Return/Enter, and the submit button.
     var canSubmitCode: Bool {
-        !busy && code.count == 6 && !attemptedCodes.contains(code)
+        !busy && code.count == 6 && !isCurrentCodeAttempted
     }
 
     @discardableResult
@@ -123,9 +127,19 @@ final class EmailCodeFlow {
             try await action(targetEmail, targetCode)
             return true
         } catch {
+            if !Self.isRejectedCodeError(error) {
+                attemptedCodes.remove(targetCode)
+            }
             errorText = AuthErrorMessage.text(for: error)
             return false
         }
+    }
+
+    private static func isRejectedCodeError(_ error: Error) -> Bool {
+        if let authError = error as? AuthError, case .invalidCode = authError {
+            return true
+        }
+        return false
     }
 }
 

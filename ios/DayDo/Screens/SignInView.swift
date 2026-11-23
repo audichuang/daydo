@@ -39,6 +39,14 @@ struct SignInView: View {
         model.isSigningIn || emailFlow.busy
     }
 
+    private var canSendMacEmailCode: Bool {
+        emailFlow.canSendCode && !model.isSigningIn
+    }
+
+    private var canSubmitMacEmailCode: Bool {
+        emailFlow.canSubmitCode && !model.isSigningIn
+    }
+
     var body: some View {
         ZStack {
             Palette.background.ignoresSafeArea()
@@ -321,8 +329,6 @@ struct SignInView: View {
     @ViewBuilder
     private var macFormPanel: some View {
         @Bindable var emailFlow = emailFlow
-        let canSend = emailFlow.canSendCode && !model.isSigningIn
-        let canSubmit = emailFlow.canSubmitCode && !model.isSigningIn
 
         VStack(alignment: .leading, spacing: 0) {
             Spacer(minLength: 0)
@@ -384,9 +390,9 @@ struct SignInView: View {
 
             Group {
                 if emailFlow.step == .enterEmail {
-                    macEmailStep(canSend: canSend)
+                    macEmailStep
                 } else {
-                    macCodeStep(canSubmit: canSubmit)
+                    macCodeStep
                 }
             }
             .animation(Motion.toggle(reduceMotion), value: emailFlow.step)
@@ -398,8 +404,9 @@ struct SignInView: View {
     }
 
     @ViewBuilder
-    private func macEmailStep(canSend: Bool) -> some View {
+    private var macEmailStep: some View {
         @Bindable var emailFlow = emailFlow
+        let canSend = canSendMacEmailCode
         let hasError = emailFlow.errorText != nil
         let isFocused = macFocusedField == .email
 
@@ -499,8 +506,9 @@ struct SignInView: View {
     }
 
     @ViewBuilder
-    private func macCodeStep(canSubmit: Bool) -> some View {
+    private var macCodeStep: some View {
         @Bindable var emailFlow = emailFlow
+        let canSubmit = canSubmitMacEmailCode
         let hasError = emailFlow.errorText != nil
         let isFocused = macFocusedField == .code
 
@@ -534,12 +542,12 @@ struct SignInView: View {
                         if filtered != oldValue, emailFlow.errorText != nil {
                             emailFlow.errorText = nil
                         }
-                        if emailFlow.canSubmitCode, !model.isSigningIn {
+                        if canSubmitMacEmailCode {
                             submitMacEmailCode()
                         }
                     }
                     .onSubmit {
-                        if canSubmit {
+                        if canSubmitMacEmailCode {
                             submitMacEmailCode()
                         } else if !macBusy {
                             focusMacField(.code)
@@ -589,6 +597,13 @@ struct SignInView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 8)
                     .accessibilityIdentifier("emailAuth.error")
+            } else if emailFlow.isCurrentCodeAttempted {
+                Text("這組驗證碼已試過，請輸入新的驗證碼或重新寄送")
+                    .txt(13)
+                    .foregroundStyle(Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
+                    .accessibilityIdentifier("emailAuth.attemptedHint")
             }
 
             Button {

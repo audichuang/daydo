@@ -1842,6 +1842,7 @@ final class EmailCodeFlowTests: XCTestCase {
         XCTAssertFalse(first)
         XCTAssertEqual(attempts, 1)
         XCTAssertNotNil(flow.errorText)
+        XCTAssertTrue(flow.isCurrentCodeAttempted)
         XCTAssertFalse(flow.canSubmitCode)
 
         // Pressing Enter or tapping submit again must not resend the same code.
@@ -1851,16 +1852,56 @@ final class EmailCodeFlowTests: XCTestCase {
         XCTAssertFalse(second)
         XCTAssertEqual(attempts, 1)
 
-        // Deleting one digit and typing it back must still block resubmission.
+        // Deleting one digit and typing it back must still block resubmission and report attempted state.
         flow.sanitizeCode("00000")
+        XCTAssertFalse(flow.isCurrentCodeAttempted)
         XCTAssertFalse(flow.canSubmitCode)
         flow.sanitizeCode("000000")
+        XCTAssertTrue(flow.isCurrentCodeAttempted)
         XCTAssertFalse(flow.canSubmitCode)
         let third = await flow.submitCode { _, _ in
             attempts += 1
         }
         XCTAssertFalse(third)
         XCTAssertEqual(attempts, 1)
+    }
+
+    func testOfflineOrRetryableErrorAllowsManualRetryOfSameCode() async {
+        let flow = EmailCodeFlow()
+        flow.email = "family@example.com"
+        _ = await flow.sendCode { _ in }
+
+        flow.sanitizeCode("123456")
+        XCTAssertTrue(flow.canSubmitCode)
+
+        var attempts = 0
+        let retryableResult = await flow.submitCode { _, _ in
+            attempts += 1
+            throw SyncError.retryable(retryAfter: 1, statusCode: nil, message: "offline")
+        }
+        XCTAssertFalse(retryableResult)
+        XCTAssertEqual(attempts, 1)
+        XCTAssertEqual(flow.errorText, "網路連線失敗，請再試一次")
+        XCTAssertFalse(flow.isCurrentCodeAttempted)
+        XCTAssertTrue(flow.canSubmitCode)
+
+        let urlErrorResult = await flow.submitCode { _, _ in
+            attempts += 1
+            throw URLError(.notConnectedToInternet)
+        }
+        XCTAssertFalse(urlErrorResult)
+        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(flow.errorText, "網路連線失敗，請再試一次")
+        XCTAssertFalse(flow.isCurrentCodeAttempted)
+        XCTAssertTrue(flow.canSubmitCode)
+
+        // Once back online, manual retry with the same valid code succeeds.
+        let recovered = await flow.submitCode { _, code in
+            attempts += 1
+            XCTAssertEqual(code, "123456")
+        }
+        XCTAssertTrue(recovered)
+        XCTAssertEqual(attempts, 3)
     }
 
     func testNewCodeAfterFailureCanBeSubmitted() async {
