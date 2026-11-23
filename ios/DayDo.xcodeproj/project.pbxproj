@@ -142,7 +142,7 @@
 		F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		F68BFC5798449FCFE7B82212 /* DayDoCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DayDoCore; path = ../DayDoCore; sourceTree = SOURCE_ROOT; };
 		F6BD3D5DF00E3413620F308D /* WeekAgendaGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeekAgendaGrid.swift; sourceTree = "<group>"; };
-		"TEMP_F1B7FADD-CA69-4259-8DD5-E47915C39C07" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		"TEMP_5A60F083-9635-4361-89C5-B8401B5116DE" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -323,10 +323,10 @@
 			path = DayDoUITests;
 			sourceTree = "<group>";
 		};
-		"TEMP_AC1A3A64-E816-4D7F-89DA-6123A061DD29" /* ios */ = {
+		"TEMP_0BC37581-B6FA-4C19-81FC-FB149CE49DC1" /* ios */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_F1B7FADD-CA69-4259-8DD5-E47915C39C07" /* Config.xcconfig */,
+				"TEMP_5A60F083-9635-4361-89C5-B8401B5116DE" /* Config.xcconfig */,
 			);
 			path = ios;
 			sourceTree = "<group>";
@@ -591,6 +591,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = DayDoWidgets/DayDoWidgets.entitlements;
+				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
 				INFOPLIST_FILE = DayDoWidgets/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -600,7 +601,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.audichuang.daydo.widgets;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = YES;
+				TARGETED_DEVICE_FAMILY = "1,2,6";
 			};
 			name = Release;
 		};
@@ -623,11 +625,12 @@
 		};
 		739B74DBC48851785BC9AAA2 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_F1B7FADD-CA69-4259-8DD5-E47915C39C07" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_5A60F083-9635-4361-89C5-B8401B5116DE" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = DayDo/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -636,7 +639,8 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.audichuang.daydo;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = YES;
+				TARGETED_DEVICE_FAMILY = "1,2,6";
 			};
 			name = Release;
 		};
@@ -736,11 +740,12 @@
 		};
 		B97B517B54A6D8DCCD7DFE92 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_F1B7FADD-CA69-4259-8DD5-E47915C39C07" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_5A60F083-9635-4361-89C5-B8401B5116DE" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = DayDo/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -749,7 +754,8 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.audichuang.daydo;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = YES;
+				TARGETED_DEVICE_FAMILY = "1,2,6";
 			};
 			name = Debug;
 		};
@@ -824,6 +830,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = DayDoWidgets/DayDoWidgets.entitlements;
+				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
 				INFOPLIST_FILE = DayDoWidgets/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -833,7 +840,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.audichuang.daydo.widgets;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = YES;
+				TARGETED_DEVICE_FAMILY = "1,2,6";
 			};
 			name = Debug;
 		};
