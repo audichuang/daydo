@@ -413,8 +413,12 @@ private struct RegularSplitView: View {
         .onChange(of: model.tab == .tasks) { _, isTasks in
             syncColumnVisibility(wide: isWide, isTasks: isTasks)
         }
-        .onChange(of: isKanban) { _, _ in
-            syncColumnVisibility(wide: isWide, isTasks: model.tab == .tasks)
+        .onChange(of: isKanban) { _, newIsKanban in
+            columnVisibility = RegularSplitVisibility.translatedForKanbanToggle(
+                current: columnVisibility,
+                toKanban: newIsKanban,
+                wide: isWide
+            )
         }
     }
 
@@ -434,23 +438,24 @@ private struct RegularSplitView: View {
     @ViewBuilder
     private var tasksSplitView: some View {
         if isKanban {
-            NavigationSplitView(columnVisibility: $columnVisibility) {
-                sidebar
-            } detail: {
-                HStack(spacing: 0) {
+            HStack(spacing: 0) {
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    sidebar
+                } detail: {
                     TaskListScreen(scope: model.scope)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if let taskId = model.selectedTaskId {
-                        Rectangle().fill(Palette.separator).frame(width: 1).ignoresSafeArea()
-                        TaskDetailContent(taskId: taskId, isInline: true) {
-                            model.selectedTaskId = nil
-                        }
-                        .id(taskId)
-                        .frame(width: Platform.isMac ? 380 : 360)
+                }
+                .navigationSplitViewStyle(.balanced)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if let taskId = model.selectedTaskId {
+                    Rectangle().fill(Palette.separator).frame(width: 1).ignoresSafeArea()
+                    TaskDetailContent(taskId: taskId, isInline: true) {
+                        model.selectedTaskId = nil
                     }
+                    .id(taskId)
+                    .frame(width: Platform.isMac ? 380 : 360)
                 }
             }
-            .navigationSplitViewStyle(.balanced)
         } else {
             NavigationSplitView(columnVisibility: $columnVisibility) {
                 sidebar
@@ -511,6 +516,28 @@ private struct RegularSplitView: View {
                 ideal: Platform.isMac ? 220 : 260,
                 max: Platform.isMac ? 260 : 300
             )
+    }
+}
+
+/// Converts `NavigationSplitViewVisibility` between 3-column list mode and 2-column
+/// Kanban mode while preserving whether the user currently has the sidebar open.
+enum RegularSplitVisibility {
+    static func translatedForKanbanToggle(
+        current: NavigationSplitViewVisibility,
+        toKanban: Bool,
+        wide: Bool
+    ) -> NavigationSplitViewVisibility {
+        if current == .automatic {
+            if wide { return .all }
+            return toKanban ? .detailOnly : .doubleColumn
+        }
+        if toKanban {
+            // 3-column -> 2-column: only `.all` had the sidebar visible.
+            return current == .all ? .all : .detailOnly
+        } else {
+            // 2-column -> 3-column: `.all` or `.doubleColumn` had the sidebar visible.
+            return (current == .all || current == .doubleColumn) ? .all : .doubleColumn
+        }
     }
 }
 

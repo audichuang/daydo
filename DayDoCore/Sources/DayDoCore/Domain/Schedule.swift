@@ -104,6 +104,11 @@ public struct Schedule: Codable, Hashable, Sendable {
         out.endDay = endDay?.adding(days: delta)
         return out
     }
+
+    /// Moves an existing schedule to `day` preserving time/duration, or creates an all-day schedule on `day`.
+    public static func moved(_ existing: Schedule?, to day: LocalDay) -> Schedule {
+        existing?.moved(to: day) ?? .allDay(day)
+    }
 }
 
 func minuteOfDay(_ date: Date, _ tz: TimeZone) -> Int {

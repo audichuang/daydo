@@ -445,10 +445,12 @@ final class DayDoIPadTests: XCTestCase {
         XCTAssertTrue(kanbanItem.waitForExistence(timeout: 3), app.debugDescription)
         kanbanItem.tap()
 
-        // Columns and cards from DemoData's 工作 list (已逾期 / 今天 / 明天 / 之後).
+        // Columns and cards from DemoData's 工作 list (已逾期 / 今天 / 明天 / 之後 + fixed 無日期 / 已完成).
         XCTAssertTrue(app.otherElements["kanban.column.overdue"].waitForExistence(timeout: 4), app.debugDescription)
         XCTAssertTrue(app.otherElements["kanban.column.today"].exists, app.debugDescription)
         XCTAssertTrue(app.otherElements["kanban.column.tomorrow"].exists, app.debugDescription)
+        XCTAssertTrue(app.otherElements["kanban.column.nodate"].exists, app.debugDescription)
+        XCTAssertTrue(app.otherElements["kanban.column.completed"].exists, app.debugDescription)
         XCTAssertTrue(app.staticTexts["今天"].exists)
         XCTAssertTrue(app.staticTexts["明天"].exists)
         let card = app.buttons.matching(NSPredicate(format: "label CONTAINS '準備週一產品會議簡報'")).element(boundBy: 1)

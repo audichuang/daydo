@@ -82,6 +82,28 @@ public enum TaskGrouping {
         }
         return out
     }
+
+    /// Expands list sections into Kanban columns in list order: optional 已逾期,
+    /// fixed 今天/明天, optional 之後, and fixed 無日期/已完成 (empty when absent).
+    public static func kanbanColumns(from sections: [TaskSection]) -> [TaskSection] {
+        let byKind = Dictionary(sections.map { ($0.kind, $0) }, uniquingKeysWith: { first, _ in first })
+        var out: [TaskSection] = []
+        if let overdue = byKind[.overdue], !overdue.tasks.isEmpty {
+            out.append(overdue)
+        }
+        out.append(byKind[.today] ?? TaskSection(kind: .today, title: "今天", tasks: []))
+        out.append(byKind[.tomorrow] ?? TaskSection(kind: .tomorrow, title: "明天", tasks: []))
+        if let later = byKind[.later], !later.tasks.isEmpty {
+            out.append(later)
+        }
+        out.append(byKind[.noDate] ?? TaskSection(kind: .noDate, title: "無日期", tasks: []))
+        out.append(byKind[.completed] ?? TaskSection(kind: .completed, title: "已完成", tasks: []))
+        let known: Set<TaskSection.Kind> = [.overdue, .today, .tomorrow, .later, .noDate, .completed]
+        for sec in sections where !known.contains(sec.kind) && !sec.tasks.isEmpty {
+            out.append(sec)
+        }
+        return out
+    }
 }
 
 /// Packs ordered inclusive column ranges into non-overlapping horizontal lanes

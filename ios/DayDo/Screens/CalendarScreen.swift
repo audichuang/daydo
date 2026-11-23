@@ -886,7 +886,7 @@ struct CalendarScreen: View {
         let weekCount = max(1, cache.gridDays(for: shownMonth).count / 7)
         let gridHeight = max(0, availableHeight - Self.macMonthWeekdayHeaderHeight)
         let cellHeight = gridHeight / CGFloat(weekCount)
-        let maxLanes = CalendarDerivedCache.macMonthMaxLanes(forCellHeight: cellHeight)
+        let maxLanes = CalendarMonthMetrics.macMonthMaxLanes(forCellHeight: cellHeight)
         let weeks = cache.monthWeeks(
             tasksVersion: tasksVersion,
             projectFilter: projectFilter,
@@ -962,19 +962,22 @@ private struct WeekRowModel: Equatable {
     var rowHeight: CGFloat
 }
 
-/// Caches derived calendar data by lightweight scalar/version keys so body
-/// re-evaluations never recompute MonthLayout, DayLayout, dot colors, or busy days.
-@MainActor
-private final class CalendarDerivedCache {
-    private static let laneHeight: CGFloat = 17
+enum CalendarMonthMetrics {
     static let macMonthLaneHeight: CGFloat = 18
     static let macMonthTopInset: CGFloat = 34
     static let macMonthOverflowReserve: CGFloat = 18
 
     static func macMonthMaxLanes(forCellHeight cellHeight: CGFloat) -> Int {
         let available = cellHeight - macMonthTopInset - macMonthOverflowReserve
-        return max(1, Int(floor(available / macMonthLaneHeight)))
+        return max(0, Int(floor(available / macMonthLaneHeight)))
     }
+}
+
+/// Caches derived calendar data by lightweight scalar/version keys so body
+/// re-evaluations never recompute MonthLayout, DayLayout, dot colors, or busy days.
+@MainActor
+private final class CalendarDerivedCache {
+    private static let laneHeight: CGFloat = 17
 
     private var gridMonth: LocalDay?
     private var cachedGridDays: [LocalDay] = []
@@ -1079,7 +1082,7 @@ private final class CalendarDerivedCache {
     ) -> [WeekRowModel] {
         let first = month.firstOfMonth
         let (cVer, map) = resolveColorMap(for: projects)
-        let clampedLanes = max(1, maxLanes)
+        let clampedLanes = max(0, maxLanes)
         if let key = monthWeeksKey,
            key.0 == tasksVersion,
            key.1 == projectFilter,
@@ -1580,11 +1583,11 @@ private struct WeekRow: View, Equatable {
     var open: (String, CGRect) -> Void
 
     private var laneH: CGFloat {
-        fillHeight ? CalendarDerivedCache.macMonthLaneHeight : 17
+        fillHeight ? CalendarMonthMetrics.macMonthLaneHeight : 17
     }
 
     private var topInset: CGFloat {
-        fillHeight ? CalendarDerivedCache.macMonthTopInset : 36
+        fillHeight ? CalendarMonthMetrics.macMonthTopInset : 36
     }
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
@@ -1634,12 +1637,14 @@ private struct WeekRow: View, Equatable {
                     let done = bar.isCompleted
                     let barWidth = max(0, colW * CGFloat(bar.endColumn - bar.startColumn + 1) - 3)
                     let showTrailingTime = fillHeight
+                        && !bar.continues
                         && bar.startTimeText != nil
-                        && barWidth >= (bar.startColumn == bar.endColumn ? 124 : 96)
+                        && barWidth >= (bar.startColumn == bar.endColumn ? 104 : 96)
+                    let showLeadingTimePrefix = bar.startColumn == bar.endColumn && !showTrailingTime
                     CalendarTaskAnchorButton(action: { rect in open(bar.taskId, rect) }) {
                         HStack(spacing: 0) {
                             Rectangle().fill(color).frame(width: 2)
-                            Text((bar.continues ? "‹ " : "") + (bar.startColumn == bar.endColumn ? bar.timedPrefix : "") + bar.title)
+                            Text((bar.continues ? "‹ " : "") + (showLeadingTimePrefix ? bar.timedPrefix : "") + bar.title)
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(done ? Palette.done : Palette.text.opacity(0.92))
                                 .strikethrough(done)
@@ -1664,9 +1669,11 @@ private struct WeekRow: View, Equatable {
                     .offset(x: colW * CGFloat(bar.startColumn) + 1.5, y: topInset + CGFloat(bar.lane) * laneH)
                 }
             }
+            .clipped()
         }
         .frame(height: fillHeight ? nil : week.rowHeight)
         .frame(maxHeight: fillHeight ? .infinity : nil)
+        .clipped()
         .overlay(alignment: .top) {
             if fillHeight {
                 Rectangle().fill(Palette.separator).frame(height: 1)

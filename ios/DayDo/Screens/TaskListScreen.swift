@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import DayDoCore
 
 /// 1b / 1c · Task list for a smart list, project or tag, in collapsible
@@ -19,6 +20,8 @@ struct TaskListScreen: View {
     @State private var limits: [TaskScope: Int] = [:]
     @State private var shareText: String?
     @State private var scrollPosition = ScrollPosition(edge: .top)
+    @State private var kanbanHorizontalScroll = ScrollPosition(edge: .leading)
+    @State private var kanbanScrollResetToken = 0
     @State private var quickAddText = ""
     @State private var quickAddSubmitting = false
     @State private var quickAddKeepFocus = false
@@ -40,9 +43,13 @@ struct TaskListScreen: View {
     }
 
     private var kanbanSections: [TaskSection] {
-        let hideCompleted = closed.contains(TaskSection.Kind.completed.id)
-        return visibleSections.filter { sec in
-            sec.kind != .completed || !hideCompleted
+        guard isScopeLoaded else { return [] }
+        return TaskGrouping.kanbanColumns(from: visibleSections)
+    }
+
+    private var selectedScrollTarget: TaskRowSelection? {
+        model.selectedTaskRow ?? model.selectedTaskId.flatMap { id in
+            orderedVisibleTaskRows.first { $0.taskId == id }
         }
     }
 
@@ -168,6 +175,10 @@ struct TaskListScreen: View {
                 if scrollPosition.isPositionedByUser || scrollPosition.edge != .top {
                     scrollPosition.scrollTo(edge: .top)
                 }
+                if kanbanHorizontalScroll.isPositionedByUser || kanbanHorizontalScroll.edge != .leading {
+                    kanbanHorizontalScroll.scrollTo(edge: .leading)
+                }
+                kanbanScrollResetToken += 1
                 model.visibleTaskRows = orderedVisibleTaskRows
             } else if quickAddFocused {
                 quickAddKeepFocus = false
@@ -245,11 +256,7 @@ struct TaskListScreen: View {
             .scrollPosition($scrollPosition)
             .scrollIndicators(.hidden)
             .onChange(of: model.selectionScrollTrigger) { _, _ in
-                guard isActive else { return }
-                let target = model.selectedTaskRow ?? model.selectedTaskId.flatMap { id in
-                    orderedVisibleTaskRows.first { $0.taskId == id }
-                }
-                guard let target else { return }
+                guard isActive, let target = selectedScrollTarget else { return }
                 withAnimation(Motion.layout(reduceMotion)) {
                     scrollProxy.scrollTo(target)
                 }
@@ -282,13 +289,9 @@ struct TaskListScreen: View {
             .padding(.horizontal, Platform.isMac ? 12 : 16)
             .padding(.top, isRegular ? (Platform.isMac ? 8 : 12) : 60)
 
-            if isScopeLoaded && kanbanSections.isEmpty {
-                EmptyState(scope: scope)
-                    .padding(.horizontal, Platform.isMac ? 12 : 16)
-                Spacer(minLength: 0)
-            } else {
-                GeometryReader { geo in
-                    let colWidth: CGFloat = isRegular ? 272 : max(240, min(320, geo.size.width * 0.8))
+            GeometryReader { geo in
+                let colWidth: CGFloat = isRegular ? 272 : max(240, min(320, geo.size.width * 0.8))
+                ScrollViewReader { horizontalProxy in
                     ScrollView(.horizontal) {
                         HStack(alignment: .top, spacing: 12) {
                             ForEach(kanbanSections) { sec in
@@ -296,9 +299,12 @@ struct TaskListScreen: View {
                                     section: sec,
                                     columnWidth: colWidth,
                                     isViewerScope: isViewerScope,
+                                    isActive: isActive,
+                                    scrollResetToken: kanbanScrollResetToken,
+                                    selectedScrollTarget: selectedScrollTarget,
                                     bottomPadding: isRegular ? (showComposeFAB ? 96 : 16) : 150,
                                     onLoadMore: sec.hasMore ? { loadMore() } : nil,
-                                    onDropTask: { taskId in handleKanbanDrop(taskId: taskId, onto: sec) }
+                                    onDropPayload: { payload in handleKanbanDrop(payload: payload, onto: sec) }
                                 )
                                 .id(SectionViewID(scope: query.loadedKey?.scope, sectionId: sec.id))
                             }
@@ -306,24 +312,31 @@ struct TaskListScreen: View {
                         .padding(.horizontal, Platform.isMac ? 12 : 16)
                         .padding(.bottom, 12)
                     }
+                    .scrollPosition($kanbanHorizontalScroll)
                     .scrollIndicators(.hidden)
+                    .onChange(of: model.selectionScrollTrigger) { _, _ in
+                        guard isActive, let target = selectedScrollTarget else { return }
+                        withAnimation(Motion.layout(reduceMotion)) {
+                            horizontalProxy.scrollTo(SectionViewID(scope: query.loadedKey?.scope, sectionId: target.sectionId))
+                        }
+                    }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private func handleKanbanDrop(taskId: String, onto targetSection: TaskSection) -> Bool {
+    private func handleKanbanDrop(payload: KanbanDragPayload, onto targetSection: TaskSection) -> Bool {
         guard !isViewerScope else { return false }
-        guard !targetSection.tasks.contains(where: { $0.id == taskId }) else { return false }
-        guard let sourceSection = visibleSections.first(where: { $0.tasks.contains { $0.id == taskId } }),
-              let task = sourceSection.tasks.first(where: { $0.id == taskId }) else {
-            return false
-        }
+        let sourceKind = TaskSection.Kind(id: payload.sourceSectionId)
+        guard sourceKind != targetSection.kind else { return false }
+        let task = visibleSections.first(where: { $0.id == payload.sourceSectionId })?.tasks.first(where: { $0.id == payload.taskId })
+            ?? visibleSections.lazy.flatMap(\.tasks).first(where: { $0.id == payload.taskId })
+        guard let task else { return false }
         guard !model.isViewer(projectId: task.projectId) else { return false }
         guard let action = KanbanDrop.action(
             for: task,
-            from: sourceSection.kind,
+            from: sourceKind,
             to: targetSection.kind,
             today: model.today
         ) else {
@@ -582,12 +595,53 @@ struct TaskListScreen: View {
 struct TaskReload: Hashable { var scope: TaskScope; var revision: Int; var limit: Int?; var memberId: String? }
 private struct SectionViewID: Hashable { var scope: TaskScope?; var sectionId: String }
 
+/// Drag payload for a Kanban card carrying its actual source column so cross-midnight
+/// tasks can move from Today to Tomorrow, and conditionally exporting `.propertyList`
+/// only when clearing the schedule is safe (no repeat rule or reminders).
+struct KanbanDragPayload: Codable, Equatable, Sendable, Transferable {
+    var sourceSectionId: String
+    var taskId: String
+    var canClearSchedule: Bool
+
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(exportedContentType: .propertyList) { payload in
+            try JSONEncoder().encode(payload)
+        }
+        .exportingCondition { $0.canClearSchedule }
+        CodableRepresentation(for: KanbanDragPayload.self, contentType: .json)
+    }
+}
+
+/// Drop target payload used exclusively by the 無日期 column so cards with repeat
+/// rules, reminders, or no schedule are rejected before hover highlight activates.
+struct KanbanNoDateDropPayload: Codable, Equatable, Sendable, Transferable {
+    var sourceSectionId: String
+    var taskId: String
+    var canClearSchedule: Bool
+
+    var asDragPayload: KanbanDragPayload {
+        KanbanDragPayload(sourceSectionId: sourceSectionId, taskId: taskId, canClearSchedule: canClearSchedule)
+    }
+
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(importedContentType: .propertyList) { data in
+            try JSONDecoder().decode(KanbanNoDateDropPayload.self, from: data)
+        }
+    }
+}
+
 /// Pure drag-and-drop rules for Kanban columns, shared by the UI and unit tests.
 enum KanbanDrop {
     enum Action: Equatable, Sendable {
         case moveSchedule(Schedule)
         case clearSchedule
         case complete
+    }
+
+    /// Clearing a schedule in LocalDayDoAPI also clears repeat rules and reminders;
+    /// disallow silent data loss when dragging to 無日期.
+    static func canClearSchedule(_ task: TodoTask) -> Bool {
+        task.schedule != nil && task.repeat == nil && task.reminders.isEmpty
     }
 
     static func acceptsDrops(sectionKind: TaskSection.Kind) -> Bool {
@@ -599,24 +653,32 @@ enum KanbanDrop {
         }
     }
 
+    static func acceptsDrops(
+        sectionKind: TaskSection.Kind,
+        for task: TodoTask,
+        from sourceSection: TaskSection.Kind?
+    ) -> Bool {
+        guard acceptsDrops(sectionKind: sectionKind) else { return false }
+        if sourceSection == sectionKind { return false }
+        if sourceSection == .completed || task.isCompleted { return false }
+        if sectionKind == .noDate && !canClearSchedule(task) { return false }
+        return true
+    }
+
     static func action(
         for task: TodoTask,
         from sourceSection: TaskSection.Kind?,
         to targetSection: TaskSection.Kind,
         today: LocalDay
     ) -> Action? {
-        guard acceptsDrops(sectionKind: targetSection) else { return nil }
-        if sourceSection == targetSection { return nil }
-        if sourceSection == .completed || task.isCompleted { return nil }
+        guard acceptsDrops(sectionKind: targetSection, for: task, from: sourceSection) else { return nil }
 
         switch targetSection {
         case .today:
-            return .moveSchedule(task.schedule?.moved(to: today) ?? .allDay(today))
+            return .moveSchedule(Schedule.moved(task.schedule, to: today))
         case .tomorrow:
-            let tomorrow = today.adding(days: 1)
-            return .moveSchedule(task.schedule?.moved(to: tomorrow) ?? .allDay(tomorrow))
+            return .moveSchedule(Schedule.moved(task.schedule, to: today.adding(days: 1)))
         case .noDate:
-            guard task.schedule != nil else { return nil }
             return .clearSchedule
         case .completed:
             return .complete
@@ -633,11 +695,15 @@ private struct KanbanColumn: View {
     var section: TaskSection
     var columnWidth: CGFloat
     var isViewerScope: Bool
+    var isActive: Bool
+    var scrollResetToken: Int
+    var selectedScrollTarget: TaskRowSelection?
     var bottomPadding: CGFloat
     var onLoadMore: (() -> Void)?
-    var onDropTask: (String) -> Bool
+    var onDropPayload: (KanbanDragPayload) -> Bool
 
     @State private var isDropTargeted = false
+    @State private var verticalScroll = ScrollPosition(edge: .top)
 
     private var cornerRadius: CGFloat { Platform.isMac ? 12 : 16 }
     private var cardRadius: CGFloat { Platform.isMac ? 8 : 12 }
@@ -676,43 +742,74 @@ private struct KanbanColumn: View {
             .padding(.horizontal, Platform.isMac ? 12 : 14)
             .frame(minHeight: Platform.isMac ? 38 : 44)
 
-            ScrollView(.vertical) {
-                LazyVStack(spacing: 8) {
-                    ForEach(section.tasks) { t in
-                        let draggable = !isViewerScope && !model.isViewer(projectId: t.projectId)
-                        TaskRow(
-                            task: t,
-                            separator: false,
-                            sectionKind: section.kind,
-                            sectionId: section.id,
-                            inTrash: false,
-                            selectsInline: true,
-                            showProject: false
-                        )
-                        .background(Palette.raised, in: RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
-                                .strokeBorder(Palette.separatorSoft, lineWidth: 1)
+            ScrollViewReader { verticalProxy in
+                ScrollView(.vertical) {
+                    LazyVStack(spacing: 8) {
+                        if section.tasks.isEmpty {
+                            Text(acceptsDrops ? "拖曳任務到這裡" : "沒有任務")
+                                .txt(13)
+                                .foregroundStyle(Palette.textFaint)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 28)
                         }
-                        .clipShape(RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
-                        .kanbanDraggable(t.id, enabled: draggable)
-                        .id(TaskRowSelection(sectionId: section.id, taskId: t.id))
-                        .transition(Motion.rowTransition(reduceMotion))
+                        ForEach(section.tasks) { t in
+                            let draggable = !isViewerScope
+                                && !model.isViewer(projectId: t.projectId)
+                                && section.kind != .completed
+                                && !t.isCompleted
+                            let payload = KanbanDragPayload(
+                                sourceSectionId: section.id,
+                                taskId: t.id,
+                                canClearSchedule: KanbanDrop.canClearSchedule(t)
+                            )
+                            TaskRow(
+                                task: t,
+                                separator: false,
+                                sectionKind: section.kind,
+                                sectionId: section.id,
+                                inTrash: false,
+                                selectsInline: true,
+                                showProject: false
+                            )
+                            .background(Palette.raised, in: RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
+                                    .strokeBorder(Palette.separatorSoft, lineWidth: 1)
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
+                            .kanbanDraggable(payload, enabled: draggable)
+                            .id(TaskRowSelection(sectionId: section.id, taskId: t.id))
+                            .transition(Motion.rowTransition(reduceMotion))
+                        }
+                        if let onLoadMore {
+                            Button(action: onLoadMore) {
+                                Text("載入更多").txt(13, .semibold).foregroundStyle(accent.text)
+                                    .frame(maxWidth: .infinity, minHeight: 34)
+                            }
+                            .buttonStyle(.press)
+                            .hoverEffect(.highlight)
+                        }
                     }
-                    if let onLoadMore {
-                        Button(action: onLoadMore) {
-                            Text("載入更多").txt(13, .semibold).foregroundStyle(accent.text)
-                                .frame(maxWidth: .infinity, minHeight: 34)
-                        }
-                        .buttonStyle(.press)
-                        .hoverEffect(.highlight)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 2)
+                    .padding(.bottom, bottomPadding)
+                }
+                .scrollPosition($verticalScroll)
+                .scrollIndicators(.hidden)
+                .onChange(of: scrollResetToken) { _, _ in
+                    if verticalScroll.isPositionedByUser || verticalScroll.edge != .top {
+                        verticalScroll.scrollTo(edge: .top)
                     }
                 }
-                .padding(.horizontal, 8)
-                .padding(.top, 2)
-                .padding(.bottom, bottomPadding)
+                .onChange(of: model.selectionScrollTrigger) { _, _ in
+                    guard isActive,
+                          let target = selectedScrollTarget,
+                          target.sectionId == section.id else { return }
+                    withAnimation(Motion.layout(reduceMotion)) {
+                        verticalProxy.scrollTo(target)
+                    }
+                }
             }
-            .scrollIndicators(.hidden)
         }
         .frame(width: columnWidth)
         .frame(maxHeight: .infinity, alignment: .top)
@@ -727,8 +824,9 @@ private struct KanbanColumn: View {
         .animation(Motion.toggle(reduceMotion), value: isDropTargeted)
         .modifier(KanbanColumnDropModifier(
             enabled: acceptsDrops,
+            noDateOnly: section.kind == .noDate,
             isTargeted: $isDropTargeted,
-            onDropTaskId: onDropTask
+            onDropPayload: onDropPayload
         ))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("kanban.column.\(section.id)")
@@ -737,14 +835,22 @@ private struct KanbanColumn: View {
 
 private struct KanbanColumnDropModifier: ViewModifier {
     var enabled: Bool
+    var noDateOnly: Bool
     @Binding var isTargeted: Bool
-    var onDropTaskId: (String) -> Bool
+    var onDropPayload: (KanbanDragPayload) -> Bool
 
     func body(content: Content) -> some View {
-        if enabled {
-            content.dropDestination(for: String.self) { items, _ in
-                guard let taskId = items.first else { return false }
-                return onDropTaskId(taskId)
+        if enabled && noDateOnly {
+            content.dropDestination(for: KanbanNoDateDropPayload.self) { items, _ in
+                guard let item = items.first else { return false }
+                return onDropPayload(item.asDragPayload)
+            } isTargeted: { targeted in
+                isTargeted = targeted
+            }
+        } else if enabled {
+            content.dropDestination(for: KanbanDragPayload.self) { items, _ in
+                guard let item = items.first else { return false }
+                return onDropPayload(item)
             } isTargeted: { targeted in
                 isTargeted = targeted
             }
@@ -756,9 +862,9 @@ private struct KanbanColumnDropModifier: ViewModifier {
 
 private extension View {
     @ViewBuilder
-    func kanbanDraggable(_ taskId: String, enabled: Bool) -> some View {
+    func kanbanDraggable(_ payload: KanbanDragPayload, enabled: Bool) -> some View {
         if enabled {
-            self.draggable(taskId)
+            self.draggable(payload)
         } else {
             self
         }
@@ -1048,7 +1154,7 @@ struct TaskRow: View {
     }
 
     func setDay(_ d: LocalDay) {
-        let s = task.schedule?.moved(to: d) ?? .allDay(d)
+        let s = Schedule.moved(task.schedule, to: d)
         let task = task
         Task { await model.moveTask(task, to: s) }
     }
