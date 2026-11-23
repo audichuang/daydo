@@ -203,6 +203,7 @@ public enum AuthError: Error, LocalizedError, Sendable, Equatable {
     case invalidCode
     case invalidCredentials(String)
     case badRequest(String)
+    case differentAccount(AuthLoginResponse)
 
     public var errorDescription: String? {
         switch self {
@@ -210,9 +211,10 @@ public enum AuthError: Error, LocalizedError, Sendable, Equatable {
             return "這個登入方式已經屬於另一個 DayDo 帳號"
         case .invalidCode:
             return "驗證碼錯誤或已過期，請再試一次"
-        case let .invalidCredentials(message),
-             let .badRequest(message):
-            return message
+        case .invalidCredentials, .badRequest:
+            return "驗證失敗，請再試一次"
+        case .differentAccount:
+            return "已登入其他帳號，請先登出"
         }
     }
 }

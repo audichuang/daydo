@@ -679,4 +679,38 @@ describe('handleAuthLink', () => {
     expect(await listUserIdentities(database, u1.user.id)).toHaveLength(1);
     expect(await listUserIdentities(database, u2.user.id)).toHaveLength(2);
   });
+
+  it('reads back the identity list inside the same write batch (no separate post-write SELECT)', async () => {
+    const { db, trace } = createTestD1();
+    const database = db as unknown as DatabaseClient;
+
+    const u = await createSessionForIdentity(database, {
+      provider: 'apple',
+      sub: 'batch-u1',
+      email: 'batch@privaterelay.appleid.com',
+      deviceId: 'd1',
+      jwtSecret: TEST_JWT_SECRET,
+      now: NOW,
+    });
+
+    trace.reset();
+    const res = await linkIdentity(database, {
+      userId: u.user.id,
+      provider: 'google',
+      sub: 'batch-g1',
+      email: 'batch@gmail.com',
+      now: NOW + 10,
+    });
+
+    expect(res).toEqual({
+      ok: true,
+      identities: [
+        { provider: 'apple', email: 'batch@privaterelay.appleid.com', createdAt: NOW },
+        { provider: 'google', email: 'batch@gmail.com', createdAt: NOW + 10 },
+      ],
+    });
+    // 1 direct SELECT (caller check) + 1 atomic 3-statement batch (insert + owner check + list readback).
+    expect(trace.direct).toBe(1);
+    expect(trace.batches).toEqual([3]);
+  });
 });

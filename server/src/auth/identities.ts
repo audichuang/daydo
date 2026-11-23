@@ -1,18 +1,9 @@
 import { identity, user } from '@schema';
 import { and, asc, eq, sql } from 'void/db';
 import { systemNow } from '../clock';
-import { nonEmptyString } from '../http';
-import { logEvent } from '../log';
-import { normalizeEmail, verifyEmailCode } from './email';
-import {
-  AuthVerificationError,
-  verifyAppleToken,
-  verifyGoogleToken,
-  type IdentityProviderName,
-  type KeySource,
-  type VerifiedIdentity,
-} from './providers';
+import type { IdentityProviderName, KeySource } from './providers';
 import type { DatabaseClient } from './session';
+import { verifyCredential, type CredentialVerificationResult } from './verifyCredential';
 
 export interface LinkedIdentity {
   provider: IdentityProviderName;
@@ -91,9 +82,9 @@ export async function linkIdentity(
     return { ok: false, reason: 'user_not_found' };
   }
 
-  // Atomic claim: insert if unbound, then read back the owner of (provider, sub).
-  // Already belonging to caller -> idempotent success; belonging to another user -> 409 without transfer.
-  const [, ownerRows] = await database.batch([
+  // Atomic claim + readback in one D1 batch: insert if unbound, read owner of (provider, sub),
+  // and read back caller's identity list so a write can never fail on a separate follow-up query.
+  const [, ownerRows, identityRows] = await database.batch([
     database
       .insert(identity)
       .values({
@@ -108,6 +99,7 @@ export async function linkIdentity(
       .select({ userId: identity.userId })
       .from(identity)
       .where(and(eq(identity.provider, params.provider), eq(identity.sub, params.sub))),
+    selectIdentitiesForUser(database, params.userId),
   ]);
 
   const owner = ownerRows[0];
@@ -115,8 +107,7 @@ export async function linkIdentity(
     return { ok: false, reason: 'identity_in_use' };
   }
 
-  const identities = await listUserIdentities(database, params.userId);
-  return { ok: true, identities };
+  return { ok: true, identities: decodeIdentityRows(identityRows) };
 }
 
 export type AuthLinkRouteResult =
@@ -141,74 +132,50 @@ export async function handleAuthLink(
     return { status: 400, body: { error: 'Invalid JSON body' } };
   }
 
-  const currentDate = params.now !== undefined ? new Date(params.now) : undefined;
   const provider = params.body.provider;
-  let verified: VerifiedIdentity;
+  let verified: CredentialVerificationResult;
 
   if (provider === 'apple') {
-    const identityToken = nonEmptyString(params.body.identityToken);
-    const nonce = nonEmptyString(params.body.nonce);
-    if (!identityToken || !nonce) {
-      return { status: 400, body: { error: 'identityToken and nonce are required' } };
-    }
-    try {
-      verified = await verifyAppleToken({
-        identityToken,
-        nonce,
-        audience: params.appleAudience,
-        jwksUrl: params.appleJwksUrl,
-        keySource: params.appleKeySource,
-        currentDate,
-      });
-    } catch (error) {
-      if (error instanceof AuthVerificationError) {
-        return { status: 401, body: { error: error.message } };
-      }
-      throw error;
-    }
+    verified = await verifyCredential({
+      provider: 'apple',
+      identityToken: params.body.identityToken,
+      nonce: params.body.nonce,
+      audience: params.appleAudience,
+      jwksUrl: params.appleJwksUrl,
+      keySource: params.appleKeySource,
+      now: params.now,
+    });
   } else if (provider === 'google') {
-    const idToken = nonEmptyString(params.body.idToken);
-    if (!idToken) {
-      return { status: 400, body: { error: 'idToken is required' } };
-    }
-    if (!params.googleAudience) {
-      return { status: 500, body: { error: 'Google auth is not configured' } };
-    }
-    try {
-      verified = await verifyGoogleToken({
-        idToken,
-        audience: params.googleAudience,
-        jwksUrl: params.googleJwksUrl,
-        keySource: params.googleKeySource,
-        currentDate,
-      });
-    } catch (error) {
-      if (error instanceof AuthVerificationError) {
-        return { status: 401, body: { error: error.message } };
-      }
-      throw error;
-    }
+    verified = await verifyCredential({
+      provider: 'google',
+      idToken: params.body.idToken,
+      audience: params.googleAudience,
+      jwksUrl: params.googleJwksUrl,
+      keySource: params.googleKeySource,
+      now: params.now,
+    });
   } else if (provider === 'email') {
-    const email = normalizeEmail(params.body.email);
-    const code = params.body.code;
-    if (!email || typeof code !== 'string') {
-      return { status: 400, body: { error: 'A valid email and code are required' } };
-    }
-    const ok = await verifyEmailCode(database, { email, code: code.trim(), now: params.now });
-    logEvent(ok ? 'log' : 'warn', 'auth.link.email', { outcome: ok ? 'ok' : 'invalid_code' });
-    if (!ok) {
-      return { status: 401, body: { error: 'Invalid or expired code' } };
-    }
-    verified = { provider: 'email', sub: email, email };
+    verified = await verifyCredential({
+      provider: 'email',
+      database,
+      email: params.body.email,
+      code: params.body.code,
+      logEventName: 'auth.link.email',
+      now: params.now,
+    });
   } else {
     return { status: 400, body: { error: 'provider must be apple, google, or email' } };
   }
 
+  if (!verified.ok) {
+    return { status: verified.status, body: { error: verified.error } };
+  }
+
   const outcome = await linkIdentity(database, {
     userId: params.userId,
-    provider: verified.provider,
-    sub: verified.sub,
-    email: verified.email,
+    provider: verified.identity.provider,
+    sub: verified.identity.sub,
+    email: verified.identity.email,
     now: params.now,
   });
 

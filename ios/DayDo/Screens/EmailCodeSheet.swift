@@ -282,7 +282,7 @@ struct EmailCodeSheet: View {
                 step = .enterCode
                 focusedField = .code
             } catch {
-                errorText = error.localizedDescription
+                errorText = AuthErrorMessage.text(for: error)
             }
         }
     }
@@ -300,7 +300,7 @@ struct EmailCodeSheet: View {
                 infoText = "已重新寄送驗證碼。"
                 focusedField = .code
             } catch {
-                errorText = error.localizedDescription
+                errorText = AuthErrorMessage.text(for: error)
             }
         }
     }
@@ -318,7 +318,7 @@ struct EmailCodeSheet: View {
                 try await onSubmitCode(targetEmail, targetCode)
                 dismiss()
             } catch {
-                errorText = error.localizedDescription
+                errorText = AuthErrorMessage.text(for: error)
             }
         }
     }

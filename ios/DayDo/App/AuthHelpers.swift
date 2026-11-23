@@ -3,6 +3,7 @@ import CryptoKit
 import GoogleSignIn
 import Security
 import UIKit
+import DayDoCore
 
 enum SignInNonce {
     static func random(length: Int = 32) -> String {
@@ -53,6 +54,31 @@ enum LocalAuthHelperError: LocalizedError {
         case let .missingToken(message):
             return message
         }
+    }
+}
+
+enum AuthErrorMessage {
+    static func text(for error: Error) -> String {
+        if let authError = error as? AuthError {
+            return authError.localizedDescription
+        }
+        if let localError = error as? LocalAuthHelperError {
+            return localError.localizedDescription
+        }
+        if let syncError = error as? SyncError {
+            switch syncError {
+            case .retryable:
+                return "網路連線失敗，請再試一次"
+            case .signedOut:
+                return "登入已失效，請重新登入"
+            case .protocolError:
+                return "驗證失敗，請再試一次"
+            }
+        }
+        if error is URLError {
+            return "網路連線失敗，請再試一次"
+        }
+        return "驗證失敗，請再試一次"
     }
 }
 
@@ -107,6 +133,12 @@ enum AuthPresentationHelper {
             }
             throw error
         }
+    }
+
+    /// Clears the local GoogleSignIn SDK session so linking Google never leaves a stale
+    /// `GIDSignIn` session that could overwrite the account's avatar on next launch.
+    static func signOutGoogleSession() {
+        GIDSignIn.sharedInstance.signOut()
     }
 
     /// Runs interactive Sign in with Apple (used for linking Apple from Settings) and returns `nil` when canceled.

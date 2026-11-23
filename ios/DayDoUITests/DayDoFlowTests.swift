@@ -786,6 +786,50 @@ final class DayDoFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testForcedSignOutEmailSwitchAccountAlertCancelAndConfirm() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "iPhone layout only")
+        app.terminate()
+        app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoDebugForcedSignOut"]
+        app.launch()
+
+        let emailButton = app.buttons["signIn.email"]
+        XCTAssertTrue(emailButton.waitForExistence(timeout: 5), app.debugDescription)
+
+        func submitEmailCode(_ email: String) {
+            emailButton.tap()
+            let emailField = app.textFields["emailAuth.emailField"]
+            XCTAssertTrue(emailField.waitForExistence(timeout: 5), app.debugDescription)
+            emailField.tap()
+            emailField.typeText(email)
+            app.buttons["emailAuth.sendCode"].tap()
+            let codeField = app.textFields["emailAuth.codeField"]
+            XCTAssertTrue(codeField.waitForExistence(timeout: 5), app.debugDescription)
+            codeField.tap()
+            codeField.typeText("123456")
+            app.buttons["emailAuth.submit"].tap()
+        }
+
+        // First attempt: after EmailCodeSheet dismisses, the switch-account alert must appear; canceling stays on SignInView.
+        submitEmailCode("other@example.com")
+        let alertMsg = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS '這支手機上還有另一個帳號的資料。要清除這些資料並改用這個帳號登入嗎？'")
+        ).firstMatch
+        XCTAssertTrue(alertMsg.waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["取消"].tap()
+        XCTAssertTrue(alertMsg.waitForNonExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(emailButton.exists, "Cancel should keep user on sign-in screen")
+
+        // Second attempt: confirm "清除並登入" completes login without re-sending the single-use email code.
+        submitEmailCode("other@example.com")
+        XCTAssertTrue(alertMsg.waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["清除並登入"].tap()
+
+        XCTAssertTrue(emailButton.waitForNonExistence(timeout: 8), app.debugDescription)
+        let namePrompt = app.textFields["meProfile.nameField"]
+        XCTAssertTrue(namePrompt.waitForExistence(timeout: 5), app.debugDescription)
+    }
+
+    @MainActor
     func testSettingsLinkedIdentitiesAndEmailLink() {
         app.terminate()
         app.launchArguments = ["-DayDoReset", "-DayDoDebugStub", "-DayDoScreen", "settings"]

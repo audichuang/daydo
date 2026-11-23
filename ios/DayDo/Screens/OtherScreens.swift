@@ -383,17 +383,7 @@ struct SettingsScreen: View {
                 .padding(.leading, 4)
 
             VStack(spacing: 0) {
-                if !model.identitiesLoaded && model.isLoadingIdentities {
-                    HStack(spacing: 12) {
-                        ProgressView().tint(Palette.textSecondary)
-                        Text("正在載入登入方式…")
-                            .txt(14)
-                            .foregroundStyle(Palette.textSecondary)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 52)
-                } else if !model.identitiesLoaded && identitiesLoadFailed {
+                if !model.identitiesLoaded && identitiesLoadFailed {
                     HStack(spacing: 12) {
                         Text("無法載入登入方式")
                             .txt(14)
@@ -405,6 +395,17 @@ struct SettingsScreen: View {
                         .txt(14, .semibold)
                         .foregroundStyle(accent.text)
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("settings.identity.retry")
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 52)
+                } else if !model.identitiesLoaded {
+                    HStack(spacing: 12) {
+                        ProgressView().tint(Palette.textSecondary)
+                        Text("正在載入登入方式…")
+                            .txt(14)
+                            .foregroundStyle(Palette.textSecondary)
+                        Spacer()
                     }
                     .padding(.horizontal, 14)
                     .frame(minHeight: 52)
@@ -417,6 +418,27 @@ struct SettingsScreen: View {
                     ForEach(Array(unlinkedProviders.enumerated()), id: \.element) { index, provider in
                         if !linked.isEmpty || index > 0 { divider }
                         linkProviderButton(provider)
+                    }
+
+                    if identitiesLoadFailed {
+                        if !linked.isEmpty || !unlinkedProviders.isEmpty { divider }
+                        HStack(spacing: 12) {
+                            Text("更新失敗")
+                                .txt(13)
+                                .foregroundStyle(Palette.textSecondary)
+                            Spacer()
+                            Button("重試") {
+                                Task { await fetchIdentities() }
+                            }
+                            .txt(13, .semibold)
+                            .foregroundStyle(accent.text)
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("settings.identity.retry")
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 44)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("settings.identity.refreshFailed")
                     }
                 }
             }
@@ -548,12 +570,15 @@ struct SettingsScreen: View {
         case .google:
             linkingProvider = .google
             Task {
-                defer { linkingProvider = nil }
+                defer {
+                    AuthPresentationHelper.signOutGoogleSession()
+                    linkingProvider = nil
+                }
                 do {
                     guard let payload = try await AuthPresentationHelper.signInWithGoogle() else { return }
                     _ = try await model.linkIdentity(with: .google(idToken: payload.idToken))
                 } catch {
-                    linkError = error.localizedDescription
+                    linkError = AuthErrorMessage.text(for: error)
                 }
             }
         case .apple:
@@ -565,7 +590,7 @@ struct SettingsScreen: View {
                     guard let payload = try await AuthPresentationHelper.signInWithApple() else { return }
                     _ = try await model.linkIdentity(with: .apple(identityToken: payload.identityToken, nonce: payload.nonce))
                 } catch {
-                    linkError = error.localizedDescription
+                    linkError = AuthErrorMessage.text(for: error)
                 }
             }
         }

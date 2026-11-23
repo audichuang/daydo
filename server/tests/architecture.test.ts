@@ -478,6 +478,21 @@ const GUARDS: Guard[] = [
     allow: ['tests/scope.test.ts'],
     bad: ['vi.spy' + "On(Date, 'now');"],
   },
+  {
+    name: 'App auth login and link paths verify credentials through src/auth/verifyCredential.ts',
+    dirs: ['routes/auth', 'src/auth/identities.ts', 'src/auth/email.ts'],
+    pattern: /\b(verifyAppleToken|verifyGoogleToken|verifyEmailCode)\(/,
+    allow: [],
+    bad: [
+      'verified = await verifyAppleToken({ identityToken, nonce, audience });',
+      'verified = await verifyGoogleToken({ idToken, audience });',
+      'const ok = await verifyEmailCode(database, { email, code });',
+    ],
+    good: [
+      "const verified = await verifyCredential({ provider: 'apple', identityToken, nonce, audience });",
+      "export { verifyEmailCode } from './emailCode';",
+    ],
+  },
 ];
 
 /** Tool names in the first column of the spec/mcp.md section 8 table. */

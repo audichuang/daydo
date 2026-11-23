@@ -10,13 +10,19 @@ struct SignInView: View {
     var logoRevealed: Bool = true
     var contentRevealed: Bool = true
 
+    private struct PendingAccountSwitch {
+        let auth: AuthLoginResponse
+        let credential: SyncAuthCredential
+        let displayName: String?
+        let avatarUrl: String?
+        let unsyncedCount: Int
+    }
+
     @State private var currentRawNonce: String?
     @State private var errorText: String?
     @State private var showingEmailSignIn = false
-    @State private var pendingSwitchCredential: SyncAuthCredential?
-    @State private var pendingSwitchDisplayName: String?
-    @State private var pendingSwitchAvatarUrl: String?
-    @State private var pendingSwitchUnsyncedCount = 0
+    @State private var pendingSwitch: PendingAccountSwitch?
+    @State private var pendingSwitchAfterSheetDismiss: PendingAccountSwitch?
     @State private var confirmSwitchAccount = false
 
     var body: some View {
@@ -158,31 +164,32 @@ struct SignInView: View {
                 .card(18, color: Palette.card)
             }
         }
-        .sheet(isPresented: $showingEmailSignIn) {
+        .sheet(isPresented: $showingEmailSignIn, onDismiss: {
+            if let deferred = pendingSwitchAfterSheetDismiss {
+                pendingSwitchAfterSheetDismiss = nil
+                pendingSwitch = deferred
+                confirmSwitchAccount = true
+            }
+        }) {
             EmailCodeSheet(mode: .signIn) { email, code in
                 try await performEmailSignIn(email: email, code: code)
             }
         }
         .alert("切換帳號？", isPresented: $confirmSwitchAccount) {
             Button("取消", role: .cancel) {
-                pendingSwitchCredential = nil
-                pendingSwitchDisplayName = nil
-                pendingSwitchAvatarUrl = nil
+                pendingSwitch = nil
             }
             Button("清除並登入", role: .destructive) {
-                guard let credential = pendingSwitchCredential else { return }
-                let displayName = pendingSwitchDisplayName
-                let avatarUrl = pendingSwitchAvatarUrl
-                pendingSwitchCredential = nil
-                pendingSwitchDisplayName = nil
-                pendingSwitchAvatarUrl = nil
+                guard let pending = pendingSwitch else { return }
+                pendingSwitch = nil
                 Task {
-                    await confirmAccountSwitch(with: credential, displayName: displayName, avatarUrl: avatarUrl)
+                    await confirmAccountSwitch(pending)
                 }
             }
         } message: {
-            if pendingSwitchUnsyncedCount > 0 {
-                Text("這支手機上還有另一個帳號的資料。要清除這些資料並改用這個帳號登入嗎？\n其中 \(pendingSwitchUnsyncedCount) 筆修改還沒同步，會一併刪除")
+            let unsynced = pendingSwitch?.unsyncedCount ?? 0
+            if unsynced > 0 {
+                Text("這支手機上還有另一個帳號的資料。要清除這些資料並改用這個帳號登入嗎？\n其中 \(unsynced) 筆修改還沒同步，會一併刪除")
             } else {
                 Text("這支手機上還有另一個帳號的資料。要清除這些資料並改用這個帳號登入嗎？")
             }
@@ -214,7 +221,7 @@ struct SignInView: View {
             if let authError = error as? ASAuthorizationError, authError.code == .canceled {
                 return
             }
-            errorText = error.localizedDescription
+            errorText = AuthErrorMessage.text(for: error)
         }
     }
 
@@ -225,7 +232,7 @@ struct SignInView: View {
                 guard let payload = try await AuthPresentationHelper.signInWithGoogle() else { return }
                 await performSignIn(.google(idToken: payload.idToken), displayName: payload.displayName, avatarUrl: payload.avatarUrl)
             } catch {
-                errorText = error.localizedDescription
+                errorText = AuthErrorMessage.text(for: error)
             }
         }
     }
@@ -235,16 +242,16 @@ struct SignInView: View {
         errorText = nil
         do {
             try await model.signIn(with: credential, displayName: nil, avatarUrl: nil)
-        } catch {
-            if isDifferentUserError(error) {
-                pendingSwitchCredential = credential
-                pendingSwitchDisplayName = nil
-                pendingSwitchAvatarUrl = nil
-                pendingSwitchUnsyncedCount = await model.unsyncedChangeCount()
-                confirmSwitchAccount = true
-                return
-            }
-            throw error
+        } catch let AuthError.differentAccount(auth) {
+            let unsynced = await model.unsyncedChangeCount()
+            pendingSwitchAfterSheetDismiss = PendingAccountSwitch(
+                auth: auth,
+                credential: credential,
+                displayName: nil,
+                avatarUrl: nil,
+                unsyncedCount: unsynced
+            )
+            return
         }
     }
 
@@ -252,30 +259,32 @@ struct SignInView: View {
         errorText = nil
         do {
             try await model.signIn(with: credential, displayName: displayName, avatarUrl: avatarUrl)
+        } catch let AuthError.differentAccount(auth) {
+            let unsynced = await model.unsyncedChangeCount()
+            pendingSwitch = PendingAccountSwitch(
+                auth: auth,
+                credential: credential,
+                displayName: displayName,
+                avatarUrl: avatarUrl,
+                unsyncedCount: unsynced
+            )
+            confirmSwitchAccount = true
         } catch {
-            if isDifferentUserError(error) {
-                pendingSwitchCredential = credential
-                pendingSwitchDisplayName = displayName
-                pendingSwitchAvatarUrl = avatarUrl
-                pendingSwitchUnsyncedCount = await model.unsyncedChangeCount()
-                confirmSwitchAccount = true
-                return
-            }
-            errorText = error.localizedDescription
+            errorText = AuthErrorMessage.text(for: error)
         }
     }
 
-    private func confirmAccountSwitch(with credential: SyncAuthCredential, displayName: String?, avatarUrl: String? = nil) async {
+    private func confirmAccountSwitch(_ pending: PendingAccountSwitch) async {
         errorText = nil
         do {
-            try await model.replaceAccountAndSignIn(with: credential, displayName: displayName, avatarUrl: avatarUrl)
+            try await model.replaceAccountAndSignIn(
+                with: pending.auth,
+                credential: pending.credential,
+                displayName: pending.displayName,
+                avatarUrl: pending.avatarUrl
+            )
         } catch {
-            errorText = error.localizedDescription
+            errorText = AuthErrorMessage.text(for: error)
         }
-    }
-
-    private func isDifferentUserError(_ error: Error) -> Bool {
-        guard case let SyncError.protocolError(message) = error else { return false }
-        return message.contains("Already signed in as a different user")
     }
 }

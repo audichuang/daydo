@@ -410,6 +410,7 @@ actor DebugStubTransport: SyncTransport {
     private var pushedMeId: String?
     private var pushedMeColor: String?
     private var linkedIdentities: [[String: Any]] = []
+    private var activeEmailCodes: Set<String> = []
 
     func send(method: String, path: String, headers: [String: String], body: Data?) async throws -> SyncHTTPResponse {
         let nowMs = EpochMillis(Date().timeIntervalSince1970 * 1000)
@@ -448,10 +449,14 @@ actor DebugStubTransport: SyncTransport {
         if method == "POST" && path == "/auth/email/start" {
             guard let body,
                   let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
-                  let rawEmail = payload["email"] as? String,
-                  rawEmail.trimmingCharacters(in: .whitespacesAndNewlines).contains("@") else {
+                  let rawEmail = payload["email"] as? String else {
                 return try jsonResponse(400, ["error": "A valid email and deviceId are required"])
             }
+            let email = rawEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard email.contains("@") else {
+                return try jsonResponse(400, ["error": "A valid email and deviceId are required"])
+            }
+            activeEmailCodes.insert(email)
             return try jsonResponse(202, ["sent": true])
         }
 
@@ -463,7 +468,8 @@ actor DebugStubTransport: SyncTransport {
                 return try jsonResponse(400, ["error": "A valid email, code and deviceId are required"])
             }
             let email = rawEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard code.trimmingCharacters(in: .whitespacesAndNewlines) == "123456" else {
+            guard code.trimmingCharacters(in: .whitespacesAndNewlines) == "123456",
+                  activeEmailCodes.remove(email) != nil else {
                 return try jsonResponse(401, ["error": "Invalid or expired code"])
             }
             linkedIdentities = [

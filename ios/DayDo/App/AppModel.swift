@@ -289,6 +289,7 @@ final class AppModel {
     var textScale: Double { didSet { defaults.set(textScale, forKey: "textScale") } }
     var openFolders: Set<String> { didSet { defaults.set(Array(openFolders), forKey: "openFolders") } }
     static let allMemberFilterKey = "allMemberFilter"
+    private static let signedInProviderKey = "signedInProvider"
     var allMemberFilter: String? {
         didSet {
             if let allMemberFilter {
@@ -745,11 +746,23 @@ final class AppModel {
     }
 
     func signIn(with credential: SyncAuthCredential, displayName: String? = nil, avatarUrl: String? = nil) async throws {
+        try await runSignInFlow(credential: credential, displayName: displayName, avatarUrl: avatarUrl) {
+            try await self.syncEngine.signIn(with: credential)
+        }
+    }
+
+    private func runSignInFlow(
+        credential: SyncAuthCredential,
+        displayName: String?,
+        avatarUrl: String?,
+        perform: () async throws -> SyncSummary
+    ) async throws {
         isSigningIn = true
         defer { isSigningIn = false }
         startSyncObservers()
         do {
-            try await syncEngine.signIn(with: credential)
+            _ = try await perform()
+            recordSignedInProvider(for: credential)
             isSignedIn = true
             await reloadData()
             await resolveMeProfileAfterSignIn(suggestedName: displayName)
@@ -761,6 +774,7 @@ final class AppModel {
             if !stillSignedIn {
                 stopSyncObservers()
             } else if let syncError = error as? SyncError, case .retryable = syncError {
+                recordSignedInProvider(for: credential)
                 isSignedIn = true
                 await reloadData()
                 await resolveMeProfileAfterSignIn(suggestedName: displayName)
@@ -774,8 +788,22 @@ final class AppModel {
         }
     }
 
+    private func recordSignedInProvider(for credential: SyncAuthCredential) {
+        let provider: AuthProvider
+        switch credential {
+        case .apple: provider = .apple
+        case .google: provider = .google
+        case .email: provider = .email
+        }
+        defaults.set(provider.rawValue, forKey: Self.signedInProviderKey)
+    }
+
     private func syncGoogleAvatarOnLaunchIfNeeded() {
         guard syncEnabled, isSignedIn, !didAttemptGoogleAvatarSyncOnLaunch else { return }
+        if let provider = defaults.string(forKey: Self.signedInProviderKey),
+           provider != AuthProvider.google.rawValue {
+            return
+        }
 #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-DayDoDebugStub") {
             return
@@ -879,7 +907,12 @@ final class AppModel {
         resetLocalUIState()
     }
 
-    func replaceAccountAndSignIn(with credential: SyncAuthCredential, displayName: String? = nil, avatarUrl: String? = nil) async throws {
+    func replaceAccountAndSignIn(
+        with auth: AuthLoginResponse,
+        credential: SyncAuthCredential,
+        displayName: String? = nil,
+        avatarUrl: String? = nil
+    ) async throws {
         isSigningIn = true
         isSigningOut = true
         defer {
@@ -888,12 +921,18 @@ final class AppModel {
         }
         cancelProjectDuplications()
         stopSyncObservers()
-        GIDSignIn.sharedInstance.signOut()
+        if case .google = credential {
+            // Keep the newly authenticated Google session for avatar lookup.
+        } else {
+            GIDSignIn.sharedInstance.signOut()
+        }
         if syncEnabled {
             try await syncEngine.signOut()
         }
         resetLocalUIState()
-        try await signIn(with: credential, displayName: displayName, avatarUrl: avatarUrl)
+        try await runSignInFlow(credential: credential, displayName: displayName, avatarUrl: avatarUrl) {
+            try await self.syncEngine.completeSignIn(with: auth)
+        }
     }
 
     private func resetLocalUIState() {
@@ -921,6 +960,7 @@ final class AppModel {
         allMemberFilter = nil
         isConfirmingSignOut = false
         cancelProjectDuplications()
+        defaults.removeObject(forKey: Self.signedInProviderKey)
         linkedIdentities = []
         isLoadingIdentities = false
         identitiesLoaded = false
