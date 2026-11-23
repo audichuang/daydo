@@ -1821,3 +1821,105 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(model.identitiesLoaded)
     }
 }
+
+@MainActor
+final class EmailCodeFlowTests: XCTestCase {
+    func testFailedCodeCannotBeResubmittedViaRepeatSubmitOrDeleteAndRetype() async {
+        let flow = EmailCodeFlow()
+        flow.email = "family@example.com"
+        let sent = await flow.sendCode { _ in }
+        XCTAssertTrue(sent)
+        XCTAssertEqual(flow.step, .enterCode)
+
+        flow.sanitizeCode("000000")
+        XCTAssertTrue(flow.canSubmitCode)
+
+        var attempts = 0
+        let first = await flow.submitCode { _, _ in
+            attempts += 1
+            throw AuthError.invalidCode
+        }
+        XCTAssertFalse(first)
+        XCTAssertEqual(attempts, 1)
+        XCTAssertNotNil(flow.errorText)
+        XCTAssertFalse(flow.canSubmitCode)
+
+        // Pressing Enter or tapping submit again must not resend the same code.
+        let second = await flow.submitCode { _, _ in
+            attempts += 1
+        }
+        XCTAssertFalse(second)
+        XCTAssertEqual(attempts, 1)
+
+        // Deleting one digit and typing it back must still block resubmission.
+        flow.sanitizeCode("00000")
+        XCTAssertFalse(flow.canSubmitCode)
+        flow.sanitizeCode("000000")
+        XCTAssertFalse(flow.canSubmitCode)
+        let third = await flow.submitCode { _, _ in
+            attempts += 1
+        }
+        XCTAssertFalse(third)
+        XCTAssertEqual(attempts, 1)
+    }
+
+    func testNewCodeAfterFailureCanBeSubmitted() async {
+        let flow = EmailCodeFlow()
+        flow.email = "family@example.com"
+        _ = await flow.sendCode { _ in }
+
+        flow.sanitizeCode("000000")
+        _ = await flow.submitCode { _, _ in
+            throw AuthError.invalidCode
+        }
+        XCTAssertFalse(flow.canSubmitCode)
+
+        // Replacing with a new 6-digit code re-enables submission.
+        flow.sanitizeCode("123456")
+        XCTAssertTrue(flow.canSubmitCode)
+
+        var submittedCode: String?
+        let ok = await flow.submitCode { _, code in
+            submittedCode = code
+        }
+        XCTAssertTrue(ok)
+        XCTAssertEqual(submittedCode, "123456")
+    }
+
+    func testResendCodeClearsAttemptedCodes() async {
+        let flow = EmailCodeFlow()
+        flow.email = "family@example.com"
+        _ = await flow.sendCode { _ in }
+
+        flow.sanitizeCode("000000")
+        _ = await flow.submitCode { _, _ in
+            throw AuthError.invalidCode
+        }
+        XCTAssertFalse(flow.canSubmitCode)
+
+        let resent = await flow.resendCode { _ in }
+        XCTAssertTrue(resent)
+        XCTAssertEqual(flow.code, "")
+        XCTAssertTrue(flow.attemptedCodes.isEmpty)
+        XCTAssertEqual(flow.infoText, "已重新寄送驗證碼。")
+
+        flow.sanitizeCode("000000")
+        XCTAssertTrue(flow.canSubmitCode)
+    }
+
+    func testResetToEmailPreservesEmailAndErrorAndClearsConsumedCode() async {
+        let flow = EmailCodeFlow()
+        flow.email = "family@example.com"
+        _ = await flow.sendCode { _ in }
+
+        flow.sanitizeCode("123456")
+        _ = await flow.submitCode { _, _ in }
+
+        flow.resetToEmail(error: "網路連線失敗，請再試一次。請重新寄送驗證碼")
+        XCTAssertEqual(flow.step, .enterEmail)
+        XCTAssertEqual(flow.email, "family@example.com")
+        XCTAssertEqual(flow.code, "")
+        XCTAssertTrue(flow.attemptedCodes.isEmpty)
+        XCTAssertEqual(flow.errorText, "網路連線失敗，請再試一次。請重新寄送驗證碼")
+    }
+}

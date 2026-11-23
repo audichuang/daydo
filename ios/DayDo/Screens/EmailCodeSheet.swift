@@ -21,7 +21,7 @@ final class EmailCodeFlow {
     private(set) var busy = false
     var errorText: String?
     var infoText: String?
-    private var lastAutoSubmittedCode: String?
+    private(set) var attemptedCodes: Set<String> = []
 
     var trimmedEmail: String {
         email.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -33,35 +33,40 @@ final class EmailCodeFlow {
         return parts.count == 2 && !parts[0].isEmpty && !parts[1].isEmpty && !trimmedEmail.contains(where: \.isWhitespace)
     }
 
+    /// Single submission gate shared by auto-submit (Mac), Return/Enter, and the submit button.
     var canSubmitCode: Bool {
-        !busy && code.count == 6
+        !busy && code.count == 6 && !attemptedCodes.contains(code)
     }
 
+    @discardableResult
     func sanitizeCode(_ raw: String) -> String {
         let filtered = String(raw.filter(\.isNumber).prefix(6))
         if filtered != code {
             code = filtered
         }
-        if filtered.count < 6 {
-            lastAutoSubmittedCode = nil
-        }
         return filtered
     }
 
-    func shouldAutoSubmit(code value: String) -> Bool {
-        !busy && value.count == 6 && value != lastAutoSubmittedCode
-    }
-
-    func backToEmail() {
+    func resetToEmail(error: String? = nil) {
         guard !busy else { return }
-        errorText = nil
+        errorText = error
         infoText = nil
         code = ""
-        lastAutoSubmittedCode = nil
+        attemptedCodes.removeAll()
         step = .enterEmail
     }
 
+    func backToEmail() {
+        resetToEmail(error: nil)
+    }
+
     func sendCode(using model: AppModel) async -> Bool {
+        await sendCode { email in
+            try await model.startEmailSignIn(email: email)
+        }
+    }
+
+    func sendCode(_ start: (_ email: String) async throws -> Void) async -> Bool {
         let target = trimmedEmail
         guard canSendCode else { return false }
         busy = true
@@ -69,10 +74,10 @@ final class EmailCodeFlow {
         infoText = nil
         defer { busy = false }
         do {
-            try await model.startEmailSignIn(email: target)
+            try await start(target)
             sentEmail = target
             code = ""
-            lastAutoSubmittedCode = nil
+            attemptedCodes.removeAll()
             step = .enterCode
             return true
         } catch {
@@ -82,15 +87,21 @@ final class EmailCodeFlow {
     }
 
     func resendCode(using model: AppModel) async -> Bool {
+        await resendCode { email in
+            try await model.startEmailSignIn(email: email)
+        }
+    }
+
+    func resendCode(_ start: (_ email: String) async throws -> Void) async -> Bool {
         guard !busy, !sentEmail.isEmpty else { return false }
         busy = true
         errorText = nil
         infoText = nil
         defer { busy = false }
         do {
-            try await model.startEmailSignIn(email: sentEmail)
+            try await start(sentEmail)
             code = ""
-            lastAutoSubmittedCode = nil
+            attemptedCodes.removeAll()
             infoText = "已重新寄送驗證碼。"
             return true
         } catch {
@@ -103,7 +114,7 @@ final class EmailCodeFlow {
         guard canSubmitCode else { return false }
         let targetEmail = sentEmail
         let targetCode = code
-        lastAutoSubmittedCode = targetCode
+        attemptedCodes.insert(targetCode)
         busy = true
         errorText = nil
         infoText = nil

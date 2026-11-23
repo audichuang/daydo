@@ -83,10 +83,13 @@ struct SignInView: View {
         }
         .alert("切換帳號？", isPresented: $confirmSwitchAccount) {
             Button("取消", role: .cancel) {
+                let canceledCredential = pendingSwitch?.credential
                 pendingSwitch = nil
-                if Platform.isMac, emailFlow.step == .enterCode {
+                if Platform.isMac,
+                   case .email = canceledCredential,
+                   emailFlow.step == .enterCode {
                     emailFlow.backToEmail()
-                    macFocusedField = .email
+                    focusMacField(.email)
                 }
             }
             Button("清除並登入", role: .destructive) {
@@ -531,12 +534,16 @@ struct SignInView: View {
                         if filtered != oldValue, emailFlow.errorText != nil {
                             emailFlow.errorText = nil
                         }
-                        if emailFlow.shouldAutoSubmit(code: filtered), !model.isSigningIn {
+                        if emailFlow.canSubmitCode, !model.isSigningIn {
                             submitMacEmailCode()
                         }
                     }
                     .onSubmit {
-                        if canSubmit { submitMacEmailCode() }
+                        if canSubmit {
+                            submitMacEmailCode()
+                        } else if !macBusy {
+                            focusMacField(.code)
+                        }
                     }
                     .onKeyPress(.escape) {
                         returnToMacEmailStep()
@@ -780,7 +787,21 @@ struct SignInView: View {
                 avatarUrl: pending.avatarUrl
             )
         } catch {
-            errorText = AuthErrorMessage.text(for: error)
+            if case .email(let email, _) = pending.credential {
+                let base = AuthErrorMessage.text(for: error)
+                let message = base.hasSuffix("。") ? "\(base)請重新寄送驗證碼" : "\(base)。請重新寄送驗證碼"
+                if Platform.isMac {
+                    if emailFlow.trimmedEmail.isEmpty {
+                        emailFlow.email = email
+                    }
+                    emailFlow.resetToEmail(error: message)
+                    focusMacField(.email)
+                } else {
+                    errorText = message
+                }
+            } else {
+                errorText = AuthErrorMessage.text(for: error)
+            }
         }
     }
 }
@@ -827,6 +848,7 @@ private struct MacWindowMinSizeBridge: UIViewRepresentable {
             if restrictions.minimumSize != minimumSize {
                 restrictions.minimumSize = minimumSize
             }
+            Platform.ensureMacWindowMinimumSize(minimumSize, in: scene)
         }
 
         func restore() {
