@@ -111,7 +111,8 @@ const TASK_FIELDS = {
   title: { type: 'string', description: 'Task title; surrounding whitespace is trimmed and it must not be empty.' },
   content: {
     type: 'string',
-    description: 'Notes / description. Use real newline characters for line breaks (a literal \\n is converted to one).',
+    description:
+      'Notes / description. Use real newline characters for line breaks (a literal \\n is converted to one). The app shows inline links written as [label](https://...), bare URLs and phone numbers as tappable links; other Markdown is displayed as plain text.',
   },
   priority: { type: 'string', enum: ['none', 'low', 'medium', 'high'], description: 'Task priority. Defaults to none on create.' },
   start: {

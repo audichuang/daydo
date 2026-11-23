@@ -15,4 +15,5 @@
 - `ArchitectureTests` 的寫死顏色護欄以整個檔案放行（`CalendarScreen` 以外 7 個檔），檔內新加的 `.white`／`Color(hex:)` 不會被擋；之後改成逐行或逐用途放行。
 - 底部分頁切換、月曆收合／展開每次仍約掉 2 幀（最長 70–85ms，模擬器），DayDo 程式碼已不到 10ms，剩 SwiftUI 內部排版與繪製；要實機用 Instruments 的 Hitches 才看得到細節（量法見 `ios/scripts/perf/README.md`）。
 - 常駐分頁的邊界情況（2026-11-22 Codex 審查，判定改版前就有或需異常時序）：停在日曆分頁時點無日期的日曆 Widget 不會回到今天；切回日曆後 SQLite 讀取失敗會留著上一次的任務；同步刪除清單與切換清單時序重疊時，舊請求的錯誤會把 scope 改回今天。
+- `testInviteConfirmLoadingToLoadedAndCancelError` 在 iPad 全套偶發失敗（2026-11-23 一次）：開 `daydo://invite/slow-ok` 後 3 秒內等不到「正在讀取邀請資訊…」，單獨重跑會過。
 - `testAppearanceChoicePersistsAcrossRelaunch` 偶發失敗：點「設定」後 0.18 秒就點「外觀」，落在分頁淡入期間沒生效，單獨重跑會過。
