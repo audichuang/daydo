@@ -228,9 +228,8 @@ final class AppModel {
         case .project(let id):
             if !isViewer(projectId: id) { req.projectId = id }
         case .tag(let t): req.tag = t
-        case .smart(.today), .smart(.next7): req.day = today
+        case .smart(.today): req.day = today
         case .smart(.tomorrow): req.day = today.adding(days: 1)
-        case .smart(.assigned): req.assigneeId = me?.id
         default: break
         }
         return req
@@ -278,7 +277,13 @@ final class AppModel {
     func createQuickTask(title: String, in scope: TaskScope) async -> TodoTask? {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, canCompose(in: scope) else { return nil }
-        let req = composeRequest(for: scope)
+        var req = composeRequest(for: scope)
+        // The quick-add bar has no date/assignee fields, so keep the new task in the list it was typed into.
+        switch scope {
+        case .smart(.next7): req.day = today
+        case .smart(.assigned): req.assigneeId = me?.id
+        default: break
+        }
         let input = CreateTaskInput(
             projectId: resolvedProjectId(for: req),
             title: trimmed,

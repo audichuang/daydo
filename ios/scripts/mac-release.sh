@@ -49,6 +49,12 @@ else
 fi
 
 git -C "$TAP" fetch -q origin
+# 上次只差 push 沒送達：本機只領先一個本版的 cask commit 時直接重推。
+if [[ -z "$(git -C "$TAP" status --porcelain)" ]] && [[ "$(git -C "$TAP" rev-list --count '@{u}..HEAD')" == 1 ]] \
+  && [[ "$(git -C "$TAP" log -1 --format=%s)" == "daydo ${VERSION}" ]] && [[ "$(git -C "$TAP" diff --name-only '@{u}' HEAD)" == "Casks/daydo.rb" ]]; then
+  git -C "$TAP" push -q origin HEAD
+  echo "已補推 tap 的 daydo ${VERSION}"; exit 0
+fi
 if [[ -n "$(git -C "$TAP" status --porcelain)" ]] || [[ "$(git -C "$TAP" rev-parse HEAD)" != "$(git -C "$TAP" rev-parse '@{u}')" ]]; then
   echo "tap（${TAP}）有未提交改動或與遠端不同步，先處理" >&2; exit 1
 fi
@@ -73,9 +79,11 @@ else
   if ! xcodebuild -project DayDo.xcodeproj -scheme DayDo -configuration Release \
     -destination 'generic/platform=macOS,variant=Mac Catalyst' -archivePath "${OUT}/DayDo.xcarchive" \
     CURRENT_PROJECT_VERSION="$BUILD" -allowProvisioningUpdates archive > "${OUT}/archive.log" 2>&1; then
+    git checkout -q -- DayDo.xcodeproj ../DayDoCore/Package.resolved
     { grep -E "error:|ARCHIVE FAILED" "${OUT}/archive.log" || true; } | tail -20; echo "archive 失敗：${OUT}/archive.log"; exit 1
   fi
-  git checkout -q -- ../DayDoCore/Package.resolved
+  # xcodegen 會改寫受追蹤的 pbxproj（TEMP_ UUID），建置也會改 Package.resolved；留著會擋住重跑。
+  git checkout -q -- DayDo.xcodeproj ../DayDoCore/Package.resolved
   if ! xcodebuild -exportArchive -archivePath "${OUT}/DayDo.xcarchive" -exportOptionsPlist ExportOptions-mac.plist \
     -exportPath "${OUT}/export" -allowProvisioningUpdates > "${OUT}/export.log" 2>&1; then
     tail -30 "${OUT}/export.log"; echo "匯出失敗：${OUT}/export.log"; exit 1

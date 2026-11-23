@@ -1648,17 +1648,18 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.selectedTaskId, "A")
     }
 
-    func testComposeRequestDefaultsForNext7AndAssigned() async throws {
+    func testQuickAddDefaultsForNext7AndAssignedLeaveComposerUnchanged() async throws {
         let (model, _) = try await makeModel()
         let me = try XCTUnwrap(model.me)
 
+        // The composer keeps its original defaults; only the quick-add bar fills these in.
         let next7Req = model.composeRequest(for: .smart(.next7))
-        XCTAssertEqual(next7Req.day, model.today)
+        XCTAssertNil(next7Req.day)
         XCTAssertNil(next7Req.assigneeId)
 
         let assignedReq = model.composeRequest(for: .smart(.assigned))
         XCTAssertNil(assignedReq.day)
-        XCTAssertEqual(assignedReq.assigneeId, me.id)
+        XCTAssertNil(assignedReq.assigneeId)
 
         let createdNext7 = await model.createQuickTask(title: "未來7天任務", in: .smart(.next7))
         let quickNext7 = try XCTUnwrap(createdNext7)
