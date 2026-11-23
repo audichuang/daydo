@@ -146,7 +146,7 @@ struct MeProfileSheet: View {
             .scrollBounceBehavior(.basedOnSize)
         }
         .background(Palette.card)
-        .adaptiveSheet(detents: [.medium, .large])
+        .adaptiveSheet(detents: [.medium, .large], macSize: CGSize(width: 420, height: 400))
         .interactiveDismissDisabled(mode == .requiredPrompt)
         .onAppear {
             let me = model.me

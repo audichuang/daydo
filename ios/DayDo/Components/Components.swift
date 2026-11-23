@@ -461,9 +461,17 @@ private struct AdaptiveSheetModifier: ViewModifier {
     var detents: Set<PresentationDetent>
     var selection: Binding<PresentationDetent>?
     var dragIndicator: Visibility
+    var macSize: CGSize?
 
     func body(content: Content) -> some View {
-        if isRegularWindow {
+        if Platform.isMac {
+            let size = macSize ?? CGSize(width: 460, height: 520)
+            content
+                .frame(width: size.width, height: size.height)
+                .presentationSizing(.fitted)
+                .presentationBackground(Palette.card)
+                .menuIndicator(.hidden)
+        } else if isRegularWindow {
             content
                 .presentationSizing(.form)
                 .presentationBackground(Palette.card)
@@ -487,9 +495,19 @@ extension View {
     func adaptiveSheet(
         detents: Set<PresentationDetent>,
         selection: Binding<PresentationDetent>? = nil,
-        dragIndicator: Visibility = .automatic
+        dragIndicator: Visibility = .automatic,
+        macSize: CGSize? = nil
     ) -> some View {
-        modifier(AdaptiveSheetModifier(detents: detents, selection: selection, dragIndicator: dragIndicator))
+        modifier(AdaptiveSheetModifier(detents: detents, selection: selection, dragIndicator: dragIndicator, macSize: macSize))
+    }
+
+    @ViewBuilder
+    func plainMenuOnMac() -> some View {
+        if Platform.isMac {
+            self.buttonStyle(.plain)
+        } else {
+            self
+        }
     }
 }
 
@@ -532,7 +550,7 @@ struct ActivityAnchor: UIViewRepresentable {
 }
 
 extension UIView {
-    fileprivate var nearestViewController: UIViewController? {
+    var nearestViewController: UIViewController? {
         var responder: UIResponder? = self
         while let current = responder {
             if let vc = current as? UIViewController { return vc }

@@ -87,8 +87,20 @@ struct RootView: View {
                                 && model.isSignedIn
                                 && !model.hasActiveRootSheet
                                 && model.tab == .tasks
-                                && model.inlineDetailAllowsSelectionShortcuts,
+                                && model.allowsTaskListKeyboardShortcuts,
+                            scope: model.scope,
                             selectedTaskId: model.selectedTaskId,
+                            onMoveSelection: { delta in
+                                model.moveTaskSelection(delta: delta)
+                            },
+                            onSpace: { id in
+                                model.toggleSelectedTaskCompletion(id: id)
+                            },
+                            onEscape: {
+                                if model.selectedTaskId != nil {
+                                    model.selectedTaskId = nil
+                                }
+                            },
                             onReturn: { id in
                                 model.openTask(id, inlineAvailable: isRegular, focusIfAlreadyInline: true)
                             },
@@ -100,6 +112,7 @@ struct RootView: View {
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                     }
+                    .menuIndicator(Platform.isMac ? .hidden : .automatic)
                     .opacity(splashDismissing || splashRemoved ? 1 : 0)
                     .scaleEffect(splashDismissing || splashRemoved || reduceMotion ? 1 : 0.98)
                 } else {
@@ -140,31 +153,37 @@ struct RootView: View {
             model.flushPendingPresentations()
         }) { ref in
             TaskDetailSheet(taskId: ref.id)
+                .environment(model)
         }
         .sheet(item: $model.composing, onDismiss: {
             model.flushPendingPresentations()
         }) { req in
             ComposerSheet(request: req)
+                .environment(model)
         }
         .sheet(item: Binding(get: { model.editingProjectId.map(TaskRef.init) }, set: { model.editingProjectId = $0?.id }), onDismiss: {
             model.flushPendingPresentations()
         }) { ref in
             EditListSheet(projectId: ref.id == "new" ? nil : ref.id)
+                .environment(model)
         }
         .sheet(item: Binding(get: { model.sharingProjectId.map(TaskRef.init) }, set: { model.sharingProjectId = $0?.id }), onDismiss: {
             model.flushPendingPresentations()
         }) { ref in
             ShareListSheet(projectId: ref.id)
+                .environment(model)
         }
         .sheet(item: $model.invitePrompt, onDismiss: {
             model.flushPendingPresentations()
         }) { prompt in
             InviteConfirmSheet(prompt: prompt)
+                .environment(model)
         }
         .sheet(isPresented: $model.showingMeNamePrompt, onDismiss: {
             model.flushPendingPresentations()
         }) {
             MeProfileSheet(mode: .requiredPrompt)
+                .environment(model)
         }
         .alert("出了點問題", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("好", role: .cancel) {}
@@ -336,13 +355,22 @@ struct HeaderAction: View {
     var tint: Color = Palette.text
     var action: () -> Void
     var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName).font(.system(size: 18, weight: .medium)).foregroundStyle(tint)
-                .frame(width: 44, height: 40).contentShape(Rectangle())
+        if Platform.isMac {
+            Button(action: action) {
+                Label(label, systemImage: systemName)
+            }
+            .labelStyle(.iconOnly)
+            .tint(nil)
+            .accessibilityLabel(label)
+        } else {
+            Button(action: action) {
+                Image(systemName: systemName).font(.system(size: 18, weight: .medium)).foregroundStyle(tint)
+                    .frame(width: 44, height: 40).contentShape(Rectangle())
+            }
+            .buttonStyle(.press)
+            .hoverEffect(.highlight)
+            .accessibilityLabel(label)
         }
-        .buttonStyle(.press)
-        .hoverEffect(.highlight)
-        .accessibilityLabel(label)
     }
 }
 
@@ -362,14 +390,17 @@ private struct RegularSplitView: View {
                     TaskListScreen(scope: model.scope)
                         .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 460)
                 } detail: {
-                    if let taskId = model.selectedTaskId {
-                        TaskDetailContent(taskId: taskId, isInline: true) {
-                            model.selectedTaskId = nil
+                    Group {
+                        if let taskId = model.selectedTaskId {
+                            TaskDetailContent(taskId: taskId, isInline: true) {
+                                model.selectedTaskId = nil
+                            }
+                            .id(taskId)
+                        } else {
+                            TaskDetailEmptyState()
                         }
-                        .id(taskId)
-                    } else {
-                        TaskDetailEmptyState()
                     }
+                    .navigationTitle(Platform.isMac ? model.scopeTitle(model.scope) : "")
                 }
                 .navigationSplitViewStyle(.balanced)
             } else {
@@ -420,7 +451,11 @@ private struct RegularSplitView: View {
     private var sidebar: some View {
         DrawerView(close: {}, rowDragging: .constant(false), isSidebar: true)
             .navigationBarTitleDisplayMode(.inline)
-            .navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 300)
+            .navigationSplitViewColumnWidth(
+                min: Platform.isMac ? 196 : 230,
+                ideal: Platform.isMac ? 220 : 260,
+                max: Platform.isMac ? 260 : 300
+            )
     }
 }
 
@@ -516,12 +551,17 @@ private struct ScrollsToTopBridge: UIViewRepresentable {
 
 private struct SelectionShortcutBridge: UIViewControllerRepresentable {
     var active: Bool
+    var scope: TaskScope
     var selectedTaskId: String?
+    var onMoveSelection: (Int) -> Void
+    var onSpace: (String) -> Void
+    var onEscape: () -> Void
     var onReturn: (String) -> Void
     var onDelete: (String) -> Void
 
     struct CaptureState: Equatable {
         var active: Bool
+        var scope: TaskScope
         var selectedTaskId: String?
     }
 
@@ -538,10 +578,13 @@ private struct SelectionShortcutBridge: UIViewControllerRepresentable {
     func updateUIViewController(_ vc: SelectionShortcutViewController, context: Context) {
         vc.active = active
         vc.selectedTaskId = selectedTaskId
+        vc.onMoveSelection = onMoveSelection
+        vc.onSpace = onSpace
+        vc.onEscape = onEscape
         vc.onReturn = onReturn
         vc.onDelete = onDelete
 
-        let state = CaptureState(active: active, selectedTaskId: selectedTaskId)
+        let state = CaptureState(active: active, scope: scope, selectedTaskId: selectedTaskId)
         guard state != context.coordinator.lastState else { return }
         context.coordinator.lastState = state
         if active {
@@ -560,6 +603,9 @@ private struct SelectionShortcutBridge: UIViewControllerRepresentable {
 private final class SelectionShortcutViewController: UIViewController {
     var active = false
     var selectedTaskId: String?
+    var onMoveSelection: ((Int) -> Void)?
+    var onSpace: ((String) -> Void)?
+    var onEscape: (() -> Void)?
     var onReturn: ((String) -> Void)?
     var onDelete: ((String) -> Void)?
 
@@ -603,7 +649,6 @@ private final class SelectionShortcutViewController: UIViewController {
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         guard active,
-              let selectedTaskId,
               let window = view.window,
               window.isKeyWindow,
               !Self.hasActiveTextInput(in: window) else {
@@ -615,12 +660,32 @@ private final class SelectionShortcutViewController: UIViewController {
             guard let key = press.key,
                   key.modifierFlags.intersection([.command, .control, .alternate]).isEmpty else { continue }
             switch key.keyCode {
+            case .keyboardUpArrow:
+                onMoveSelection?(-1)
+                handled = true
+            case .keyboardDownArrow:
+                onMoveSelection?(1)
+                handled = true
+            case .keyboardSpacebar:
+                if let selectedTaskId {
+                    onSpace?(selectedTaskId)
+                    handled = true
+                }
+            case .keyboardEscape:
+                if selectedTaskId != nil {
+                    onEscape?()
+                    handled = true
+                }
             case .keyboardDeleteOrBackspace, .keyboardDeleteForward:
-                onDelete?(selectedTaskId)
-                handled = true
+                if let selectedTaskId {
+                    onDelete?(selectedTaskId)
+                    handled = true
+                }
             case .keyboardReturnOrEnter:
-                onReturn?(selectedTaskId)
-                handled = true
+                if let selectedTaskId {
+                    onReturn?(selectedTaskId)
+                    handled = true
+                }
             default:
                 break
             }

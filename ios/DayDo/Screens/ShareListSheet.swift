@@ -240,7 +240,7 @@ struct ShareListSheet: View {
             }
         }
         .background(Palette.card)
-        .adaptiveSheet(detents: [.large])
+        .adaptiveSheet(detents: [.large], macSize: CGSize(width: 440, height: 500))
         .sheet(item: $editingMember) { member in
             MemberDetailSheet(projectId: projectId, member: member) {
                 Task {
@@ -248,6 +248,7 @@ struct ShareListSheet: View {
                     await load()
                 }
             }
+            .environment(model)
         }
         .confirmationDialog(
             "確定要離開「\(project?.name ?? "此清單")」？離開後將無法再存取其中的任務。",
@@ -435,7 +436,7 @@ private struct MemberDetailSheet: View {
             .padding(.horizontal, 16)
         }
         .background(Palette.card)
-        .adaptiveSheet(detents: [.height(300)])
+        .adaptiveSheet(detents: [.height(300)], macSize: CGSize(width: 380, height: 280))
     }
 
     private func setRole(_ newRole: String) {

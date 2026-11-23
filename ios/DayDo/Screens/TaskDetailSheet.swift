@@ -29,7 +29,7 @@ struct TaskDetailSheet: View {
             onClose: { dismiss() }
         )
         .interactiveDismissDisabled(dirty)
-        .adaptiveSheet(detents: [.fraction(0.56), .large], selection: $detent, dragIndicator: .visible)
+        .adaptiveSheet(detents: [.fraction(0.56), .large], selection: $detent, dragIndicator: .visible, macSize: CGSize(width: 500, height: 580))
     }
 }
 
@@ -294,6 +294,7 @@ struct TaskDetailContent: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
+            .plainMenuOnMac()
             .hoverEffect(.highlight)
             .disabled(readOnly)
             .accessibilityLabel("所屬清單：\(model.project(task.projectId)?.name ?? "")" + (readOnly ? "" : "，點擊更換"))
@@ -332,8 +333,8 @@ struct TaskDetailContent: View {
             }
         }
         .padding(.horizontal, 14)
-        .padding(.top, isInline ? 8 : 16)
-        .frame(height: isInline ? 56 : 68)
+        .padding(.top, isInline ? (Platform.isMac ? 4 : 8) : 16)
+        .frame(height: isInline ? (Platform.isMac ? 44 : 56) : 68)
     }
 
     func statusRow(_ task: TodoTask, readOnly: Bool, isDone: Bool) -> some View {
@@ -485,7 +486,7 @@ struct TaskDetailContent: View {
                         .strikethrough(item.isDone, color: Palette.done)
                     Spacer()
                 }
-                .frame(minHeight: 44)
+                .frame(minHeight: Platform.isMac ? 34 : 44)
                 .overlay(alignment: .top) { if i > 0 { Rectangle().fill(Palette.separatorSoft).frame(height: 1) } }
                 .contextMenu {
                     if !readOnly {
@@ -506,7 +507,7 @@ struct TaskDetailContent: View {
                         .submitLabel(.next)
                         .onSubmit { addItem(task) }
                 }
-                .frame(minHeight: 44)
+                .frame(minHeight: Platform.isMac ? 34 : 44)
                 .overlay(alignment: .top) { if !task.items.isEmpty { Rectangle().fill(Palette.separatorSoft).frame(height: 1) } }
             }
         }
@@ -623,8 +624,8 @@ struct TaskDetailContent: View {
         guard !Task.isCancelled else { return }
         let first = task == nil
         task = t
-        if first, let p = UserDefaults.standard.string(forKey: "debugDetailPage") {
-            UserDefaults.standard.removeObject(forKey: "debugDetailPage")
+        if first, let p = model.defaults.string(forKey: "debugDetailPage") {
+            model.defaults.removeObject(forKey: "debugDetailPage")
             openDate(t)
             if p == "time" { page = .time }
         }

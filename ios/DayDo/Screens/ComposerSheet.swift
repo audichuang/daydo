@@ -74,13 +74,14 @@ struct ComposerSheet: View {
                 contentHeight = clamped
             }
         }
-        .frame(maxHeight: .infinity, alignment: .top)
-        .frame(minHeight: isRegularWindow ? 220 : nil)
-        .adaptiveSheet(detents: [.height(contentHeight)], dragIndicator: .hidden)
+        .frame(maxHeight: Platform.isMac ? nil : .infinity, alignment: .top)
+        .frame(minHeight: isRegularWindow && !Platform.isMac ? 220 : nil)
+        .adaptiveSheet(detents: [.height(contentHeight)], dragIndicator: .hidden, macSize: CGSize(width: 460, height: 176))
         .sheet(isPresented: $showDate) {
             DateEditorFlow(draft: $panelDraft, today: model.today, title: title, excludeTaskId: nil,
                            cancel: { showDate = false }, confirm: { draft = panelDraft; showDate = false })
-                .adaptiveSheet(detents: [.large])
+                .environment(model)
+                .adaptiveSheet(detents: [.large], macSize: CGSize(width: 420, height: 560))
                 .onDisappear { focus = .title }
         }
         .alert("新增標籤", isPresented: $addingTag) {
@@ -92,12 +93,8 @@ struct ComposerSheet: View {
             }
         }
         .onAppear {
-            if let reqId = request.projectId, !model.isViewer(projectId: reqId) {
-                projectId = reqId
-            } else {
-                projectId = model.inbox?.id ?? model.editableProjects.first?.id
-            }
-            if let t = request.tag { tags = [model.tags.first { $0.name == t }?.label ?? t] }
+            projectId = model.resolvedProjectId(for: request)
+            tags = model.resolvedTags(for: request)
             if let d = request.day {
                 draft.day = d
                 if let m = request.minute {

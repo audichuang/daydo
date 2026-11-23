@@ -205,27 +205,28 @@ struct DrawerView: View {
                             Button("新增清單", systemImage: "list.bullet") { close(); model.editingProjectId = "new" }
                             Button("新增資料夾", systemImage: "folder.badge.plus") { newFolder = "" }
                         } label: {
-                            Image(systemName: "plus").font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.textSecondary)
-                                .frame(width: 40, height: 36)
+                            Image(systemName: "plus").font(.system(size: Platform.isMac ? 14 : 16, weight: .medium)).foregroundStyle(Palette.textSecondary)
+                                .frame(width: Platform.isMac ? 28 : 40, height: Platform.isMac ? 26 : 36)
                         }
+                        .menuIndicator(Platform.isMac ? .hidden : .automatic)
                         .hoverEffect(.highlight)
                         .accessibilityLabel("新增清單或資料夾")
                     }
                     .padding(.leading, 12)
-                    .padding(.top, 14)
+                    .padding(.top, Platform.isMac ? 10 : 14)
 
                     ForEach(model.folders) { f in folderRow(f) }
                     ForEach(lists(in: nil)) { p in listRow(p, indent: false) }
 
                     if !model.tags.isEmpty {
                         Text("標籤").txt(12, .semibold).foregroundStyle(Palette.textTertiary)
-                            .padding(.leading, 12).padding(.top, 14).padding(.bottom, 6)
+                            .padding(.leading, 12).padding(.top, Platform.isMac ? 10 : 14).padding(.bottom, 6)
                         FlowLayout(spacing: 6) {
                             ForEach(model.tags) { t in
                                 Button { pick(.tag(t.name)) } label: {
                                     Text("# " + t.label).txt(12, .medium)
                                         .foregroundStyle(isCurrent(.tag(t.name)) ? accent.text : Palette.textNav)
-                                        .padding(.horizontal, 10).padding(.vertical, 6)
+                                        .padding(.horizontal, 10).padding(.vertical, Platform.isMac ? 4 : 6)
                                         .background(Capsule().fill(isCurrent(.tag(t.name)) ? accent.soft : Palette.raised))
                                 }
                                 .buttonStyle(.press)
@@ -233,6 +234,14 @@ struct DrawerView: View {
                             }
                         }
                         .padding(.horizontal, 12)
+                    }
+
+                    if Platform.isMac && isSidebar {
+                        Rectangle().fill(Palette.separatorSoft).frame(height: 1)
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 8)
+                        smartRow(.completed, "已完成", "checkmark.circle", model.counts.completed)
+                        smartRow(.trash, "垃圾桶", "trash", model.counts.trash)
                     }
                 }
                 .padding(.horizontal, 8)
@@ -248,13 +257,15 @@ struct DrawerView: View {
                     closeSwipe()
                 }
             }
-            HStack(spacing: 8) {
-                bottomButton("已完成", .completed)
-                bottomButton("垃圾桶", .trash)
+            if !(Platform.isMac && isSidebar) {
+                HStack(spacing: 8) {
+                    bottomButton("已完成", .completed)
+                    bottomButton("垃圾桶", .trash)
+                }
+                .padding(12)
+                .padding(.bottom, isSidebar ? 12 : 20)
+                .overlay(alignment: .top) { Rectangle().fill(Palette.separator).frame(height: 1) }
             }
-            .padding(12)
-            .padding(.bottom, isSidebar ? 12 : 20)
-            .overlay(alignment: .top) { Rectangle().fill(Palette.separator).frame(height: 1) }
         }
         .background(isSidebar ? Palette.card : .clear)
         .alert("新增資料夾", isPresented: Binding(get: { newFolder != nil }, set: { if !$0 { newFolder = nil } })) {
@@ -293,18 +304,18 @@ struct DrawerView: View {
     @State private var renameText = ""
 
     var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Platform.isMac ? 8 : 10) {
             let me = model.me
-            AvatarView(member: me, size: 34, fallbackColor: accent.hex)
+            AvatarView(member: me, size: Platform.isMac ? 26 : 34, fallbackColor: accent.hex)
             Text(me?.name ?? "")
-                .txt(16, .semibold)
+                .txt(Platform.isMac ? 15 : 16, .semibold)
                 .foregroundStyle(Palette.text)
                 .lineLimit(1)
             Spacer()
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
+        .padding(.horizontal, Platform.isMac ? 14 : 16)
+        .padding(.top, Platform.isMac ? 8 : 12)
+        .padding(.bottom, Platform.isMac ? 6 : 10)
     }
 
     func lists(in folder: String?) -> [Project] {
@@ -339,8 +350,8 @@ struct DrawerView: View {
 
     func row(icon: some View, title: String, count: Int?, current: Bool, indent: Bool, highlighted: Bool = false, trailing: AnyView? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 12) {
-                icon.font(.system(size: 16)).foregroundStyle(current ? accent.text : Palette.textSecondary).frame(width: 22)
+            HStack(spacing: Platform.isMac ? 8 : 12) {
+                icon.font(.system(size: Platform.isMac ? 14 : 16)).foregroundStyle(current ? accent.text : Palette.textSecondary).frame(width: Platform.isMac ? 18 : 22)
                 Text(title).txt(15, current ? .bold : .regular).foregroundStyle(current ? Palette.text : Palette.textBody).lineLimit(1)
                 Spacer(minLength: 4)
                 if let trailing { trailing }
@@ -353,10 +364,10 @@ struct DrawerView: View {
                         .transition(.opacity)
                 }
             }
-            .padding(.leading, indent ? 26 : 12)
-            .padding(.trailing, 12)
-            .frame(minHeight: 46)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(current || highlighted ? accent.soft : .clear))
+            .padding(.leading, indent ? (Platform.isMac ? 22 : 26) : (Platform.isMac ? 10 : 12))
+            .padding(.trailing, Platform.isMac ? 10 : 12)
+            .frame(minHeight: Platform.isMac ? 32 : 46)
+            .background(RoundedRectangle(cornerRadius: Platform.isMac ? 8 : 12, style: .continuous).fill(current || highlighted ? accent.soft : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.press(scale: 0.98, opacity: 0.92, highlight: Palette.pressHighlight))
@@ -508,7 +519,7 @@ private struct SwipeableListRow<Content: View>: View {
             content(reveal > 2)
                 .padding(.trailing, reveal)
         }
-        .frame(minHeight: 48)
+        .frame(minHeight: Platform.isMac ? 32 : 48)
         .contentShape(Rectangle())
         .gesture(
             HorizontalPanGesture(

@@ -13,7 +13,17 @@ final class KeychainSyncTokenStore: SyncTokenStore, @unchecked Sendable {
         static let refreshToken = "refreshToken"
     }
 
-    init(service: String = (Bundle.main.bundleIdentifier ?? "com.audichuang.daydo") + ".auth") {
+    static var defaultService: String {
+        let base = Bundle.main.bundleIdentifier ?? "com.audichuang.daydo"
+#if DEBUG
+        if Platform.isMac {
+            return base + ".debug.auth"
+        }
+#endif
+        return base + ".auth"
+    }
+
+    init(service: String = KeychainSyncTokenStore.defaultService) {
         self.service = service
     }
 

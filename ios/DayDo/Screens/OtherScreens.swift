@@ -232,6 +232,7 @@ struct SettingsScreen: View {
         }
         .sheet(isPresented: $editingMeProfile) {
             MeProfileSheet(mode: .edit)
+                .environment(model)
         }
     }
 
@@ -365,7 +366,7 @@ struct SettingsScreen: View {
             }
         }
         .padding(.horizontal, 14)
-        .frame(minHeight: 52)
+        .frame(minHeight: Platform.isMac ? 40 : 52)
         .contentShape(Rectangle())
     }
 }

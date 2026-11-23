@@ -52,6 +52,7 @@ struct CalendarScreen: View {
     @State private var yearScrollPosition = ScrollPosition(edge: .top)
     @State private var monthScrollPosition = ScrollPosition(edge: .top)
     @State private var timeGridScrollReset = 0
+    @State private var popoverTarget: CalendarTaskPopoverTarget?
 
     private var tasks: [TodoTask] { query.value }
     private var tasksVersion: Int { query.version }
@@ -88,24 +89,70 @@ struct CalendarScreen: View {
                 }
                 content
             }
-            if !model.isViewer(projectId: projectFilter) {
+            if !Platform.isMac && !model.isViewer(projectId: projectFilter) {
                 ComposeFAB { compose(day: sel, minute: nil) }
             }
         }
         .sensoryFeedback(.selection, trigger: dateSelectionHaptic)
         .sensoryFeedback(.selection, trigger: modeRaw)
         .sensoryFeedback(.impact(weight: .light), trigger: pageShiftHaptic)
+        .coordinateSpace(name: "calendarPopoverSpace")
+        .background {
+            if Platform.isMac {
+                CalendarPopoverPresenter(
+                    target: $popoverTarget,
+                    tasks: tasks,
+                    onOpenDetail: { id in
+                        model.openTask(id, inlineAvailable: false)
+                    }
+                )
+                .allowsHitTesting(false)
+            }
+        }
+        .navigationTitle(Platform.isMac ? title : "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if isRegular {
-                ToolbarItem(placement: .topBarLeading) {
-                    modeMenuButton(useGlass: false)
-                }
-                ToolbarItem(placement: .principal) {
-                    titleButton
-                }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    trailingActions
+                if Platform.isMac {
+                    ToolbarItemGroup(placement: .topBarLeading) {
+                        Button { shift(-1) } label: {
+                            Label("上一頁", systemImage: "chevron.left")
+                        }
+                        .labelStyle(.iconOnly)
+                        .tint(nil)
+                        .accessibilityLabel("上一頁")
+                        .accessibilityIdentifier("calendarPrev")
+                        Button("今天") { goToday() }
+                            .tint(nil)
+                            .accessibilityLabel("回到今天")
+                            .accessibilityIdentifier("calendarToday")
+                        Button { shift(1) } label: {
+                            Label("下一頁", systemImage: "chevron.right")
+                        }
+                        .labelStyle(.iconOnly)
+                        .tint(nil)
+                        .accessibilityLabel("下一頁")
+                        .accessibilityIdentifier("calendarNext")
+                    }
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        modeMenuButton(useGlass: false)
+                        if !model.isViewer(projectId: projectFilter) {
+                            HeaderAction(systemName: "plus", label: "新增任務") {
+                                compose(day: sel, minute: nil)
+                            }
+                        }
+                        trailingActions
+                    }
+                } else {
+                    ToolbarItem(placement: .topBarLeading) {
+                        modeMenuButton(useGlass: false)
+                    }
+                    ToolbarItem(placement: .principal) {
+                        titleButton
+                    }
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        trailingActions
+                    }
                 }
             }
         }
@@ -113,9 +160,20 @@ struct CalendarScreen: View {
             await load(for: activeReload)
         }
         .onAppear { applyPendingCalendarDay() }
+        .onChange(of: model.calendarCommandTrigger) { _, _ in
+            guard isActive, let action = model.calendarCommandAction else { return }
+            model.calendarCommandAction = nil
+            popoverTarget = nil
+            switch action {
+            case .previous: shift(-1)
+            case .next: shift(1)
+            case .today: goToday()
+            }
+        }
         .onChange(of: CalActivation(isActive: isActive, navTrigger: model.calendarNavigationTrigger)) { old, new in
             if !new.isActive {
                 gridDragLock.isActive = false
+                if popoverTarget != nil { popoverTarget = nil }
                 if drag.horizontalOffset != 0 { drag.horizontalOffset = 0 }
                 if drag.collapseY != 0 { drag.collapseY = 0 }
                 return
@@ -142,6 +200,7 @@ struct CalendarScreen: View {
         if drag.horizontalOffset != 0 { drag.horizontalOffset = 0 }
         if drag.collapseY != 0 { drag.collapseY = 0 }
         if pendingMove != nil { pendingMove = nil }
+        if popoverTarget != nil { popoverTarget = nil }
         if selected != nil { selected = nil }
         if month != nil { month = nil }
         if memberFilter != nil { memberFilter = nil }
@@ -231,6 +290,7 @@ struct CalendarScreen: View {
             } label: {
                 iconLabel
             }
+            .menuIndicator(Platform.isMac ? .hidden : .automatic)
             .hoverEffect(.highlight)
             .accessibilityLabel("切換檢視：目前\(mode.label)")
             .accessibilityIdentifier("calendarMode")
@@ -266,7 +326,13 @@ struct CalendarScreen: View {
             }
             .accessibilityIdentifier("weekLayoutToggle")
         }
-        let ellipsisLabel = Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
+        let ellipsisLabel = Group {
+            if Platform.isMac {
+                Image(systemName: "ellipsis")
+            } else {
+                Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
+            }
+        }
         if isActive {
             Menu {
                 Button("回到今天", systemImage: "arrow.uturn.backward") { goToday() }
@@ -291,6 +357,7 @@ struct CalendarScreen: View {
             } label: {
                 ellipsisLabel
             }
+            .menuIndicator(Platform.isMac ? .hidden : .automatic)
             .hoverEffect(.highlight)
             .accessibilityLabel("更多選項")
         } else {
@@ -300,13 +367,14 @@ struct CalendarScreen: View {
 
     var title: String {
         let thisYear = model.today.year
+        let includeYear = Platform.isMac
         switch mode {
         case .year: return "\(String(shownMonth.year)) 年"
         case .week, .threeDay, .day:
             let d = rangeDays.first ?? sel
-            return d.year == thisYear ? "\(d.month)月" : "\(String(d.year)) 年 \(d.month) 月"
+            return (!includeYear && d.year == thisYear) ? "\(d.month)月" : "\(String(d.year)) 年 \(d.month) 月"
         default:
-            return shownMonth.year == thisYear ? "\(shownMonth.month)月" : "\(String(shownMonth.year)) 年 \(shownMonth.month) 月"
+            return (!includeYear && shownMonth.year == thisYear) ? "\(shownMonth.month)月" : "\(String(shownMonth.year)) 年 \(shownMonth.month) 月"
         }
     }
 
@@ -376,6 +444,7 @@ struct CalendarScreen: View {
         bumpPage: Bool = true,
         update: () -> Void
     ) {
+        if popoverTarget != nil { popoverTarget = nil }
         shiftDir = direction
         switch haptic {
         case .none: break
@@ -414,6 +483,14 @@ struct CalendarScreen: View {
     func compose(day: LocalDay, minute: Int?, endMinute: Int? = nil) {
         guard !model.isViewer(projectId: projectFilter) else { return }
         model.composing = ComposeRequest(projectId: projectFilter, day: day, minute: minute, endMinute: endMinute)
+    }
+
+    private func openTaskOrPopover(_ id: String, rect: CGRect) {
+        if Platform.isMac {
+            popoverTarget = CalendarTaskPopoverTarget(taskId: id, rect: rect)
+        } else {
+            model.openTask(id, inlineAvailable: false)
+        }
     }
 
     private func moveTask(_ task: TodoTask, to draft: DateDraft) {
@@ -587,7 +664,7 @@ struct CalendarScreen: View {
                             isRegular: isRegular,
                             showOwnerAvatars: showOwnerAvatars,
                             isViewerFilter: model.isViewer(projectId: projectFilter),
-                            openTask: { model.openTask($0, inlineAvailable: false) },
+                            openTask: { id, rect in openTaskOrPopover(id, rect: rect) },
                             tapEmpty: { d in compose(day: d, minute: nil) },
                             openDay: { d in
                                 shiftPage(direction: 0) {
@@ -617,7 +694,7 @@ struct CalendarScreen: View {
                                  showOwnerAvatars: showOwnerAvatars,
                                  isViewerFilter: model.isViewer(projectId: projectFilter),
                                  dragLock: gridDragLock,
-                                 openTask: { model.openTask($0, inlineAvailable: false) },
+                                 openTask: { id, rect in openTaskOrPopover(id, rect: rect) },
                                  tapSlot: { d, m in compose(day: d, minute: m) },
                                  createRange: { d, s, e in compose(day: d, minute: s, endMinute: e) },
                                  moveTask: { task, draft in moveTask(task, to: draft) },
@@ -639,6 +716,7 @@ struct CalendarScreen: View {
         .onChange(of: modeRaw) { _, _ in
             // Non-animated cleanup when mode changes.
             gridDragLock.isActive = false
+            popoverTarget = nil
             drag.horizontalOffset = 0
             drag.collapseY = 0
             shiftDir = 0
@@ -769,7 +847,9 @@ struct CalendarScreen: View {
                         selected = d
                         modeRaw = CalMode.day.rawValue
                     }
-                } open: { id in model.openTask(id, inlineAvailable: false) }
+                } open: { id, rect in
+                    openTaskOrPopover(id, rect: rect)
+                }
                 .equatable()
             }
         }
@@ -1222,7 +1302,7 @@ struct AgendaRow: View {
             .hoverEffect(.highlight)
             .accessibilityValue(owner.map { "\($0.name)的" } ?? "")
         }
-        .padding(.leading, 14).padding(.trailing, 16).padding(.vertical, 12)
+        .padding(.leading, 14).padding(.trailing, 16).padding(.vertical, Platform.isMac ? 8 : 12)
         .overlay(alignment: .leading) { Rectangle().fill(Palette.listColor(project?.color)).frame(width: 4) }
     }
 
@@ -1405,7 +1485,7 @@ private struct WeekRow: View, Equatable {
     var today: LocalDay
     var reduceMotion: Bool
     var pick: (LocalDay) -> Void
-    var open: (String) -> Void
+    var open: (String, CGRect) -> Void
 
     let laneH: CGFloat = 17
 
@@ -1448,7 +1528,7 @@ private struct WeekRow: View, Equatable {
                 ForEach(Array(week.bars.enumerated()), id: \.offset) { _, bar in
                     let color = Palette.listColor(bar.colorHex)
                     let done = bar.isCompleted
-                    Button { open(bar.taskId) } label: {
+                    CalendarTaskAnchorButton(action: { rect in open(bar.taskId, rect) }) {
                         HStack(spacing: 0) {
                             Rectangle().fill(color).frame(width: 2)
                             Text((bar.continues ? "‹ " : "") + (bar.startColumn == bar.endColumn ? bar.timedPrefix : "") + bar.title)
@@ -1505,7 +1585,7 @@ struct TimeGrid: View {
     var showOwnerAvatars: Bool = false
     var isViewerFilter: Bool = false
     fileprivate var dragLock: GridDragLock
-    var openTask: (String) -> Void
+    var openTask: (String, CGRect) -> Void
     var tapSlot: (LocalDay, Int) -> Void
     var createRange: (LocalDay, Int, Int) -> Void
     var moveTask: (TodoTask, DateDraft) -> Void
@@ -1531,7 +1611,7 @@ struct TimeGrid: View {
         return ContinuousClock.now < until
     }
 
-    var hourH: CGFloat { isRegular ? 64 : 56 }
+    var hourH: CGFloat { Platform.isMac ? 52 : (isRegular ? 64 : 56) }
     var gutter: CGFloat { isRegular ? 52 : 40 }
 
     var body: some View {
@@ -1728,7 +1808,7 @@ struct TimeGrid: View {
         // Same title-first rule as timed blocks: color bar 2 + leading 4 + title
         // + trailing 2 + avatar 14 + stroke 1 + trailing 3.
         let showAvatar = owner != nil && width >= 2 + 4 + Self.ownerAvatarMinTitleWidth + 2 + 14 + 1 + 3
-        return Button { openTask(t.id) } label: {
+        return CalendarTaskAnchorButton(action: { rect in openTask(t.id, rect) }) {
             HStack(spacing: 0) {
                 Rectangle().fill(color).frame(width: 2)
                 Text(t.title)
@@ -1767,19 +1847,20 @@ struct TimeGrid: View {
         let h = max(CGFloat(b.end - b.start) / 60 * hourH - 2, CGFloat(TimeGridDrag.minBlockHeight))
         let done = b.task.isCompleted
         let owner = partnerOwner(for: b.task, show: showOwnerAvatars, members: model.members)
-        return blockContent(task: b.task, schedule: b.task.schedule, color: color, owner: owner, width: w, height: h)
-            .background(RoundedRectangle(cornerRadius: 4).fill(color.opacity(done ? 0.12 : 0.3)))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .contentShape(Rectangle())
-            .hoverEffect(.highlight)
-            .onTapGesture {
-                guard dragMode == nil, !isTapSuppressed else { return }
-                openTask(b.task.id)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel(b.task.title + "，" + (b.task.schedule.map(DateText.range) ?? ""))
-            .accessibilityValue(owner.map { "\($0.name)的" } ?? "")
+        return CalendarTaskTapAnchor(onTap: { rect in
+            guard dragMode == nil, !isTapSuppressed else { return }
+            openTask(b.task.id, rect)
+        }) {
+            blockContent(task: b.task, schedule: b.task.schedule, color: color, owner: owner, width: w, height: h)
+                .background(RoundedRectangle(cornerRadius: 4).fill(color.opacity(done ? 0.12 : 0.3)))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .contentShape(Rectangle())
+                .hoverEffect(.highlight)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(b.task.title + "，" + (b.task.schedule.map(DateText.range) ?? ""))
+        .accessibilityValue(owner.map { "\($0.name)的" } ?? "")
     }
 
     private func blockContent(task: TodoTask, schedule: Schedule?, color: Color, owner: Member?, width w: CGFloat, height h: CGFloat) -> some View {
@@ -2130,6 +2211,7 @@ private struct CalendarPanGesture: UIGestureRecognizerRepresentable {
     func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
         let pan = UIPanGestureRecognizer()
         pan.maximumNumberOfTouches = 1
+        pan.allowedScrollTypesMask = .continuous
         pan.delegate = context.coordinator
         return pan
     }
@@ -2217,5 +2299,286 @@ private struct CalendarPanGesture: UIGestureRecognizerRepresentable {
             }
             return false
         }
+    }
+}
+
+struct CalendarTaskPopoverTarget: Equatable {
+    let id = UUID()
+    var taskId: String
+    var rect: CGRect
+}
+
+/// Button wrapper that records its frame in `calendarPopoverSpace` on Mac so a
+/// single `UIPopoverPresentationController` can anchor directly to the clicked task.
+struct CalendarTaskAnchorButton<Label: View>: View {
+    var action: (CGRect) -> Void
+    @ViewBuilder var label: () -> Label
+    @State private var frame: CGRect = .zero
+
+    var body: some View {
+        Button {
+            action(frame)
+        } label: {
+            label()
+        }
+        .background {
+            if Platform.isMac {
+                Color.clear
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("calendarPopoverSpace")) } action: { frame = $0 }
+            }
+        }
+    }
+}
+
+private struct CalendarTaskTapAnchor<Content: View>: View {
+    var onTap: (CGRect) -> Void
+    @ViewBuilder var content: () -> Content
+    @State private var frame: CGRect = .zero
+
+    var body: some View {
+        content()
+            .onTapGesture {
+                onTap(frame)
+            }
+            .background {
+                if Platform.isMac {
+                    Color.clear
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("calendarPopoverSpace")) } action: { frame = $0 }
+                }
+            }
+    }
+}
+
+/// Presents `CalendarTaskPopoverCard` via `UIPopoverPresentationController` anchored
+/// to the clicked task's exact frame in `calendarPopoverSpace`.
+private struct CalendarPopoverPresenter: UIViewRepresentable {
+    @Environment(AppModel.self) private var model
+    @Environment(\.accent) private var accent
+    @Environment(\.textScale) private var textScale
+    @Binding var target: CalendarTaskPopoverTarget?
+    var tasks: [TodoTask]
+    var onOpenDetail: (String) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        let coord = context.coordinator
+        coord.onDismiss = {
+            if self.target != nil {
+                self.target = nil
+            }
+        }
+
+        guard let target else {
+            if let presented = coord.presentedController {
+                coord.presentedController = nil
+                coord.presentedId = nil
+                presented.dismiss(animated: true)
+            }
+            return
+        }
+
+        if coord.presentedId == target.id { return }
+
+        let taskId = target.taskId
+        let initialTask = tasks.first { $0.id == taskId }
+        let card = CalendarTaskPopoverCard(
+            taskId: taskId,
+            initialTask: initialTask,
+            onOpen: {
+                let presented = coord.presentedController
+                coord.presentedController = nil
+                coord.presentedId = nil
+                self.target = nil
+                if let presented {
+                    presented.dismiss(animated: true) {
+                        onOpenDetail(taskId)
+                    }
+                } else {
+                    onOpenDetail(taskId)
+                }
+            }
+        )
+        .environment(model)
+        .environment(\.accent, accent)
+        .environment(\.textScale, textScale)
+
+        let presentNew: () -> Void = {
+            guard let host = uiView.nearestViewController ?? uiView.window?.rootViewController else { return }
+            let hc = UIHostingController(rootView: card)
+            hc.sizingOptions = .preferredContentSize
+            hc.modalPresentationStyle = .popover
+            hc.view.backgroundColor = .clear
+            let fitted = hc.sizeThatFits(in: CGSize(width: 280, height: 600))
+            hc.preferredContentSize = CGSize(width: max(280, fitted.width), height: max(120, fitted.height))
+            if let popover = hc.popoverPresentationController {
+                popover.sourceView = uiView
+                let raw = target.rect
+                let clamped = raw.isEmpty
+                    ? CGRect(x: uiView.bounds.midX, y: uiView.bounds.midY, width: 1, height: 1)
+                    : raw.intersection(uiView.bounds)
+                popover.sourceRect = clamped.isEmpty
+                    ? CGRect(x: uiView.bounds.midX, y: uiView.bounds.midY, width: 1, height: 1)
+                    : clamped
+                popover.permittedArrowDirections = [.left, .right, .up, .down]
+                popover.delegate = coord
+            }
+            coord.presentedController = hc
+            coord.presentedId = target.id
+            host.present(hc, animated: true)
+        }
+
+        if let existing = coord.presentedController {
+            coord.presentedController = nil
+            coord.presentedId = nil
+            existing.dismiss(animated: false) {
+                presentNew()
+            }
+        } else {
+            DispatchQueue.main.async {
+                guard self.target?.id == target.id else { return }
+                presentNew()
+            }
+        }
+    }
+
+    final class Coordinator: NSObject, UIPopoverPresentationControllerDelegate {
+        weak var presentedController: UIViewController?
+        var presentedId: UUID?
+        var onDismiss: (() -> Void)?
+
+        func adaptivePresentationStyle(for controller: UIPresentationController) -> UIModalPresentationStyle {
+            .none
+        }
+
+        func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+            presentedController = nil
+            presentedId = nil
+            onDismiss?()
+        }
+    }
+}
+
+private struct CalendarTaskPopoverCard: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.accent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var taskId: String
+    var initialTask: TodoTask?
+    var onOpen: () -> Void
+
+    @State private var loadedTask: TodoTask?
+
+    private var task: TodoTask? { loadedTask ?? initialTask }
+
+    var body: some View {
+        Group {
+            if let task {
+                let isDone = model.displaysCompleted(task)
+                let readOnly = model.isViewer(projectId: task.projectId)
+                let project = model.project(task.projectId)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 10) {
+                        Button { model.toggleComplete(task) } label: {
+                            TaskCheckbox(done: isDone, priority: task.priority, size: 18)
+                                .padding(.top, 2)
+                                .frame(width: 24, height: 24, alignment: .top)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.press(scale: 0.9, opacity: 0.85))
+                        .disabled(readOnly)
+                        .accessibilityLabel((isDone ? "取消完成：" : "完成：") + task.title)
+
+                        Text(task.title)
+                            .txt(16, .semibold)
+                            .foregroundStyle(isDone ? Palette.done : Palette.text)
+                            .strikethrough(isDone, color: Palette.done)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .animation(Motion.check(reduceMotion), value: isDone)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let scheduleText = dateSummary(task) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "calendar")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(dateColor(task))
+                                Text(scheduleText)
+                                    .txt(13, .medium)
+                                    .foregroundStyle(dateColor(task))
+                                    .lineLimit(1)
+                                if task.repeat != nil {
+                                    Image(systemName: "repeat")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Palette.textTertiary)
+                                }
+                            }
+                        }
+                        if let project {
+                            HStack(spacing: 6) {
+                                ListDot(color: project.color, size: 8)
+                                Text(project.name)
+                                    .txt(13)
+                                    .foregroundStyle(Palette.textSecondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                    .padding(.leading, 34)
+
+                    Rectangle().fill(Palette.separatorSoft).frame(height: 1)
+
+                    HStack {
+                        Spacer()
+                        Button("開啟") {
+                            onOpen()
+                        }
+                        .txt(13, .semibold)
+                        .foregroundStyle(accent.text)
+                        .padding(.horizontal, 12)
+                        .frame(height: 28)
+                        .background(Capsule().fill(accent.soft))
+                        .buttonStyle(.press)
+                        .accessibilityIdentifier("calendarPopover.open")
+                    }
+                }
+                .padding(14)
+            } else {
+                ProgressView()
+                    .tint(Palette.textSecondary)
+                    .padding(24)
+            }
+        }
+        .frame(width: 280)
+        .background(Palette.card)
+        .task(id: model.revision) {
+            if let fresh = try? await model.api.getTask(id: taskId) {
+                loadedTask = fresh
+            }
+        }
+    }
+
+    private func dateSummary(_ task: TodoTask) -> String? {
+        guard let s = task.schedule else { return nil }
+        let day = DateText.relative(s.startDay, today: model.today)
+        if s.isAllDay {
+            if s.isMultiDay { return "\(DateText.monthDay(s.startDay)) – \(DateText.monthDay(s.lastDay))・全天" }
+            return day + "・全天"
+        }
+        return day + " " + DateText.range(s)
+    }
+
+    private func dateColor(_ task: TodoTask) -> Color {
+        guard task.schedule != nil else { return Palette.textSecondary }
+        return TaskGrouping.isOverdue(task, today: model.today) ? Palette.overdue : accent.text
     }
 }

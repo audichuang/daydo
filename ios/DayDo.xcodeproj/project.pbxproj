@@ -46,6 +46,7 @@
 		BA3665B45AB6639B842BBA89 /* WidgetSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 769FB898F8CB816D3209FD16 /* WidgetSnapshotTests.swift */; };
 		BA526A6B810BD3379EC9BA14 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6984AFAE49745EDDDFF3BDB4 /* AppModel.swift */; };
 		C71F91C87DBE76BFE8A2BC0C /* Motion.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDC36FD5853DC2385FA65F35 /* Motion.swift */; };
+		D080D648D0DDD7A1F8E7FE68 /* Platform.swift in Sources */ = {isa = PBXBuildFile; fileRef = D08F9335E9E218EF32592CC1 /* Platform.swift */; };
 		D5B392650E0271184B023696 /* DayDoWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D30F5C2B4335B32BA231501 /* DayDoWidgetsBundle.swift */; };
 		D6E8515463547C7474484DF0 /* DayDoWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 90C4A324F918B192D9D68EE1 /* DayDoWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		EAB896BF06D1DA77E283DF5E /* DayDoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4677FEEE4764DF9B66BB6C5A /* DayDoCore */; };
@@ -135,6 +136,7 @@
 		B891DFDE4EE9759CC78BA7E9 /* DrawerMetricsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerMetricsTests.swift; sourceTree = "<group>"; };
 		C790B6FFBAFDB9BADA3CE1FC /* TaskDetailSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskDetailSheet.swift; sourceTree = "<group>"; };
 		CBE69B8A39D6026F6C72A644 /* TaskListScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskListScreen.swift; sourceTree = "<group>"; };
+		D08F9335E9E218EF32592CC1 /* Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platform.swift; sourceTree = "<group>"; };
 		DD944E1EAEB502E47717D303 /* ShareListSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareListSheet.swift; sourceTree = "<group>"; };
 		DFFE20E498B56F159D6BDC5C /* DayDo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DayDo.entitlements; sourceTree = "<group>"; };
 		E45AF04A64333352B5667B17 /* DrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerView.swift; sourceTree = "<group>"; };
@@ -143,7 +145,7 @@
 		F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		F68BFC5798449FCFE7B82212 /* DayDoCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DayDoCore; path = ../DayDoCore; sourceTree = SOURCE_ROOT; };
 		F6BD3D5DF00E3413620F308D /* WeekAgendaGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeekAgendaGrid.swift; sourceTree = "<group>"; };
-		"TEMP_4C481C03-495D-4443-90A5-1ECC38833118" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		"TEMP_71477870-BBE1-4468-B2B6-F96993C0CAD8" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -182,6 +184,7 @@
 				615E31EA2D033F846C07B08E /* DayDoApp.swift */,
 				6DAF0DFE366B2DF89B894383 /* DemoData.swift */,
 				A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */,
+				D08F9335E9E218EF32592CC1 /* Platform.swift */,
 				8ACE4B8D0A80E51B00BC93D5 /* ResidentQuery.swift */,
 			);
 			path = App;
@@ -325,10 +328,10 @@
 			path = DayDoUITests;
 			sourceTree = "<group>";
 		};
-		"TEMP_8663F69B-E1DA-4605-ABB6-8CC7C852F634" /* ios */ = {
+		"TEMP_BFD278C5-DA21-4217-9C20-1986A8321468" /* ios */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_4C481C03-495D-4443-90A5-1ECC38833118" /* Config.xcconfig */,
+				"TEMP_71477870-BBE1-4468-B2B6-F96993C0CAD8" /* Config.xcconfig */,
 			);
 			path = ios;
 			sourceTree = "<group>";
@@ -539,6 +542,7 @@
 				7D0D980B5B52B78EF1CA32AF /* MeProfileSheet.swift in Sources */,
 				C71F91C87DBE76BFE8A2BC0C /* Motion.swift in Sources */,
 				7454858BA67E1C4407B53A26 /* OtherScreens.swift in Sources */,
+				D080D648D0DDD7A1F8E7FE68 /* Platform.swift in Sources */,
 				EB87665C4CBCDAD8E36016DD /* ResidentQuery.swift in Sources */,
 				23FCC3E72501BB4E763CA638 /* RootView.swift in Sources */,
 				291183E9EBCB11282851A4F3 /* ShareListSheet.swift in Sources */,
@@ -628,7 +632,7 @@
 		};
 		739B74DBC48851785BC9AAA2 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_4C481C03-495D-4443-90A5-1ECC38833118" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_71477870-BBE1-4468-B2B6-F96993C0CAD8" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
@@ -745,7 +749,7 @@
 		};
 		B97B517B54A6D8DCCD7DFE92 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_4C481C03-495D-4443-90A5-1ECC38833118" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_71477870-BBE1-4468-B2B6-F96993C0CAD8" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;

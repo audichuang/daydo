@@ -85,6 +85,7 @@ final class AppModel {
         didSet {
             if oldValue != scope {
                 selectedTaskId = nil
+                visibleTaskIds = []
             }
         }
     }
@@ -99,6 +100,8 @@ final class AppModel {
             }
         }
     }
+    var visibleTaskIds: [String] = []
+    var selectionScrollTrigger = 0
     var inlineDetailSubpageTaskId: String?
     var inlineDetailFocusedTaskId: String?
     var searchFocusTrigger = 0
@@ -108,12 +111,34 @@ final class AppModel {
         guard let selectedTaskId else { return false }
         return inlineDetailSubpageTaskId != selectedTaskId && inlineDetailFocusedTaskId != selectedTaskId
     }
+
+    var allowsTaskListKeyboardShortcuts: Bool {
+        if let selectedTaskId {
+            return inlineDetailSubpageTaskId != selectedTaskId && inlineDetailFocusedTaskId != selectedTaskId
+        }
+        return true
+    }
+
     /// Task opened from a notification while another detail sheet was open;
     /// shown after that sheet is dismissed so unsaved edits are not replaced.
     var pendingDetailTaskId: String?
     var pendingWidgetDeepLink: WidgetDeepLink?
     var calendarNavigationDay: LocalDay?
     var calendarNavigationTrigger = 0
+
+    enum CalendarCommandAction: Equatable {
+        case previous
+        case next
+        case today
+    }
+    var calendarCommandAction: CalendarCommandAction?
+    var calendarCommandTrigger = 0
+
+    func triggerCalendarCommand(_ action: CalendarCommandAction) {
+        guard isSignedIn, !hasActiveRootSheet, tab == .calendar else { return }
+        calendarCommandAction = action
+        calendarCommandTrigger += 1
+    }
 
     /// Opens a task's detail inline in the split view when in a regular-width
     /// window on the Tasks tab; otherwise opens it as a root sheet.
@@ -158,8 +183,7 @@ final class AppModel {
         }
     }
 
-    func openComposerForCurrentScope() {
-        guard canComposeForCurrentScope else { return }
+    func composeRequest(for scope: TaskScope) -> ComposeRequest {
         var req = ComposeRequest()
         switch scope {
         case .project(let id):
@@ -169,7 +193,62 @@ final class AppModel {
         case .smart(.tomorrow): req.day = today.adding(days: 1)
         default: break
         }
-        composing = req
+        return req
+    }
+
+    func resolvedProjectId(for req: ComposeRequest) -> String? {
+        if let reqId = req.projectId, !isViewer(projectId: reqId) {
+            return reqId
+        }
+        return inbox?.id ?? editableProjects.first?.id
+    }
+
+    func resolvedTags(for req: ComposeRequest) -> [String] {
+        guard let t = req.tag else { return [] }
+        return [tags.first { $0.name == t }?.label ?? t]
+    }
+
+    func openComposerForCurrentScope() {
+        guard canComposeForCurrentScope else { return }
+        composing = composeRequest(for: scope)
+    }
+
+    @discardableResult
+    func createQuickTask(title: String, in scope: TaskScope) async -> TodoTask? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, canCompose(in: scope) else { return nil }
+        let req = composeRequest(for: scope)
+        let input = CreateTaskInput(
+            projectId: resolvedProjectId(for: req),
+            title: trimmed,
+            schedule: req.day.map { .allDay($0) },
+            tags: resolvedTags(for: req)
+        )
+        guard let created = await perform({ try await $0.createTask(input) }) else { return nil }
+        await revealCreatedTaskInAll(created)
+        return created
+    }
+
+    func moveTaskSelection(delta: Int) {
+        let ids = visibleTaskIds
+        guard !ids.isEmpty else { return }
+        if let current = selectedTaskId, let idx = ids.firstIndex(of: current) {
+            let next = max(0, min(ids.count - 1, idx + delta))
+            selectedTaskId = ids[next]
+        } else {
+            selectedTaskId = delta >= 0 ? ids.first : ids.last
+        }
+        selectionScrollTrigger += 1
+    }
+
+    func toggleSelectedTaskCompletion(id: String) {
+        guard scope != .smart(.trash) else { return }
+        Task {
+            guard let task = try? await api.getTask(id: id),
+                  task.deletedAt == nil,
+                  !isViewer(projectId: task.projectId) else { return }
+            toggleComplete(task)
+        }
     }
 
     func deleteSelectedTask(id: String) {
@@ -264,7 +343,7 @@ final class AppModel {
         UserDefaults(suiteName: DayDoStorage.appGroup)
     }
 
-    private let defaults: UserDefaults
+    let defaults: UserDefaults
     private let sharedDefaults: UserDefaults?
 
     var accentHex: String {
@@ -873,6 +952,7 @@ final class AppModel {
         hasPushedNavigation = false
         detailTaskId = nil
         selectedTaskId = nil
+        visibleTaskIds = []
         pendingDetailTaskId = nil
         pendingWidgetDeepLink = nil
         calendarNavigationDay = nil

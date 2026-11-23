@@ -19,6 +19,9 @@ struct TaskListScreen: View {
     @State private var limits: [TaskScope: Int] = [:]
     @State private var shareText: String?
     @State private var scrollPosition = ScrollPosition(edge: .top)
+    @State private var quickAddText = ""
+    @State private var quickAddSubmitting = false
+    @FocusState private var quickAddFocused: Bool
     @AppStorage("closedSections") private var closedRaw = TaskSection.Kind.completed.id
 
     private var activeReload: TaskReload? {
@@ -29,6 +32,13 @@ struct TaskListScreen: View {
     /// hidden (or while a load is in flight / fails) never shows or acts on old rows.
     private var visibleSections: [TaskSection] {
         query.loadedKey?.scope == scope ? query.value : []
+    }
+
+    private var orderedVisibleTaskIds: [String] {
+        let closedSet = closed
+        return visibleSections
+            .filter { !closedSet.contains($0.id) }
+            .flatMap { $0.tasks.map(\.id) }
     }
 
     private var isScopeLoaded: Bool {
@@ -43,7 +53,11 @@ struct TaskListScreen: View {
     }
 
     private var showComposeFAB: Bool {
-        model.canCompose(in: scope)
+        !Platform.isMac && model.canCompose(in: scope)
+    }
+
+    private var showQuickAdd: Bool {
+        Platform.isMac && model.canCompose(in: scope)
     }
 
     var body: some View {
@@ -53,53 +67,79 @@ struct TaskListScreen: View {
                 Palette.background.ignoresSafeArea()
             }
             ZStack(alignment: .top) {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(model.scopeTitle(scope)).txt(30, .bold).foregroundStyle(Palette.text)
-                            Text(subtitle)
-                                .txt(14)
-                                .foregroundStyle(Palette.textSecondary)
-                                .contentTransition(reduceMotion ? .identity : .numericText())
-                                .animation(isScopeLoaded ? Motion.count(reduceMotion) : nil, value: subtitle)
-                            if scope == .smart(.all) && model.filterMembers.count > 1 {
-                                MemberFilterChips(
-                                    members: model.filterMembers,
-                                    selection: Binding(get: { model.effectiveAllMemberFilter }, set: { model.allMemberFilter = $0 })
-                                )
-                                    .padding(.top, 10)
+                ScrollViewReader { scrollProxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: Platform.isMac ? 10 : 16) {
+                            if Platform.isMac {
+                                Text(subtitle)
+                                    .txt(12)
+                                    .foregroundStyle(Palette.textSecondary)
+                                    .contentTransition(reduceMotion ? .identity : .numericText())
+                                    .animation(isScopeLoaded ? Motion.count(reduceMotion) : nil, value: subtitle)
+                                    .padding(.horizontal, 4)
+                                if scope == .smart(.all) && model.filterMembers.count > 1 {
+                                    MemberFilterChips(
+                                        members: model.filterMembers,
+                                        selection: Binding(get: { model.effectiveAllMemberFilter }, set: { model.allMemberFilter = $0 })
+                                    )
+                                }
+                                if showQuickAdd {
+                                    quickAddBar
+                                }
+                            } else {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(model.scopeTitle(scope)).txt(30, .bold).foregroundStyle(Palette.text)
+                                    Text(subtitle)
+                                        .txt(14)
+                                        .foregroundStyle(Palette.textSecondary)
+                                        .contentTransition(reduceMotion ? .identity : .numericText())
+                                        .animation(isScopeLoaded ? Motion.count(reduceMotion) : nil, value: subtitle)
+                                    if scope == .smart(.all) && model.filterMembers.count > 1 {
+                                        MemberFilterChips(
+                                            members: model.filterMembers,
+                                            selection: Binding(get: { model.effectiveAllMemberFilter }, set: { model.allMemberFilter = $0 })
+                                        )
+                                            .padding(.top, 10)
+                                    }
+                                }
+                                .padding(.horizontal, 4)
                             }
-                        }
-                        .padding(.horizontal, 4)
 
-                        if isScopeLoaded && visibleSections.isEmpty {
-                            EmptyState(scope: scope)
-                                .id(SectionViewID(scope: query.loadedKey?.scope, sectionId: "__empty"))
-                                .transition(.opacity)
-                        }
-                        ForEach(visibleSections) { sec in
-                            SectionCard(section: sec, scope: scope, closed: closed.contains(sec.id)) { toggle(sec.id) }
-                                .id(SectionViewID(scope: query.loadedKey?.scope, sectionId: sec.id))
-                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
-                        }
-                        if visibleSections.contains(where: \.hasMore) {
-                            Button { loadMore() } label: {
-                                Text("載入更多").txt(13, .semibold).foregroundStyle(accent.text)
-                                    .frame(maxWidth: .infinity, minHeight: 36)
+                            if isScopeLoaded && visibleSections.isEmpty {
+                                EmptyState(scope: scope)
+                                    .id(SectionViewID(scope: query.loadedKey?.scope, sectionId: "__empty"))
+                                    .transition(.opacity)
                             }
-                            .buttonStyle(.press)
-                            .hoverEffect(.highlight)
-                        } else if !visibleSections.isEmpty {
-                            Text("已顯示全部").txt(12).foregroundStyle(Palette.textFaint).frame(maxWidth: .infinity).padding(.vertical, 4)
+                            ForEach(visibleSections) { sec in
+                                SectionCard(section: sec, scope: scope, closed: closed.contains(sec.id)) { toggle(sec.id) }
+                                    .id(SectionViewID(scope: query.loadedKey?.scope, sectionId: sec.id))
+                                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                            }
+                            if visibleSections.contains(where: \.hasMore) {
+                                Button { loadMore() } label: {
+                                    Text("載入更多").txt(13, .semibold).foregroundStyle(accent.text)
+                                        .frame(maxWidth: .infinity, minHeight: 36)
+                                }
+                                .buttonStyle(.press)
+                                .hoverEffect(.highlight)
+                            } else if !visibleSections.isEmpty {
+                                Text("已顯示全部").txt(12).foregroundStyle(Palette.textFaint).frame(maxWidth: .infinity).padding(.vertical, 4)
+                            }
+                        }
+                        .padding(.horizontal, Platform.isMac ? 12 : 16)
+                        .padding(.top, isRegular ? (Platform.isMac ? 8 : 12) : 60)
+                        .padding(.bottom, isRegular ? (showComposeFAB ? 96 : 24) : 170)
+                        .enclosingScrollsToTop(isActive)
+                    }
+                    .scrollPosition($scrollPosition)
+                    .scrollIndicators(.hidden)
+                    .onChange(of: model.selectionScrollTrigger) { _, _ in
+                        guard isActive, let id = model.selectedTaskId else { return }
+                        withAnimation(Motion.layout(reduceMotion)) {
+                            scrollProxy.scrollTo(id)
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, isRegular ? 12 : 60)
-                    .padding(.bottom, isRegular ? (showComposeFAB ? 96 : 32) : 170)
-                    .enclosingScrollsToTop(isActive)
                 }
-                .scrollPosition($scrollPosition)
-                .scrollIndicators(.hidden)
 
                 if !isRegular {
                     ScreenHeader {
@@ -119,21 +159,35 @@ struct TaskListScreen: View {
                 ComposeFAB { compose() }
             }
         }
+        .navigationTitle(Platform.isMac ? model.scopeTitle(scope) : "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if isRegular {
-                if isDuplicatingCurrentProject {
+                if !Platform.isMac && isDuplicatingCurrentProject {
                     ToolbarItem(placement: .principal) {
                         duplicatingStatusView
                     }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    if Platform.isMac && isDuplicatingCurrentProject {
+                        duplicatingStatusView
+                    }
                     trailingActions
                 }
             }
         }
         .task(id: activeReload) {
             await load(for: activeReload)
+        }
+        .onChange(of: orderedVisibleTaskIds, initial: true) { _, ids in
+            if isActive {
+                model.visibleTaskIds = ids
+            }
+        }
+        .onChange(of: showQuickAdd) { _, allowed in
+            if !allowed && quickAddFocused {
+                quickAddFocused = false
+            }
         }
         .onChange(of: isActive) { _, active in
             if active {
@@ -146,7 +200,58 @@ struct TaskListScreen: View {
                 if scrollPosition.isPositionedByUser || scrollPosition.edge != .top {
                     scrollPosition.scrollTo(edge: .top)
                 }
+                model.visibleTaskIds = orderedVisibleTaskIds
+            } else if quickAddFocused {
+                quickAddFocused = false
             }
+        }
+    }
+
+    private var quickAddBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "plus")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(quickAddFocused ? accent.text : Palette.textTertiary)
+            TextField("新增任務至 \(model.scopeTitle(scope))", text: $quickAddText)
+                .txt(14)
+                .foregroundStyle(Palette.text)
+                .tint(accent.color)
+                .focused($quickAddFocused)
+                .submitLabel(.return)
+                .onSubmit { submitQuickAdd() }
+                .onKeyPress(.escape) {
+                    quickAddFocused = false
+                    return .handled
+                }
+                .accessibilityIdentifier("taskList.quickAdd")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 36)
+        .background(Palette.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(quickAddFocused ? accent.color : Palette.separator, lineWidth: 1)
+        )
+    }
+
+    private func submitQuickAdd() {
+        let title = quickAddText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !quickAddSubmitting else {
+            quickAddFocused = true
+            return
+        }
+        let targetScope = scope
+        quickAddText = ""
+        quickAddSubmitting = true
+        quickAddFocused = true
+        Task {
+            defer {
+                quickAddSubmitting = false
+                if showQuickAdd {
+                    quickAddFocused = true
+                }
+            }
+            _ = await model.createQuickTask(title: title, in: targetScope)
         }
     }
 
@@ -159,7 +264,13 @@ struct TaskListScreen: View {
         if case .project(let id) = scope, !(model.project(id)?.isInbox ?? false) {
             HeaderAction(systemName: "person.crop.circle.badge.plus", label: "共享") { model.sharingProjectId = id }
         }
-        let ellipsisLabel = Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
+        let ellipsisLabel = Group {
+            if Platform.isMac {
+                Image(systemName: "ellipsis")
+            } else {
+                Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
+            }
+        }
         if isActive {
             Menu {
                 if case .project(let id) = scope {
@@ -199,6 +310,7 @@ struct TaskListScreen: View {
             } label: {
                 ellipsisLabel
             }
+            .menuIndicator(Platform.isMac ? .hidden : .automatic)
             .hoverEffect(.highlight)
             .background(ActivityAnchor(text: $shareText))
             .accessibilityLabel("更多選項")
@@ -352,8 +464,8 @@ struct SectionCard: View {
                     Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textTertiary)
                         .rotationEffect(.degrees(closed ? -90 : 0))
                 }
-                .padding(.leading, 16).padding(.trailing, 14)
-                .frame(minHeight: 44)
+                .padding(.leading, Platform.isMac ? 12 : 16).padding(.trailing, Platform.isMac ? 12 : 14)
+                .frame(minHeight: Platform.isMac ? 34 : 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.press(scale: 0.99, opacity: 0.92))
@@ -365,14 +477,15 @@ struct SectionCard: View {
                 LazyVStack(spacing: 0) {
                     ForEach(section.tasks) { t in
                         TaskRow(task: t, separator: t.id != firstId, sectionKind: section.kind, inTrash: scope == .smart(.trash), selectsInline: true, showProject: !isProjectScope)
+                            .id(t.id)
                             .transition(Motion.rowTransition(reduceMotion))
                     }
                 }
                 .transition(Motion.expandTransition(reduceMotion))
             }
         }
-        .card()
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .card(Platform.isMac ? 12 : 16)
+        .clipShape(RoundedRectangle(cornerRadius: Platform.isMac ? 12 : 16, style: .continuous))
     }
 }
 
@@ -402,13 +515,13 @@ struct TaskRow: View {
 
     var body: some View {
         let compact = model.compact
-        let pad: CGFloat = compact ? 9 : 12
+        let pad: CGFloat = Platform.isMac ? (compact ? 6 : 8) : (compact ? 9 : 12)
         HStack(alignment: .top, spacing: 0) {
             Button { toggle() } label: {
-                TaskCheckbox(done: isDone, priority: task.priority)
+                TaskCheckbox(done: isDone, priority: task.priority, size: Platform.isMac ? 17 : 20)
                     .padding(.top, pad + 1)
-                    .frame(width: 48, alignment: .top)
-                    .frame(minHeight: 44, alignment: .top)
+                    .frame(width: Platform.isMac ? 38 : 48, alignment: .top)
+                    .frame(minHeight: Platform.isMac ? 34 : 44, alignment: .top)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.press(scale: 0.9, opacity: 0.85))
@@ -419,7 +532,7 @@ struct TaskRow: View {
             Button {
                 model.openTask(task.id, inlineAvailable: usesInlineSelection)
             } label: {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: Platform.isMac ? 2 : 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(task.title)
                             .txt(17, .medium)
@@ -601,7 +714,7 @@ struct EmptyState: View {
 
     var message: String {
         switch scope {
-        case .smart(.today): "今天沒有待辦。按右下角 ＋ 新增一項。"
+        case .smart(.today): Platform.isMac ? "今天沒有待辦。在上方輸入框新增一項。" : "今天沒有待辦。按右下角 ＋ 新增一項。"
         case .smart(.trash): "垃圾桶是空的"
         case .smart(.completed): "還沒有完成的任務"
         default: "這裡還沒有任務"

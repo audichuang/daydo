@@ -196,6 +196,7 @@ struct DatePanel: View {
         } label: {
             rowLabel("alarm", "提醒時間", summary, highlight: !draft.reminders.isEmpty)
         }
+        .plainMenuOnMac()
         .menuActionDismissBehavior(.disabled)
     }
 
@@ -215,6 +216,7 @@ struct DatePanel: View {
         } label: {
             rowLabel("repeat", "重複", current?.label(anchor: anchor) ?? (draft.repeatRule ?? "無"), highlight: draft.repeatRule != nil)
         }
+        .plainMenuOnMac()
     }
 
     var zoneMenu: some View {
@@ -229,6 +231,7 @@ struct DatePanel: View {
         } label: {
             rowLabel("globe", "時區", TimeZoneOption.label(draft.timeZone), highlight: false)
         }
+        .plainMenuOnMac()
     }
 
     // MARK: 持續時間

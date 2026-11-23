@@ -155,6 +155,7 @@ struct EditListSheet: View {
                             } label: {
                                 rowLabel("提醒與通知", value: notifyMode == "all" ? "有變更時通知" : "不通知", last: !canTransferOwner)
                             }
+                            .plainMenuOnMac()
 
                             if canTransferOwner {
                                 Button { showTransferOwner = true } label: {
@@ -172,14 +173,17 @@ struct EditListSheet: View {
                             Button("不放資料夾") { folderId = nil }
                             ForEach(model.folders) { f in Button(f.name) { folderId = f.id } }
                         } label: { rowLabel("資料夾", value: model.folders.first { $0.id == folderId }?.name ?? "無") }
+                        .plainMenuOnMac()
                         Menu {
                             Button("任務清單") { kind = "TASK" }
                             Button("筆記清單") { kind = "NOTE" }
                         } label: { rowLabel("清單類型", value: kind == "NOTE" ? "筆記清單（顯示同任務清單）" : "任務清單") }
+                        .plainMenuOnMac()
                         Menu {
                             Button("所有任務") { showInSmart = "all" }
                             Button("不顯示") { showInSmart = "none" }
                         } label: { rowLabel("在智慧清單中顯示", value: showInSmart == "all" ? "所有任務" : "不顯示", last: true) }
+                        .plainMenuOnMac()
                     }
 
                     if let original, !original.isInbox, isOwner {
@@ -205,7 +209,7 @@ struct EditListSheet: View {
             }
         }
         .background(Palette.card)
-        .adaptiveSheet(detents: [.large])
+        .adaptiveSheet(detents: [.large], macSize: CGSize(width: 440, height: 540))
         .confirmationDialog("刪除「\(name)」？清單內的任務會移到垃圾桶。", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("刪除清單", role: .destructive) {
                 guard let id = original?.id else { return }
@@ -217,6 +221,7 @@ struct EditListSheet: View {
                 TransferOwnerSheet(project: original) { updated in
                     self.original = updated
                 }
+                .environment(model)
             }
         }
         .sheet(isPresented: $showSharing, onDismiss: {
@@ -228,6 +233,7 @@ struct EditListSheet: View {
         }) {
             if let original {
                 ShareListSheet(projectId: original.id)
+                    .environment(model)
             }
         }
         .task {
@@ -416,6 +422,6 @@ private struct TransferOwnerSheet: View {
             }
         }
         .background(Palette.card)
-        .adaptiveSheet(detents: [.medium])
+        .adaptiveSheet(detents: [.medium], macSize: CGSize(width: 400, height: 340))
     }
 }

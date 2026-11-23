@@ -133,7 +133,7 @@ struct InviteConfirmSheet: View {
             }
         }
         .background(Palette.card)
-        .adaptiveSheet(detents: [.height(480), .large], dragIndicator: .visible)
+        .adaptiveSheet(detents: [.height(480), .large], dragIndicator: .visible, macSize: CGSize(width: 420, height: 420))
 #if DEBUG
         .onAppear {
             model.debugInviteAppearCount += 1

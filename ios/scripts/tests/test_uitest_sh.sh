@@ -384,6 +384,12 @@ EOF
 cat >"$STUB/xcodebuild" <<'EOF'
 #!/bin/bash
 S="$STUB_STATE"
+if [[ " $* " == *" -showBuildSettings "* ]]; then
+  printf '%s\n' "xcodebuild $*" >>"$S/events.log"
+  echo "    TARGET_BUILD_DIR = /tmp/stub-dd/Build/Products/Debug-maccatalyst"
+  echo "    FULL_PRODUCT_NAME = DayDo.app"
+  exit 0
+fi
 if [[ -e "$S/xcodebuild.ignore_term" ]]; then
   trap '' TERM INT HUP
   echo $$ >"$S/xcodebuild.pid"
@@ -1148,6 +1154,39 @@ t_build_restores_resolved() {
   fi
 }
 
+t_mac_build_no_lock_and_restores_resolved() {
+  set_env "$STUB_NOVAULT"
+  local r="$ROOT/DayDoCore/Package.resolved"
+  if ! git -C "$ROOT" diff --quiet -- "$r"; then echo "  skip: Package.resolved already modified"; return; fi
+  # Hold the DayDo simulator lock and pretend another xcodebuild is running: mac mode must not wait.
+  mkdir -p "$(dirname "$LOCK")"
+  "$REAL_PY" -I -c '
+import fcntl, os, sys, time
+fd = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR, 0o644)
+fcntl.flock(fd, fcntl.LOCK_EX)
+open(sys.argv[2], "w").close()
+time.sleep(30)
+' "$LOCK" "$T/held" &
+  local hpid=$!; BG_PIDS="$BG_PIDS $hpid"
+  local i=0; while [[ ! -e "$T/held" && $i -lt 100 ]]; do sleep 0.05; i=$((i + 1)); done
+  echo 999 >"$S/pgrep.out"
+  printf "printf '%%s\\n' '// stub pin' >>'%s'\n" "$r" >"$S/hook.xcodebuild"
+
+  run DD_UITEST_LOCK_WAIT=1 -- mac -configuration Debug
+  rm -f "$S/hook.xcodebuild" "$S/pgrep.out"
+  kill "$hpid" 2>/dev/null; wait "$hpid" 2>/dev/null
+
+  eq "$RC" 0 "mac build rc"
+  has "$S/events.log" "^xcodebuild build -project DayDo\.xcodeproj -scheme DayDo -destination platform=macOS,variant=Mac Catalyst CODE_SIGNING_ALLOWED=NO -configuration Debug$" "xcodebuild mac build args"
+  has "$T/out" "/tmp/stub-dd/Build/Products/Debug-maccatalyst/DayDo\.app" "prints .app path"
+  hasnt "$T/err" "等 DayDo 模擬器鎖" "did not wait for simulator lock"
+  hasnt "$T/err" "有別的 xcodebuild 在跑" "did not wait for other xcodebuild"
+  if ! git -C "$ROOT" diff --quiet -- "$r"; then
+    fail "Package.resolved left modified after mac build"
+    git -C "$ROOT" checkout -q -- "$r"
+  fi
+}
+
 t_temp_device_missing() {
   rm -f "$S/udid"; : >"$S/archive"
   run -- "DD tmp x"
@@ -1669,7 +1708,7 @@ t_test_allows_legacy_owner_file_transition t_test_refuses_foreign_lease t_test_f
 t_test_child_and_teardown_rc_8_no_busy_msg t_down_releases_and_shuts_down
 t_down_legacy_owner_file_transition t_down_interleaved_lease t_down_missing_device
 t_park_transition_guard t_down_transition_guard t_park_rc_passthrough t_park_lock_timeout
-t_old_sim_vault t_no_sim_vault t_build_restores_resolved t_temp_device_missing t_full_name_is_resident
+t_old_sim_vault t_no_sim_vault t_build_restores_resolved t_mac_build_no_lock_and_restores_resolved t_temp_device_missing t_full_name_is_resident
 t_test_waits_for_other_xcodebuild t_teardown_failure_rc t_record_relative_path t_record_basic
 t_record_recorder_dies_midway t_record_test_failure_rc t_record_recorder_fails
 t_record_test_refused t_record_rm_log_failure_preserves_rc t_sigterm_stops_child_and_recorder

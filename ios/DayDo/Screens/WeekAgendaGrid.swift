@@ -15,7 +15,7 @@ struct WeekAgendaGrid: View {
     var isRegular: Bool = false
     var showOwnerAvatars: Bool = false
     var isViewerFilter: Bool = false
-    var openTask: (String) -> Void
+    var openTask: (String, CGRect) -> Void
     var tapEmpty: (LocalDay) -> Void
     var openDay: (LocalDay) -> Void
     var pickMiniDay: (LocalDay) -> Void
@@ -277,7 +277,7 @@ struct WeekAgendaGrid: View {
         let availableTitleWidth = cellWidth - 2.5 - 4 - 4 - timeWidth - (avatarSize + strokeWidth + 4)
         let showAvatar = owner != nil && availableTitleWidth >= TimeGrid.ownerAvatarMinTitleWidth
 
-        return Button { openTask(task.id) } label: {
+        return CalendarTaskAnchorButton(action: { rect in openTask(task.id, rect) }) {
             HStack(spacing: 4) {
                 Rectangle()
                     .fill(color)

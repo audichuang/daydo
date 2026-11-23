@@ -3,6 +3,7 @@
 #
 #   ios/scripts/uitest.sh [iphone|ipad|"DD <full simulator name>"] [extra xcodebuild args...]
 #   ios/scripts/uitest.sh build [extra xcodebuild args...]  # build-for-testing (no simulator needed)
+#   ios/scripts/uitest.sh mac [extra xcodebuild args...]    # build Mac Catalyst app (no lock/simulator)
 #   ios/scripts/uitest.sh ipad -only-testing:DayDoUITests/DayDoFlowTests/testCalendar
 #   ios/scripts/uitest.sh up [iphone|ipad|"DD <name>"]     # restore if parked, boot, lease, print the UDID
 #   ios/scripts/uitest.sh down [iphone|ipad|"DD <name>"]   # drop your lease, shut down if nobody else uses it
@@ -168,17 +169,17 @@ test_owner="dd:uitest"
 install_hint='uv tool install --force "git+https://github.com/audichuang/sim-vault@v4.1.0"'
 
 usage() {
-  echo "usage: $0 {build [xcodebuild args...] | [up|down|park] [iphone|ipad|\"DD <name>\"] | [iphone|ipad|\"DD <name>\"] [xcodebuild args...]}" >&2
+  echo "usage: $0 {build [xcodebuild args...] | mac [xcodebuild args...] | [up|down|park] [iphone|ipad|\"DD <name>\"] | [iphone|ipad|\"DD <name>\"] [xcodebuild args...]}" >&2
   exit 2
 }
 
 # Validate without shifting: the lock re-executes this script with the original arguments.
 mode="test"
-case "${1:-}" in build|down|park|up) mode=$1 ;; esac
+case "${1:-}" in build|down|mac|park|up) mode=$1 ;; esac
 if [[ "$mode" == test ]]; then target="${1:-iphone}"; else target="${2:-iphone}"; fi
 resident=1
 name=""
-if [[ "$mode" != build ]]; then
+if [[ "$mode" != build && "$mode" != mac ]]; then
   case "$target" in
     # Full names of the resident devices take the same path as their aliases.
     iphone|"DD iPhone 18 Pro") target=iphone; name="DD iPhone 18 Pro" ;;
@@ -186,6 +187,41 @@ if [[ "$mode" != build ]]; then
     "DD "*) name="$target"; resident=0 ;;
     *) usage ;;
   esac
+fi
+
+# Building the app workspace rewrites DayDoCore/Package.resolved with the app's own pins
+# (GoogleSignIn, AppAuth, ...). Put it back afterwards, but only if it was clean before:
+# a deliberate edit must survive.
+resolved="$root/DayDoCore/Package.resolved"
+resolved_was_clean=0
+if git -C "$root" diff --quiet -- "$resolved" 2>/dev/null; then resolved_was_clean=1; fi
+restore_resolved() {
+  if [[ $resolved_was_clean == 1 ]]; then git -C "$root" checkout -q -- "$resolved" 2>/dev/null || true; fi
+}
+
+if [[ "$mode" == mac ]]; then
+  shift
+  trap restore_resolved EXIT
+  cd "$here/.."
+  echo "編譯 Mac Catalyst：platform=macOS,variant=Mac Catalyst" >&2
+  xcodebuild build -project DayDo.xcodeproj -scheme DayDo \
+    -destination "platform=macOS,variant=Mac Catalyst" \
+    CODE_SIGNING_ALLOWED=NO "$@" && build_rc=0 || build_rc=$?
+  if [[ $build_rc == 0 ]]; then
+    app_path=$(xcodebuild -showBuildSettings -project DayDo.xcodeproj -scheme DayDo \
+      -destination "platform=macOS,variant=Mac Catalyst" \
+      CODE_SIGNING_ALLOWED=NO "$@" 2>/dev/null | awk -F ' = ' '
+        $1 ~ /^[[:space:]]*TARGET_BUILD_DIR$/ && dir == "" { dir = $2 }
+        $1 ~ /^[[:space:]]*FULL_PRODUCT_NAME$/ && name == "" { name = $2 }
+        END { if (dir != "" && name != "") print dir "/" name }
+      ')
+    if [[ -n "$app_path" ]]; then
+      printf '%s\n' "$app_path"
+    fi
+  fi
+  restore_resolved
+  trap - EXIT
+  exit "$build_rc"
 fi
 
 locked=0
@@ -229,16 +265,6 @@ lock_fd="${DD_UITEST_LOCK_FD:-}"
 # Children (xcodebuild, a nested uitest.sh) must not think they hold the lock.
 unset DD_UITEST_LOCK_PID DD_UITEST_LOCK_FD DD_UITEST_LOCK_RC
 if [[ -n "$lock_rc" ]]; then exit "$lock_rc"; fi
-
-# Building the app workspace rewrites DayDoCore/Package.resolved with the app's own pins
-# (GoogleSignIn, AppAuth, ...). Put it back afterwards, but only if it was clean before:
-# a deliberate edit must survive.
-resolved="$root/DayDoCore/Package.resolved"
-resolved_was_clean=0
-if git -C "$root" diff --quiet -- "$resolved" 2>/dev/null; then resolved_was_clean=1; fi
-restore_resolved() {
-  if [[ $resolved_was_clean == 1 ]]; then git -C "$root" checkout -q -- "$resolved" 2>/dev/null || true; fi
-}
 
 # Drop the mode and target, keep the xcodebuild args.
 if [[ "$mode" != test ]]; then shift; fi
