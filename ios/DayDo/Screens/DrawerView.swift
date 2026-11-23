@@ -202,7 +202,7 @@ struct DrawerView: View {
                         Text("清單").txt(12, .semibold).foregroundStyle(Palette.textTertiary)
                         Spacer()
                         Menu {
-                            Button("新增清單", systemImage: "list.bullet") { close(); model.editingProjectId = "new" }
+                            Button("新增清單", systemImage: "list.bullet") { close(); model.openEditProject("new") }
                             Button("新增資料夾", systemImage: "folder.badge.plus") { newFolder = "" }
                         } label: {
                             Image(systemName: "plus").font(.system(size: Platform.isMac ? 14 : 16, weight: .medium)).foregroundStyle(Palette.textSecondary)
@@ -420,7 +420,7 @@ struct DrawerView: View {
         if p.isViewer {
             rowBody
                 .contextMenu {
-                    Button("共享協作", systemImage: "person.2") { close(); model.sharingProjectId = p.id }
+                    Button("共享協作", systemImage: "person.2") { close(); model.openShareProject(p.id) }
                 }
         } else {
             SwipeableListRow(
@@ -428,7 +428,7 @@ struct DrawerView: View {
                 swipedId: $swipedId,
                 activeDrag: $rowDragging,
                 onPin: { pinToTop(p) },
-                onEdit: { close(); model.editingProjectId = p.id },
+                onEdit: { close(); model.openEditProject(p.id) },
                 onDelete: p.isOwner ? { deletingProject = p } : nil
             ) { isSwiped in
                 row(icon: ListDot(color: p.color, size: 9), title: p.name, count: p.activeCount, current: isCurrent(.project(p.id)), indent: indent, highlighted: isSwiped,
@@ -438,10 +438,10 @@ struct DrawerView: View {
                 }
                 .accessibilityIdentifier("drawer.list.\(p.name)")
                 .accessibilityAction(named: "置頂") { pinToTop(p) }
-                .accessibilityAction(named: "編輯") { close(); model.editingProjectId = p.id }
+                .accessibilityAction(named: "編輯") { close(); model.openEditProject(p.id) }
                 .contextMenu {
                     Button("置頂", systemImage: "arrow.up.to.line") { pinToTop(p) }
-                    Button("編輯清單", systemImage: "slider.horizontal.3") { close(); model.editingProjectId = p.id }
+                    Button("編輯清單", systemImage: "slider.horizontal.3") { close(); model.openEditProject(p.id) }
                     if p.isOwner {
                         Button("刪除", systemImage: "trash", role: .destructive) { deletingProject = p }
                     }

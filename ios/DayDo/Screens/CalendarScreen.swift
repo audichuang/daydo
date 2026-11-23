@@ -96,7 +96,6 @@ struct CalendarScreen: View {
         .sensoryFeedback(.selection, trigger: dateSelectionHaptic)
         .sensoryFeedback(.selection, trigger: modeRaw)
         .sensoryFeedback(.impact(weight: .light), trigger: pageShiftHaptic)
-        .coordinateSpace(name: "calendarPopoverSpace")
         .background {
             if Platform.isMac {
                 CalendarPopoverPresenter(
@@ -163,7 +162,7 @@ struct CalendarScreen: View {
         .onChange(of: model.calendarCommandTrigger) { _, _ in
             guard isActive, let action = model.calendarCommandAction else { return }
             model.calendarCommandAction = nil
-            popoverTarget = nil
+            closePopover()
             switch action {
             case .previous: shift(-1)
             case .next: shift(1)
@@ -173,7 +172,7 @@ struct CalendarScreen: View {
         .onChange(of: CalActivation(isActive: isActive, navTrigger: model.calendarNavigationTrigger)) { old, new in
             if !new.isActive {
                 gridDragLock.isActive = false
-                if popoverTarget != nil { popoverTarget = nil }
+                closePopover()
                 if drag.horizontalOffset != 0 { drag.horizontalOffset = 0 }
                 if drag.collapseY != 0 { drag.collapseY = 0 }
                 return
@@ -200,7 +199,7 @@ struct CalendarScreen: View {
         if drag.horizontalOffset != 0 { drag.horizontalOffset = 0 }
         if drag.collapseY != 0 { drag.collapseY = 0 }
         if pendingMove != nil { pendingMove = nil }
-        if popoverTarget != nil { popoverTarget = nil }
+        closePopover()
         if selected != nil { selected = nil }
         if month != nil { month = nil }
         if memberFilter != nil { memberFilter = nil }
@@ -444,7 +443,7 @@ struct CalendarScreen: View {
         bumpPage: Bool = true,
         update: () -> Void
     ) {
-        if popoverTarget != nil { popoverTarget = nil }
+        closePopover()
         shiftDir = direction
         switch haptic {
         case .none: break
@@ -482,11 +481,21 @@ struct CalendarScreen: View {
 
     func compose(day: LocalDay, minute: Int?, endMinute: Int? = nil) {
         guard !model.isViewer(projectId: projectFilter) else { return }
-        model.composing = ComposeRequest(projectId: projectFilter, day: day, minute: minute, endMinute: endMinute)
+        model.openComposer(ComposeRequest(projectId: projectFilter, day: day, minute: minute, endMinute: endMinute))
+    }
+
+    private func closePopover() {
+        if popoverTarget != nil {
+            popoverTarget = nil
+        }
+        if model.isCalendarPopoverPresented {
+            model.isCalendarPopoverPresented = false
+        }
     }
 
     private func openTaskOrPopover(_ id: String, rect: CGRect) {
         if Platform.isMac {
+            model.isCalendarPopoverPresented = true
             popoverTarget = CalendarTaskPopoverTarget(taskId: id, rect: rect)
         } else {
             model.openTask(id, inlineAvailable: false)
@@ -797,7 +806,7 @@ struct CalendarScreen: View {
             Group {
                 if items.isEmpty { emptyDay }
                 ForEach(items) { t in
-                    AgendaRow(task: t, day: sel, showOwnerAvatar: showOwnerAvatars, showProject: projectFilter == nil)
+                    AgendaRow(task: t, day: sel, showOwnerAvatar: showOwnerAvatars, showProject: projectFilter == nil, onOpen: openTaskOrPopover)
                         .transition(Motion.rowTransition(reduceMotion))
                 }
             }
@@ -817,7 +826,7 @@ struct CalendarScreen: View {
             Group {
                 if items.isEmpty { emptyDay.card(16) }
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, t in
-                    TimelineAgendaRow(task: t, day: sel, last: i == items.count - 1, showOwnerAvatar: showOwnerAvatars)
+                    TimelineAgendaRow(task: t, day: sel, last: i == items.count - 1, showOwnerAvatar: showOwnerAvatars, onOpen: openTaskOrPopover)
                         .transition(Motion.rowTransition(reduceMotion))
                 }
             }
@@ -1255,6 +1264,7 @@ struct AgendaRow: View {
     var day: LocalDay
     var showOwnerAvatar = false
     var showProject = true
+    var onOpen: (String, CGRect) -> Void
 
     private var isDone: Bool {
         model.displaysCompleted(task)
@@ -1271,7 +1281,9 @@ struct AgendaRow: View {
             .hoverEffect(.highlight)
             .disabled(model.isViewer(projectId: task.projectId))
             .accessibilityLabel((isDone ? "取消完成：" : "完成：") + task.title)
-            Button { model.openTask(task.id, inlineAvailable: false) } label: {
+            CalendarTaskAnchorButton { rect in
+                onOpen(task.id, rect)
+            } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .top, spacing: 6) {
                         Text(task.title).txt(17, .medium).foregroundStyle(isDone ? Palette.done : Palette.text)
@@ -1319,6 +1331,7 @@ struct TimelineAgendaRow: View {
     var day: LocalDay
     var last: Bool
     var showOwnerAvatar = false
+    var onOpen: (String, CGRect) -> Void
 
     var body: some View {
         let owner = partnerOwner(for: task, show: showOwnerAvatar, members: model.members)
@@ -1335,7 +1348,9 @@ struct TimelineAgendaRow: View {
                 if !last { Rectangle().fill(Palette.separator).frame(width: 1.5).frame(maxHeight: .infinity) }
             }
             .frame(width: 14)
-            Button { model.openTask(task.id, inlineAvailable: false) } label: {
+            CalendarTaskAnchorButton { rect in
+                onOpen(task.id, rect)
+            } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .top, spacing: 6) {
                         Text(DateText.agendaLine(task, includeDay: task.schedule?.isMultiDay ?? false))
@@ -2211,7 +2226,9 @@ private struct CalendarPanGesture: UIGestureRecognizerRepresentable {
     func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
         let pan = UIPanGestureRecognizer()
         pan.maximumNumberOfTouches = 1
-        pan.allowedScrollTypesMask = .continuous
+        if Platform.isMac {
+            pan.allowedScrollTypesMask = .continuous
+        }
         pan.delegate = context.coordinator
         return pan
     }
@@ -2305,26 +2322,55 @@ private struct CalendarPanGesture: UIGestureRecognizerRepresentable {
 struct CalendarTaskPopoverTarget: Equatable {
     let id = UUID()
     var taskId: String
+    /// Frame in the host window's coordinate space, sampled at click time.
     var rect: CGRect
 }
 
-/// Button wrapper that records its frame in `calendarPopoverSpace` on Mac so a
-/// single `UIPopoverPresentationController` can anchor directly to the clicked task.
+private final class AnchorViewBox {
+    weak var view: UIView?
+
+    @MainActor
+    func windowFrame() -> CGRect {
+        guard let view, let window = view.window else { return .zero }
+        return view.convert(view.bounds, to: window)
+    }
+}
+
+private struct AnchorFrameProbe: UIViewRepresentable {
+    let box: AnchorViewBox
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        box.view = view
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        box.view = uiView
+    }
+}
+
+/// Button wrapper that reads its window frame at click time on Mac so a
+/// single `UIPopoverPresentationController` can anchor to the clicked task
+/// without writing `@State` on every scroll frame.
 struct CalendarTaskAnchorButton<Label: View>: View {
     var action: (CGRect) -> Void
     @ViewBuilder var label: () -> Label
-    @State private var frame: CGRect = .zero
+    @State private var anchorBox = AnchorViewBox()
 
     var body: some View {
         Button {
-            action(frame)
+            action(Platform.isMac ? anchorBox.windowFrame() : .zero)
         } label: {
             label()
         }
         .background {
             if Platform.isMac {
-                Color.clear
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("calendarPopoverSpace")) } action: { frame = $0 }
+                AnchorFrameProbe(box: anchorBox)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
         }
     }
@@ -2333,24 +2379,25 @@ struct CalendarTaskAnchorButton<Label: View>: View {
 private struct CalendarTaskTapAnchor<Content: View>: View {
     var onTap: (CGRect) -> Void
     @ViewBuilder var content: () -> Content
-    @State private var frame: CGRect = .zero
+    @State private var anchorBox = AnchorViewBox()
 
     var body: some View {
         content()
             .onTapGesture {
-                onTap(frame)
+                onTap(Platform.isMac ? anchorBox.windowFrame() : .zero)
             }
             .background {
                 if Platform.isMac {
-                    Color.clear
-                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("calendarPopoverSpace")) } action: { frame = $0 }
+                    AnchorFrameProbe(box: anchorBox)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
             }
     }
 }
 
 /// Presents `CalendarTaskPopoverCard` via `UIPopoverPresentationController` anchored
-/// to the clicked task's exact frame in `calendarPopoverSpace`.
+/// to the clicked task's window frame.
 private struct CalendarPopoverPresenter: UIViewRepresentable {
     @Environment(AppModel.self) private var model
     @Environment(\.accent) private var accent
@@ -2370,17 +2417,23 @@ private struct CalendarPopoverPresenter: UIViewRepresentable {
 
     func updateUIView(_ uiView: UIView, context: Context) {
         let coord = context.coordinator
+        coord.model = model
         coord.onDismiss = {
             if self.target != nil {
                 self.target = nil
             }
         }
+        model.registerCalendarPopoverDismisser { [weak coord] completion in
+            guard let coord else {
+                completion()
+                return
+            }
+            coord.dismiss(animated: true, completion: completion)
+        }
 
         guard let target else {
-            if let presented = coord.presentedController {
-                coord.presentedController = nil
-                coord.presentedId = nil
-                presented.dismiss(animated: true)
+            if coord.presentedController != nil {
+                coord.dismiss(animated: true)
             }
             return
         }
@@ -2393,17 +2446,12 @@ private struct CalendarPopoverPresenter: UIViewRepresentable {
             taskId: taskId,
             initialTask: initialTask,
             onOpen: {
-                let presented = coord.presentedController
-                coord.presentedController = nil
-                coord.presentedId = nil
-                self.target = nil
-                if let presented {
-                    presented.dismiss(animated: true) {
-                        onOpenDetail(taskId)
-                    }
-                } else {
+                coord.dismiss(animated: true) {
                     onOpenDetail(taskId)
                 }
+            },
+            onDismiss: {
+                coord.dismiss(animated: true)
             }
         )
         .environment(model)
@@ -2411,7 +2459,13 @@ private struct CalendarPopoverPresenter: UIViewRepresentable {
         .environment(\.textScale, textScale)
 
         let presentNew: () -> Void = {
-            guard let host = uiView.nearestViewController ?? uiView.window?.rootViewController else { return }
+            guard self.target?.id == target.id else { return }
+            guard !model.hasActiveRootSheet,
+                  let host = uiView.nearestViewController ?? uiView.window?.rootViewController,
+                  host.presentedViewController == nil else {
+                coord.dismiss(animated: false)
+                return
+            }
             let hc = UIHostingController(rootView: card)
             hc.sizingOptions = .preferredContentSize
             hc.modalPresentationStyle = .popover
@@ -2420,7 +2474,14 @@ private struct CalendarPopoverPresenter: UIViewRepresentable {
             hc.preferredContentSize = CGSize(width: max(280, fitted.width), height: max(120, fitted.height))
             if let popover = hc.popoverPresentationController {
                 popover.sourceView = uiView
-                let raw = target.rect
+                let raw: CGRect
+                if target.rect.isEmpty {
+                    raw = .zero
+                } else if let window = uiView.window {
+                    raw = uiView.convert(target.rect, from: window)
+                } else {
+                    raw = target.rect
+                }
                 let clamped = raw.isEmpty
                     ? CGRect(x: uiView.bounds.midX, y: uiView.bounds.midY, width: 1, height: 1)
                     : raw.intersection(uiView.bounds)
@@ -2432,6 +2493,7 @@ private struct CalendarPopoverPresenter: UIViewRepresentable {
             }
             coord.presentedController = hc
             coord.presentedId = target.id
+            model.isCalendarPopoverPresented = true
             host.present(hc, animated: true)
         }
 
@@ -2443,16 +2505,54 @@ private struct CalendarPopoverPresenter: UIViewRepresentable {
             }
         } else {
             DispatchQueue.main.async {
-                guard self.target?.id == target.id else { return }
                 presentNew()
             }
         }
     }
 
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        let model = coordinator.model
+        model?.registerCalendarPopoverDismisser(nil)
+        coordinator.dismiss(animated: false)
+    }
+
+    @MainActor
     final class Coordinator: NSObject, UIPopoverPresentationControllerDelegate {
+        weak var model: AppModel?
         weak var presentedController: UIViewController?
         var presentedId: UUID?
         var onDismiss: (() -> Void)?
+
+        func dismiss(animated: Bool = true, completion: (@MainActor () -> Void)? = nil) {
+            let presented = presentedController
+            presentedController = nil
+            presentedId = nil
+            onDismiss?()
+            if model?.isCalendarPopoverPresented == true {
+                model?.isCalendarPopoverPresented = false
+            }
+            guard let presented else {
+                completion?()
+                return
+            }
+            if presented.isBeingDismissed {
+                if let transition = presented.transitionCoordinator {
+                    transition.animate(alongsideTransition: nil) { _ in
+                        Task { @MainActor in completion?() }
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        completion?()
+                    }
+                }
+            } else if presented.presentingViewController != nil {
+                presented.dismiss(animated: animated) {
+                    Task { @MainActor in completion?() }
+                }
+            } else {
+                completion?()
+            }
+        }
 
         func adaptivePresentationStyle(for controller: UIPresentationController) -> UIModalPresentationStyle {
             .none
@@ -2461,6 +2561,7 @@ private struct CalendarPopoverPresenter: UIViewRepresentable {
         func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
             presentedController = nil
             presentedId = nil
+            model?.isCalendarPopoverPresented = false
             onDismiss?()
         }
     }
@@ -2473,6 +2574,7 @@ private struct CalendarTaskPopoverCard: View {
     var taskId: String
     var initialTask: TodoTask?
     var onOpen: () -> Void
+    var onDismiss: () -> Void
 
     @State private var loadedTask: TodoTask?
 
@@ -2561,8 +2663,17 @@ private struct CalendarTaskPopoverCard: View {
         .frame(width: 280)
         .background(Palette.card)
         .task(id: model.revision) {
-            if let fresh = try? await model.api.getTask(id: taskId) {
-                loadedTask = fresh
+            do {
+                let fresh = try await model.api.getTask(id: taskId)
+                if fresh.deletedAt != nil {
+                    onDismiss()
+                } else {
+                    loadedTask = fresh
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                onDismiss()
             }
         }
     }

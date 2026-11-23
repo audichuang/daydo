@@ -151,14 +151,16 @@ struct DayDoApp: App {
         }
     }
 
-    static func makeStorage() -> (DeviceStore, KeychainSyncTokenStore, UserDefaults, UserDefaults?) {
-        let isMacDebug: Bool = {
+    nonisolated static let isMacDebug: Bool = {
 #if DEBUG
-            Platform.isMac
+        Platform.isMac
 #else
-            false
+        false
 #endif
-        }()
+    }()
+
+    static func makeStorage() -> (DeviceStore, KeychainSyncTokenStore, UserDefaults, UserDefaults?) {
+        let isMacDebug = Self.isMacDebug
         let dir: URL = isMacDebug
             ? URL.applicationSupportDirectory.appendingPathComponent("DayDo-Debug", isDirectory: true)
             : DayDoStorage.defaultDirectory()
@@ -169,6 +171,7 @@ struct DayDoApp: App {
         let defaults: UserDefaults = defaultsSuite.flatMap { UserDefaults(suiteName: $0) } ?? .standard
         let sharedDefaults: UserDefaults? = isMacDebug ? nil : UserDefaults(suiteName: DayDoStorage.appGroup)
 
+#if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-DayDoReset") {
             try? FileManager.default.removeItem(at: dir)
             if let suite = defaultsSuite {
@@ -178,6 +181,7 @@ struct DayDoApp: App {
             }
             tokenStore.clearAll()
         }
+#endif
         do {
             let store = try DayDoStorage.openForApp(in: dir)
             return (store, tokenStore, defaults, sharedDefaults)
@@ -250,22 +254,24 @@ struct DayDoApp: App {
                 .disabled(!model.isSignedIn || model.hasActiveRootSheet)
                 Button("設定") { model.tab = .settings }
                     .keyboardShortcut("4", modifiers: .command)
-                Divider()
-                Button("上一頁") {
-                    model.triggerCalendarCommand(.previous)
+                if Platform.isMac {
+                    Divider()
+                    Button("上一頁") {
+                        model.triggerCalendarCommand(.previous)
+                    }
+                    .keyboardShortcut(.leftArrow, modifiers: .command)
+                    .disabled(!model.isSignedIn || model.hasActiveRootSheet || model.tab != .calendar)
+                    Button("下一頁") {
+                        model.triggerCalendarCommand(.next)
+                    }
+                    .keyboardShortcut(.rightArrow, modifiers: .command)
+                    .disabled(!model.isSignedIn || model.hasActiveRootSheet || model.tab != .calendar)
+                    Button("回到今天") {
+                        model.triggerCalendarCommand(.today)
+                    }
+                    .keyboardShortcut("t", modifiers: .command)
+                    .disabled(!model.isSignedIn || model.hasActiveRootSheet || model.tab != .calendar)
                 }
-                .keyboardShortcut(.leftArrow, modifiers: .command)
-                .disabled(!model.isSignedIn || model.hasActiveRootSheet || model.tab != .calendar)
-                Button("下一頁") {
-                    model.triggerCalendarCommand(.next)
-                }
-                .keyboardShortcut(.rightArrow, modifiers: .command)
-                .disabled(!model.isSignedIn || model.hasActiveRootSheet || model.tab != .calendar)
-                Button("回到今天") {
-                    model.triggerCalendarCommand(.today)
-                }
-                .keyboardShortcut("t", modifiers: .command)
-                .disabled(!model.isSignedIn || model.hasActiveRootSheet || model.tab != .calendar)
             }
         }
     }
@@ -278,6 +284,8 @@ actor ReminderScheduler {
     private var dirty = false
 
     func reschedule(api: any DayDoAPI) async {
+        // Mac Debug shares bundle id & UNUserNotificationCenter with the Release app.
+        if DayDoApp.isMacDebug { return }
         if isRescheduling {
             dirty = true
             return

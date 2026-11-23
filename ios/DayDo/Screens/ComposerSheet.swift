@@ -231,7 +231,8 @@ struct ComposerSheet: View {
         isSubmitting = true
         let input = CreateTaskInput(projectId: projectId, title: snapTitle, content: snapNote, priority: priority,
                                     schedule: draft.schedule, reminders: draft.schedule == nil ? [] : draft.reminders,
-                                    repeat: draft.schedule == nil ? nil : draft.repeatRule, tags: tags)
+                                    repeat: draft.schedule == nil ? nil : draft.repeatRule, tags: tags,
+                                    assigneeId: request.assigneeId)
         Task {
             let created = await model.perform { try await $0.createTask(input) }
             isSubmitting = false

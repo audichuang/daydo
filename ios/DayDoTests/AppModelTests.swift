@@ -1616,4 +1616,76 @@ final class AppModelTests: XCTestCase {
         await model.moveTask(moved, to: schedule.moved(to: model.today))
         XCTAssertEqual(model.postponeHapticTrigger, 1)
     }
+
+    func testMoveTaskSelectionAcrossDuplicateMultiDayRowsDoesNotLoop() async throws {
+        let (model, _) = try await makeModel()
+        let rows: [TaskRowSelection] = [
+            TaskRowSelection(sectionId: "today", taskId: "A"),
+            TaskRowSelection(sectionId: "today", taskId: "B"),
+            TaskRowSelection(sectionId: "tomorrow", taskId: "A"),
+            TaskRowSelection(sectionId: "tomorrow", taskId: "C"),
+        ]
+        model.visibleTaskRows = rows
+
+        model.moveTaskSelection(delta: 1)
+        XCTAssertEqual(model.selectedTaskRow, rows[0])
+        XCTAssertEqual(model.selectedTaskId, "A")
+
+        model.moveTaskSelection(delta: 1)
+        XCTAssertEqual(model.selectedTaskRow, rows[1])
+        XCTAssertEqual(model.selectedTaskId, "B")
+
+        model.moveTaskSelection(delta: 1)
+        XCTAssertEqual(model.selectedTaskRow, rows[2])
+        XCTAssertEqual(model.selectedTaskId, "A")
+
+        model.moveTaskSelection(delta: 1)
+        XCTAssertEqual(model.selectedTaskRow, rows[3])
+        XCTAssertEqual(model.selectedTaskId, "C")
+
+        model.moveTaskSelection(delta: -1)
+        XCTAssertEqual(model.selectedTaskRow, rows[2])
+        XCTAssertEqual(model.selectedTaskId, "A")
+    }
+
+    func testComposeRequestDefaultsForNext7AndAssigned() async throws {
+        let (model, _) = try await makeModel()
+        let me = try XCTUnwrap(model.me)
+
+        let next7Req = model.composeRequest(for: .smart(.next7))
+        XCTAssertEqual(next7Req.day, model.today)
+        XCTAssertNil(next7Req.assigneeId)
+
+        let assignedReq = model.composeRequest(for: .smart(.assigned))
+        XCTAssertNil(assignedReq.day)
+        XCTAssertEqual(assignedReq.assigneeId, me.id)
+
+        let createdNext7 = await model.createQuickTask(title: "未來7天任務", in: .smart(.next7))
+        let quickNext7 = try XCTUnwrap(createdNext7)
+        XCTAssertEqual(quickNext7.schedule?.startDay, model.today)
+
+        let createdAssigned = await model.createQuickTask(title: "指派給我任務", in: .smart(.assigned))
+        let quickAssigned = try XCTUnwrap(createdAssigned)
+        XCTAssertEqual(quickAssigned.assigneeId, me.id)
+    }
+
+    func testRootSheetEntryDismissesCalendarPopoverBeforePresenting() async throws {
+        let (model, _) = try await makeModel()
+        model.isSignedIn = true
+        model.tab = .calendar
+        model.isCalendarPopoverPresented = true
+
+        var pendingDismissCompletion: (@MainActor () -> Void)?
+        model.registerCalendarPopoverDismisser { completion in
+            pendingDismissCompletion = completion
+        }
+
+        model.openComposerForCurrentScope()
+        XCTAssertNil(model.composing, "Sheet state must wait for popover dismissal completion")
+        XCTAssertNotNil(pendingDismissCompletion)
+
+        model.isCalendarPopoverPresented = false
+        pendingDismissCompletion?()
+        XCTAssertNotNil(model.composing)
+    }
 }

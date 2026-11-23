@@ -21,6 +21,7 @@ struct TaskListScreen: View {
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var quickAddText = ""
     @State private var quickAddSubmitting = false
+    @State private var quickAddKeepFocus = false
     @FocusState private var quickAddFocused: Bool
     @AppStorage("closedSections") private var closedRaw = TaskSection.Kind.completed.id
 
@@ -34,11 +35,11 @@ struct TaskListScreen: View {
         query.loadedKey?.scope == scope ? query.value : []
     }
 
-    private var orderedVisibleTaskIds: [String] {
+    private var orderedVisibleTaskRows: [TaskRowSelection] {
         let closedSet = closed
         return visibleSections
             .filter { !closedSet.contains($0.id) }
-            .flatMap { $0.tasks.map(\.id) }
+            .flatMap { sec in sec.tasks.map { TaskRowSelection(sectionId: sec.id, taskId: $0.id) } }
     }
 
     private var isScopeLoaded: Bool {
@@ -134,9 +135,13 @@ struct TaskListScreen: View {
                     .scrollPosition($scrollPosition)
                     .scrollIndicators(.hidden)
                     .onChange(of: model.selectionScrollTrigger) { _, _ in
-                        guard isActive, let id = model.selectedTaskId else { return }
+                        guard isActive else { return }
+                        let target = model.selectedTaskRow ?? model.selectedTaskId.flatMap { id in
+                            orderedVisibleTaskRows.first { $0.taskId == id }
+                        }
+                        guard let target else { return }
                         withAnimation(Motion.layout(reduceMotion)) {
-                            scrollProxy.scrollTo(id)
+                            scrollProxy.scrollTo(target)
                         }
                     }
                 }
@@ -179,14 +184,20 @@ struct TaskListScreen: View {
         .task(id: activeReload) {
             await load(for: activeReload)
         }
-        .onChange(of: orderedVisibleTaskIds, initial: true) { _, ids in
+        .onChange(of: orderedVisibleTaskRows, initial: true) { _, rows in
             if isActive {
-                model.visibleTaskIds = ids
+                model.visibleTaskRows = rows
             }
         }
         .onChange(of: showQuickAdd) { _, allowed in
             if !allowed && quickAddFocused {
+                quickAddKeepFocus = false
                 quickAddFocused = false
+            }
+        }
+        .onChange(of: quickAddFocused) { _, focused in
+            if !focused {
+                quickAddKeepFocus = false
             }
         }
         .onChange(of: isActive) { _, active in
@@ -200,8 +211,9 @@ struct TaskListScreen: View {
                 if scrollPosition.isPositionedByUser || scrollPosition.edge != .top {
                     scrollPosition.scrollTo(edge: .top)
                 }
-                model.visibleTaskIds = orderedVisibleTaskIds
+                model.visibleTaskRows = orderedVisibleTaskRows
             } else if quickAddFocused {
+                quickAddKeepFocus = false
                 quickAddFocused = false
             }
         }
@@ -220,6 +232,7 @@ struct TaskListScreen: View {
                 .submitLabel(.return)
                 .onSubmit { submitQuickAdd() }
                 .onKeyPress(.escape) {
+                    quickAddKeepFocus = false
                     quickAddFocused = false
                     return .handled
                 }
@@ -235,23 +248,26 @@ struct TaskListScreen: View {
     }
 
     private func submitQuickAdd() {
-        let title = quickAddText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let submitted = quickAddText
+        let title = submitted.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, !quickAddSubmitting else {
-            quickAddFocused = true
             return
         }
         let targetScope = scope
-        quickAddText = ""
         quickAddSubmitting = true
+        quickAddKeepFocus = true
         quickAddFocused = true
         Task {
             defer {
                 quickAddSubmitting = false
-                if showQuickAdd {
-                    quickAddFocused = true
-                }
             }
-            _ = await model.createQuickTask(title: title, in: targetScope)
+            let created = await model.createQuickTask(title: title, in: targetScope)
+            if created != nil, quickAddText == submitted {
+                quickAddText = ""
+            }
+            if quickAddKeepFocus && showQuickAdd && isActive && !model.hasActiveRootSheet {
+                quickAddFocused = true
+            }
         }
     }
 
@@ -476,9 +492,17 @@ struct SectionCard: View {
                 let firstId = section.tasks.first?.id
                 LazyVStack(spacing: 0) {
                     ForEach(section.tasks) { t in
-                        TaskRow(task: t, separator: t.id != firstId, sectionKind: section.kind, inTrash: scope == .smart(.trash), selectsInline: true, showProject: !isProjectScope)
-                            .id(t.id)
-                            .transition(Motion.rowTransition(reduceMotion))
+                        TaskRow(
+                            task: t,
+                            separator: t.id != firstId,
+                            sectionKind: section.kind,
+                            sectionId: section.id,
+                            inTrash: scope == .smart(.trash),
+                            selectsInline: true,
+                            showProject: !isProjectScope
+                        )
+                        .id(TaskRowSelection(sectionId: section.id, taskId: t.id))
+                        .transition(Motion.rowTransition(reduceMotion))
                     }
                 }
                 .transition(Motion.expandTransition(reduceMotion))
@@ -497,6 +521,7 @@ struct TaskRow: View {
     var task: TodoTask
     var separator: Bool
     var sectionKind: TaskSection.Kind
+    var sectionId: String? = nil
     var inTrash = false
     var selectsInline = false
     var showProject = true
@@ -506,7 +531,11 @@ struct TaskRow: View {
     }
 
     private var isSelected: Bool {
-        usesInlineSelection && model.selectedTaskId == task.id
+        guard usesInlineSelection else { return false }
+        if let sectionId, let selectedRow = model.selectedTaskRow {
+            return selectedRow == TaskRowSelection(sectionId: sectionId, taskId: task.id)
+        }
+        return model.selectedTaskId == task.id
     }
 
     private var isDone: Bool {
@@ -530,7 +559,7 @@ struct TaskRow: View {
             .accessibilityLabel((isDone ? "取消完成：" : "完成：") + task.title)
 
             Button {
-                model.openTask(task.id, inlineAvailable: usesInlineSelection)
+                model.openTask(task.id, sectionId: sectionId, inlineAvailable: usesInlineSelection)
             } label: {
                 VStack(alignment: .leading, spacing: Platform.isMac ? 2 : 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {

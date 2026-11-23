@@ -480,4 +480,87 @@ private let guards: [Guard] = [
             "SyncApplier.specs entity mismatch vs server/src/sync/entities.ts ENTITY_NAMES: missing=\(missingInApp), extra=\(extraInApp)"
         )
     }
+
+    /// Destructive/test launch flags (`-DayDoReset`, `-DayDoSkipLogin`, `-DayDoDemo`)
+    /// must only be honored inside `#if DEBUG` so Release builds ignore them.
+    @Test func destructiveTestLaunchArgsRequireDebugBuild() throws {
+        let flags = ["-DayDoReset", "-DayDoSkipLogin", "-DayDoDemo"]
+
+        func requiresDebug(_ condition: String) -> Bool {
+            let trimmed = condition.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
+                .first.map(String.init) ?? condition
+            guard !trimmed.contains("||") else { return false }
+            return trimmed
+                .components(separatedBy: "&&")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .contains("DEBUG")
+        }
+
+        func unguardedHits(in source: String) -> [(line: Int, flag: String)] {
+            enum Branch { case debugActive, other }
+            var stack: [Branch] = []
+            var violations: [(Int, String)] = []
+            let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+            for (index, raw) in lines.enumerated() {
+                let trimmed = raw.trimmingCharacters(in: .whitespaces)
+                if trimmed.hasPrefix("//") { continue }
+                if trimmed.hasPrefix("#if ") {
+                    let cond = String(trimmed.dropFirst(4))
+                    stack.append(requiresDebug(cond) ? .debugActive : .other)
+                    continue
+                }
+                if trimmed.hasPrefix("#elseif ") {
+                    if !stack.isEmpty {
+                        let cond = String(trimmed.dropFirst(8))
+                        stack[stack.count - 1] = requiresDebug(cond) ? .debugActive : .other
+                    }
+                    continue
+                }
+                if trimmed == "#else" || trimmed.hasPrefix("#else ") || trimmed.hasPrefix("#else/") {
+                    if !stack.isEmpty {
+                        stack[stack.count - 1] = .other
+                    }
+                    continue
+                }
+                if trimmed == "#endif" || trimmed.hasPrefix("#endif ") || trimmed.hasPrefix("#endif/") {
+                    if !stack.isEmpty {
+                        stack.removeLast()
+                    }
+                    continue
+                }
+                let inDebug = stack.contains(.debugActive)
+                if !inDebug {
+                    for flag in flags where trimmed.contains("\"\(flag)\"") {
+                        violations.append((index + 1, flag))
+                    }
+                }
+            }
+            return violations
+        }
+
+        // Verify the guard is non-hollow against synthetic violations and valid samples.
+        for flag in flags {
+            #expect(!unguardedHits(in: "if args.contains(\"\(flag)\") {}").isEmpty, "guard misses unguarded \(flag)")
+            #expect(!unguardedHits(in: "#if DEBUG\n#else\nif args.contains(\"\(flag)\") {}\n#endif").isEmpty, "guard misses #else \(flag)")
+            #expect(!unguardedHits(in: "#if DEBUG\n#endif\nif args.contains(\"\(flag)\") {}").isEmpty, "guard misses post-#endif \(flag)")
+            #expect(!unguardedHits(in: "#if DEBUG || RELEASE\nif args.contains(\"\(flag)\") {}\n#endif").isEmpty, "guard misses OR condition \(flag)")
+            #expect(unguardedHits(in: "#if DEBUG\nif args.contains(\"\(flag)\") {}\n#endif").isEmpty, "false positive inside #if DEBUG for \(flag)")
+            #expect(unguardedHits(in: "#if DEBUG && targetEnvironment(macCatalyst)\nif args.contains(\"\(flag)\") {}\n#endif").isEmpty, "false positive inside #if DEBUG && ... for \(flag)")
+        }
+
+        let files = swiftFiles(in: ["ios/DayDo"])
+        var offenses: [String] = []
+        var sawFlags: Set<String> = []
+        for rel in files {
+            let source = try String(contentsOf: repoRoot.appendingPathComponent(rel), encoding: .utf8)
+            for flag in flags where source.contains("\"\(flag)\"") {
+                sawFlags.insert(flag)
+            }
+            for hit in unguardedHits(in: source) {
+                offenses.append("\(rel):\(hit.line) (\(hit.flag))")
+            }
+        }
+        #expect(sawFlags == Set(flags), "Expected all destructive test flags to exist in ios/DayDo; renamed? saw=\(sawFlags.sorted())")
+        #expect(offenses.isEmpty, "Destructive test launch args outside #if DEBUG: \(offenses.joined(separator: ", "))")
+    }
 }

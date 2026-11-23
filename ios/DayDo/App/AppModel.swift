@@ -84,23 +84,32 @@ final class AppModel {
     var scope: TaskScope = .smart(.today) {
         didSet {
             if oldValue != scope {
+                selectedTaskRow = nil
                 selectedTaskId = nil
-                visibleTaskIds = []
+                visibleTaskRows = []
             }
         }
     }
     var drawerOpen = false
     var hasPushedNavigation = false
     var detailTaskId: String?
+    var selectedTaskRow: TaskRowSelection?
     var selectedTaskId: String? {
         didSet {
             if oldValue != selectedTaskId {
                 inlineDetailSubpageTaskId = nil
                 inlineDetailFocusedTaskId = nil
+                if let id = selectedTaskId {
+                    if selectedTaskRow?.taskId != id {
+                        selectedTaskRow = visibleTaskRows.first { $0.taskId == id }
+                    }
+                } else {
+                    selectedTaskRow = nil
+                }
             }
         }
     }
-    var visibleTaskIds: [String] = []
+    var visibleTaskRows: [TaskRowSelection] = []
     var selectionScrollTrigger = 0
     var inlineDetailSubpageTaskId: String?
     var inlineDetailFocusedTaskId: String?
@@ -108,15 +117,39 @@ final class AppModel {
     var detailFocusTrigger = 0
 
     var inlineDetailAllowsSelectionShortcuts: Bool {
-        guard let selectedTaskId else { return false }
-        return inlineDetailSubpageTaskId != selectedTaskId && inlineDetailFocusedTaskId != selectedTaskId
-    }
-
-    var allowsTaskListKeyboardShortcuts: Bool {
         if let selectedTaskId {
             return inlineDetailSubpageTaskId != selectedTaskId && inlineDetailFocusedTaskId != selectedTaskId
         }
-        return true
+        return Platform.isMac
+    }
+
+    var isCalendarPopoverPresented = false
+    @ObservationIgnored private var calendarPopoverDismisser: ((@escaping @MainActor () -> Void) -> Void)?
+
+    func registerCalendarPopoverDismisser(_ dismisser: ((@escaping @MainActor () -> Void) -> Void)?) {
+        calendarPopoverDismisser = dismisser
+    }
+
+    func performAfterDismissingCalendarPopover(_ action: @escaping @MainActor () -> Void) {
+        guard isCalendarPopoverPresented else {
+            action()
+            return
+        }
+        if let dismisser = calendarPopoverDismisser {
+            dismisser(action)
+        } else {
+            isCalendarPopoverPresented = false
+            action()
+        }
+    }
+
+    func dismissCalendarPopoverIfNeeded() async {
+        guard isCalendarPopoverPresented else { return }
+        await withCheckedContinuation { continuation in
+            performAfterDismissingCalendarPopover {
+                continuation.resume()
+            }
+        }
     }
 
     /// Task opened from a notification while another detail sheet was open;
@@ -142,8 +175,11 @@ final class AppModel {
 
     /// Opens a task's detail inline in the split view when in a regular-width
     /// window on the Tasks tab; otherwise opens it as a root sheet.
-    func openTask(_ id: String, inlineAvailable: Bool, focusIfAlreadyInline: Bool = false) {
+    func openTask(_ id: String, sectionId: String? = nil, inlineAvailable: Bool, focusIfAlreadyInline: Bool = false) {
         if inlineAvailable && tab == .tasks {
+            if let sectionId {
+                selectedTaskRow = TaskRowSelection(sectionId: sectionId, taskId: id)
+            }
             if selectedTaskId == id {
                 if focusIfAlreadyInline {
                     detailFocusTrigger += 1
@@ -152,7 +188,10 @@ final class AppModel {
                 selectedTaskId = id
             }
         } else {
-            detailTaskId = id
+            performAfterDismissingCalendarPopover { [weak self] in
+                guard let self, !self.hasActiveRootSheet else { return }
+                self.detailTaskId = id
+            }
         }
     }
 
@@ -189,8 +228,9 @@ final class AppModel {
         case .project(let id):
             if !isViewer(projectId: id) { req.projectId = id }
         case .tag(let t): req.tag = t
-        case .smart(.today): req.day = today
+        case .smart(.today), .smart(.next7): req.day = today
         case .smart(.tomorrow): req.day = today.adding(days: 1)
+        case .smart(.assigned): req.assigneeId = me?.id
         default: break
         }
         return req
@@ -208,9 +248,30 @@ final class AppModel {
         return [tags.first { $0.name == t }?.label ?? t]
     }
 
+    func openComposer(_ request: ComposeRequest) {
+        performAfterDismissingCalendarPopover { [weak self] in
+            guard let self, !self.hasActiveRootSheet else { return }
+            self.composing = request
+        }
+    }
+
     func openComposerForCurrentScope() {
         guard canComposeForCurrentScope else { return }
-        composing = composeRequest(for: scope)
+        openComposer(composeRequest(for: scope))
+    }
+
+    func openEditProject(_ id: String) {
+        performAfterDismissingCalendarPopover { [weak self] in
+            guard let self, !self.hasActiveRootSheet else { return }
+            self.editingProjectId = id
+        }
+    }
+
+    func openShareProject(_ id: String) {
+        performAfterDismissingCalendarPopover { [weak self] in
+            guard let self, !self.hasActiveRootSheet else { return }
+            self.sharingProjectId = id
+        }
     }
 
     @discardableResult
@@ -222,7 +283,8 @@ final class AppModel {
             projectId: resolvedProjectId(for: req),
             title: trimmed,
             schedule: req.day.map { .allDay($0) },
-            tags: resolvedTags(for: req)
+            tags: resolvedTags(for: req),
+            assigneeId: req.assigneeId
         )
         guard let created = await perform({ try await $0.createTask(input) }) else { return nil }
         await revealCreatedTaskInAll(created)
@@ -230,14 +292,25 @@ final class AppModel {
     }
 
     func moveTaskSelection(delta: Int) {
-        let ids = visibleTaskIds
-        guard !ids.isEmpty else { return }
-        if let current = selectedTaskId, let idx = ids.firstIndex(of: current) {
-            let next = max(0, min(ids.count - 1, idx + delta))
-            selectedTaskId = ids[next]
+        let rows = visibleTaskRows
+        guard !rows.isEmpty else { return }
+        let currentIdx: Int?
+        if let row = selectedTaskRow, let idx = rows.firstIndex(of: row) {
+            currentIdx = idx
+        } else if let id = selectedTaskId, let idx = rows.firstIndex(where: { $0.taskId == id }) {
+            currentIdx = idx
         } else {
-            selectedTaskId = delta >= 0 ? ids.first : ids.last
+            currentIdx = nil
         }
+        let target: TaskRowSelection
+        if let idx = currentIdx {
+            let next = max(0, min(rows.count - 1, idx + delta))
+            target = rows[next]
+        } else {
+            target = delta >= 0 ? rows[0] : rows[rows.count - 1]
+        }
+        selectedTaskRow = target
+        selectedTaskId = target.taskId
         selectionScrollTrigger += 1
     }
 
@@ -431,10 +504,18 @@ final class AppModel {
     private var pathSatisfied: Bool?
     private var didAttemptGoogleAvatarSyncOnLaunch = false
 
+    private static var defaultSyncEnabled: Bool {
+#if DEBUG
+        !ProcessInfo.processInfo.arguments.contains("-DayDoSkipLogin")
+#else
+        true
+#endif
+    }
+
     init(
         store: DeviceStore,
         tokenStore: any SyncTokenStore = KeychainSyncTokenStore(),
-        syncEnabled: Bool = !ProcessInfo.processInfo.arguments.contains("-DayDoSkipLogin"),
+        syncEnabled: Bool = AppModel.defaultSyncEnabled,
         transport: (any SyncTransport)? = nil,
         clock: any Swift.Clock<Duration> = ContinuousClock(),
         reduceMotion: @escaping @MainActor () -> Bool = { UIAccessibility.isReduceMotionEnabled },
@@ -526,9 +607,11 @@ final class AppModel {
     func launch() async {
         if !syncEnabled {
             try? await store.bootstrap()
+#if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-DayDoDemo") {
                 try? await DemoData.load(into: api, today: today)
             }
+#endif
             await reloadData()
             isSignedIn = true
             ready = true
@@ -940,7 +1023,10 @@ final class AppModel {
     }
 
     private func resetLocalUIState() {
-        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        if !DayDoApp.isMacDebug {
+            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        }
+        performAfterDismissingCalendarPopover {}
         projects = []
         folders = []
         tags = []
@@ -951,8 +1037,9 @@ final class AppModel {
         drawerOpen = false
         hasPushedNavigation = false
         detailTaskId = nil
+        selectedTaskRow = nil
         selectedTaskId = nil
-        visibleTaskIds = []
+        visibleTaskRows = []
         pendingDetailTaskId = nil
         pendingWidgetDeepLink = nil
         calendarNavigationDay = nil
@@ -1140,6 +1227,8 @@ final class AppModel {
     }
 
     func processPendingInviteIfNeeded() async {
+        guard isSignedIn, !hasActiveRootSheet, pendingInviteCode != nil else { return }
+        await dismissCalendarPopoverIfNeeded()
         guard isSignedIn, !hasActiveRootSheet, let code = pendingInviteCode else { return }
         pendingInviteCode = nil
         let prompt = PendingInvitePrompt(code: code, info: nil, isLoading: true, error: nil)
@@ -1210,6 +1299,11 @@ final class AppModel {
 
 enum MainTab: Hashable { case tasks, calendar, search, settings }
 
+struct TaskRowSelection: Hashable {
+    var sectionId: String
+    var taskId: String
+}
+
 /// Opening the composer with defaults (e.g. the day selected in the calendar).
 struct ComposeRequest: Identifiable {
     let id = UUID()
@@ -1220,4 +1314,5 @@ struct ComposeRequest: Identifiable {
     /// Optional end minute (minutes from `day` 00:00) when dragged on the time grid.
     var endMinute: Int?
     var tag: String?
+    var assigneeId: String?
 }

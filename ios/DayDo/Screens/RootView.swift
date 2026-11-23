@@ -87,7 +87,7 @@ struct RootView: View {
                                 && model.isSignedIn
                                 && !model.hasActiveRootSheet
                                 && model.tab == .tasks
-                                && model.allowsTaskListKeyboardShortcuts,
+                                && model.inlineDetailAllowsSelectionShortcuts,
                             scope: model.scope,
                             selectedTaskId: model.selectedTaskId,
                             onMoveSelection: { delta in
@@ -660,18 +660,18 @@ private final class SelectionShortcutViewController: UIViewController {
             guard let key = press.key,
                   key.modifierFlags.intersection([.command, .control, .alternate]).isEmpty else { continue }
             switch key.keyCode {
-            case .keyboardUpArrow:
+            case .keyboardUpArrow where Platform.isMac:
                 onMoveSelection?(-1)
                 handled = true
-            case .keyboardDownArrow:
+            case .keyboardDownArrow where Platform.isMac:
                 onMoveSelection?(1)
                 handled = true
-            case .keyboardSpacebar:
+            case .keyboardSpacebar where Platform.isMac:
                 if let selectedTaskId {
                     onSpace?(selectedTaskId)
                     handled = true
                 }
-            case .keyboardEscape:
+            case .keyboardEscape where Platform.isMac:
                 if selectedTaskId != nil {
                     onEscape?()
                     handled = true
