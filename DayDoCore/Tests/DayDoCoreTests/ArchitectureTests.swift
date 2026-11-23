@@ -325,6 +325,16 @@ private let guards: [Guard] = [
             "ISO8601DateFormatter().string(from: Date())",
         ]
     ),
+    Guard(
+        name: "screen platform branches use Platform.isMac, not #if targetEnvironment(macCatalyst)",
+        directories: ["ios/DayDo/Screens", "ios/DayDo/Components"],
+        pattern: #"targetEnvironment\s*\(\s*macCatalyst\s*\)"#,
+        allow: [],
+        bad: [
+            "#if !targetEnvironment(macCatalyst)",
+            "#if targetEnvironment(macCatalyst)",
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {

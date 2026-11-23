@@ -14,12 +14,13 @@ info:
     Model contract of the App's local `DayDoAPI`
     (DayDoCore/Sources/DayDoCore/API/DayDoAPI.swift, implemented by `LocalDayDoAPI`).
     The Cloudflare Worker does not expose these REST paths; its HTTP routes are
-    only `/auth/*`, `/me/avatar`, `/sync/*`, `/attachments/{id}/content`,
+    only `/auth/*`, `/me/avatar`, `/me/identities`, `/sync/*`, `/attachments/{id}/content`,
     `/invites/*`, `/projects/{id}/members/*`, `/health`, and the MCP/OAuth
     endpoints (see `server/README.md`). Only operations whose `operationId`
     matches a tool in `server/src/mcp/registry.ts` (`spec/mcp.md` section 8)
     correspond to MCP tools; all other operations here are local App API only
-    (except `/attachments/{attachment_id}/content`, which is Worker HTTP only).
+    (except `/attachments/{attachment_id}/content`, `/auth/link`, and `/me/identities`,
+    which are Worker HTTP only; Worker auth/sync endpoints use camelCase keys per `spec/sync.md`).
 
     Conventions
     - JSON keys are snake_case.
@@ -41,6 +42,41 @@ servers:
 security:
   - bearer: []
 paths:
+  /auth/link:
+    post:
+      operationId: link_identity
+      description: |
+        Links an additional sign-in identity (Apple, Google, or email verification code)
+        to the currently authenticated account. Worker HTTP only (camelCase keys).
+        Idempotent (200) if the identity already belongs to the caller; 409 `identity_in_use`
+        if it belongs to another account (no merge or transfer). Unlinking is not supported.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LinkIdentityInput" }
+      responses:
+        "200":
+          description: Current account's linked identities
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/LinkedIdentity" } } } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401":
+          description: Missing/invalid access token or invalid provider credential / verification code
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "409":
+          description: Identity already belongs to another DayDo account (`{"error":"identity_in_use"}`)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+  /me/identities:
+    get:
+      operationId: list_identities
+      description: Lists sign-in identities linked to the currently authenticated account. Worker HTTP only (camelCase keys).
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/LinkedIdentity" } } } }
+        "401":
+          description: Missing or invalid access token
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
   /members:
     get:
       operationId: list_members
@@ -516,6 +552,32 @@ components:
     Error:
       type: object
       properties: { error: { type: string }, message: { type: string } }
+    LinkedIdentity:
+      type: object
+      required: [provider, createdAt]
+      properties:
+        provider: { type: string, enum: [apple, google, email] }
+        email: { type: string, description: Email captured from the provider (including Apple private relay as-is); omitted when absent. }
+        createdAt: { type: integer, description: Epoch milliseconds when this identity was linked. }
+    LinkIdentityInput:
+      oneOf:
+        - type: object
+          required: [provider, identityToken, nonce]
+          properties:
+            provider: { const: apple }
+            identityToken: { type: string }
+            nonce: { type: string }
+        - type: object
+          required: [provider, idToken]
+          properties:
+            provider: { const: google }
+            idToken: { type: string }
+        - type: object
+          required: [provider, email, code]
+          properties:
+            provider: { const: email }
+            email: { type: string, format: email }
+            code: { type: string, description: 6-digit verification code sent by POST /auth/email/start }
     Member:
       type: object
       properties: { id: { type: string }, name: { type: string }, initial: { type: string }, color: { type: string }, is_me: { type: boolean }, avatar_url: { type: string, nullable: true } }

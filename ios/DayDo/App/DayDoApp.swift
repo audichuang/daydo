@@ -409,12 +409,16 @@ actor DebugStubTransport: SyncTransport {
     private var didFailAttachmentOnce = false
     private var pushedMeId: String?
     private var pushedMeColor: String?
+    private var linkedIdentities: [[String: Any]] = []
 
     func send(method: String, path: String, headers: [String: String], body: Data?) async throws -> SyncHTTPResponse {
         let nowMs = EpochMillis(Date().timeIntervalSince1970 * 1000)
         let serverHLC = HLC(ms: nowMs, counter: 0, deviceId: "srv").description
 
         if method == "POST" && path == "/auth/apple" {
+            linkedIdentities = [
+                ["provider": "apple", "email": "test@privaterelay.appleid.com", "createdAt": nowMs],
+            ]
             return try jsonResponse(200, [
                 "accessToken": "debug-access",
                 "refreshToken": "debug-refresh",
@@ -427,6 +431,9 @@ actor DebugStubTransport: SyncTransport {
         }
 
         if method == "POST" && path == "/auth/google" {
+            linkedIdentities = [
+                ["provider": "google", "email": "tester@gmail.com", "createdAt": nowMs],
+            ]
             return try jsonResponse(200, [
                 "accessToken": "debug-access-2",
                 "refreshToken": "debug-refresh-2",
@@ -436,6 +443,95 @@ actor DebugStubTransport: SyncTransport {
                 "meMemberId": NSNull(),
                 "inboxProjectId": NSNull(),
             ])
+        }
+
+        if method == "POST" && path == "/auth/email/start" {
+            guard let body,
+                  let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  let rawEmail = payload["email"] as? String,
+                  rawEmail.trimmingCharacters(in: .whitespacesAndNewlines).contains("@") else {
+                return try jsonResponse(400, ["error": "A valid email and deviceId are required"])
+            }
+            return try jsonResponse(202, ["sent": true])
+        }
+
+        if method == "POST" && path == "/auth/email/verify" {
+            guard let body,
+                  let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  let rawEmail = payload["email"] as? String,
+                  let code = payload["code"] as? String else {
+                return try jsonResponse(400, ["error": "A valid email, code and deviceId are required"])
+            }
+            let email = rawEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard code.trimmingCharacters(in: .whitespacesAndNewlines) == "123456" else {
+                return try jsonResponse(401, ["error": "Invalid or expired code"])
+            }
+            linkedIdentities = [
+                ["provider": "email", "email": email, "createdAt": nowMs],
+            ]
+            return try jsonResponse(200, [
+                "accessToken": "debug-access-email",
+                "refreshToken": "debug-refresh-email",
+                "user": ["id": "debug-user-email"],
+                "isNewAccount": true,
+                "hasData": false,
+                "meMemberId": NSNull(),
+                "inboxProjectId": NSNull(),
+            ])
+        }
+
+        if method == "GET" && path == "/me/identities" {
+            if linkedIdentities.isEmpty {
+                linkedIdentities = [
+                    ["provider": "apple", "email": "test@privaterelay.appleid.com", "createdAt": nowMs],
+                ]
+            }
+            return try jsonResponse(200, linkedIdentities)
+        }
+
+        if method == "POST" && path == "/auth/link" {
+            guard let body,
+                  let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  let provider = payload["provider"] as? String else {
+                return try jsonResponse(400, ["error": "Invalid JSON body"])
+            }
+            let args = ProcessInfo.processInfo.arguments
+            switch provider {
+            case "google":
+                if args.contains("-DayDoDebugLinkConflictGoogle") {
+                    return try jsonResponse(409, ["error": "identity_in_use"])
+                }
+                if !linkedIdentities.contains(where: { ($0["provider"] as? String) == "google" }) {
+                    linkedIdentities.append(["provider": "google", "email": "linked@gmail.com", "createdAt": nowMs])
+                }
+                return try jsonResponse(200, linkedIdentities)
+            case "apple":
+                if args.contains("-DayDoDebugLinkConflictApple") {
+                    return try jsonResponse(409, ["error": "identity_in_use"])
+                }
+                if !linkedIdentities.contains(where: { ($0["provider"] as? String) == "apple" }) {
+                    linkedIdentities.append(["provider": "apple", "email": "linked@privaterelay.appleid.com", "createdAt": nowMs])
+                }
+                return try jsonResponse(200, linkedIdentities)
+            case "email":
+                guard let rawEmail = payload["email"] as? String,
+                      let code = payload["code"] as? String else {
+                    return try jsonResponse(400, ["error": "A valid email and code are required"])
+                }
+                let email = rawEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard code.trimmingCharacters(in: .whitespacesAndNewlines) == "123456" else {
+                    return try jsonResponse(401, ["error": "Invalid or expired code"])
+                }
+                if email == "inuse@example.com" || args.contains("-DayDoDebugLinkConflictEmail") {
+                    return try jsonResponse(409, ["error": "identity_in_use"])
+                }
+                if !linkedIdentities.contains(where: { ($0["provider"] as? String) == "email" && ($0["email"] as? String) == email }) {
+                    linkedIdentities.append(["provider": "email", "email": email, "createdAt": nowMs])
+                }
+                return try jsonResponse(200, linkedIdentities)
+            default:
+                return try jsonResponse(400, ["error": "provider must be apple, google, or email"])
+            }
         }
 
         if method == "POST" && path == "/sync/push" {

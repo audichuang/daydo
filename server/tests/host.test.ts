@@ -26,6 +26,8 @@ const NON_MCP_PATHS = [
   '/auth/apple',
   '/auth/email/start',
   '/auth/email/verify',
+  '/auth/link',
+  '/me/identities',
   '/authorizeX',
   '/registerx',
   '/token/x',

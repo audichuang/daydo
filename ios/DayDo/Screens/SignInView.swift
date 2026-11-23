@@ -1,9 +1,5 @@
 import AuthenticationServices
-import CryptoKit
-import GoogleSignIn
-import Security
 import SwiftUI
-import UIKit
 import DayDoCore
 
 struct SignInView: View {
@@ -16,6 +12,7 @@ struct SignInView: View {
 
     @State private var currentRawNonce: String?
     @State private var errorText: String?
+    @State private var showingEmailSignIn = false
     @State private var pendingSwitchCredential: SyncAuthCredential?
     @State private var pendingSwitchDisplayName: String?
     @State private var pendingSwitchAvatarUrl: String?
@@ -70,20 +67,22 @@ struct SignInView: View {
                             .card(12, color: Palette.raised)
                     }
 
-                    SignInWithAppleButton(.signIn) { request in
-                        let rawNonce = SignInNonce.random()
-                        currentRawNonce = rawNonce
-                        request.requestedScopes = [.fullName, .email]
-                        request.nonce = SignInNonce.sha256Hex(rawNonce)
-                    } onCompletion: { result in
-                        handleAppleResult(result)
+                    if !Platform.isMac {
+                        SignInWithAppleButton(.signIn) { request in
+                            let rawNonce = SignInNonce.random()
+                            currentRawNonce = rawNonce
+                            request.requestedScopes = [.fullName, .email]
+                            request.nonce = SignInNonce.sha256Hex(rawNonce)
+                        } onCompletion: { result in
+                            handleAppleResult(result)
+                        }
+                        .signInWithAppleButtonStyle(colorScheme == .light ? .black : .white)
+                        .id(colorScheme)
+                        .frame(height: 52)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .accessibilityIdentifier("signIn.apple")
+                        .disabled(model.isSigningIn)
                     }
-                    .signInWithAppleButtonStyle(colorScheme == .light ? .black : .white)
-                    .id(colorScheme)
-                    .frame(height: 52)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .accessibilityIdentifier("signIn.apple")
-                    .disabled(model.isSigningIn)
 
                     Button {
                         signInWithGoogle()
@@ -111,6 +110,34 @@ struct SignInView: View {
                     .hoverEffect(.highlight)
                     .accessibilityIdentifier("signIn.google")
                     .disabled(model.isSigningIn)
+
+                    Button {
+                        errorText = nil
+                        showingEmailSignIn = true
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "envelope")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(Palette.text)
+                            Text("使用 Email 登入")
+                                .txt(17, .semibold)
+                                .foregroundStyle(Palette.text)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Palette.raised)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(Palette.separatorSoft, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .hoverEffect(.highlight)
+                    .accessibilityIdentifier("signIn.email")
+                    .disabled(model.isSigningIn)
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 44)
@@ -129,6 +156,11 @@ struct SignInView: View {
                 .padding(.horizontal, 24)
                 .padding(.vertical, 20)
                 .card(18, color: Palette.card)
+            }
+        }
+        .sheet(isPresented: $showingEmailSignIn) {
+            EmailCodeSheet(mode: .signIn) { email, code in
+                try await performEmailSignIn(email: email, code: code)
             }
         }
         .alert("切換帳號？", isPresented: $confirmSwitchAccount) {
@@ -188,46 +220,31 @@ struct SignInView: View {
 
     private func signInWithGoogle() {
         errorText = nil
-#if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-DayDoDebugStub") {
-            let suggestedName = ProcessInfo.processInfo.arguments.contains("-DayDoDebugNoProviderName") ? nil : "測試者"
-            Task {
-                await performSignIn(.google(idToken: "debug-google-token"), displayName: suggestedName)
-            }
-            return
-        }
-#endif
-        guard let presenter = topViewController() else {
-            errorText = "無法開啟 Google 登入視窗。"
-            return
-        }
-        if let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String,
-           !clientID.isEmpty,
-           GIDSignIn.sharedInstance.configuration == nil {
-            GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
-        }
         Task {
             do {
-                let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presenter)
-                guard let idToken = result.user.idToken?.tokenString, !idToken.isEmpty else {
-                    errorText = "無法取得 Google ID Token。"
-                    return
-                }
-                let profileName = result.user.profile?.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                let suggestedName = (profileName?.isEmpty == false) ? profileName : nil
-                let rawAvatarURL = (result.user.profile?.hasImage == true)
-                    ? result.user.profile?.imageURL(withDimension: 256)
-                    : nil
-                let suggestedAvatarUrl = (rawAvatarURL?.scheme?.lowercased() == "https") ? rawAvatarURL?.absoluteString : nil
-                await performSignIn(.google(idToken: idToken), displayName: suggestedName, avatarUrl: suggestedAvatarUrl)
+                guard let payload = try await AuthPresentationHelper.signInWithGoogle() else { return }
+                await performSignIn(.google(idToken: payload.idToken), displayName: payload.displayName, avatarUrl: payload.avatarUrl)
             } catch {
-                let nsError = error as NSError
-                if nsError.domain == kGIDSignInErrorDomain,
-                   nsError.code == GIDSignInError.canceled.rawValue {
-                    return
-                }
                 errorText = error.localizedDescription
             }
+        }
+    }
+
+    private func performEmailSignIn(email: String, code: String) async throws {
+        let credential = SyncAuthCredential.email(email: email, code: code)
+        errorText = nil
+        do {
+            try await model.signIn(with: credential, displayName: nil, avatarUrl: nil)
+        } catch {
+            if isDifferentUserError(error) {
+                pendingSwitchCredential = credential
+                pendingSwitchDisplayName = nil
+                pendingSwitchAvatarUrl = nil
+                pendingSwitchUnsyncedCount = await model.unsyncedChangeCount()
+                confirmSwitchAccount = true
+                return
+            }
+            throw error
         }
     }
 
@@ -260,42 +277,5 @@ struct SignInView: View {
     private func isDifferentUserError(_ error: Error) -> Bool {
         guard case let SyncError.protocolError(message) = error else { return false }
         return message.contains("Already signed in as a different user")
-    }
-
-    private func topViewController() -> UIViewController? {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        let window = scenes.flatMap(\.windows).first(where: \.isKeyWindow) ?? scenes.flatMap(\.windows).first
-        var top = window?.rootViewController
-        while let presented = top?.presentedViewController {
-            top = presented
-        }
-        return top
-    }
-}
-
-private enum SignInNonce {
-    static func random(length: Int = 32) -> String {
-        let charset = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
-        var result = ""
-        var remaining = length
-        while remaining > 0 {
-            var bytes = [UInt8](repeating: 0, count: 16)
-            let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-            if status != errSecSuccess {
-                fatalError("Unable to generate random nonce: \(status)")
-            }
-            for byte in bytes where remaining > 0 {
-                if Int(byte) < charset.count * (256 / charset.count) {
-                    result.append(charset[Int(byte) % charset.count])
-                    remaining -= 1
-                }
-            }
-        }
-        return result
-    }
-
-    static func sha256Hex(_ input: String) -> String {
-        let digest = SHA256.hash(data: Data(input.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
     }
 }

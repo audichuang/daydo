@@ -384,7 +384,94 @@ async function main() {
     const emailRefreshed = await postJson(baseUrl, '/auth/refresh', { refreshToken: emailLogin.data.refreshToken });
     assert.equal(emailRefreshed.status, 200);
 
-    console.log('e2e: all 9 auth & session assertions passed');
+    // 10. Account linking (/me/identities & /auth/link): list, link Google + Email, idempotent re-link, 409 conflict, sign in with linked provider
+    const unauthIds = await fetch(`${baseUrl}/me/identities`);
+    assert.equal(unauthIds.status, 401);
+
+    const authHeaders = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${appleLogin2.data.accessToken}`,
+    };
+    const idsBeforeRes = await fetch(`${baseUrl}/me/identities`, { headers: authHeaders });
+    assert.equal(idsBeforeRes.status, 200);
+    const idsBefore = await idsBeforeRes.json();
+    assert.equal(idsBefore.length, 1);
+    assert.equal(idsBefore[0].provider, 'apple');
+    assert.equal(idsBefore[0].email, sharedEmail);
+    assert.equal(typeof idsBefore[0].createdAt, 'number');
+
+    // Linking a Google identity already owned by googleLogin -> 409 identity_in_use
+    const conflictRes = await fetch(`${baseUrl}/auth/link`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ provider: 'google', idToken: googleToken }),
+    });
+    assert.equal(conflictRes.status, 409);
+    assert.deepEqual(await conflictRes.json(), { error: 'identity_in_use' });
+
+    // Linking a fresh Google identity -> 200 with both identities
+    const linkedGoogleSub = `google-linked-${randomUUID()}`;
+    const linkedGoogleEmail = `linked-${randomUUID()}@gmail.com`;
+    const linkedGoogleToken = await new SignJWT({ email: linkedGoogleEmail })
+      .setProtectedHeader({ alg: 'ES256', kid: 'google-e2e-1' })
+      .setIssuer('https://accounts.google.com')
+      .setAudience(env.GOOGLE_AUDIENCE)
+      .setSubject(linkedGoogleSub)
+      .setIssuedAt()
+      .setExpirationTime('10m')
+      .sign(jwks.googlePrivateKey);
+
+    const linkGoogleRes = await fetch(`${baseUrl}/auth/link`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ provider: 'google', idToken: linkedGoogleToken }),
+    });
+    assert.equal(linkGoogleRes.status, 200);
+    const afterGoogleLink = await linkGoogleRes.json();
+    assert.deepEqual(
+      afterGoogleLink.map((i) => ({ provider: i.provider, email: i.email })),
+      [
+        { provider: 'apple', email: sharedEmail },
+        { provider: 'google', email: linkedGoogleEmail },
+      ],
+    );
+
+    // Idempotent re-link -> 200 unchanged
+    const relinkGoogleRes = await fetch(`${baseUrl}/auth/link`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ provider: 'google', idToken: linkedGoogleToken }),
+    });
+    assert.equal(relinkGoogleRes.status, 200);
+    assert.deepEqual(await relinkGoogleRes.json(), afterGoogleLink);
+
+    // Link a fresh Email identity via /auth/email/start -> /auth/link
+    const linkedEmail = `linked-${randomUUID()}@example.com`;
+    const linkEmailStart = await postEmail('/auth/email/start', { email: linkedEmail, deviceId });
+    assert.equal(linkEmailStart.status, 202);
+    const linkEmailCode = await readCode(linkedEmail);
+    const linkEmailRes = await fetch(`${baseUrl}/auth/link`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ provider: 'email', email: linkedEmail, code: linkEmailCode }),
+    });
+    assert.equal(linkEmailRes.status, 200);
+    const afterEmailLink = await linkEmailRes.json();
+    assert.deepEqual(
+      afterEmailLink.map((i) => i.provider),
+      ['apple', 'google', 'email'],
+    );
+
+    // Signing in with the newly linked Google identity lands in the Apple user's account
+    const loginViaLinkedGoogle = await postJson(baseUrl, '/auth/google', {
+      idToken: linkedGoogleToken,
+      deviceId,
+    });
+    assert.equal(loginViaLinkedGoogle.status, 200);
+    assert.equal(loginViaLinkedGoogle.data.isNewAccount, false);
+    assert.equal(loginViaLinkedGoogle.data.user.id, appleLogin1.data.user.id);
+
+    console.log('e2e: all 10 auth & session assertions passed');
   } finally {
     process.off('SIGINT', cleanup);
     process.off('SIGTERM', cleanup);

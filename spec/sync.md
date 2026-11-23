@@ -71,7 +71,7 @@
 
 - 「全部」與日曆的成員篩選按「指派人，沒指派就看清單擁有者」算歸屬，收件匣一律算自己的：收件匣不能共享，所以對方的收件匣不會同步過來；若異常 client 共享了收件匣，裡面的任務會被算成自己的。
 - 把成員移出清單不會清掉他在那份清單的指派，那些任務仍算他的。成員篩選只列「自己＋還跟你共用未封存清單的人」，所以把對方移出最後一份共享清單後，整排篩選會消失，「全部」會連同仍指派給他的任務一起顯示；要再分得出來，先把那些任務改指派或取消指派。
-- iOS App 還沒有信箱登入畫面；信箱驗證碼目前只能透過 API 與 MCP 授權頁使用，且同信箱不會與 Google／Apple 帳號合併。
+- 同信箱不會與 Google／Apple 帳號自動合併，兩個既有帳號也無法合併（要共用同一個帳號，需先登入其中一個並在設定頁透過 `POST /auth/link` 連結另一種登入方式，不能先各自建立再合併）；亦不提供解除綁定登入方式。
 - 知道某人信箱的人可以故意用完他每小時 5 次的寄碼額度，或猜錯 10 次觸發 24 小時鎖定，讓他暫時無法用信箱登入（阻斷服務，不會因此登入他的帳號）；Google／Apple 登入不受影響。
 - 同一個子項目 id 同時指向兩個不同任務、兩個請求又同時送出時，路由可能被清掉（需異常 client）。
 - 共享清單的 editor 能把清單的 `isInbox` 改成 true（App 不會這樣送）。
@@ -180,7 +180,7 @@
   - `start` 一律回 `202 {sent:true}`，不透露該信箱是否已有帳號。
   - 信件：Cloudflare Email Service 的 `send_email` binding（名稱 `EMAIL`），寄件人 `DayDo <no-reply@daydoapp.com>`，主旨「你的 DayDo 驗證碼」，純文字與 HTML 兩份，內含驗證碼與「10 分鐘內有效」的說明。開發建置使用可注入的記憶體 mailer，並提供僅開發建置掛上的路由（`routes/test/*.dev.ts`）讀取某信箱最後一組碼；正式環境不記驗證碼。
   - 過期的 `emailCode` 列由既有的每小時 OAuth 清理一併刪除，保留到過期後 24 小時，跨碼鎖定要加總的列都還在。
-- 帳號用 `(provider, sub)` 識別，不用 email 自動合併帳號：Apple 可能給隱藏的轉寄 email。要讓兩種登入方式共用同一個帳號，登入後在設定裡手動連結。
+- 帳號用 `(provider, sub)` 識別，不用 email 自動合併帳號：Apple 可能給隱藏的轉寄 email。要讓多種登入方式共用同一個帳號，登入後在設定頁呼叫 `POST /auth/link`（需帶登入的 access token），以與登入相同的規則驗證第二種憑證（Apple／Google token 驗簽、信箱驗證碼沿用相同消耗與猜錯鎖定規則）；該 `(provider, sub)` 已屬目前帳號時回 200（冪等），屬於別的帳號回 409 `{error:"identity_in_use"}`（不合併、不轉移），其餘新增 `identity` 列綁到目前帳號並回 200，成功一律回傳目前帳號的身分清單。`GET /me/identities` 回傳 `[{provider, email?, createdAt}]`（`email` 只回該身分登入或連結時取得的位址，Apple 隱藏轉寄信箱照原樣）。不提供解除綁定，兩個既有帳號亦無法合併。
 - Worker 自己發 token：access token 為 JWT，1 小時；refresh token 90 天，每次使用就換一組新的，D1 只存雜湊值。
 - **refresh 寬限期**：正常換發後 10 分鐘內且後繼 token 尚未被使用時，以舊 refresh token 重試視為遺失回應重試，撤銷該未使用的後繼 token 並換發新的一組；其餘重複使用撤銷整條 session 鏈並回 401。
 - 登入與 refresh 回應另帶 `hasData`（伺服器上已經有這個使用者的收件匣，等同 `inboxProjectId` 不是 null）、`meMemberId`（綁定的「我」，還沒有就是 null）、`inboxProjectId`（收件匣的定義：自己範圍裡 `isInbox` 為真、沒有 `deletedAt` 也沒有 `purgedAt` 的清單；有多個時取 `serverSeq` 最小的；沒有就是 null。MCP／ICS 的 snapshot 沿用同一個定義）、`avatarUrl`（D1 `user.avatarUrl`，可為 null）。App 依「已定的決策」的第一次登入規則處理。
@@ -198,7 +198,8 @@
 | POST | `/auth/email/verify` | `{email, code, deviceId}` → 與 `/auth/google` 相同形狀：`{accessToken, refreshToken, user, isNewAccount, hasData, meMemberId, inboxProjectId, avatarUrl}`；第一次成功時建立帳號；碼錯、過期、已用、超過 5 次一律 401 同一種錯誤 |
 | POST | `/auth/refresh` | `{refreshToken}` → `{accessToken, refreshToken, hasData, meMemberId, inboxProjectId, avatarUrl}` |
 | PUT | `/me/avatar` | `{avatarUrl}`（限 `https:` 且 host 為 `googleusercontent.com`、最多 2048 字元）→ `{avatarUrl}`，更新 D1 `user.avatarUrl` |
-| POST | `/auth/link` | 已登入時連結另一種登入方式（之後做） |
+| GET | `/me/identities` | 需登入；回傳目前帳號已連結的登入方式清單 `[{provider, email?, createdAt}]`（`email` 只回該身分登入／連結時拿到的信箱，Apple 隱藏轉寄信箱照原樣） |
+| POST | `/auth/link` | 需登入；body 擇一 `{provider:"apple", identityToken, nonce}`、`{provider:"google", idToken}`、`{provider:"email", email, code}`，以與登入相同的驗證規則驗憑證。已屬自己回 200（冪等）；屬他人回 409 `{error:"identity_in_use"}`（不合併、不轉移）；否則新增 `identity` 列回 200。成功回傳目前帳號的身分清單 `[{provider, email?, createdAt}]`（不做解除綁定） |
 | DELETE | `/account` | 刪除帳號與所有資料（之後做，上架前必須有） |
 | POST | `/sync/push` | `{deviceId, ops: [{opId, hlc, entity, entityId, op, fields, row}]}`（最多 200）→ `{results: [{opId, status, reason?, row, clocks}], serverTime}`，`results` 與 `ops` 同順序；`serverTime` 是 HLC 字串（`<ms>:<counter>:server`） |
 | POST | `/sync/pull` | `{cursors: {"u:<id>": seq}, backfill?: [projectId], limit?}` → `{scopes: [{scope, rows: [{entity, row, clocks, serverSeq} \| {entity, entityId, gone: true, serverSeq}], cursor, hasMore}], memberships: [{projectId, scope, role}], members: [member 列（另帶 userId, avatarUrl）]}`；沒給游標的範圍從 0 開始；列很大時一頁可能少於 `limit` 但 `hasMore=true`（Scope 每頁有 JSON 字元預算） |
@@ -215,7 +216,7 @@
 
 ## 儲存
 
-- **D1**：`user`（含 `meMemberId` 與名字、縮寫、顏色、`avatarUrl`）、`identity(provider, sub, userId)`、`session`、`device`、`projectMembership(projectId, userId, role, createdAt, removedAt)`、`invite(codeHash, projectId, role, createdBy, expiresAt, revokedAt)`、`entityHome(entity, entityId, scope)`（tag 除外）、`listScopes(projectId, scope)`、未完成的清單刪除通知。資料表不放 D1。
+- **D1**：`user`（含 `meMemberId` 與名字、縮寫、顏色、`avatarUrl`）、`identity(provider, sub, userId, email, createdAt)`、`session`、`device`、`projectMembership(projectId, userId, role, createdAt, removedAt)`、`invite(codeHash, projectId, role, createdBy, expiresAt, revokedAt)`、`entityHome(entity, entityId, scope)`（tag 除外）、`listScopes(projectId, scope)`、未完成的清單刪除通知。資料表不放 D1。
 - **範圍 DO 的 SQLite**：各 entity 一張表（欄位同 App，加 `clocks`、`serverSeq`、`purgedAt`，子列另存所屬清單），`departure`（離開紀錄），`opApplied(opId, status, serverSeq)`，`counter`（範圍內的 serverSeq）。
 - 舊的單一寫入 DO（`writer`）與 D1 的資料表在 T5a 移除；從未部署過，不用搬資料。
 - 測試要能證明並發被正確處理：e2e 的 concurrency 情境保留；DO SQLite 本身就依序執行，所以改用只在開發建置有效的故障注入（例如在讀 `clocks` 和寫入之間故意 `await`），開啟時該情境必須失敗。

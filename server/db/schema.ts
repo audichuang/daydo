@@ -19,6 +19,8 @@ export const identity = sqliteTable(
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
     email: text('email'),
+    // Epoch ms when linked; null on rows created before this column existed (fallback to user.createdAt).
+    createdAt: integer('createdAt'),
   },
   (t) => [
     primaryKey({ columns: [t.provider, t.sub] }),

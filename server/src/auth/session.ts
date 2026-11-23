@@ -206,6 +206,7 @@ export async function createSessionForIdentity(
         sub: params.sub,
         userId: newUserId,
         email: params.email,
+        createdAt: now,
       }),
       ...buildDeviceAndSessionStatements(database, {
         userId: newUserId,

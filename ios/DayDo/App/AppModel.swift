@@ -67,6 +67,9 @@ final class AppModel {
     var isSignedIn = false
     var isSigningIn = false
     var isSyncing = false
+    var linkedIdentities: [LinkedIdentity] = []
+    var isLoadingIdentities = false
+    var identitiesLoaded = false
     private(set) var isConfirmingSignOut = false
     private var isSigningOut = false
     private(set) var duplicationLocks: [String: UUID] = [:]
@@ -708,6 +711,39 @@ final class AppModel {
 
     // MARK: - Auth & Sync
 
+    func startEmailSignIn(email: String) async throws {
+        try await syncEngine.startEmailSignIn(email: email)
+    }
+
+    @discardableResult
+    func loadLinkedIdentities() async throws -> [LinkedIdentity] {
+        guard syncEnabled, isSignedIn else { return [] }
+        isLoadingIdentities = true
+        defer { isLoadingIdentities = false }
+        do {
+            let list = try await syncEngine.listIdentities()
+            linkedIdentities = list
+            identitiesLoaded = true
+            return list
+        } catch {
+            _ = await handleErrorIfSignedOut(error)
+            throw error
+        }
+    }
+
+    @discardableResult
+    func linkIdentity(with credential: SyncAuthCredential) async throws -> [LinkedIdentity] {
+        do {
+            let list = try await syncEngine.linkIdentity(with: credential)
+            linkedIdentities = list
+            identitiesLoaded = true
+            return list
+        } catch {
+            _ = await handleErrorIfSignedOut(error)
+            throw error
+        }
+    }
+
     func signIn(with credential: SyncAuthCredential, displayName: String? = nil, avatarUrl: String? = nil) async throws {
         isSigningIn = true
         defer { isSigningIn = false }
@@ -885,6 +921,9 @@ final class AppModel {
         allMemberFilter = nil
         isConfirmingSignOut = false
         cancelProjectDuplications()
+        linkedIdentities = []
+        isLoadingIdentities = false
+        identitiesLoaded = false
         isSignedIn = false
         revision += 1
         scheduleWidgetReload()

@@ -196,3 +196,23 @@ public enum SharingError: Error, LocalizedError, Sendable, Equatable {
         }
     }
 }
+
+/// Errors surfaced by auth and account-linking API calls.
+public enum AuthError: Error, LocalizedError, Sendable, Equatable {
+    case identityInUse
+    case invalidCode
+    case invalidCredentials(String)
+    case badRequest(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .identityInUse:
+            return "這個登入方式已經屬於另一個 DayDo 帳號"
+        case .invalidCode:
+            return "驗證碼錯誤或已過期，請再試一次"
+        case let .invalidCredentials(message),
+             let .badRequest(message):
+            return message
+        }
+    }
+}

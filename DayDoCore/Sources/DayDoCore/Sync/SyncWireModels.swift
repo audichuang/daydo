@@ -159,6 +159,7 @@ struct UpdateMeAvatarResponse: Decodable, Sendable {
 public enum SyncAuthCredential: Sendable, Equatable {
     case google(idToken: String)
     case apple(identityToken: String, nonce: String)
+    case email(email: String, code: String)
 }
 
 public struct AuthGoogleRequest: Codable, Sendable {
@@ -181,6 +182,69 @@ public struct AuthAppleRequest: Codable, Sendable {
         self.nonce = nonce
         self.deviceId = deviceId
     }
+}
+
+public struct AuthEmailStartRequest: Codable, Sendable {
+    public let email: String
+    public let deviceId: String
+
+    public init(email: String, deviceId: String) {
+        self.email = email
+        self.deviceId = deviceId
+    }
+}
+
+public struct AuthEmailVerifyRequest: Codable, Sendable {
+    public let email: String
+    public let code: String
+    public let deviceId: String
+
+    public init(email: String, code: String, deviceId: String) {
+        self.email = email
+        self.code = code
+        self.deviceId = deviceId
+    }
+}
+
+public enum AuthProvider: String, Codable, Sendable, CaseIterable, Hashable {
+    case apple
+    case google
+    case email
+}
+
+public struct LinkedIdentity: Codable, Sendable, Equatable, Identifiable {
+    public let provider: AuthProvider
+    public let email: String?
+    public let createdAt: EpochMillis
+
+    public var id: String { "\(provider.rawValue):\(email ?? ""):\(createdAt)" }
+
+    public init(provider: AuthProvider, email: String? = nil, createdAt: EpochMillis) {
+        self.provider = provider
+        self.email = email
+        self.createdAt = createdAt
+    }
+}
+
+struct AuthLinkAppleRequest: Encodable, Sendable {
+    let provider = "apple"
+    let identityToken: String
+    let nonce: String
+}
+
+struct AuthLinkGoogleRequest: Encodable, Sendable {
+    let provider = "google"
+    let idToken: String
+}
+
+struct AuthLinkEmailRequest: Encodable, Sendable {
+    let provider = "email"
+    let email: String
+    let code: String
+}
+
+struct AuthErrorBody: Decodable, Sendable {
+    let error: String?
 }
 
 public struct AuthLoginUser: Codable, Sendable, Equatable {

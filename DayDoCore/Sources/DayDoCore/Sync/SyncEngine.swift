@@ -131,8 +131,29 @@ public actor SyncEngine {
         }
     }
 
-    /// Signs in with Google or Apple, runs first-login reconciliation once in a single write
-    /// transaction before the first push, and runs `syncNow()`.
+    /// Requests a 6-digit email verification code (`POST /auth/email/start`) for sign-in or account linking.
+    public func startEmailSignIn(email: String) async throws {
+        let deviceId = try await database.writer.write { db in
+            try HLC.ensureDeviceId(in: db)
+        }
+        let requestBody = try encoder.encode(AuthEmailStartRequest(email: email, deviceId: deviceId))
+        let response = try await sendWithNetworkRetryable(
+            method: "POST",
+            path: "/auth/email/start",
+            headers: [:],
+            body: requestBody
+        )
+        if (200...299).contains(response.status) {
+            return
+        }
+        if response.status == 400 {
+            throw AuthError.badRequest(parseErrorMessage(from: response))
+        }
+        _ = try validateHTTPResponse(response)
+    }
+
+    /// Signs in with Google, Apple, or email verification code, runs first-login reconciliation once
+    /// in a single write transaction before the first push, and runs `syncNow()`.
     @discardableResult
     public func signIn(with credential: SyncAuthCredential) async throws -> SyncSummary {
         let generation = sessionGeneration
@@ -149,6 +170,9 @@ public actor SyncEngine {
         case let .apple(identityToken, nonce):
             path = "/auth/apple"
             requestBody = try encoder.encode(AuthAppleRequest(identityToken: identityToken, nonce: nonce, deviceId: deviceId))
+        case let .email(email, code):
+            path = "/auth/email/verify"
+            requestBody = try encoder.encode(AuthEmailVerifyRequest(email: email, code: code, deviceId: deviceId))
         }
 
         let response = try await sendWithNetworkRetryable(
@@ -157,6 +181,14 @@ public actor SyncEngine {
             headers: [:],
             body: requestBody
         )
+        if case .email = credential {
+            if response.status == 401 {
+                throw AuthError.invalidCode
+            }
+            if response.status == 400 {
+                throw AuthError.badRequest(parseErrorMessage(from: response))
+            }
+        }
         let data = try validateHTTPResponse(response)
         let auth = try decode(AuthLoginResponse.self, from: data)
 
@@ -290,6 +322,111 @@ public actor SyncEngine {
             emitChange(SyncSummary(didChangeLocalData: true))
         }
         return decoded.avatarUrl
+    }
+
+    /// Fetches the sign-in identities linked to the currently signed-in account (`GET /me/identities`).
+    public func listIdentities() async throws -> [LinkedIdentity] {
+        let generation = sessionGeneration
+        let data = try await sendAuthorized(method: "GET", path: "/me/identities", body: nil, generation: generation)
+        return try decode([LinkedIdentity].self, from: data)
+    }
+
+    /// Links another sign-in provider to the currently signed-in account (`POST /auth/link`)
+    /// and returns the account's full list of linked identities.
+    @discardableResult
+    public func linkIdentity(with credential: SyncAuthCredential) async throws -> [LinkedIdentity] {
+        let generation = sessionGeneration
+        let requestBody: Data
+        switch credential {
+        case let .apple(identityToken, nonce):
+            requestBody = try encoder.encode(AuthLinkAppleRequest(identityToken: identityToken, nonce: nonce))
+        case let .google(idToken):
+            requestBody = try encoder.encode(AuthLinkGoogleRequest(idToken: idToken))
+        case let .email(email, code):
+            requestBody = try encoder.encode(AuthLinkEmailRequest(email: email, code: code))
+        }
+
+        let response = try await sendAuthorizedLinkRequest(body: requestBody, generation: generation)
+        if (200...299).contains(response.status) {
+            return try decode([LinkedIdentity].self, from: response.body)
+        }
+        let message = parseErrorMessage(from: response)
+        switch response.status {
+        case 409:
+            throw AuthError.identityInUse
+        case 401:
+            if case .email = credential {
+                throw AuthError.invalidCode
+            }
+            throw AuthError.invalidCredentials(message)
+        case 400:
+            throw AuthError.badRequest(message)
+        case 429, 500...599:
+            throw SyncError.retryable(retryAfter: baseBackoffSeconds, statusCode: response.status, message: message)
+        default:
+            throw SyncError.protocolError("HTTP \(response.status): \(message)")
+        }
+    }
+
+    /// Sends `POST /auth/link` with bearer auth. Unlike general authorized requests, a 401 whose
+    /// body is NOT `{"error":"Unauthorized"}` means the *second* credential failed verification
+    /// (e.g. wrong email code), so it must not refresh/retry or sign the caller out.
+    private func sendAuthorizedLinkRequest(body: Data, generation: UInt64) async throws -> SyncHTTPResponse {
+        guard generation == sessionGeneration, !Task.isCancelled else {
+            throw CancellationError()
+        }
+
+        let initialToken: String
+        if let access = tokenStore.accessToken, !access.isEmpty {
+            initialToken = access
+        } else if let refresh = tokenStore.refreshToken, !refresh.isEmpty {
+            initialToken = try await refreshAccessToken(failedAccessToken: nil, generation: generation)
+        } else {
+            throw SyncError.signedOut
+        }
+
+        let firstResponse = try await sendWithNetworkRetryable(
+            method: "POST",
+            path: "/auth/link",
+            headers: ["Authorization": "Bearer \(initialToken)"],
+            body: body,
+            generation: generation
+        )
+
+        if firstResponse.status == 401 && isSessionUnauthorized(firstResponse) {
+            let newAccess = try await refreshAccessToken(failedAccessToken: initialToken, generation: generation)
+            let retryResponse = try await sendWithNetworkRetryable(
+                method: "POST",
+                path: "/auth/link",
+                headers: ["Authorization": "Bearer \(newAccess)"],
+                body: body,
+                generation: generation
+            )
+            if retryResponse.status == 401 && isSessionUnauthorized(retryResponse) {
+                tokenStore.accessToken = nil
+                tokenStore.refreshToken = nil
+                throw SyncError.signedOut
+            }
+            return retryResponse
+        }
+
+        return firstResponse
+    }
+
+    private func isSessionUnauthorized(_ response: SyncHTTPResponse) -> Bool {
+        guard let parsed = try? decoder.decode(AuthErrorBody.self, from: response.body) else {
+            return false
+        }
+        return parsed.error == "Unauthorized"
+    }
+
+    private func parseErrorMessage(from response: SyncHTTPResponse) -> String {
+        if let parsed = try? decoder.decode(AuthErrorBody.self, from: response.body),
+           let err = parsed.error, !err.isEmpty {
+            return err
+        }
+        let raw = String(data: response.body, encoding: .utf8) ?? ""
+        return raw.isEmpty ? "HTTP \(response.status)" : raw
     }
 
     // MARK: - Sharing
