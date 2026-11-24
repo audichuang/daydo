@@ -8,7 +8,6 @@ import { chunkArray, loadPushContext } from './push/context';
 import { collectPushLookups } from './push/parse';
 import { planPushBatch } from './push/plan';
 
-
 export { chunkArray };
 
 interface SyncPushParams {

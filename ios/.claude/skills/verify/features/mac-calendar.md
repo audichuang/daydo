@@ -25,12 +25,12 @@ Preconditions:
 - `$S/mac.sh doctor` is OK and the window is 1400x900.
 
 - **Month default.** Read AX: `calendarModeMenu` says `目前月`, and month cells list task buttons (e.g. `週會、10:00`). Shot `cal-month`.
-- **Cross-month.** Click the button inside container `<next month> 1 日 …`. `calendarTitle` reads `<yyyy> 年 <m> 月 1 日 …` and the sidebar month button reads the same month. Shot `cal-cross-month`.
+- **Cross-month.** Click the button inside a grey next-month container (e.g. `12 月 1 日 週二`). `calendarTitle` reads `<yyyy> 年 <m> 月 1 日 …` and the sidebar month button reads the same month. Shot `cal-cross-month`.
 - **Filter.** Click sidebar row `工作`; it becomes `(selected)` and only 工作 tasks remain. Click `全部清單` to clear.
 - **Inspector.** Click a task button; `taskTitleField` appears with its title. `pressKey('Escape')`; `taskTitleField` is gone.
 - **Double-click add.** `click([x,y], {clickCount: 2})` on empty space inside a cell; the composer opens with that date.
 - **Context menu.** `click(<task>, {mouseButton: 'right'})`, screenshot the menu, choose `完成`; reopen from the task list to confirm it is completed (a repeating task moves to its next date instead).
-- **Narrow.** `$S/mac.sh size 900x640`, open a task: the sidebar is hidden. Open the date row, pick another date without confirming, click `sidebar.left`: the pane and the picked date stay.
+- **Narrow.** `$S/mac.sh size 900x640`, open a task: the sidebar is hidden. Open the date row, pick another date without confirming, click `顯示／隱藏側欄`: the pane and the picked date stay.
 
 ## Gotchas
 

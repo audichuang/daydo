@@ -1,12 +1,17 @@
 #!/bin/bash
 # Drive the DayDo Mac (Catalyst) Debug build of THIS worktree for verification.
-# Usage: mac.sh build | launch [screen] [WxH] | doctor | size WxH | shot <name> | evidence | cleanup
+# Usage: mac.sh build | launch [screen|signin] [WxH] | doctor | size WxH | shot <name> | evidence | cleanup
 set -euo pipefail
 
-ROOT="$(git rev-parse --show-toplevel)"
+# The worktree this script lives in, whatever the caller's cwd.
+ROOT="$(cd "$(dirname "$0")/../../../../.." && pwd)"
 MAIN="$(git -C "$ROOT" worktree list --porcelain | awk 'NR==1{print $2}')"
-STATE="${DAYDO_MAC_VERIFY_STATE:-$HOME/.local/state/daydo-verify-mac}/$(printf '%s' "$ROOT" | shasum | cut -c1-10)"
+BASE="${DAYDO_MAC_VERIFY_STATE:-$HOME/.local/state/daydo-verify-mac}"
+STATE="$BASE/$(printf '%s' "$ROOT" | shasum | cut -c1-10)"
 mkdir -p "$STATE"
+
+# Identity of a built executable: inode + mtime change on every rebuild.
+fingerprint() { stat -f '%i-%m' "$1"; }
 
 die() { echo "mac.sh: $*" >&2; exit 1; }
 
@@ -39,15 +44,26 @@ set_size() {
 case "${1:-}" in
   build)
     heavy -- "$ROOT/ios/scripts/uitest.sh" mac >"$STATE/build.log" 2>&1 || { tail -20 "$STATE/build.log"; die "build failed (log: $STATE/build.log)"; }
-    git -C "$ROOT" checkout -q DayDoCore/Package.resolved 2>/dev/null || true
+    # Stamp the build, not the binary: a comment-only edit compiles to identical objects and Xcode skips relinking.
+    touch "$STATE/built"
     app_path ;;
   launch)
     screen="${2:-}"; size="${3:-1400x900}"
-    [ -z "$(our_pid || true)" ] || die "an instance from this worktree is already running (pid $(our_pid)); run cleanup first"
+    # Every worktree's Debug build shares one data dir and preference suite, so -DayDoReset here
+    # would wipe another worktree's running instance: allow one Debug instance machine-wide.
+    # mkdir is atomic: two concurrent launches cannot both pass the check below and claim one pid.
+    mkdir "$BASE/launch.lock" 2>/dev/null || die "another mac.sh launch is in progress (remove $BASE/launch.lock if none is)"
+    trap 'rmdir "$BASE/launch.lock" 2>/dev/null || true' EXIT
+    other="$(pgrep -fl "Library/Developer/Xcode/DerivedData/DayDo-.*/DayDo.app/Contents/MacOS/DayDo" || true)"
+    [ -z "$other" ] || die "a DayDo Debug build is already running (shared data dir): $other; stop it (mac.sh cleanup in its worktree) first"
     app="$(app_path)" || die "no Mac build for this worktree; run: mac.sh build"
     before="$(pgrep -f "$app/Contents/MacOS/DayDo" || true)"
-    args=(-DayDoReset -DayDoSkipLogin -DayDoDemo)
-    [ -n "$screen" ] && args+=(-DayDoScreen "$screen")
+    if [ "$screen" = signin ]; then
+      args=(-DayDoReset)
+    else
+      args=(-DayDoReset -DayDoSkipLogin -DayDoDemo)
+      [ -n "$screen" ] && args+=(-DayDoScreen "$screen")
+    fi
     open -n "$app" --args "${args[@]}"
     pid=""
     for _ in $(seq 1 40); do
@@ -58,6 +74,7 @@ case "${1:-}" in
     done
     [ -n "$pid" ] || die "app did not start"
     echo "$pid" >"$STATE/pid"; echo "$app" >"$STATE/app"
+    fingerprint "$app/Contents/MacOS/DayDo" >"$STATE/fingerprint"
     # Ready = the main window exists (System Events sees it), not just a live process.
     for _ in $(seq 1 40); do
       n="$(osascript -e "tell application \"System Events\" to count windows of (first process whose unix id is $pid)" 2>/dev/null || echo 0)"
@@ -68,11 +85,13 @@ case "${1:-}" in
   doctor)
     app="$(app_path)" || die "FAIL no Mac build for $ROOT; run: mac.sh build"
     bin="$app/Contents/MacOS/DayDo"
-    newest="$(find "$ROOT/ios/DayDo" "$ROOT/DayDoCore/Sources" -name '*.swift' -newer "$bin" | head -1)"
-    [ -z "$newest" ] || die "FAIL build is older than $newest; run: mac.sh build"
+    [ -f "$STATE/built" ] || die "FAIL no mac.sh build recorded for this worktree; run: mac.sh build"
+    newest="$(find "$ROOT/ios/DayDo" "$ROOT/DayDoCore/Sources" -name '*.swift' -newer "$STATE/built" -print -quit)"
+    [ -z "$newest" ] || die "FAIL $newest changed after the last mac.sh build; run: mac.sh build"
     pid="$(our_pid || true)"
     [ -n "$pid" ] || die "FAIL no running instance started by this worktree; run: mac.sh launch"
-    echo "OK pid=$pid build=$app (newer than every source file)" ;;
+    [ "$(fingerprint "$bin")" = "$(cat "$STATE/fingerprint" 2>/dev/null)" ] || die "FAIL running pid $pid predates the current build; run: mac.sh cleanup && mac.sh launch"
+    echo "OK pid=$pid build=$app (built after every source change, running the current binary)" ;;
   size) set_size "${2:?WxH}"; echo "size=$2" ;;
   evidence)
     run="${DAYDO_VERIFY_RUN:-$(date +%Y%m%d-%H%M%S)}"
@@ -87,7 +106,6 @@ case "${1:-}" in
     pid="$(our_pid || true)"
     if [ -n "$pid" ]; then kill "$pid"; echo "stopped pid $pid"; else echo "nothing of ours running"; fi
     rm -f "$STATE/pid"
-    git -C "$ROOT" checkout -q DayDoCore/Package.resolved 2>/dev/null || true
-    [ -f "$STATE/evidence" ] && echo "evidence kept at $(cat "$STATE/evidence")" ;;
+    if [ -f "$STATE/evidence" ]; then echo "evidence kept at $(cat "$STATE/evidence")"; fi ;;
   *) sed -n 2,3p "$0"; exit 2 ;;
 esac

@@ -28,9 +28,9 @@ struct AnchorFrameProbe: UIViewRepresentable {
     }
 }
 
-/// Button wrapper that reads its window frame at click time on Mac so a
-/// single `UIPopoverPresentationController` can anchor to the clicked task
-/// without writing `@State` on every scroll frame.
+/// Button wrapper that reads its window frame at click time on Mac.
+/// shortcut: nothing uses the rect since the Mac popover became the detail pane; drop the probe and
+/// the `rect` parameter from TimeGrid/WeekAgendaGrid/CalendarMonth callers when next touching them.
 struct CalendarTaskAnchorButton<Label: View>: View {
     var action: (CGRect) -> Void
     @ViewBuilder var label: () -> Label

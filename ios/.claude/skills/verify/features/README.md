@@ -5,12 +5,12 @@ This directory is the maintained source for verifying what a DayDo user sees and
 ## Baseline preconditions
 
 - Mac: `$S/mac.sh build`, `DAYDO_VERIFY_RUN=<topic> $S/mac.sh evidence`, `$S/mac.sh launch <screen> 1400x900`, then `$S/mac.sh doctor` prints OK.
-- The demo data is loaded (`-DayDoDemo`): lists 收件匣、工作、個人、購物、學習、我們的行程; tasks dated around today, including 週會 (repeating, 10:00), 媽媽生日 (first of next month, all-day), 花蓮小旅行 (multi-day).
+- The demo data is loaded (`-DayDoDemo`): lists 收件匣、工作、個人、購物、學習、我們的行程; tasks dated around today, including 週會 (repeating, 10:00), 媽媽生日 (today + 7 days, all-day; crosses into the next month only late in a month), 花蓮小旅行 (multi-day).
 - iPhone/iPad: `ios/scripts/uitest.sh` gets the `DD` simulator and the lock itself; never drive a simulator someone else holds a lease on.
 
 ## Driving conventions
 
-- One instance per worktree; `launch` refuses a second. Never touch `/Applications/DayDo.app` (the user's brew install).
+- One DayDo Debug instance on the whole machine (shared data dir); `launch` refuses a second. Never touch `/Applications/DayDo.app` (the user's brew install).
 - Prefer AX ids and labels from `../SKILL.md` Drive; use coordinates only for text focus and task-row titles.
 - Every journey starts from a fresh `launch` (it resets data), so mutations need no restore.
 

@@ -25,7 +25,8 @@ $S/mac.sh launch [calendar|events|week|day|search|settings|detail|...] [1400x900
 - Ready = the window exists and has been sized; `launch` waits for both.
 - Screen names come from the `-DayDoScreen` switch in `ios/DayDo/App/Debug/DebugLaunch.swift`.
 - Window sizes that matter: `1400x900` (wide), `900x640` (narrow; the calendar sidebar steps aside below 1100 pt when the detail pane is open).
-- The sign-in page needs a launch without `-DayDoSkipLogin`: `open -n "$(cat ~/.local/state/daydo-verify-mac/*/app)" --args -DayDoReset`, and stop that pid yourself.
+- `launch signin` starts on the sign-in page (only `-DayDoReset`, no skip-login, no demo data).
+- Only one DayDo Debug build may run on the machine: every worktree's Debug build shares `~/Library/Application Support/DayDo-Debug` and one preference suite, so `-DayDoReset` would wipe the other one. `launch` refuses while another runs.
 
 iPhone/iPad: `ios/scripts/uitest.sh [iphone|ipad] [-only-testing:DayDoUITests/<Class>/<method>]` (root AGENTS.md「模擬器」covers locks and leases). For manual simulator checks take a UDID with `ios/scripts/uitest.sh up [iphone|ipad]` and give it back with `down`.
 
@@ -35,14 +36,14 @@ iPhone/iPad: `ios/scripts/uitest.sh [iphone|ipad] [-only-testing:DayDoUITests/<C
 $S/mac.sh doctor
 ```
 
-OK means: a Mac build exists for this worktree's `DayDo.xcodeproj`, it is newer than every `.swift` under `ios/DayDo` and `DayDoCore/Sources`, and the running instance is the pid this script started from that build (never the brew-installed `/Applications/DayDo.app`, which has the same bundle id).
+OK means: `mac.sh build` succeeded for this worktree after the last change to any `.swift` under `ios/DayDo` and `DayDoCore/Sources`, and the running instance is the pid this script started from the current binary (never the brew-installed `/Applications/DayDo.app`, which has the same bundle id).
 
 ## Drive
 
 Mac: drive with lcu (load the `lcu-desktop` skill for general technique). DayDo specifics:
 
 - Attach by full path: `cua.getApp('<path printed by launch>')`. The bundle id is ambiguous with the brew install.
-- Stable AX handles: `rail.tasks` `rail.calendar` `rail.search` `rail.settings` (icon rail), `sidebar.left` (sidebar toggle in both tabs), `calendarTitle`, `calendarModeMenu`, `calendarPrev`/`calendarToday`/`calendarNext`, `taskTitleField`, `taskContentField`, `taskDetailClose`, `yearDay.<yyyy-mm-dd>` (sidebar mini month). Month cells are containers labelled `11 月 24 日 週二` whose date button opens the day view.
+- Stable AX handles: `rail.tasks` `rail.calendar` `rail.search` `rail.settings` (icon rail), sidebar toggles by label `顯示／隱藏側欄` (calendar) and `顯示／隱藏清單欄` (tasks), `calendarTitle`, `calendarModeMenu`, `calendarPrev`/`calendarToday`/`calendarNext`, `taskTitleField`, `taskContentField`, `taskDetailClose`, `yearDay.<yyyy-mm-dd>` (sidebar mini month). Month cells are containers labelled `11 月 24 日 週二` whose date button opens the day view.
 - Keys: `pressKey('Escape')`, `pressKey('cmd+f')`. Lowercase `escape`/`end`/`right` are rejected.
 - Text focus: clicking a field by AX index does not give it real first-responder focus; click its coordinates, then `typeText`. `typeText` bypasses the input method, so Zhuyin composition cannot be driven.
 - Task rows: clicking a row by AX index can hit the completion checkbox and complete the task. Click the title text by coordinates.
@@ -64,7 +65,7 @@ iPhone/iPad: drive through XCUITest. Set `TEST_RUNNER_DAYDO_SHOTS=<dir>` and the
 $S/mac.sh cleanup
 ```
 
-Stops only the pid `launch` recorded (verified by executable path), restores the `DayDoCore/Package.resolved` drift that every build causes, and prints where the evidence was kept. Evidence is never deleted. Simulator runs: `ios/scripts/uitest.sh down` for any `up` you did.
+Stops only the pid `launch` recorded (verified by executable path) and prints where the evidence was kept. `uitest.sh` already restores the `DayDoCore/Package.resolved` drift a build causes when the file was clean before. Evidence is never deleted. Simulator runs: `ios/scripts/uitest.sh down` for any `up` you did.
 
 ## When a UI test run hangs or reports nothing
 

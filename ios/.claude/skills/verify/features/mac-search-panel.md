@@ -16,10 +16,10 @@
 
 Preconditions:
 
-- `$S/mac.sh launch calendar` and doctor OK.
+- `$S/mac.sh launch` (tasks tab) and doctor OK.
 
-- **Open/close.** On the tasks tab click `sidebar.left` to collapse the sidebar, `pressKey('cmd+f')`, `pressKey('Escape')`; the sidebar is still collapsed. Shot `search-closed`.
-- **Same task.** In the calendar click 媽媽生日, click its title by coordinates, `typeText('XYZ')`, `pressKey('cmd+f')`, `typeText('生日')`, click the result by coordinates. Expect: no panel, the calendar with the pane showing `媽媽生日XYZ`. Shot `search-same-task`.
+- **Open/close.** On the tasks tab click `顯示／隱藏清單欄` to collapse the sidebar, `pressKey('cmd+f')`, `pressKey('Escape')`; the sidebar is still collapsed. Shot `search-closed`.
+- **Same task.** Click `rail.calendar`, click 媽媽生日 (switch month if needed), click its title by coordinates, `typeText('XYZ')`, `pressKey('cmd+f')`, `typeText('生日')`, click the result by coordinates. Expect: no panel, the calendar with the pane showing `媽媽生日XYZ`. Shot `search-same-task`.
 
 ## Gotchas
 

@@ -338,7 +338,7 @@ private let guards: [Guard] = [
     Guard(
         name: "Esc goes through SelectionShortcutBridge (skips active text input); .keyboardShortcut(.cancelAction) also steals Esc mid Zhuyin composition",
         directories: ["ios/DayDo/Screens", "ios/DayDo/Components"],
-        pattern: #"\.keyboardShortcut\(\s*\.cancelAction"#,
+        pattern: #"\.keyboardShortcut\(\s*(KeyboardShortcut)?\.(cancelAction|escape)"#,
         allow: [
             // Unresolved risk, not a reason: Esc closes the Mac search panel while its field may be composing Zhuyin.
             "ios/DayDo/Screens/Root/RegularSplitView.swift",
@@ -347,6 +347,8 @@ private let guards: [Guard] = [
         ],
         bad: [
             ".keyboardShortcut(.cancelAction)",
+            ".keyboardShortcut(KeyboardShortcut.cancelAction)",
+            ".keyboardShortcut(.escape)",
         ]
     ),
 ]
