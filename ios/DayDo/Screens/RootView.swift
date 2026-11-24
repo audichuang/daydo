@@ -918,6 +918,7 @@ private final class SelectionShortcutViewController: UIViewController {
             guard let key = press.key,
                   key.modifierFlags.intersection([.command, .control, .alternate]).isEmpty else { continue }
             if activeTab == .calendar && Platform.isMac {
+                // Match physical keys, not characters: the user types with Zhuyin, where characters aren't D/W/M/T.
                 switch key.keyCode {
                 case .keyboardD:
                     onCalendarCommand?(.setMode(.day))
