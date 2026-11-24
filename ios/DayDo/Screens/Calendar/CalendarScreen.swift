@@ -370,7 +370,6 @@ struct CalendarScreen: View {
             } label: {
                 iconLabel
             }
-            .menuIndicator(Platform.isMac ? .hidden : .automatic)
             .hoverEffect(.highlight)
             .accessibilityLabel("切換檢視：目前\(mode.label)")
             .accessibilityIdentifier("calendarMode")
@@ -429,20 +428,13 @@ struct CalendarScreen: View {
             }
             .accessibilityIdentifier("weekLayoutToggle")
         }
-        let ellipsisLabel = Group {
-            if Platform.isMac {
-                Image(systemName: "ellipsis")
-            } else {
-                Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
-            }
-        }
+        let ellipsisLabel = Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
         if isActive {
             Menu {
                 moreMenuContent
             } label: {
                 ellipsisLabel
             }
-            .menuIndicator(Platform.isMac ? .hidden : .automatic)
             .hoverEffect(.highlight)
             .accessibilityLabel("更多選項")
         } else {
@@ -571,7 +563,7 @@ struct CalendarScreen: View {
         model.openComposer(ComposeRequest(projectId: projectFilter, day: day, minute: minute, endMinute: endMinute))
     }
 
-    private func openCalendarTask(_ id: String, rect: CGRect) {
+    private func openCalendarTask(_ id: String) {
         if Platform.isMac {
             model.calendarInspectorTaskId = id
         } else {
@@ -766,7 +758,7 @@ struct CalendarScreen: View {
                             isRegular: isRegular,
                             showOwnerAvatars: showOwnerAvatars,
                             isViewerFilter: model.isViewer(projectId: projectFilter),
-                            openTask: { id, rect in openCalendarTask(id, rect: rect) },
+                            openTask: openCalendarTask,
                             tapEmpty: { d in compose(day: d, minute: nil) },
                             openDay: { d in
                                 shiftPage(direction: 0) {
@@ -796,7 +788,7 @@ struct CalendarScreen: View {
                                  showOwnerAvatars: showOwnerAvatars,
                                  isViewerFilter: model.isViewer(projectId: projectFilter),
                                  dragLock: gridDragLock,
-                                 openTask: { id, rect in openCalendarTask(id, rect: rect) },
+                                 openTask: openCalendarTask,
                                  tapSlot: { d, m in compose(day: d, minute: m) },
                                  createRange: { d, s, e in compose(day: d, minute: s, endMinute: e) },
                                  moveTask: { task, draft in moveTask(task, to: draft) },
@@ -950,8 +942,8 @@ struct CalendarScreen: View {
                         selected = d
                         modeRaw = CalMode.day.rawValue
                     }
-                } open: { id, rect in
-                    openCalendarTask(id, rect: rect)
+                } open: { id in
+                    openCalendarTask(id)
                 } task: { id in tasks.first { $0.id == id } }
                 .equatable()
             }
@@ -991,8 +983,8 @@ struct CalendarScreen: View {
                             month = d.firstOfMonth
                             modeRaw = CalMode.day.rawValue
                         }
-                    } open: { id, rect in
-                        openCalendarTask(id, rect: rect)
+                    } open: { id in
+                        openCalendarTask(id)
                     } task: { id in tasks.first { $0.id == id } } create: { d in
                         if !model.isViewer(projectId: projectFilter) { compose(day: d, minute: nil) }
                     }

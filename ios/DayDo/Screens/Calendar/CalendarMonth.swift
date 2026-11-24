@@ -221,7 +221,7 @@ struct WeekRow: View, Equatable {
     var reduceMotion: Bool
     var fillHeight: Bool = false
     var pick: (LocalDay) -> Void
-    var open: (String, CGRect) -> Void
+    var open: (String) -> Void
     /// Looks up a bar's task for the Mac right-click menu (bars only carry the id).
     var task: (String) -> TodoTask? = { _ in nil }
     /// Mac: double-clicking a day cell adds a task on that day.
@@ -355,7 +355,7 @@ struct WeekRow: View, Equatable {
                         && bar.startTimeText != nil
                         && barWidth >= (bar.startColumn == bar.endColumn ? 104 : 96)
                     let showLeadingTimePrefix = bar.startColumn == bar.endColumn && !showTrailingTime
-                    CalendarTaskAnchorButton(action: { rect in open(bar.taskId, rect) }) {
+                    Button(action: { open(bar.taskId) }) {
                         HStack(spacing: 0) {
                             Rectangle().fill(color).frame(width: 2)
                             Text((bar.continues ? "‹ " : "") + (showLeadingTimePrefix ? bar.timedPrefix : "") + bar.title)

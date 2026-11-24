@@ -575,7 +575,7 @@ private struct SwipeableListRow<Content: View>: View {
             content(reveal > 2)
                 .padding(.trailing, reveal)
         }
-        .frame(minHeight: Platform.isMac ? 32 : 48)
+        .frame(minHeight: 48)
         .contentShape(Rectangle())
         .gesture(
             HorizontalPanGesture(

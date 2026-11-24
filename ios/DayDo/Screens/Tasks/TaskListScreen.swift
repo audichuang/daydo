@@ -454,25 +454,19 @@ struct TaskListScreen: View {
         }
     }
 
+    /// Phone header and iPad toolbar only; the Mac uses `macHeader`.
     @ViewBuilder
     private var trailingActions: some View {
         if case .project(let id) = scope, !(model.project(id)?.isInbox ?? false) {
             HeaderAction(systemName: "person.crop.circle.badge.plus", label: "共享") { model.sharingProjectId = id }
         }
-        let ellipsisLabel = Group {
-            if Platform.isMac {
-                Image(systemName: "ellipsis")
-            } else {
-                Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
-            }
-        }
+        let ellipsisLabel = Image(systemName: "ellipsis").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.text).frame(width: 44, height: 40)
         if isActive {
             Menu {
                 moreMenuItems
             } label: {
                 ellipsisLabel
             }
-            .menuIndicator(Platform.isMac ? .hidden : .automatic)
             .hoverEffect(.highlight)
             .background(ActivityAnchor(text: $shareText))
             .accessibilityLabel("更多選項")

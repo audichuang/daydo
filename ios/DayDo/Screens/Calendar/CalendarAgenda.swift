@@ -30,7 +30,7 @@ struct AgendaRow: View {
     var day: LocalDay
     var showOwnerAvatar = false
     var showProject = true
-    var onOpen: (String, CGRect) -> Void
+    var onOpen: (String) -> Void
 
     private var isDone: Bool {
         model.displaysCompleted(task)
@@ -47,8 +47,8 @@ struct AgendaRow: View {
             .hoverEffect(.highlight)
             .disabled(model.isViewer(projectId: task.projectId))
             .accessibilityLabel((isDone ? "取消完成：" : "完成：") + task.title)
-            CalendarTaskAnchorButton { rect in
-                onOpen(task.id, rect)
+            Button {
+                onOpen(task.id)
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .top, spacing: 6) {
@@ -97,7 +97,7 @@ struct TimelineAgendaRow: View {
     var day: LocalDay
     var last: Bool
     var showOwnerAvatar = false
-    var onOpen: (String, CGRect) -> Void
+    var onOpen: (String) -> Void
 
     var body: some View {
         let owner = partnerOwner(for: task, show: showOwnerAvatar, members: model.members)
@@ -114,8 +114,8 @@ struct TimelineAgendaRow: View {
                 if !last { Rectangle().fill(Palette.separator).frame(width: 1.5).frame(maxHeight: .infinity) }
             }
             .frame(width: 14)
-            CalendarTaskAnchorButton { rect in
-                onOpen(task.id, rect)
+            Button {
+                onOpen(task.id)
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .top, spacing: 6) {

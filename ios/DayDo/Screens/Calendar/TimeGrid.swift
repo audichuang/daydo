@@ -35,7 +35,7 @@ struct TimeGrid: View {
     var showOwnerAvatars: Bool = false
     var isViewerFilter: Bool = false
     var dragLock: GridDragLock
-    var openTask: (String, CGRect) -> Void
+    var openTask: (String) -> Void
     var tapSlot: (LocalDay, Int) -> Void
     var createRange: (LocalDay, Int, Int) -> Void
     var moveTask: (TodoTask, DateDraft) -> Void
@@ -309,7 +309,7 @@ struct TimeGrid: View {
         // Same title-first rule as timed blocks: color bar 2 + leading 4 + title
         // + trailing 2 + avatar 14 + stroke 1 + trailing 3.
         let showAvatar = owner != nil && width >= 2 + 4 + Self.ownerAvatarMinTitleWidth + 2 + 14 + 1 + 3
-        return CalendarTaskAnchorButton(action: { rect in openTask(t.id, rect) }) {
+        return Button(action: { openTask(t.id) }) {
             HStack(spacing: 0) {
                 Rectangle().fill(color).frame(width: 2)
                 Text(t.title)
@@ -349,16 +349,15 @@ struct TimeGrid: View {
         let h = max(CGFloat(b.end - b.start) / 60 * hourH - 2, CGFloat(TimeGridDrag.minBlockHeight))
         let done = b.task.isCompleted
         let owner = partnerOwner(for: b.task, show: showOwnerAvatars, members: model.members)
-        return CalendarTaskTapAnchor(onTap: { rect in
-            guard dragMode == nil, !isTapSuppressed else { return }
-            openTask(b.task.id, rect)
-        }) {
-            blockContent(task: b.task, schedule: b.task.schedule, color: color, owner: owner, width: w, height: h)
-                .background(RoundedRectangle(cornerRadius: 4).fill(color.opacity(done ? 0.12 : 0.3)))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-                .contentShape(Rectangle())
-                .hoverEffect(.highlight)
-        }
+        return blockContent(task: b.task, schedule: b.task.schedule, color: color, owner: owner, width: w, height: h)
+            .background(RoundedRectangle(cornerRadius: 4).fill(color.opacity(done ? 0.12 : 0.3)))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .contentShape(Rectangle())
+            .hoverEffect(.highlight)
+            .onTapGesture {
+                guard dragMode == nil, !isTapSuppressed else { return }
+                openTask(b.task.id)
+            }
         .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(b.task.title + "，" + (b.task.schedule.map { DateText.range($0) } ?? ""))

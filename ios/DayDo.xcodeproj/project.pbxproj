@@ -34,7 +34,6 @@
 		5383CF711DC6E85AA7EF56EF /* TodayWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B8A10BACD8F7752A8C5A164 /* TodayWidgetView.swift */; };
 		55991F44D5F3CCFA3301D173 /* CalendarWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A7F8C84AE26E0C8B8272408 /* CalendarWidgetView.swift */; };
 		580457AE9D795172D224FDA0 /* KanbanDropTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 594680A49FAEE5598CF0B3E6 /* KanbanDropTests.swift */; };
-		584618EAAF020119B181D0D1 /* CalendarTaskAnchor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E182BA528DB9BE0B7C731E13 /* CalendarTaskAnchor.swift */; };
 		5C95C3DAF6AA8AF7C303DEEA /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36A61F18DDDC6C2FC166DDDB /* Theme.swift */; };
 		60FAF7B65E1175874FFF2FFF /* TimeBlockEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9FAC32D7D0F903F316B23E5 /* TimeBlockEditor.swift */; };
 		6241455AB6BDC69BCF835DB0 /* DayDoFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93AF820DEE1E49529E90A0E0 /* DayDoFlowTests.swift */; };
@@ -197,7 +196,6 @@
 		D92BBD38C666C741FC6CE6D2 /* DrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerView.swift; sourceTree = "<group>"; };
 		DFE5DFFA632F54EA2EE00CC5 /* SectionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionCard.swift; sourceTree = "<group>"; };
 		DFFE20E498B56F159D6BDC5C /* DayDo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DayDo.entitlements; sourceTree = "<group>"; };
-		E182BA528DB9BE0B7C731E13 /* CalendarTaskAnchor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTaskAnchor.swift; sourceTree = "<group>"; };
 		E1D318061459C18F785F97EC /* CalendarYear.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarYear.swift; sourceTree = "<group>"; };
 		E6DED1A0319AAD185C8B69A5 /* CalendarMonth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarMonth.swift; sourceTree = "<group>"; };
 		E956344859C96BB5836CF97C /* ScreenHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenHeader.swift; sourceTree = "<group>"; };
@@ -207,7 +205,7 @@
 		F1112DAD84AE32741FD7EFAA /* DebugStubTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugStubTransport.swift; sourceTree = "<group>"; };
 		F68BFC5798449FCFE7B82212 /* DayDoCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DayDoCore; path = ../DayDoCore; sourceTree = SOURCE_ROOT; };
 		FB767846BDBC0D6454107414 /* WeekAgendaGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeekAgendaGrid.swift; sourceTree = "<group>"; };
-		"TEMP_D86A2B47-BEE5-40C2-85C5-724928794554" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		"TEMP_14AEC413-DFBC-471E-9273-CF3D0E126326" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -464,7 +462,6 @@
 				E6DED1A0319AAD185C8B69A5 /* CalendarMonth.swift */,
 				94550FCCDD97961EE2C5FBC9 /* CalendarPanGesture.swift */,
 				191CAB9AC23B63A11798C608 /* CalendarScreen.swift */,
-				E182BA528DB9BE0B7C731E13 /* CalendarTaskAnchor.swift */,
 				E1D318061459C18F785F97EC /* CalendarYear.swift */,
 				30D1D6ECFB182EB98781B8A8 /* TimeGrid.swift */,
 				FB767846BDBC0D6454107414 /* WeekAgendaGrid.swift */,
@@ -493,10 +490,10 @@
 			path = DayDoUITests;
 			sourceTree = "<group>";
 		};
-		"TEMP_37290A28-42F4-493F-8B49-3FB82A9BA296" /* ios */ = {
+		"TEMP_4665C7B5-A95F-45F5-AC88-6147A1D2D7C4" /* ios */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_D86A2B47-BEE5-40C2-85C5-724928794554" /* Config.xcconfig */,
+				"TEMP_14AEC413-DFBC-471E-9273-CF3D0E126326" /* Config.xcconfig */,
 			);
 			path = ios;
 			sourceTree = "<group>";
@@ -705,7 +702,6 @@
 				46BCE06D5F739C6CC8B33D6C /* CalendarMonth.swift in Sources */,
 				368E73D7B1D136FF7E32B8CA /* CalendarPanGesture.swift in Sources */,
 				A09DD300D30621E6BB76E532 /* CalendarScreen.swift in Sources */,
-				584618EAAF020119B181D0D1 /* CalendarTaskAnchor.swift in Sources */,
 				63B2EFBBF12C03FD2604F4CA /* CalendarYear.swift in Sources */,
 				EF57A429289CCBCFF71EB323 /* Components.swift in Sources */,
 				BFF09BE6812E50910B5D6829 /* ComposerSheet.swift in Sources */,
@@ -828,7 +824,7 @@
 		};
 		739B74DBC48851785BC9AAA2 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_D86A2B47-BEE5-40C2-85C5-724928794554" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_14AEC413-DFBC-471E-9273-CF3D0E126326" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
@@ -945,7 +941,7 @@
 		};
 		B97B517B54A6D8DCCD7DFE92 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_D86A2B47-BEE5-40C2-85C5-724928794554" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_14AEC413-DFBC-471E-9273-CF3D0E126326" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
