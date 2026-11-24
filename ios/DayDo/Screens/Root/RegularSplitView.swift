@@ -59,7 +59,9 @@ struct RegularSplitView: View {
     }
 
     private var isKanban: Bool {
-        model.tab == .tasks && model.isKanbanScope(model.scope)
+        // The tasks tab also stays visible under the Mac search panel.
+        (model.tab == .tasks || (Platform.isMac && model.tab == .search && macBehindSearch == .tasks))
+            && model.isKanbanScope(model.scope)
     }
 
     /// Mac search is a floating panel over the current tab (desktop apps search from a

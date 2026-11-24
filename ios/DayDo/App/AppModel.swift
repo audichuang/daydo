@@ -100,6 +100,8 @@ final class AppModel {
     var hasPushedNavigation = false
     var detailTaskId: String?
     var selectedTaskRow: TaskRowSelection?
+    /// Mac calendar: task open in the calendar's side detail pane.
+    var calendarInspectorTaskId: String?
     var selectedTaskId: String? {
         didSet {
             if oldValue != selectedTaskId {
@@ -376,6 +378,9 @@ final class AppModel {
             deleteHapticTrigger += 1
             if selectedTaskId == id {
                 selectedTaskId = nil
+            }
+            if calendarInspectorTaskId == id {
+                calendarInspectorTaskId = nil
             }
         }
         return deleted
@@ -1151,6 +1156,7 @@ final class AppModel {
         detailTaskId = nil
         selectedTaskRow = nil
         selectedTaskId = nil
+        calendarInspectorTaskId = nil
         visibleTaskRows = []
         pendingDetailTaskId = nil
         pendingWidgetDeepLink = nil

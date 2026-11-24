@@ -61,9 +61,15 @@ struct CalendarScreen: View {
     @State private var monthScrollPosition = ScrollPosition(edge: .top)
     @State private var timeGridScrollReset = 0
     @State private var popoverTarget: CalendarTaskPopoverTarget?
-    /// Mac: task shown in the editable detail pane on the calendar's right edge.
-    @State private var inspectorTaskId: String?
     @AppStorage("macCalendarSidebar") private var showMacSidebar = true
+    /// Shared with the tasks tab's detail pane so both open at the width the user chose.
+    @AppStorage("macDetailWidth") private var macDetailWidth: Double = 420
+    @State private var macWidth: CGFloat = 1400
+    /// In a narrow window the sidebar steps aside while the detail pane is open, so the
+    /// grid keeps a readable width.
+    private var macSidebarVisible: Bool {
+        showMacSidebar && (macWidth >= 1100 || model.calendarInspectorTaskId == nil)
+    }
 
     private var tasks: [TodoTask] { query.value }
     private var tasksVersion: Int { query.version }
@@ -99,7 +105,7 @@ struct CalendarScreen: View {
                 Palette.background.ignoresSafeArea()
             }
             HStack(spacing: 0) {
-                if Platform.isMac && showMacSidebar {
+                if Platform.isMac && macSidebarVisible {
                     macSidebar
                     Rectangle().fill(Palette.separator).frame(width: 1).ignoresSafeArea()
                 }
@@ -110,24 +116,30 @@ struct CalendarScreen: View {
                         header
                     }
                     // The Mac sidebar already shows the chosen list; no duplicate chip.
-                    if model.filterMembers.count > 1 || (projectFilter != nil && !(Platform.isMac && showMacSidebar)) {
+                    if model.filterMembers.count > 1 || (projectFilter != nil && !(Platform.isMac && macSidebarVisible)) {
                         filters.padding(.horizontal, 16).padding(.top, isRegular && !Platform.isMac ? 8 : 0).padding(.bottom, 6)
                     }
                     content
                 }
-                if Platform.isMac, let id = inspectorTaskId {
+                if Platform.isMac, let id = model.calendarInspectorTaskId {
                     // Desktop calendar: clicking an event edits it in a side pane, not a
                     // view-only card that then opens a sheet.
                     Rectangle().fill(Palette.separator).frame(width: 1).ignoresSafeArea()
                     TaskDetailContent(taskId: id, isInline: true, showCloseButton: true) {
-                        inspectorTaskId = nil
+                        model.calendarInspectorTaskId = nil
                     }
                     .id(id)
-                    .frame(width: 400)
+                    .frame(width: min(CGFloat(macDetailWidth), max(300, macWidth * 0.34)))
                     .background {
-                        Button("關閉詳情") { inspectorTaskId = nil }
-                            .keyboardShortcut(.cancelAction)
-                            .hidden()
+                        // Same rule as the tasks tab: Esc leaves a focused field or a date
+                        // subpage alone, and is not claimed while the search panel is on top.
+                        if model.tab == .calendar
+                            && model.inlineDetailSubpageTaskId != id
+                            && model.inlineDetailFocusedTaskId != id {
+                            Button("關閉詳情") { model.calendarInspectorTaskId = nil }
+                                .keyboardShortcut(.cancelAction)
+                                .hidden()
+                        }
                     }
                 }
             }
@@ -135,6 +147,7 @@ struct CalendarScreen: View {
                 ComposeFAB { compose(day: sel, minute: nil) }
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { macWidth = $0 }
         .sensoryFeedback(.selection, trigger: dateSelectionHaptic)
         .sensoryFeedback(.selection, trigger: modeRaw)
         .sensoryFeedback(.impact(weight: .light), trigger: pageShiftHaptic)
@@ -336,7 +349,10 @@ struct CalendarScreen: View {
     private var macHeader: some View {
         HStack(spacing: 8) {
             MacCalendarIconButton(systemName: "sidebar.left", label: "顯示／隱藏側欄") {
-                withAnimation(Motion.layout(reduceMotion)) { showMacSidebar.toggle() }
+                withAnimation(Motion.layout(reduceMotion)) {
+                    // Narrow window with the detail open: bring the sidebar back by closing the detail.
+                    if !macSidebarVisible && showMacSidebar { model.calendarInspectorTaskId = nil } else { showMacSidebar.toggle() }
+                }
             }
             Text(title)
                 .font(.system(size: 20, weight: .bold))
@@ -657,7 +673,7 @@ struct CalendarScreen: View {
     private func openTaskOrPopover(_ id: String, rect: CGRect) {
         if Platform.isMac {
             closePopover()
-            inspectorTaskId = id
+            model.calendarInspectorTaskId = id
         } else {
             model.openTask(id, inlineAvailable: false)
         }
