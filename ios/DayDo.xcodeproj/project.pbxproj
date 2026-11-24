@@ -7,57 +7,80 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		03C1AF17D50B43DA7B59E9F5 /* ShareListSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E77D7DE04212613A85FC8CC /* ShareListSheet.swift */; };
 		045317EF60CE505DE0087807 /* DayDoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 68A14B5281718AB2C97AE41F /* DayDoCore */; };
-		0CCFCE88645325C2F9E9DDE0 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */; };
+		05AD7C11A1CA46BA8B80C189 /* SectionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFE5DFFA632F54EA2EE00CC5 /* SectionCard.swift */; };
+		0CF57854367538CB7E9D633C /* DataSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97A90D02BCBCF71D04D4C5C8 /* DataSettingsView.swift */; };
 		0D9ADC077D5DA3C1736876FC /* DayDoPerfTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3169730DAA2FAB58744EC60A /* DayDoPerfTests.swift */; };
 		0E897BC85DA0ED546D97EB62 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3AC93921B8246DF3D1A2F32B /* Assets.xcassets */; };
-		0F335A407D2DCE82DC52398D /* ComposerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36BA7575D416B540F3E5F021 /* ComposerSheet.swift */; };
-		1B5B5057036A95B851A8C16F /* TimeBlockEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CC0B1CED20281F2431A79ED /* TimeBlockEditor.swift */; };
+		1A60C16B480E63A7338BC019 /* DrawerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D92BBD38C666C741FC6CE6D2 /* DrawerView.swift */; };
+		1A6AC27137E1223A7775270A /* DatabaseSuspensionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44682041F8BDAD03BA5CD1FC /* DatabaseSuspensionCoordinator.swift */; };
 		1F43E9357842CB04A22105DB /* DayDoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 615E31EA2D033F846C07B08E /* DayDoApp.swift */; };
+		20D8476774B6CCBD933E71AA /* DebugStubTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1112DAD84AE32741FD7EFAA /* DebugStubTransport.swift */; };
 		239BE2EFE14CE7C2720AF28E /* TodayWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B8A10BACD8F7752A8C5A164 /* TodayWidgetView.swift */; };
-		23FCC3E72501BB4E763CA638 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2E3411D9BD47A773354B9EE /* RootView.swift */; };
-		2586B4711A3F7B5A08BFC598 /* EditListSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 723C6FDF68327E755BBBC400 /* EditListSheet.swift */; };
-		291183E9EBCB11282851A4F3 /* ShareListSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD944E1EAEB502E47717D303 /* ShareListSheet.swift */; };
 		2B68D0A20FBE89F153D00562 /* KeychainSyncTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */; };
 		36614013B8857F519ECCE7DC /* WidgetTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9A02351805458F23E7DB226 /* WidgetTheme.swift */; };
-		36C06F0D17D9C8A91549B2E6 /* TaskListScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBE69B8A39D6026F6C72A644 /* TaskListScreen.swift */; };
+		368E73D7B1D136FF7E32B8CA /* CalendarPanGesture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94550FCCDD97961EE2C5FBC9 /* CalendarPanGesture.swift */; };
+		376F6CA19E297F44B1202DA0 /* DatePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 294FD769F03D3E501F35CB42 /* DatePanel.swift */; };
+		3DD81008B2FF8B6B715949DB /* CalendarTaskPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = D841F966A6EF9A8C9EC99B1F /* CalendarTaskPopover.swift */; };
 		3F27EE784851A2577C7BF4FF /* ResidentQueryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75E4376438156BEAE4728779 /* ResidentQueryTests.swift */; };
+		3FC746DAD213A17EB817137E /* TaskDetailSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C84823A8542AC79D7717AA77 /* TaskDetailSheet.swift */; };
 		4461E85D6F754C9A7FCD0A48 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 7E101714C88520768756EA09 /* GoogleSignIn */; };
 		458D9DE291EF0F7CB9D9E7D0 /* DrawerMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B891DFDE4EE9759CC78BA7E9 /* DrawerMetricsTests.swift */; };
-		47522C6A267E5A9289A56315 /* EmailCodeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED1721ADC0EF24328067A7A9 /* EmailCodeSheet.swift */; };
-		4F90194F10CE45A1E8CE79A4 /* WeekAgendaGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6BD3D5DF00E3413620F308D /* WeekAgendaGrid.swift */; };
+		46BCE06D5F739C6CC8B33D6C /* CalendarMonth.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6DED1A0319AAD185C8B69A5 /* CalendarMonth.swift */; };
 		509C4CA0873E1CAB038DFEA4 /* AppModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC3484874C0CCBD966338B4D /* AppModelTests.swift */; };
+		51F0FC27A00009FB96D43C23 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB253B98C89877E77F3518FA /* SignInView.swift */; };
 		52E699F2CDF260B54AE329F5 /* DebugAvatar.png in Resources */ = {isa = PBXBuildFile; fileRef = 6797E97CCA68C6FB31E5196E /* DebugAvatar.png */; };
 		5383CF711DC6E85AA7EF56EF /* TodayWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B8A10BACD8F7752A8C5A164 /* TodayWidgetView.swift */; };
 		55991F44D5F3CCFA3301D173 /* CalendarWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A7F8C84AE26E0C8B8272408 /* CalendarWidgetView.swift */; };
 		580457AE9D795172D224FDA0 /* KanbanDropTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 594680A49FAEE5598CF0B3E6 /* KanbanDropTests.swift */; };
 		5C95C3DAF6AA8AF7C303DEEA /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36A61F18DDDC6C2FC166DDDB /* Theme.swift */; };
+		5CDB421D63FDEA4A0E5A3D02 /* CalendarMacChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A54B616CA0F7918F6F7F0E6 /* CalendarMacChrome.swift */; };
+		60FAF7B65E1175874FFF2FFF /* TimeBlockEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9FAC32D7D0F903F316B23E5 /* TimeBlockEditor.swift */; };
 		6241455AB6BDC69BCF835DB0 /* DayDoFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93AF820DEE1E49529E90A0E0 /* DayDoFlowTests.swift */; };
-		635BEE00F58D95D66615961E /* DatePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3ADCB55D80C898953405EA4 /* DatePanel.swift */; };
+		624BD4875219154FE27FFF18 /* WeekAgendaGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB767846BDBC0D6454107414 /* WeekAgendaGrid.swift */; };
+		63B2EFBBF12C03FD2604F4CA /* CalendarYear.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1D318061459C18F785F97EC /* CalendarYear.swift */; };
+		683B38C8A0FB6595EF14FB94 /* SettingsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20564CA28580951EFAB4F71D /* SettingsScreen.swift */; };
 		6A2386BB97D9807DFD337605 /* TestClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550EFD129C4C0E515133339B /* TestClock.swift */; };
 		71E047BD3761B4116F06B846 /* DayDoIPadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E477F2C75D83F9691F85C75 /* DayDoIPadTests.swift */; };
-		728A01A5331B302B834B290A /* TaskDetailSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C790B6FFBAFDB9BADA3CE1FC /* TaskDetailSheet.swift */; };
-		7454858BA67E1C4407B53A26 /* OtherScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 586710AA91D1F8A386C4DA0F /* OtherScreens.swift */; };
-		7D0D980B5B52B78EF1CA32AF /* MeProfileSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87A6EE2C31E3EA193622C3D4 /* MeProfileSheet.swift */; };
-		8E2D7343DA9825517D9845EF /* InviteConfirmSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40ED13459CB865ADD6D54F4 /* InviteConfirmSheet.swift */; };
+		736A4492BF6E20CF309F350C /* CalendarAgenda.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7985BDC3ACD3D4C995BE2920 /* CalendarAgenda.swift */; };
+		7A5B780CB310765912A2821A /* TaskRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22C934F624DCC3CD368204BD /* TaskRow.swift */; };
+		81D4560B244F3EBD92926E74 /* EditListSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AE5FE0D70A65B7B449B1841 /* EditListSheet.swift */; };
+		826D5D2E7EB890CEA6556FDF /* DebugLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AABFEDC9ED78C471FAD4BA9 /* DebugLaunch.swift */; };
+		870A4E1CBD7515B8167E733A /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27AA2C60EB1CC6E0C424AA06 /* RootView.swift */; };
+		8B10563B736513F0781C4C32 /* Kanban.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5EF2F09AD6C9E56FD3D1D59 /* Kanban.swift */; };
 		971DBD236D629470649D00B3 /* NextWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4977F811E6EBE5878C8AC687 /* NextWidgetView.swift */; };
 		9803CD51FA1D1364EDA06C05 /* AuthHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79993C7D027C693E1C9C59F6 /* AuthHelpers.swift */; };
+		9DE13837DFEF598B194246BF /* EmailCodeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ADEC473BDFFAA8532008340 /* EmailCodeSheet.swift */; };
 		A087FC82AD3BEED279F6F0D4 /* DayDoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4148E35FBA61D1882A2ED98F /* DayDoCore */; };
+		A09DD300D30621E6BB76E532 /* CalendarScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 191CAB9AC23B63A11798C608 /* CalendarScreen.swift */; };
 		A76CA81AB7C79056C7BBF883 /* WidgetTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9A02351805458F23E7DB226 /* WidgetTheme.swift */; };
+		A9A163BCA2F8C530E2BB886F /* InviteConfirmSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E972CA08F300535959331DF9 /* InviteConfirmSheet.swift */; };
+		ABABD37BC1A84C1520D677C0 /* BottomNav.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A51AA0A1C2D956AC2F3DAD3 /* BottomNav.swift */; };
+		AC52CBCAD2E5C684313969A0 /* View+ScrollsToTop.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8539E1CD99C87302785B894 /* View+ScrollsToTop.swift */; };
 		AE2BF5BFEF228940A02802F7 /* DemoData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DAF0DFE366B2DF89B894383 /* DemoData.swift */; };
+		B3B665DF99FD7D68B5BCCCB4 /* SearchScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79A883CF0DE19119631536CA /* SearchScreen.swift */; };
 		B6932C6011DDA88EB6338216 /* CalendarWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A7F8C84AE26E0C8B8272408 /* CalendarWidgetView.swift */; };
+		BA30B4265F989181DEED86B9 /* ArchivedProjectsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 017750DEA1F2AA0128DDD6C1 /* ArchivedProjectsView.swift */; };
 		BA3665B45AB6639B842BBA89 /* WidgetSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 769FB898F8CB816D3209FD16 /* WidgetSnapshotTests.swift */; };
 		BA526A6B810BD3379EC9BA14 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6984AFAE49745EDDDFF3BDB4 /* AppModel.swift */; };
+		BABF96BD75248ED5E02BEC1C /* AppearanceSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35063E5639F4810CDFBA25C0 /* AppearanceSettingsView.swift */; };
+		BC5594FC32F4382FEE4F72FC /* RegularSplitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C038E45BB88A3510D7E5246F /* RegularSplitView.swift */; };
+		BFF09BE6812E50910B5D6829 /* ComposerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D61E72DC8230A89B6E82FE3 /* ComposerSheet.swift */; };
+		C489DC89CB12A648E9090F08 /* MeProfileSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A03E4F4F2382B3778BBF551C /* MeProfileSheet.swift */; };
 		C71F91C87DBE76BFE8A2BC0C /* Motion.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDC36FD5853DC2385FA65F35 /* Motion.swift */; };
+		CC501691E28866D75F95B005 /* ScreenHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E956344859C96BB5836CF97C /* ScreenHeader.swift */; };
+		CFAD1EC91107B155505CA7CF /* TimeGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30D1D6ECFB182EB98781B8A8 /* TimeGrid.swift */; };
 		D080D648D0DDD7A1F8E7FE68 /* Platform.swift in Sources */ = {isa = PBXBuildFile; fileRef = D08F9335E9E218EF32592CC1 /* Platform.swift */; };
 		D5B392650E0271184B023696 /* DayDoWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D30F5C2B4335B32BA231501 /* DayDoWidgetsBundle.swift */; };
 		D6E8515463547C7474484DF0 /* DayDoWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 90C4A324F918B192D9D68EE1 /* DayDoWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		DCC236516B372470114D9439 /* ReminderScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BA6CE5A3D1515A5E0E1C692 /* ReminderScheduler.swift */; };
+		E1051C03D224583493224313 /* TaskListScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75F87F402B1D51144A355BF7 /* TaskListScreen.swift */; };
 		EAB896BF06D1DA77E283DF5E /* DayDoCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4677FEEE4764DF9B66BB6C5A /* DayDoCore */; };
 		EB87665C4CBCDAD8E36016DD /* ResidentQuery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ACE4B8D0A80E51B00BC93D5 /* ResidentQuery.swift */; };
 		EF57A429289CCBCFF71EB323 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = B385BD7500B9C55FC5E7A64A /* Components.swift */; };
 		F22D59FD9BEA7AC96C0306A0 /* NextWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4977F811E6EBE5878C8AC687 /* NextWidgetView.swift */; };
-		FA871EBC37232DE4894D7FCE /* CalendarScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 423EDB9F8B70C6CE2D2E3326 /* CalendarScreen.swift */; };
-		FE3382C49FF0F62208E3B7C7 /* DrawerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E45AF04A64333352B5667B17 /* DrawerView.swift */; };
+		F2B81DC6BB1F2AA3D44AF157 /* CalendarDateGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = 076F0CB347C1471723C264E0 /* CalendarDateGrid.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -99,59 +122,82 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		017750DEA1F2AA0128DDD6C1 /* ArchivedProjectsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchivedProjectsView.swift; sourceTree = "<group>"; };
+		076F0CB347C1471723C264E0 /* CalendarDateGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarDateGrid.swift; sourceTree = "<group>"; };
 		0A7F8C84AE26E0C8B8272408 /* CalendarWidgetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarWidgetView.swift; sourceTree = "<group>"; };
 		14E86541BA71F626A6811C13 /* DayDo.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DayDo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		191CAB9AC23B63A11798C608 /* CalendarScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarScreen.swift; sourceTree = "<group>"; };
+		1ADEC473BDFFAA8532008340 /* EmailCodeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailCodeSheet.swift; sourceTree = "<group>"; };
 		1B8A10BACD8F7752A8C5A164 /* TodayWidgetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayWidgetView.swift; sourceTree = "<group>"; };
+		20564CA28580951EFAB4F71D /* SettingsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScreen.swift; sourceTree = "<group>"; };
+		22C934F624DCC3CD368204BD /* TaskRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskRow.swift; sourceTree = "<group>"; };
+		27AA2C60EB1CC6E0C424AA06 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		27AE9AE733071F3B645C0DE2 /* DayDoTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DayDoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		294FD769F03D3E501F35CB42 /* DatePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatePanel.swift; sourceTree = "<group>"; };
 		2E477F2C75D83F9691F85C75 /* DayDoIPadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoIPadTests.swift; sourceTree = "<group>"; };
+		30D1D6ECFB182EB98781B8A8 /* TimeGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeGrid.swift; sourceTree = "<group>"; };
 		3169730DAA2FAB58744EC60A /* DayDoPerfTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoPerfTests.swift; sourceTree = "<group>"; };
+		35063E5639F4810CDFBA25C0 /* AppearanceSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceSettingsView.swift; sourceTree = "<group>"; };
 		36A61F18DDDC6C2FC166DDDB /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
-		36BA7575D416B540F3E5F021 /* ComposerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerSheet.swift; sourceTree = "<group>"; };
 		3AC93921B8246DF3D1A2F32B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		3CC0B1CED20281F2431A79ED /* TimeBlockEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeBlockEditor.swift; sourceTree = "<group>"; };
-		423EDB9F8B70C6CE2D2E3326 /* CalendarScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarScreen.swift; sourceTree = "<group>"; };
+		44682041F8BDAD03BA5CD1FC /* DatabaseSuspensionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseSuspensionCoordinator.swift; sourceTree = "<group>"; };
 		4977F811E6EBE5878C8AC687 /* NextWidgetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NextWidgetView.swift; sourceTree = "<group>"; };
 		550EFD129C4C0E515133339B /* TestClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestClock.swift; sourceTree = "<group>"; };
-		586710AA91D1F8A386C4DA0F /* OtherScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OtherScreens.swift; sourceTree = "<group>"; };
 		594680A49FAEE5598CF0B3E6 /* KanbanDropTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KanbanDropTests.swift; sourceTree = "<group>"; };
 		615E31EA2D033F846C07B08E /* DayDoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoApp.swift; sourceTree = "<group>"; };
 		6797E97CCA68C6FB31E5196E /* DebugAvatar.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = DebugAvatar.png; sourceTree = "<group>"; };
 		6984AFAE49745EDDDFF3BDB4 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		6A51AA0A1C2D956AC2F3DAD3 /* BottomNav.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BottomNav.swift; sourceTree = "<group>"; };
 		6D30F5C2B4335B32BA231501 /* DayDoWidgetsBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoWidgetsBundle.swift; sourceTree = "<group>"; };
 		6DAF0DFE366B2DF89B894383 /* DemoData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoData.swift; sourceTree = "<group>"; };
-		723C6FDF68327E755BBBC400 /* EditListSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditListSheet.swift; sourceTree = "<group>"; };
 		75740C90A3D93DC752FAB1DE /* DayDoUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DayDoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		75E4376438156BEAE4728779 /* ResidentQueryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResidentQueryTests.swift; sourceTree = "<group>"; };
+		75F87F402B1D51144A355BF7 /* TaskListScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskListScreen.swift; sourceTree = "<group>"; };
 		769FB898F8CB816D3209FD16 /* WidgetSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshotTests.swift; sourceTree = "<group>"; };
+		7985BDC3ACD3D4C995BE2920 /* CalendarAgenda.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarAgenda.swift; sourceTree = "<group>"; };
 		79993C7D027C693E1C9C59F6 /* AuthHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthHelpers.swift; sourceTree = "<group>"; };
+		79A883CF0DE19119631536CA /* SearchScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchScreen.swift; sourceTree = "<group>"; };
+		7AE5FE0D70A65B7B449B1841 /* EditListSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditListSheet.swift; sourceTree = "<group>"; };
 		804D37B4E777C0B7FFBAECAA /* DayDoWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DayDoWidgets.entitlements; sourceTree = "<group>"; };
 		85E2F4237AF4F16976307DCE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		87A6EE2C31E3EA193622C3D4 /* MeProfileSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeProfileSheet.swift; sourceTree = "<group>"; };
+		8A54B616CA0F7918F6F7F0E6 /* CalendarMacChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarMacChrome.swift; sourceTree = "<group>"; };
+		8AABFEDC9ED78C471FAD4BA9 /* DebugLaunch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLaunch.swift; sourceTree = "<group>"; };
 		8ACE4B8D0A80E51B00BC93D5 /* ResidentQuery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResidentQuery.swift; sourceTree = "<group>"; };
+		8BA6CE5A3D1515A5E0E1C692 /* ReminderScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderScheduler.swift; sourceTree = "<group>"; };
 		90C4A324F918B192D9D68EE1 /* DayDoWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = DayDoWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		93AF820DEE1E49529E90A0E0 /* DayDoFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDoFlowTests.swift; sourceTree = "<group>"; };
+		94550FCCDD97961EE2C5FBC9 /* CalendarPanGesture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarPanGesture.swift; sourceTree = "<group>"; };
+		97A90D02BCBCF71D04D4C5C8 /* DataSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataSettingsView.swift; sourceTree = "<group>"; };
+		9D61E72DC8230A89B6E82FE3 /* ComposerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerSheet.swift; sourceTree = "<group>"; };
+		9E77D7DE04212613A85FC8CC /* ShareListSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareListSheet.swift; sourceTree = "<group>"; };
+		A03E4F4F2382B3778BBF551C /* MeProfileSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeProfileSheet.swift; sourceTree = "<group>"; };
 		A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainSyncTokenStore.swift; sourceTree = "<group>"; };
-		A3ADCB55D80C898953405EA4 /* DatePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatePanel.swift; sourceTree = "<group>"; };
+		A8539E1CD99C87302785B894 /* View+ScrollsToTop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "View+ScrollsToTop.swift"; sourceTree = "<group>"; };
 		A9A02351805458F23E7DB226 /* WidgetTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetTheme.swift; sourceTree = "<group>"; };
 		B180E6043572447F4D1B16D9 /* DayDo-mac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "DayDo-mac.entitlements"; sourceTree = "<group>"; };
 		B23F152D25AD641F8B905F41 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		B2E3411D9BD47A773354B9EE /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		B385BD7500B9C55FC5E7A64A /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
-		B40ED13459CB865ADD6D54F4 /* InviteConfirmSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteConfirmSheet.swift; sourceTree = "<group>"; };
+		B5EF2F09AD6C9E56FD3D1D59 /* Kanban.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Kanban.swift; sourceTree = "<group>"; };
 		B891DFDE4EE9759CC78BA7E9 /* DrawerMetricsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerMetricsTests.swift; sourceTree = "<group>"; };
-		C790B6FFBAFDB9BADA3CE1FC /* TaskDetailSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskDetailSheet.swift; sourceTree = "<group>"; };
-		CBE69B8A39D6026F6C72A644 /* TaskListScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskListScreen.swift; sourceTree = "<group>"; };
+		BB253B98C89877E77F3518FA /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
+		C038E45BB88A3510D7E5246F /* RegularSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegularSplitView.swift; sourceTree = "<group>"; };
+		C84823A8542AC79D7717AA77 /* TaskDetailSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskDetailSheet.swift; sourceTree = "<group>"; };
+		C9FAC32D7D0F903F316B23E5 /* TimeBlockEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeBlockEditor.swift; sourceTree = "<group>"; };
 		D08F9335E9E218EF32592CC1 /* Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platform.swift; sourceTree = "<group>"; };
-		DD944E1EAEB502E47717D303 /* ShareListSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareListSheet.swift; sourceTree = "<group>"; };
+		D841F966A6EF9A8C9EC99B1F /* CalendarTaskPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTaskPopover.swift; sourceTree = "<group>"; };
+		D92BBD38C666C741FC6CE6D2 /* DrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerView.swift; sourceTree = "<group>"; };
+		DFE5DFFA632F54EA2EE00CC5 /* SectionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionCard.swift; sourceTree = "<group>"; };
 		DFFE20E498B56F159D6BDC5C /* DayDo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DayDo.entitlements; sourceTree = "<group>"; };
-		E45AF04A64333352B5667B17 /* DrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerView.swift; sourceTree = "<group>"; };
+		E1D318061459C18F785F97EC /* CalendarYear.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarYear.swift; sourceTree = "<group>"; };
+		E6DED1A0319AAD185C8B69A5 /* CalendarMonth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarMonth.swift; sourceTree = "<group>"; };
+		E956344859C96BB5836CF97C /* ScreenHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenHeader.swift; sourceTree = "<group>"; };
+		E972CA08F300535959331DF9 /* InviteConfirmSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteConfirmSheet.swift; sourceTree = "<group>"; };
 		EC3484874C0CCBD966338B4D /* AppModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelTests.swift; sourceTree = "<group>"; };
-		ED1721ADC0EF24328067A7A9 /* EmailCodeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailCodeSheet.swift; sourceTree = "<group>"; };
 		EDC36FD5853DC2385FA65F35 /* Motion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Motion.swift; sourceTree = "<group>"; };
-		F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
+		F1112DAD84AE32741FD7EFAA /* DebugStubTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugStubTransport.swift; sourceTree = "<group>"; };
 		F68BFC5798449FCFE7B82212 /* DayDoCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DayDoCore; path = ../DayDoCore; sourceTree = SOURCE_ROOT; };
-		F6BD3D5DF00E3413620F308D /* WeekAgendaGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeekAgendaGrid.swift; sourceTree = "<group>"; };
-		"TEMP_AF70EFE7-080F-4308-AEA5-384CFE578CE2" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		FB767846BDBC0D6454107414 /* WeekAgendaGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeekAgendaGrid.swift; sourceTree = "<group>"; };
+		"TEMP_E2F920A0-87B3-4A25-9A64-B73942F65138" /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -188,13 +234,26 @@
 			children = (
 				6984AFAE49745EDDDFF3BDB4 /* AppModel.swift */,
 				79993C7D027C693E1C9C59F6 /* AuthHelpers.swift */,
+				44682041F8BDAD03BA5CD1FC /* DatabaseSuspensionCoordinator.swift */,
 				615E31EA2D033F846C07B08E /* DayDoApp.swift */,
 				6DAF0DFE366B2DF89B894383 /* DemoData.swift */,
 				A07DB7FD00AA715AC5164F20 /* KeychainSyncTokenStore.swift */,
 				D08F9335E9E218EF32592CC1 /* Platform.swift */,
+				8BA6CE5A3D1515A5E0E1C692 /* ReminderScheduler.swift */,
 				8ACE4B8D0A80E51B00BC93D5 /* ResidentQuery.swift */,
+				898118CFD637109641F73F04 /* Debug */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		1A88673D4A0CEC1045FCEBB3 /* Account */ = {
+			isa = PBXGroup;
+			children = (
+				1ADEC473BDFFAA8532008340 /* EmailCodeSheet.swift */,
+				A03E4F4F2382B3778BBF551C /* MeProfileSheet.swift */,
+				BB253B98C89877E77F3518FA /* SignInView.swift */,
+			);
+			path = Account;
 			sourceTree = "<group>";
 		};
 		2291417B1791CC88A7349725 /* DayDoWidgets */ = {
@@ -227,6 +286,14 @@
 			name = Packages;
 			sourceTree = "<group>";
 		};
+		3AC6DEEEE3B4270DA0D2F750 /* Search */ = {
+			isa = PBXGroup;
+			children = (
+				79A883CF0DE19119631536CA /* SearchScreen.swift */,
+			);
+			path = Search;
+			sourceTree = "<group>";
+		};
 		436F758EA35E5DAF0F58C045 /* Components */ = {
 			isa = PBXGroup;
 			children = (
@@ -234,6 +301,16 @@
 				EDC36FD5853DC2385FA65F35 /* Motion.swift */,
 			);
 			path = Components;
+			sourceTree = "<group>";
+		};
+		4FF8CF12CBDDA1061FCECEE7 /* Lists */ = {
+			isa = PBXGroup;
+			children = (
+				7AE5FE0D70A65B7B449B1841 /* EditListSheet.swift */,
+				E972CA08F300535959331DF9 /* InviteConfirmSheet.swift */,
+				9E77D7DE04212613A85FC8CC /* ShareListSheet.swift */,
+			);
+			path = Lists;
 			sourceTree = "<group>";
 		};
 		630CF5A80C94AA9B46B5BCE1 /* DayDoTests */ = {
@@ -247,6 +324,27 @@
 				769FB898F8CB816D3209FD16 /* WidgetSnapshotTests.swift */,
 			);
 			path = DayDoTests;
+			sourceTree = "<group>";
+		};
+		87BA5C49521A06BB8026D7B6 /* Root */ = {
+			isa = PBXGroup;
+			children = (
+				6A51AA0A1C2D956AC2F3DAD3 /* BottomNav.swift */,
+				C038E45BB88A3510D7E5246F /* RegularSplitView.swift */,
+				27AA2C60EB1CC6E0C424AA06 /* RootView.swift */,
+				E956344859C96BB5836CF97C /* ScreenHeader.swift */,
+				A8539E1CD99C87302785B894 /* View+ScrollsToTop.swift */,
+			);
+			path = Root;
+			sourceTree = "<group>";
+		};
+		898118CFD637109641F73F04 /* Debug */ = {
+			isa = PBXGroup;
+			children = (
+				8AABFEDC9ED78C471FAD4BA9 /* DebugLaunch.swift */,
+				F1112DAD84AE32741FD7EFAA /* DebugStubTransport.swift */,
+			);
+			path = Debug;
 			sourceTree = "<group>";
 		};
 		8FD703392BB84D00984B21FA /* Theme */ = {
@@ -266,6 +364,21 @@
 				A9A02351805458F23E7DB226 /* WidgetTheme.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		B31AABB298EF4FC3763A2B5A /* Tasks */ = {
+			isa = PBXGroup;
+			children = (
+				9D61E72DC8230A89B6E82FE3 /* ComposerSheet.swift */,
+				294FD769F03D3E501F35CB42 /* DatePanel.swift */,
+				B5EF2F09AD6C9E56FD3D1D59 /* Kanban.swift */,
+				DFE5DFFA632F54EA2EE00CC5 /* SectionCard.swift */,
+				C84823A8542AC79D7717AA77 /* TaskDetailSheet.swift */,
+				75F87F402B1D51144A355BF7 /* TaskListScreen.swift */,
+				22C934F624DCC3CD368204BD /* TaskRow.swift */,
+				C9FAC32D7D0F903F316B23E5 /* TimeBlockEditor.swift */,
+			);
+			path = Tasks;
 			sourceTree = "<group>";
 		};
 		B36EA48CC7C86824567CEF4C /* DayDo */ = {
@@ -295,24 +408,24 @@
 		C15968D255D9CFFBD9660EEA /* Screens */ = {
 			isa = PBXGroup;
 			children = (
-				423EDB9F8B70C6CE2D2E3326 /* CalendarScreen.swift */,
-				36BA7575D416B540F3E5F021 /* ComposerSheet.swift */,
-				A3ADCB55D80C898953405EA4 /* DatePanel.swift */,
-				E45AF04A64333352B5667B17 /* DrawerView.swift */,
-				723C6FDF68327E755BBBC400 /* EditListSheet.swift */,
-				ED1721ADC0EF24328067A7A9 /* EmailCodeSheet.swift */,
-				B40ED13459CB865ADD6D54F4 /* InviteConfirmSheet.swift */,
-				87A6EE2C31E3EA193622C3D4 /* MeProfileSheet.swift */,
-				586710AA91D1F8A386C4DA0F /* OtherScreens.swift */,
-				B2E3411D9BD47A773354B9EE /* RootView.swift */,
-				DD944E1EAEB502E47717D303 /* ShareListSheet.swift */,
-				F3BD7D100E9CE5E8B976B5D3 /* SignInView.swift */,
-				C790B6FFBAFDB9BADA3CE1FC /* TaskDetailSheet.swift */,
-				CBE69B8A39D6026F6C72A644 /* TaskListScreen.swift */,
-				3CC0B1CED20281F2431A79ED /* TimeBlockEditor.swift */,
-				F6BD3D5DF00E3413620F308D /* WeekAgendaGrid.swift */,
+				1A88673D4A0CEC1045FCEBB3 /* Account */,
+				CF4924561C310C0271E9EBF5 /* Calendar */,
+				C394007122376DEEB9B72903 /* Drawer */,
+				4FF8CF12CBDDA1061FCECEE7 /* Lists */,
+				87BA5C49521A06BB8026D7B6 /* Root */,
+				3AC6DEEEE3B4270DA0D2F750 /* Search */,
+				D4DC9E7B6DC9620506C1D9A4 /* Settings */,
+				B31AABB298EF4FC3763A2B5A /* Tasks */,
 			);
 			path = Screens;
+			sourceTree = "<group>";
+		};
+		C394007122376DEEB9B72903 /* Drawer */ = {
+			isa = PBXGroup;
+			children = (
+				D92BBD38C666C741FC6CE6D2 /* DrawerView.swift */,
+			);
+			path = Drawer;
 			sourceTree = "<group>";
 		};
 		CF057070284060C2FC0B6C0D = {
@@ -327,6 +440,34 @@
 			);
 			sourceTree = "<group>";
 		};
+		CF4924561C310C0271E9EBF5 /* Calendar */ = {
+			isa = PBXGroup;
+			children = (
+				7985BDC3ACD3D4C995BE2920 /* CalendarAgenda.swift */,
+				076F0CB347C1471723C264E0 /* CalendarDateGrid.swift */,
+				8A54B616CA0F7918F6F7F0E6 /* CalendarMacChrome.swift */,
+				E6DED1A0319AAD185C8B69A5 /* CalendarMonth.swift */,
+				94550FCCDD97961EE2C5FBC9 /* CalendarPanGesture.swift */,
+				191CAB9AC23B63A11798C608 /* CalendarScreen.swift */,
+				D841F966A6EF9A8C9EC99B1F /* CalendarTaskPopover.swift */,
+				E1D318061459C18F785F97EC /* CalendarYear.swift */,
+				30D1D6ECFB182EB98781B8A8 /* TimeGrid.swift */,
+				FB767846BDBC0D6454107414 /* WeekAgendaGrid.swift */,
+			);
+			path = Calendar;
+			sourceTree = "<group>";
+		};
+		D4DC9E7B6DC9620506C1D9A4 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				35063E5639F4810CDFBA25C0 /* AppearanceSettingsView.swift */,
+				017750DEA1F2AA0128DDD6C1 /* ArchivedProjectsView.swift */,
+				97A90D02BCBCF71D04D4C5C8 /* DataSettingsView.swift */,
+				20564CA28580951EFAB4F71D /* SettingsScreen.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
 		E8E832832820352F66F1D79E /* DayDoUITests */ = {
 			isa = PBXGroup;
 			children = (
@@ -337,10 +478,10 @@
 			path = DayDoUITests;
 			sourceTree = "<group>";
 		};
-		"TEMP_18194072-60C3-44CF-915A-B266226952FF" /* ios */ = {
+		"TEMP_CE4ED2B0-4F37-4E4A-A23B-78CCD85AF775" /* ios */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_AF70EFE7-080F-4308-AEA5-384CFE578CE2" /* Config.xcconfig */,
+				"TEMP_E2F920A0-87B3-4A25-9A64-B73942F65138" /* Config.xcconfig */,
 			);
 			path = ios;
 			sourceTree = "<group>";
@@ -539,31 +680,54 @@
 			buildActionMask = 2147483647;
 			files = (
 				BA526A6B810BD3379EC9BA14 /* AppModel.swift in Sources */,
+				BABF96BD75248ED5E02BEC1C /* AppearanceSettingsView.swift in Sources */,
+				BA30B4265F989181DEED86B9 /* ArchivedProjectsView.swift in Sources */,
 				9803CD51FA1D1364EDA06C05 /* AuthHelpers.swift in Sources */,
-				FA871EBC37232DE4894D7FCE /* CalendarScreen.swift in Sources */,
+				ABABD37BC1A84C1520D677C0 /* BottomNav.swift in Sources */,
+				736A4492BF6E20CF309F350C /* CalendarAgenda.swift in Sources */,
+				F2B81DC6BB1F2AA3D44AF157 /* CalendarDateGrid.swift in Sources */,
+				5CDB421D63FDEA4A0E5A3D02 /* CalendarMacChrome.swift in Sources */,
+				46BCE06D5F739C6CC8B33D6C /* CalendarMonth.swift in Sources */,
+				368E73D7B1D136FF7E32B8CA /* CalendarPanGesture.swift in Sources */,
+				A09DD300D30621E6BB76E532 /* CalendarScreen.swift in Sources */,
+				3DD81008B2FF8B6B715949DB /* CalendarTaskPopover.swift in Sources */,
+				63B2EFBBF12C03FD2604F4CA /* CalendarYear.swift in Sources */,
 				EF57A429289CCBCFF71EB323 /* Components.swift in Sources */,
-				0F335A407D2DCE82DC52398D /* ComposerSheet.swift in Sources */,
-				635BEE00F58D95D66615961E /* DatePanel.swift in Sources */,
+				BFF09BE6812E50910B5D6829 /* ComposerSheet.swift in Sources */,
+				0CF57854367538CB7E9D633C /* DataSettingsView.swift in Sources */,
+				1A6AC27137E1223A7775270A /* DatabaseSuspensionCoordinator.swift in Sources */,
+				376F6CA19E297F44B1202DA0 /* DatePanel.swift in Sources */,
 				1F43E9357842CB04A22105DB /* DayDoApp.swift in Sources */,
+				826D5D2E7EB890CEA6556FDF /* DebugLaunch.swift in Sources */,
+				20D8476774B6CCBD933E71AA /* DebugStubTransport.swift in Sources */,
 				AE2BF5BFEF228940A02802F7 /* DemoData.swift in Sources */,
-				FE3382C49FF0F62208E3B7C7 /* DrawerView.swift in Sources */,
-				2586B4711A3F7B5A08BFC598 /* EditListSheet.swift in Sources */,
-				47522C6A267E5A9289A56315 /* EmailCodeSheet.swift in Sources */,
-				8E2D7343DA9825517D9845EF /* InviteConfirmSheet.swift in Sources */,
+				1A60C16B480E63A7338BC019 /* DrawerView.swift in Sources */,
+				81D4560B244F3EBD92926E74 /* EditListSheet.swift in Sources */,
+				9DE13837DFEF598B194246BF /* EmailCodeSheet.swift in Sources */,
+				A9A163BCA2F8C530E2BB886F /* InviteConfirmSheet.swift in Sources */,
+				8B10563B736513F0781C4C32 /* Kanban.swift in Sources */,
 				2B68D0A20FBE89F153D00562 /* KeychainSyncTokenStore.swift in Sources */,
-				7D0D980B5B52B78EF1CA32AF /* MeProfileSheet.swift in Sources */,
+				C489DC89CB12A648E9090F08 /* MeProfileSheet.swift in Sources */,
 				C71F91C87DBE76BFE8A2BC0C /* Motion.swift in Sources */,
-				7454858BA67E1C4407B53A26 /* OtherScreens.swift in Sources */,
 				D080D648D0DDD7A1F8E7FE68 /* Platform.swift in Sources */,
+				BC5594FC32F4382FEE4F72FC /* RegularSplitView.swift in Sources */,
+				DCC236516B372470114D9439 /* ReminderScheduler.swift in Sources */,
 				EB87665C4CBCDAD8E36016DD /* ResidentQuery.swift in Sources */,
-				23FCC3E72501BB4E763CA638 /* RootView.swift in Sources */,
-				291183E9EBCB11282851A4F3 /* ShareListSheet.swift in Sources */,
-				0CCFCE88645325C2F9E9DDE0 /* SignInView.swift in Sources */,
-				728A01A5331B302B834B290A /* TaskDetailSheet.swift in Sources */,
-				36C06F0D17D9C8A91549B2E6 /* TaskListScreen.swift in Sources */,
+				870A4E1CBD7515B8167E733A /* RootView.swift in Sources */,
+				CC501691E28866D75F95B005 /* ScreenHeader.swift in Sources */,
+				B3B665DF99FD7D68B5BCCCB4 /* SearchScreen.swift in Sources */,
+				05AD7C11A1CA46BA8B80C189 /* SectionCard.swift in Sources */,
+				683B38C8A0FB6595EF14FB94 /* SettingsScreen.swift in Sources */,
+				03C1AF17D50B43DA7B59E9F5 /* ShareListSheet.swift in Sources */,
+				51F0FC27A00009FB96D43C23 /* SignInView.swift in Sources */,
+				3FC746DAD213A17EB817137E /* TaskDetailSheet.swift in Sources */,
+				E1051C03D224583493224313 /* TaskListScreen.swift in Sources */,
+				7A5B780CB310765912A2821A /* TaskRow.swift in Sources */,
 				5C95C3DAF6AA8AF7C303DEEA /* Theme.swift in Sources */,
-				1B5B5057036A95B851A8C16F /* TimeBlockEditor.swift in Sources */,
-				4F90194F10CE45A1E8CE79A4 /* WeekAgendaGrid.swift in Sources */,
+				60FAF7B65E1175874FFF2FFF /* TimeBlockEditor.swift in Sources */,
+				CFAD1EC91107B155505CA7CF /* TimeGrid.swift in Sources */,
+				AC52CBCAD2E5C684313969A0 /* View+ScrollsToTop.swift in Sources */,
+				624BD4875219154FE27FFF18 /* WeekAgendaGrid.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -644,7 +808,7 @@
 		};
 		739B74DBC48851785BC9AAA2 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_AF70EFE7-080F-4308-AEA5-384CFE578CE2" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_E2F920A0-87B3-4A25-9A64-B73942F65138" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;
@@ -761,7 +925,7 @@
 		};
 		B97B517B54A6D8DCCD7DFE92 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_AF70EFE7-080F-4308-AEA5-384CFE578CE2" /* Config.xcconfig */;
+			baseConfigurationReference = "TEMP_E2F920A0-87B3-4A25-9A64-B73942F65138" /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DayDo/DayDo.entitlements;

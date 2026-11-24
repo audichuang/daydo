@@ -47,7 +47,7 @@ repo 沒有 GitHub Actions：push 後不等 CI，合併前以本機測試結果�
 
 `xcodegen generate` 之後 `ios/DayDo.xcodeproj/project.pbxproj` 只有 `TEMP_` UUID 變動時是雜訊，可以還原；改了 `project.yml` 的 target 或增刪檔案，重產的 pbxproj 要一起 commit（曾把新增的 `DayDoTests` target 一起還原掉，那些測試從來沒跑過）。
 
-啟動參數（Debug 用）：UI 測試帶 `-DayDoSkipLogin`（跳過登入、只用本機資料）或 `-DayDoDebugStub`（假同步伺服器、token 不進 Keychain），不連正式伺服器（只測登入畫面與啟動畫面的除外）；`-DayDoReset` 清空資料與偏好、`-DayDoDemo` 載入設計稿範例資料、`-DayDoScreen <名稱>` 直接開到某畫面（可用的名稱看 `ios/DayDo/App/DayDoApp.swift` 處理 `-DayDoScreen` 的 switch）。
+啟動參數（Debug 用）：UI 測試帶 `-DayDoSkipLogin`（跳過登入、只用本機資料）或 `-DayDoDebugStub`（假同步伺服器、token 不進 Keychain），不連正式伺服器（只測登入畫面與啟動畫面的除外）；`-DayDoReset` 清空資料與偏好、`-DayDoDemo` 載入設計稿範例資料、`-DayDoScreen <名稱>` 直接開到某畫面（可用的名稱看 `ios/DayDo/App/Debug/DebugLaunch.swift` 處理 `-DayDoScreen` 的 switch）。
 
 ## 模擬器
 

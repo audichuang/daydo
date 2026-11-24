@@ -17,7 +17,7 @@ DD_SIM_OWNER=dd:perf ./scripts/uitest.sh down iphone
 
 ## 組成
 
-- `-DayDoSeedPerf`（Debug 限定，`DayDoApp.swift` 的 `DebugLaunch`）：建 600 筆任務分布在前後 90 天（約 300 筆過期擠在「今天」），結束時把 image 載入位址寫進 App tmp 的 `perf-images.txt`，並打 `seedDone` signpost 當分析起點。
+- `-DayDoSeedPerf`（Debug 限定，`App/Debug/DebugLaunch.swift`）：建 600 筆任務分布在前後 90 天（約 300 筆過期擠在「今天」），結束時把 image 載入位址寫進 App tmp 的 `perf-images.txt`，並打 `seedDone` signpost 當分析起點。
 - `DayDoUITests/DayDoPerfTests`：每個情境把一組手勢重複 6 次；`TEST_RUNNER_DAYDO_PERF=1` 才會跑，平常的全套會跳過。`testPerfControlQueriesOnly` 是只查元素、不做手勢的對照組。
 - `run.sh`：用 `-O` 加 dSYM 編譯，測試啟動後 attach Time Profiler 錄到 App 結束。
 - `perf.py`：主執行緒每個 runloop iteration 的忙碌時間取 Time Profiler 樣本權重和，≥16.7ms 算掉一幀；用對照組校正 trace 與測試 log 的時鐘差，只算 XCUITest `Synthesize event` 後 1 秒內、不貼著元素查詢的幀（每次查詢都會讓 App 主執行緒做一次無障礙快照，列表大時約 0.5 秒）。

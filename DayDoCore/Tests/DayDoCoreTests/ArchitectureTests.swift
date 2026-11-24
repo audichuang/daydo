@@ -117,19 +117,19 @@ private let guards: [Guard] = [
         pattern: #"\bColor\(\s*hex:|\bColor\.(white|black)\b|(?<![A-Za-z0-9_])\.(white|black)\b"#,
         allow: [
             // Scheme-independent swipe action pill buttons (#F7B500/#1A1206, #FF8A1E/.white, #F2555A/.white).
-            "ios/DayDo/Screens/DrawerView.swift",
+            "ios/DayDo/Screens/Drawer/DrawerView.swift",
             // List color picker swatch circles (Palette.listColors).
-            "ios/DayDo/Screens/EditListSheet.swift",
+            "ios/DayDo/Screens/Lists/EditListSheet.swift",
             // Member avatar color picker swatches (Member.avatarColors).
-            "ios/DayDo/Screens/MeProfileSheet.swift",
+            "ios/DayDo/Screens/Account/MeProfileSheet.swift",
             // Accent color picker swatches (Palette.accentOptions).
-            "ios/DayDo/Screens/OtherScreens.swift",
+            "ios/DayDo/Screens/Settings/AppearanceSettingsView.swift",
             // Sign in with Apple button style (.black in light mode, .white in dark mode).
-            "ios/DayDo/Screens/SignInView.swift",
+            "ios/DayDo/Screens/Account/SignInView.swift",
             // File-type attachment badge colors (semantic fixed swatches).
-            "ios/DayDo/Screens/TaskDetailSheet.swift",
+            "ios/DayDo/Screens/Tasks/TaskDetailSheet.swift",
             // White drag handle capsule inside accent-bordered TimeBlockEditor handles.
-            "ios/DayDo/Screens/TimeBlockEditor.swift",
+            "ios/DayDo/Screens/Tasks/TimeBlockEditor.swift",
         ],
         bad: [
             ##"Color(hex: "#18191B")"##,
@@ -185,8 +185,8 @@ private let guards: [Guard] = [
         pattern: #"@State\s+(private\s+)?var\s+\w*[dD]rag\w*\s*:\s*CGFloat"#,
         allow: [
             // Light views: the drawer overlay and the root edge-drag handle.
-            "ios/DayDo/Screens/DrawerView.swift",
-            "ios/DayDo/Screens/RootView.swift",
+            "ios/DayDo/Screens/Drawer/DrawerView.swift",
+            "ios/DayDo/Screens/Root/RootView.swift",
         ],
         bad: [
             "@State private var hDragOffset: CGFloat = 0",
@@ -376,7 +376,7 @@ private let guards: [Guard] = [
     /// truncates titles like 學校接小安／學校接小明 to the same prefix (review
     /// rounds 2 and 3 each found one cell that skipped the rule).
     @Test func compactOwnerAvatarsKeepTitleFirst() throws {
-        let code = try codeLines("ios/DayDo/Screens/CalendarScreen.swift")
+        let code = try codeLines("ios/DayDo/Screens/Calendar/TimeGrid.swift")
         let sizedBadges = code.components(separatedBy: "OwnerAvatarBadge(member: owner, size:").count - 1
         let gates = code.components(separatedBy: "Self.ownerAvatarMinTitleWidth").count - 1
         #expect(sizedBadges > 0, "no sized owner badges found; renamed?")
@@ -387,7 +387,7 @@ private let guards: [Guard] = [
     /// week columns' `id: \.offset` (0...6), so opening 週 between 05:00 and 09:00 scrolled to
     /// a day column at 00:00 instead of the hour row.
     @Test func timeGridScrollTargetsHourRowID() throws {
-        let code = try codeLines("ios/DayDo/Screens/CalendarScreen.swift")
+        let code = try codeLines("ios/DayDo/Screens/Calendar/TimeGrid.swift")
         #expect(code.contains(".id(HourRowID(hour: h))"), "hour rows lost their HourRowID; renamed?")
         #expect(code.contains("proxy.scrollTo(HourRowID(hour: initialHour)"), "initial scroll must target HourRowID")
         #expect(!code.contains(".id(h)"), "hour rows must not use plain Int ids (collide with column offsets)")

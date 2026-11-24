@@ -6,10 +6,11 @@
 
 ## 畫面地圖（`DayDo/Screens/` → 設計板號）
 
+- 檔案依功能放在 `Screens/` 的子資料夾（Root、Tasks、Calendar、Drawer、Lists、Account、Search、Settings），一個檔放一個概念；`ArchitectureTests` 有幾道護欄寫死檔案路徑，搬檔或拆檔要一起改，否則護欄會因為讀不到檔而失敗。
 - `DrawerView` 清單抽屜 1a｜`TaskListScreen` 任務列表 1b、1c｜`CalendarScreen` 日曆：清單視圖 2a、2b、事件月曆 2c，年／週／3日／日沒有板
 - `TaskDetailSheet` 任務詳情 3a、3b｜`DatePanel` 日期面板 4a、4b｜`TimeBlockEditor` 時間區塊 4c、4d｜`EditListSheet` 新增／編輯清單 5
 - `RootView`：根容器、底部分頁（任務／日曆／搜尋／設定）與共用 `ScreenHeader`。設計板的底欄有「共享」沒有「設定」，現在的分頁是刻意改的。
-- 沒有板的：`ComposerSheet` 鍵盤上方的快速新增、`OtherScreens` 搜尋與設定、`SignInView`、分享與邀請的幾個 sheet（第二階段新增）。
+- 沒有板的：`ComposerSheet` 鍵盤上方的快速新增、`SearchScreen`、`SettingsScreen`、`SignInView`、分享與邀請的幾個 sheet（第二階段新增）。
 
 改動畫、轉場、手勢或觸覺前讀 `ios/MOTION.md`。
 找哪個動畫卡、比較改前改後的掉幀：`ios/scripts/perf/README.md`。
