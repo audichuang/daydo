@@ -213,7 +213,7 @@ struct EditListSheet: View {
         .confirmationDialog("刪除「\(name)」？清單內的任務會移到垃圾桶。", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("刪除清單", role: .destructive) {
                 guard let id = original?.id else { return }
-                Task { await model.perform { try await $0.deleteProject(id: id) }; leave(id) }
+                Task { await model.deleteProject(id: id); dismiss() }
             }
         }
         .sheet(isPresented: $showTransferOwner) {
@@ -252,7 +252,7 @@ struct EditListSheet: View {
     }
 
     func leave(_ id: String) {
-        if model.scope == .project(id) { model.scope = .smart(.today) }
+        model.leaveScope(ofProject: id)
         dismiss()
     }
 

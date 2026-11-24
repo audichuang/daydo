@@ -60,7 +60,6 @@ struct CalendarScreen: View {
     @State private var yearScrollPosition = ScrollPosition(edge: .top)
     @State private var monthScrollPosition = ScrollPosition(edge: .top)
     @State private var timeGridScrollReset = 0
-    @State private var popoverTarget: CalendarTaskPopoverTarget?
     @AppStorage("macCalendarSidebar") private var showMacSidebar = true
     /// Shared with the tasks tab's detail pane so both open at the width the user chose.
     @AppStorage("macDetailWidth") private var macDetailWidth: Double = 420
@@ -106,7 +105,25 @@ struct CalendarScreen: View {
             }
             HStack(spacing: 0) {
                 if Platform.isMac && macSidebarVisible {
-                    macSidebar
+                    CalendarMacSidebar(
+                        shownMonth: shownMonth,
+                        busyDays: busyDays,
+                        projectFilter: $projectFilter,
+                        openMonth: { m in
+                            shiftPage(direction: 0) {
+                                month = m
+                                selected = m
+                                if mode == .year { modeRaw = CalMode.month.rawValue }
+                            }
+                        },
+                        openDay: { d in
+                            shiftPage(direction: 0) {
+                                selected = d
+                                month = d.firstOfMonth
+                                if mode == .year { modeRaw = CalMode.day.rawValue }
+                            }
+                        }
+                    )
                     Rectangle().fill(Palette.separator).frame(width: 1).ignoresSafeArea()
                 }
                 VStack(spacing: 0) {
@@ -140,18 +157,6 @@ struct CalendarScreen: View {
         .sensoryFeedback(.selection, trigger: dateSelectionHaptic)
         .sensoryFeedback(.selection, trigger: modeRaw)
         .sensoryFeedback(.impact(weight: .light), trigger: pageShiftHaptic)
-        .background {
-            if Platform.isMac {
-                CalendarPopoverPresenter(
-                    target: $popoverTarget,
-                    tasks: tasks,
-                    onOpenDetail: { id in
-                        model.openTask(id, inlineAvailable: false)
-                    }
-                )
-                .allowsHitTesting(false)
-            }
-        }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(Platform.isMac ? .hidden : .automatic, for: .navigationBar)
@@ -175,7 +180,6 @@ struct CalendarScreen: View {
         .onChange(of: model.calendarCommandTrigger) { _, _ in
             guard isActive, let action = model.calendarCommandAction else { return }
             model.calendarCommandAction = nil
-            closePopover()
             switch action {
             case .previous: shift(-1)
             case .next: shift(1)
@@ -191,7 +195,6 @@ struct CalendarScreen: View {
         .onChange(of: CalActivation(isActive: isActive, navTrigger: model.calendarNavigationTrigger)) { old, new in
             if !new.isActive {
                 gridDragLock.isActive = false
-                closePopover()
                 if drag.horizontalOffset != 0 { drag.horizontalOffset = 0 }
                 if drag.collapseY != 0 { drag.collapseY = 0 }
                 return
@@ -218,7 +221,6 @@ struct CalendarScreen: View {
         if drag.horizontalOffset != 0 { drag.horizontalOffset = 0 }
         if drag.collapseY != 0 { drag.collapseY = 0 }
         if pendingMove != nil { pendingMove = nil }
-        closePopover()
         if selected != nil { selected = nil }
         if month != nil { month = nil }
         if memberFilter != nil { memberFilter = nil }
@@ -261,80 +263,6 @@ struct CalendarScreen: View {
 
     // MARK: Header
 
-    /// Mac calendar sidebar (desktop calendar layout): a mini month to jump to any day and
-    /// the list filter as always-visible rows instead of a submenu.
-    private var macSidebar: some View {
-        let mask: UInt32 = busyDays.reduce(0) { m, d in
-            d.year == shownMonth.year && d.month == shownMonth.month ? m | (1 << UInt32(d.day)) : m
-        }
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                YearMonthCell(
-                    year: shownMonth.year,
-                    month: shownMonth.month,
-                    today: model.today,
-                    busyMask: mask,
-                    isRegular: true,
-                    reduceMotion: reduceMotion,
-                    openMonth: { m in
-                        shiftPage(direction: 0) {
-                            month = m
-                            selected = m
-                            if mode == .year { modeRaw = CalMode.month.rawValue }
-                        }
-                    },
-                    openDay: { d in
-                        shiftPage(direction: 0) {
-                            selected = d
-                            month = d.firstOfMonth
-                            if mode == .year { modeRaw = CalMode.day.rawValue }
-                        }
-                    }
-                )
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("清單").txt(12, .semibold).foregroundStyle(Palette.textTertiary)
-                        .padding(.leading, 8).padding(.bottom, 4)
-                    macFilterRow(id: nil, name: "全部清單", color: nil)
-                    ForEach(model.projects) { p in
-                        macFilterRow(id: p.id, name: p.name, color: p.color)
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 16)
-            .padding(.bottom, 20)
-        }
-        .scrollIndicators(.hidden)
-        .frame(width: 236)
-    }
-
-    private func macFilterRow(id: String?, name: String, color: String?) -> some View {
-        let on = projectFilter == id
-        return Button {
-            projectFilter = id
-        } label: {
-            HStack(spacing: 8) {
-                if id == nil {
-                    Image(systemName: "tray.full").font(.system(size: 12)).foregroundStyle(Palette.textSecondary).frame(width: 12)
-                } else {
-                    ListDot(color: color, size: 9).frame(width: 12)
-                }
-                Text(name).txt(13, on ? .semibold : .regular).foregroundStyle(on ? Palette.text : Palette.textBody).lineLimit(1)
-                Spacer(minLength: 4)
-                if on {
-                    Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(accent.text)
-                }
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 28)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(on ? accent.soft : .clear))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .hoverEffect(.highlight)
-        .accessibilityAddTraits(on ? .isSelected : [])
-    }
-
     private var macHeader: some View {
         HStack(spacing: 8) {
             MacCalendarIconButton(systemName: "sidebar.left", label: "顯示／隱藏側欄") {
@@ -369,14 +297,6 @@ struct CalendarScreen: View {
                 onNext: { shift(1) }
             )
 
-            if mode == .list {
-                MacCalendarIconButton(
-                    systemName: timelineStyle ? "list.bullet.rectangle" : "calendar.day.timeline.left",
-                    label: timelineStyle ? "切換為卡片清單" : "切換為時間軸清單"
-                ) {
-                    withAnimation(Motion.toggle(reduceMotion)) { timelineStyle.toggle() }
-                }
-            }
             if mode == .week {
                 MacCalendarIconButton(
                     systemName: weekAgendaStyle ? "calendar.day.timeline.left" : "square.grid.2x2",
@@ -611,7 +531,6 @@ struct CalendarScreen: View {
         bumpPage: Bool = true,
         update: () -> Void
     ) {
-        closePopover()
         shiftDir = direction
         switch haptic {
         case .none: break
@@ -652,18 +571,8 @@ struct CalendarScreen: View {
         model.openComposer(ComposeRequest(projectId: projectFilter, day: day, minute: minute, endMinute: endMinute))
     }
 
-    private func closePopover() {
-        if popoverTarget != nil {
-            popoverTarget = nil
-        }
-        if model.isCalendarPopoverPresented {
-            model.isCalendarPopoverPresented = false
-        }
-    }
-
-    private func openTaskOrPopover(_ id: String, rect: CGRect) {
+    private func openCalendarTask(_ id: String, rect: CGRect) {
         if Platform.isMac {
-            closePopover()
             model.calendarInspectorTaskId = id
         } else {
             model.openTask(id, inlineAvailable: false)
@@ -857,7 +766,7 @@ struct CalendarScreen: View {
                             isRegular: isRegular,
                             showOwnerAvatars: showOwnerAvatars,
                             isViewerFilter: model.isViewer(projectId: projectFilter),
-                            openTask: { id, rect in openTaskOrPopover(id, rect: rect) },
+                            openTask: { id, rect in openCalendarTask(id, rect: rect) },
                             tapEmpty: { d in compose(day: d, minute: nil) },
                             openDay: { d in
                                 shiftPage(direction: 0) {
@@ -887,7 +796,7 @@ struct CalendarScreen: View {
                                  showOwnerAvatars: showOwnerAvatars,
                                  isViewerFilter: model.isViewer(projectId: projectFilter),
                                  dragLock: gridDragLock,
-                                 openTask: { id, rect in openTaskOrPopover(id, rect: rect) },
+                                 openTask: { id, rect in openCalendarTask(id, rect: rect) },
                                  tapSlot: { d, m in compose(day: d, minute: m) },
                                  createRange: { d, s, e in compose(day: d, minute: s, endMinute: e) },
                                  moveTask: { task, draft in moveTask(task, to: draft) },
@@ -909,7 +818,6 @@ struct CalendarScreen: View {
         .onChange(of: modeRaw) { _, _ in
             // Non-animated cleanup when mode changes.
             gridDragLock.isActive = false
-            popoverTarget = nil
             drag.horizontalOffset = 0
             drag.collapseY = 0
             shiftDir = 0
@@ -990,7 +898,7 @@ struct CalendarScreen: View {
             Group {
                 if items.isEmpty { emptyDay }
                 ForEach(items) { t in
-                    AgendaRow(task: t, day: sel, showOwnerAvatar: showOwnerAvatars, showProject: projectFilter == nil, onOpen: openTaskOrPopover)
+                    AgendaRow(task: t, day: sel, showOwnerAvatar: showOwnerAvatars, showProject: projectFilter == nil, onOpen: openCalendarTask)
                         .transition(Motion.rowTransition(reduceMotion))
                 }
             }
@@ -1010,7 +918,7 @@ struct CalendarScreen: View {
             Group {
                 if items.isEmpty { emptyDay.card(16) }
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, t in
-                    TimelineAgendaRow(task: t, day: sel, last: i == items.count - 1, showOwnerAvatar: showOwnerAvatars, onOpen: openTaskOrPopover)
+                    TimelineAgendaRow(task: t, day: sel, last: i == items.count - 1, showOwnerAvatar: showOwnerAvatars, onOpen: openCalendarTask)
                         .transition(Motion.rowTransition(reduceMotion))
                 }
             }
@@ -1043,7 +951,7 @@ struct CalendarScreen: View {
                         modeRaw = CalMode.day.rawValue
                     }
                 } open: { id, rect in
-                    openTaskOrPopover(id, rect: rect)
+                    openCalendarTask(id, rect: rect)
                 } task: { id in tasks.first { $0.id == id } }
                 .equatable()
             }
@@ -1084,7 +992,7 @@ struct CalendarScreen: View {
                             modeRaw = CalMode.day.rawValue
                         }
                     } open: { id, rect in
-                        openTaskOrPopover(id, rect: rect)
+                        openCalendarTask(id, rect: rect)
                     } task: { id in tasks.first { $0.id == id } } create: { d in
                         if !model.isViewer(projectId: projectFilter) { compose(day: d, minute: nil) }
                     }

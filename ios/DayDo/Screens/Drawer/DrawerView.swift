@@ -312,8 +312,7 @@ struct DrawerView: View {
             Button("刪除清單", role: .destructive) {
                 guard let p = deletingProject else { return }
                 Task {
-                    await model.perform { try await $0.deleteProject(id: p.id) }
-                    if model.scope == .project(p.id) { model.scope = .smart(.today) }
+                    await model.deleteProject(id: p.id)
                 }
             }
         }

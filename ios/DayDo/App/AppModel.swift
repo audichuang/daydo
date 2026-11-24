@@ -131,35 +131,6 @@ final class AppModel {
         return Platform.isMac
     }
 
-    var isCalendarPopoverPresented = false
-    @ObservationIgnored private var calendarPopoverDismisser: ((@escaping @MainActor () -> Void) -> Void)?
-
-    func registerCalendarPopoverDismisser(_ dismisser: ((@escaping @MainActor () -> Void) -> Void)?) {
-        calendarPopoverDismisser = dismisser
-    }
-
-    func performAfterDismissingCalendarPopover(_ action: @escaping @MainActor () -> Void) {
-        guard isCalendarPopoverPresented else {
-            action()
-            return
-        }
-        if let dismisser = calendarPopoverDismisser {
-            dismisser(action)
-        } else {
-            isCalendarPopoverPresented = false
-            action()
-        }
-    }
-
-    func dismissCalendarPopoverIfNeeded() async {
-        guard isCalendarPopoverPresented else { return }
-        await withCheckedContinuation { continuation in
-            performAfterDismissingCalendarPopover {
-                continuation.resume()
-            }
-        }
-    }
-
     /// Task opened from a notification while another detail sheet was open;
     /// shown after that sheet is dismissed so unsaved edits are not replaced.
     var pendingDetailTaskId: String?
@@ -202,10 +173,8 @@ final class AppModel {
                 selectedTaskId = id
             }
         } else {
-            performAfterDismissingCalendarPopover { [weak self] in
-                guard let self, !self.hasActiveRootSheet else { return }
-                self.detailTaskId = id
-            }
+            guard !hasActiveRootSheet else { return }
+            detailTaskId = id
         }
     }
 
@@ -270,10 +239,8 @@ final class AppModel {
     }
 
     func openComposer(_ request: ComposeRequest) {
-        performAfterDismissingCalendarPopover { [weak self] in
-            guard let self, !self.hasActiveRootSheet else { return }
-            self.composing = request
-        }
+        guard !hasActiveRootSheet else { return }
+        composing = request
     }
 
     func openComposerForCurrentScope() {
@@ -282,17 +249,13 @@ final class AppModel {
     }
 
     func openEditProject(_ id: String) {
-        performAfterDismissingCalendarPopover { [weak self] in
-            guard let self, !self.hasActiveRootSheet else { return }
-            self.editingProjectId = id
-        }
+        guard !hasActiveRootSheet else { return }
+        editingProjectId = id
     }
 
     func openShareProject(_ id: String) {
-        performAfterDismissingCalendarPopover { [weak self] in
-            guard let self, !self.hasActiveRootSheet else { return }
-            self.sharingProjectId = id
-        }
+        guard !hasActiveRootSheet else { return }
+        sharingProjectId = id
     }
 
     @discardableResult
@@ -729,6 +692,17 @@ final class AppModel {
         }
     }
 
+    /// Deletes a list; a screen showing it falls back to 今天.
+    func deleteProject(id: String) async {
+        await perform { try await $0.deleteProject(id: id) }
+        leaveScope(ofProject: id)
+    }
+
+    /// The list is gone (deleted, left, or no longer visible): stop showing it.
+    func leaveScope(ofProject id: String) {
+        if scope == .project(id) { scope = .smart(.today) }
+    }
+
     func isDuplicatingProject(_ id: String) -> Bool {
         duplicationLocks[id] != nil
     }
@@ -1148,7 +1122,6 @@ final class AppModel {
         if !DayDoApp.isMacDebug {
             UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
         }
-        performAfterDismissingCalendarPopover {}
         projects = []
         folders = []
         tags = []
@@ -1356,7 +1329,6 @@ final class AppModel {
 
     func processPendingInviteIfNeeded() async {
         guard isSignedIn, !hasActiveRootSheet, pendingInviteCode != nil else { return }
-        await dismissCalendarPopoverIfNeeded()
         guard isSignedIn, !hasActiveRootSheet, let code = pendingInviteCode else { return }
         pendingInviteCode = nil
         let prompt = PendingInvitePrompt(code: code, info: nil, isLoading: true, error: nil)

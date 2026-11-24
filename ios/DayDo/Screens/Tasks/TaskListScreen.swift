@@ -137,20 +137,12 @@ struct TaskListScreen: View {
         .toolbar(Platform.isMac ? .hidden : .automatic, for: .navigationBar)
         .toolbar {
             if isRegular && !Platform.isMac {
-                if !Platform.isMac && isDuplicatingCurrentProject {
+                if isDuplicatingCurrentProject {
                     ToolbarItem(placement: .principal) {
                         duplicatingStatusView
                     }
                 }
-                if Platform.isMac, let proj = editableCustomProject {
-                    ToolbarItem(placement: .topBarLeading) {
-                        projectViewModeSwitcher(for: proj)
-                    }
-                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    if Platform.isMac && isDuplicatingCurrentProject {
-                        duplicatingStatusView
-                    }
                     trailingActions
                 }
             }

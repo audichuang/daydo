@@ -1513,6 +1513,21 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.projects.filter { $0.name == "確認登出清單 副本" }.count, 1)
     }
 
+    func testDeleteProjectLeavesItsScopeOnly() async throws {
+        let (model, store) = try await makeModel()
+        let shown = try await store.api.createProject(CreateProjectInput(name: "正在看的清單"))
+        let other = try await store.api.createProject(CreateProjectInput(name: "另一個清單"))
+        await model.reloadData()
+
+        model.scope = .project(shown.id)
+        await model.deleteProject(id: other.id)
+        XCTAssertEqual(model.scope, .project(shown.id))
+
+        await model.deleteProject(id: shown.id)
+        XCTAssertEqual(model.scope, .smart(.today))
+        XCTAssertFalse(model.projects.contains { $0.id == shown.id })
+    }
+
     func testDeleteRestoreAndPurgeIncrementHapticTriggers() async throws {
         let (model, store) = try await makeModel()
         let api = store.api
@@ -1668,26 +1683,6 @@ final class AppModelTests: XCTestCase {
         let createdAssigned = await model.createQuickTask(title: "指派給我任務", in: .smart(.assigned))
         let quickAssigned = try XCTUnwrap(createdAssigned)
         XCTAssertEqual(quickAssigned.assigneeId, me.id)
-    }
-
-    func testRootSheetEntryDismissesCalendarPopoverBeforePresenting() async throws {
-        let (model, _) = try await makeModel()
-        model.isSignedIn = true
-        model.tab = .calendar
-        model.isCalendarPopoverPresented = true
-
-        var pendingDismissCompletion: (@MainActor () -> Void)?
-        model.registerCalendarPopoverDismisser { completion in
-            pendingDismissCompletion = completion
-        }
-
-        model.openComposerForCurrentScope()
-        XCTAssertNil(model.composing, "Sheet state must wait for popover dismissal completion")
-        XCTAssertNotNil(pendingDismissCompletion)
-
-        model.isCalendarPopoverPresented = false
-        pendingDismissCompletion?()
-        XCTAssertNotNil(model.composing)
     }
 
     func testStaleLoadLinkedIdentitiesDoesNotOverwriteCompletedLink() async throws {

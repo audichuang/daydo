@@ -338,9 +338,7 @@ struct ShareListSheet: View {
                 try await model.sharing.leaveList(projectId: projectId)
                 await model.runSyncNow()
                 await model.reloadData()
-                if model.scope == .project(projectId) {
-                    model.scope = .smart(.today)
-                }
+                model.leaveScope(ofProject: projectId)
                 dismiss()
             } catch {
                 if await model.handleErrorIfSignedOut(error) {
