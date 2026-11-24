@@ -22,6 +22,8 @@ if [[ ! -f Secrets.xcconfig ]] \
   echo "Secrets.xcconfig 缺少 DAYDO_ACCESS_CLIENT_ID 或 DAYDO_ACCESS_CLIENT_SECRET" >&2
   exit 1
 fi
+# xcodegen rewrites the tracked pbxproj (TEMP_ UUIDs) and the build touches Package.resolved; left dirty they block mac-release.sh.
+trap 'git checkout -q -- DayDo.xcodeproj ../DayDoCore/Package.resolved' EXIT
 /opt/homebrew/bin/xcodegen generate --quiet
 if ! xcodebuild -project DayDo.xcodeproj -scheme DayDo -configuration Release \
   -destination 'generic/platform=iOS' -archivePath "${OUT}/DayDo.xcarchive" \
