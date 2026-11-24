@@ -169,6 +169,7 @@ final class AppModel {
         case previous
         case next
         case today
+        case setMode(CalMode)
     }
     var calendarCommandAction: CalendarCommandAction?
     var calendarCommandTrigger = 0

@@ -86,8 +86,9 @@ struct RootView: View {
                             active: splashRemoved
                                 && model.isSignedIn
                                 && !model.hasActiveRootSheet
-                                && model.tab == .tasks
-                                && model.inlineDetailAllowsSelectionShortcuts,
+                                && ((model.tab == .tasks && model.inlineDetailAllowsSelectionShortcuts)
+                                    || (Platform.isMac && model.tab == .calendar)),
+                            tab: model.tab,
                             scope: model.scope,
                             selectedTaskId: model.selectedTaskId,
                             onMoveSelection: { delta in
@@ -106,6 +107,9 @@ struct RootView: View {
                             },
                             onDelete: { id in
                                 model.deleteSelectedTask(id: id)
+                            },
+                            onCalendarCommand: { action in
+                                model.triggerCalendarCommand(action)
                             }
                         )
                         .frame(width: 0, height: 0)
@@ -795,6 +799,7 @@ private struct ScrollsToTopBridge: UIViewRepresentable {
 
 private struct SelectionShortcutBridge: UIViewControllerRepresentable {
     var active: Bool
+    var tab: MainTab
     var scope: TaskScope
     var selectedTaskId: String?
     var onMoveSelection: (Int) -> Void
@@ -802,9 +807,11 @@ private struct SelectionShortcutBridge: UIViewControllerRepresentable {
     var onEscape: () -> Void
     var onReturn: (String) -> Void
     var onDelete: (String) -> Void
+    var onCalendarCommand: (AppModel.CalendarCommandAction) -> Void
 
     struct CaptureState: Equatable {
         var active: Bool
+        var tab: MainTab
         var scope: TaskScope
         var selectedTaskId: String?
     }
@@ -821,14 +828,16 @@ private struct SelectionShortcutBridge: UIViewControllerRepresentable {
 
     func updateUIViewController(_ vc: SelectionShortcutViewController, context: Context) {
         vc.active = active
+        vc.activeTab = tab
         vc.selectedTaskId = selectedTaskId
         vc.onMoveSelection = onMoveSelection
         vc.onSpace = onSpace
         vc.onEscape = onEscape
         vc.onReturn = onReturn
         vc.onDelete = onDelete
+        vc.onCalendarCommand = onCalendarCommand
 
-        let state = CaptureState(active: active, scope: scope, selectedTaskId: selectedTaskId)
+        let state = CaptureState(active: active, tab: tab, scope: scope, selectedTaskId: selectedTaskId)
         guard state != context.coordinator.lastState else { return }
         context.coordinator.lastState = state
         if active {
@@ -846,12 +855,14 @@ private struct SelectionShortcutBridge: UIViewControllerRepresentable {
 @MainActor
 private final class SelectionShortcutViewController: UIViewController {
     var active = false
+    var activeTab: MainTab = .tasks
     var selectedTaskId: String?
     var onMoveSelection: ((Int) -> Void)?
     var onSpace: ((String) -> Void)?
     var onEscape: (() -> Void)?
     var onReturn: ((String) -> Void)?
     var onDelete: ((String) -> Void)?
+    var onCalendarCommand: ((AppModel.CalendarCommandAction) -> Void)?
 
     override func loadView() {
         let v = UIView()
@@ -864,11 +875,14 @@ private final class SelectionShortcutViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         let nc = NotificationCenter.default
-        nc.addObserver(self, selector: #selector(handleTextDidEndEditing), name: UITextField.textDidEndEditingNotification, object: nil)
-        nc.addObserver(self, selector: #selector(handleTextDidEndEditing), name: UITextView.textDidEndEditingNotification, object: nil)
+        nc.addObserver(self, selector: #selector(handleResponderReturn), name: UITextField.textDidEndEditingNotification, object: nil)
+        nc.addObserver(self, selector: #selector(handleResponderReturn), name: UITextView.textDidEndEditingNotification, object: nil)
+        if Platform.isMac {
+            nc.addObserver(self, selector: #selector(handleResponderReturn), name: UIWindow.didBecomeKeyNotification, object: nil)
+        }
     }
 
-    @objc private func handleTextDidEndEditing() {
+    @objc private func handleResponderReturn() {
         DispatchQueue.main.async { [weak self] in
             self?.claimResponderIfNeeded()
         }
@@ -903,6 +917,26 @@ private final class SelectionShortcutViewController: UIViewController {
         for press in presses {
             guard let key = press.key,
                   key.modifierFlags.intersection([.command, .control, .alternate]).isEmpty else { continue }
+            if activeTab == .calendar && Platform.isMac {
+                switch key.keyCode {
+                case .keyboardD:
+                    onCalendarCommand?(.setMode(.day))
+                    handled = true
+                case .keyboardW:
+                    onCalendarCommand?(.setMode(.week))
+                    handled = true
+                case .keyboardM:
+                    onCalendarCommand?(.setMode(.month))
+                    handled = true
+                case .keyboardT:
+                    onCalendarCommand?(.today)
+                    handled = true
+                default:
+                    break
+                }
+                continue
+            }
+            guard activeTab == .tasks else { continue }
             switch key.keyCode {
             case .keyboardUpArrow where Platform.isMac:
                 onMoveSelection?(-1)

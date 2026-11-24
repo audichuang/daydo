@@ -16,6 +16,14 @@ private extension CalMode {
         case .day: "rectangle"
         }
     }
+    var macShortcutKey: String? {
+        switch self {
+        case .month: "M"
+        case .week: "W"
+        case .day: "D"
+        case .list, .year, .threeDay: nil
+        }
+    }
 }
 
 /// 日曆: 清單 (date grid + the selected day's items, 2a/2b), 年, 月 (event
@@ -81,11 +89,13 @@ struct CalendarScreen: View {
                 Palette.background.ignoresSafeArea()
             }
             VStack(spacing: 0) {
-                if !isRegular {
+                if Platform.isMac {
+                    macHeader
+                } else if !isRegular {
                     header
                 }
                 if model.filterMembers.count > 1 || projectFilter != nil {
-                    filters.padding(.horizontal, 16).padding(.top, isRegular ? 8 : 0).padding(.bottom, 6)
+                    filters.padding(.horizontal, 16).padding(.top, isRegular && !Platform.isMac ? 8 : 0).padding(.bottom, 6)
                 }
                 content
             }
@@ -108,50 +118,19 @@ struct CalendarScreen: View {
                 .allowsHitTesting(false)
             }
         }
-        .navigationTitle(Platform.isMac ? title : "")
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(Platform.isMac ? .hidden : .automatic, for: .navigationBar)
         .toolbar {
-            if isRegular {
-                if Platform.isMac {
-                    ToolbarItemGroup(placement: .topBarLeading) {
-                        Button { shift(-1) } label: {
-                            Label("上一頁", systemImage: "chevron.left")
-                        }
-                        .labelStyle(.iconOnly)
-                        .tint(nil)
-                        .accessibilityLabel("上一頁")
-                        .accessibilityIdentifier("calendarPrev")
-                        Button("今天") { goToday() }
-                            .tint(nil)
-                            .accessibilityLabel("回到今天")
-                            .accessibilityIdentifier("calendarToday")
-                        Button { shift(1) } label: {
-                            Label("下一頁", systemImage: "chevron.right")
-                        }
-                        .labelStyle(.iconOnly)
-                        .tint(nil)
-                        .accessibilityLabel("下一頁")
-                        .accessibilityIdentifier("calendarNext")
-                    }
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        modeMenuButton(useGlass: false)
-                        if !model.isViewer(projectId: projectFilter) {
-                            HeaderAction(systemName: "plus", label: "新增任務") {
-                                compose(day: sel, minute: nil)
-                            }
-                        }
-                        trailingActions
-                    }
-                } else {
-                    ToolbarItem(placement: .topBarLeading) {
-                        modeMenuButton(useGlass: false)
-                    }
-                    ToolbarItem(placement: .principal) {
-                        titleButton
-                    }
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        trailingActions
-                    }
+            if isRegular && !Platform.isMac {
+                ToolbarItem(placement: .topBarLeading) {
+                    modeMenuButton(useGlass: false)
+                }
+                ToolbarItem(placement: .principal) {
+                    titleButton
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    trailingActions
                 }
             }
         }
@@ -167,6 +146,12 @@ struct CalendarScreen: View {
             case .previous: shift(-1)
             case .next: shift(1)
             case .today: goToday()
+            case .setMode(let targetMode):
+                if mode != targetMode {
+                    withAnimation(Motion.toggle(reduceMotion)) {
+                        modeRaw = targetMode.rawValue
+                    }
+                }
             }
         }
         .onChange(of: CalActivation(isActive: isActive, navTrigger: model.calendarNavigationTrigger)) { old, new in
@@ -242,6 +227,60 @@ struct CalendarScreen: View {
 
     // MARK: Header
 
+    private var macHeader: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(Palette.text)
+                .lineLimit(1)
+                .accessibilityIdentifier("calendarTitle")
+
+            Spacer(minLength: 12)
+
+            if !model.isViewer(projectId: projectFilter) {
+                MacCalendarIconButton(systemName: "plus", label: "新增任務") {
+                    compose(day: sel, minute: nil)
+                }
+            }
+
+            MacCalendarModeMenu(mode: mode, isActive: isActive) {
+                modeMenuItems(showShortcuts: true)
+            }
+
+            MacCalendarNavControl(
+                onPrev: { shift(-1) },
+                onToday: { goToday() },
+                onNext: { shift(1) }
+            )
+
+            if mode == .list {
+                MacCalendarIconButton(
+                    systemName: timelineStyle ? "list.bullet.rectangle" : "calendar.day.timeline.left",
+                    label: timelineStyle ? "切換為卡片清單" : "切換為時間軸清單"
+                ) {
+                    withAnimation(Motion.toggle(reduceMotion)) { timelineStyle.toggle() }
+                }
+            }
+            if mode == .week {
+                MacCalendarIconButton(
+                    systemName: weekAgendaStyle ? "calendar.day.timeline.left" : "square.grid.2x2",
+                    label: weekAgendaStyle ? "切換為週時間軸" : "切換為週清單"
+                ) {
+                    shiftDir = 0
+                    withAnimation(Motion.toggle(reduceMotion)) { weekAgendaStyle.toggle() }
+                }
+                .accessibilityIdentifier("weekLayoutToggle")
+            }
+
+            MacCalendarMoreMenu(isActive: isActive) {
+                moreMenuContent
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+    }
+
     var header: some View {
         HStack {
             modeMenuButton(useGlass: true)
@@ -258,6 +297,18 @@ struct CalendarScreen: View {
         .padding(.horizontal, 16)
         .padding(.top, 6)
         .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private func modeMenuItems(showShortcuts: Bool) -> some View {
+        ForEach(CalMode.allCases) { m in
+            let itemTitle = showShortcuts ? (m.macShortcutKey.map { "\(m.label)  \($0)" } ?? m.label) : m.label
+            Button {
+                withAnimation(Motion.toggle(reduceMotion)) { modeRaw = m.rawValue }
+            } label: {
+                if m == mode { Label(itemTitle, systemImage: "checkmark") } else { Label(itemTitle, systemImage: m.icon) }
+            }
+        }
     }
 
     @ViewBuilder
@@ -279,13 +330,7 @@ struct CalendarScreen: View {
         }
         if isActive {
             Menu {
-                ForEach(CalMode.allCases) { m in
-                    Button {
-                        withAnimation(Motion.toggle(reduceMotion)) { modeRaw = m.rawValue }
-                    } label: {
-                        if m == mode { Label(m.label, systemImage: "checkmark") } else { Label(m.label, systemImage: m.icon) }
-                    }
-                }
+                modeMenuItems(showShortcuts: false)
             } label: {
                 iconLabel
             }
@@ -306,6 +351,29 @@ struct CalendarScreen: View {
         .hoverEffect(.highlight)
         .accessibilityLabel(title + "，點兩下回到今天")
         .accessibilityIdentifier("calendarTitle")
+    }
+
+    @ViewBuilder
+    private var moreMenuContent: some View {
+        Button("回到今天", systemImage: "arrow.uturn.backward") { goToday() }
+        Button(showCompleted ? "隱藏已完成" : "顯示已完成", systemImage: "checkmark.circle") { showCompleted.toggle() }
+        Menu("清單篩選", systemImage: "line.3.horizontal.decrease") {
+            Button {
+                projectFilter = nil
+            } label: { if projectFilter == nil { Label("全部清單", systemImage: "checkmark") } else { Text("全部清單") } }
+            ForEach(model.projects) { p in
+                Button {
+                    projectFilter = p.id
+                } label: { if projectFilter == p.id { Label(p.name, systemImage: "checkmark") } else { Text(p.name) } }
+            }
+        }
+        if mode == .list {
+            Button(collapsed ? "展開整個月份" : "收合成單週", systemImage: "rectangle.compress.vertical") {
+                withAnimation(Motion.layout(reduceMotion)) {
+                    collapsed.toggle()
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -334,25 +402,7 @@ struct CalendarScreen: View {
         }
         if isActive {
             Menu {
-                Button("回到今天", systemImage: "arrow.uturn.backward") { goToday() }
-                Button(showCompleted ? "隱藏已完成" : "顯示已完成", systemImage: "checkmark.circle") { showCompleted.toggle() }
-                Menu("清單篩選", systemImage: "line.3.horizontal.decrease") {
-                    Button {
-                        projectFilter = nil
-                    } label: { if projectFilter == nil { Label("全部清單", systemImage: "checkmark") } else { Text("全部清單") } }
-                    ForEach(model.projects) { p in
-                        Button {
-                            projectFilter = p.id
-                        } label: { if projectFilter == p.id { Label(p.name, systemImage: "checkmark") } else { Text(p.name) } }
-                    }
-                }
-                if mode == .list {
-                    Button(collapsed ? "展開整個月份" : "收合成單週", systemImage: "rectangle.compress.vertical") {
-                        withAnimation(Motion.layout(reduceMotion)) {
-                            collapsed.toggle()
-                        }
-                    }
-                }
+                moreMenuContent
             } label: {
                 ellipsisLabel
             }
@@ -898,7 +948,11 @@ struct CalendarScreen: View {
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
                 ForEach(LocalDay.weekdaySymbols, id: \.self) {
-                    Text($0).txt(12, .medium).foregroundStyle(Palette.textTertiary).frame(maxWidth: .infinity)
+                    Text("週\($0)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Palette.textTertiary)
+                        .padding(.leading, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .frame(height: Self.macMonthWeekdayHeaderHeight)
@@ -931,6 +985,188 @@ struct CalendarScreen: View {
 private final class CalendarDragState {
     var horizontalOffset: CGFloat = 0
     var collapseY: CGFloat = 0
+}
+
+private enum MacCalChrome {
+    static let height: CGFloat = 28
+    static let cornerRadius: CGFloat = 6
+}
+
+private struct MacCalendarIconButton: View {
+    var systemName: String
+    var label: String
+    var action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Palette.text)
+                .frame(width: MacCalChrome.height, height: MacCalChrome.height)
+                .background(
+                    RoundedRectangle(cornerRadius: MacCalChrome.cornerRadius, style: .continuous)
+                        .fill(isHovered ? Palette.control : Palette.card)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: MacCalChrome.cornerRadius, style: .continuous)
+                        .strokeBorder(Palette.separator, lineWidth: 1)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: MacCalChrome.cornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help(label)
+        .accessibilityLabel(label)
+    }
+}
+
+private struct MacCalendarModeMenu<MenuContent: View>: View {
+    var mode: CalMode
+    var isActive: Bool
+    @ViewBuilder var menuContent: () -> MenuContent
+    @State private var isHovered = false
+
+    private var labelView: some View {
+        HStack(spacing: 5) {
+            Text(mode.label)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Palette.text)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Palette.textSecondary)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: MacCalChrome.height)
+        .background(
+            RoundedRectangle(cornerRadius: MacCalChrome.cornerRadius, style: .continuous)
+                .fill(isHovered ? Palette.control : Palette.card)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: MacCalChrome.cornerRadius, style: .continuous)
+                .strokeBorder(Palette.separator, lineWidth: 1)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: MacCalChrome.cornerRadius, style: .continuous))
+    }
+
+    var body: some View {
+        if isActive {
+            Menu {
+                menuContent()
+            } label: {
+                labelView
+            }
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .onHover { isHovered = $0 }
+            .accessibilityLabel("切換檢視：目前\(mode.label)")
+            .accessibilityIdentifier("calendarModeMenu")
+        } else {
+            labelView.accessibilityHidden(true)
+        }
+    }
+}
+
+private struct MacCalendarNavControl: View {
+    var onPrev: () -> Void
+    var onToday: () -> Void
+    var onNext: () -> Void
+    @State private var hoveredSegment: Int?
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button(action: onPrev) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Palette.text)
+                    .frame(width: 26, height: MacCalChrome.height)
+                    .background(hoveredSegment == 0 ? Palette.control : Palette.card)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hoveredSegment = $0 ? 0 : (hoveredSegment == 0 ? nil : hoveredSegment) }
+            .help("上一頁")
+            .accessibilityLabel("上一頁")
+            .accessibilityIdentifier("calendarPrev")
+
+            Rectangle().fill(Palette.separator).frame(width: 1, height: MacCalChrome.height)
+
+            Button(action: onToday) {
+                Text("今天")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Palette.text)
+                    .padding(.horizontal, 10)
+                    .frame(height: MacCalChrome.height)
+                    .background(hoveredSegment == 1 ? Palette.control : Palette.card)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hoveredSegment = $0 ? 1 : (hoveredSegment == 1 ? nil : hoveredSegment) }
+            .help("回到今天 (T)")
+            .accessibilityLabel("回到今天")
+            .accessibilityIdentifier("calendarToday")
+
+            Rectangle().fill(Palette.separator).frame(width: 1, height: MacCalChrome.height)
+
+            Button(action: onNext) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Palette.text)
+                    .frame(width: 26, height: MacCalChrome.height)
+                    .background(hoveredSegment == 2 ? Palette.control : Palette.card)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hoveredSegment = $0 ? 2 : (hoveredSegment == 2 ? nil : hoveredSegment) }
+            .help("下一頁")
+            .accessibilityLabel("下一頁")
+            .accessibilityIdentifier("calendarNext")
+        }
+        .clipShape(RoundedRectangle(cornerRadius: MacCalChrome.cornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: MacCalChrome.cornerRadius, style: .continuous)
+                .strokeBorder(Palette.separator, lineWidth: 1)
+        }
+    }
+}
+
+private struct MacCalendarMoreMenu<MenuContent: View>: View {
+    var isActive: Bool
+    @ViewBuilder var menuContent: () -> MenuContent
+    @State private var isHovered = false
+
+    private var labelView: some View {
+        Image(systemName: "ellipsis")
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(Palette.text)
+            .frame(width: MacCalChrome.height, height: MacCalChrome.height)
+            .background(
+                RoundedRectangle(cornerRadius: MacCalChrome.cornerRadius, style: .continuous)
+                    .fill(isHovered ? Palette.control : Palette.card)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: MacCalChrome.cornerRadius, style: .continuous)
+                    .strokeBorder(Palette.separator, lineWidth: 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: MacCalChrome.cornerRadius, style: .continuous))
+    }
+
+    var body: some View {
+        if isActive {
+            Menu {
+                menuContent()
+            } label: {
+                labelView
+            }
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .onHover { isHovered = $0 }
+            .help("更多選項")
+            .accessibilityLabel("更多選項")
+        } else {
+            labelView.accessibilityHidden(true)
+        }
+    }
 }
 
 private struct HorizontalDragOffsetModifier: ViewModifier {
@@ -1605,29 +1841,72 @@ private struct WeekRow: View, Equatable {
                 HStack(spacing: 0) {
                     ForEach(Array(week.days.enumerated()), id: \.offset) { i, d in
                         let isToday = d == today
+                        let inMonth = d.month == month.month
                         let overflowValue = week.overflow[i].map { n in
                             let hasBar = week.bars.contains { $0.startColumn <= i && i <= $0.endColumn }
                             return hasBar ? "還有 \(n) 項任務，點按切換至單日檢視" : "\(n) 項任務，點按切換至單日檢視"
                         } ?? ""
                         Button { pick(d) } label: {
-                            VStack(spacing: 0) {
-                                Text("\(d.day)")
-                                    .font(.system(size: fillHeight ? 13 : 14, weight: isToday ? .bold : .semibold))
-                                    .foregroundStyle(isToday ? accent.onAccent : Palette.textDay)
-                                    .frame(width: fillHeight ? 26 : 28, height: fillHeight ? 26 : 28)
-                                    .background(Circle().fill(isToday ? accent.color : .clear))
-                                    .padding(.top, 4)
-                                Spacer(minLength: 0)
-                                if let n = week.overflow[i] {
-                                    Text("+\(n)").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.textSecondary)
-                                        .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 4).padding(.bottom, 2)
+                            if fillHeight {
+                                VStack(alignment: .leading, spacing: 0) {
+                                    Group {
+                                        if isToday {
+                                            if d.day == 1 {
+                                                Text("\(d.month)月1日")
+                                                    .font(.system(size: 12, weight: .semibold))
+                                                    .foregroundStyle(accent.onAccent)
+                                                    .padding(.horizontal, 6)
+                                                    .frame(height: 22)
+                                                    .background(Capsule().fill(accent.color))
+                                            } else {
+                                                Text("\(d.day)")
+                                                    .font(.system(size: 13, weight: .semibold))
+                                                    .foregroundStyle(accent.onAccent)
+                                                    .frame(width: 22, height: 22)
+                                                    .background(Circle().fill(accent.color))
+                                            }
+                                        } else {
+                                            Text(d.day == 1 ? "\(d.month)月1日" : "\(d.day)")
+                                                .font(.system(size: 13, weight: .medium))
+                                                .foregroundStyle(inMonth ? Palette.textDay : Palette.textDisabled)
+                                                .frame(minWidth: 22, minHeight: 22, alignment: .leading)
+                                        }
+                                    }
+                                    .padding(.top, 5)
+                                    .padding(.leading, 6)
+                                    Spacer(minLength: 0)
+                                    if let n = week.overflow[i] {
+                                        Text("+\(n)")
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .foregroundStyle(Palette.textSecondary)
+                                            .opacity(inMonth ? 1 : 0.6)
+                                            .frame(maxWidth: .infinity, alignment: .trailing)
+                                            .padding(.trailing, 4)
+                                            .padding(.bottom, 2)
+                                    }
                                 }
+                                .frame(width: colW, height: geo.size.height, alignment: .topLeading)
+                                .contentShape(Rectangle())
+                            } else {
+                                VStack(spacing: 0) {
+                                    Text("\(d.day)")
+                                        .font(.system(size: 14, weight: isToday ? .bold : .semibold))
+                                        .foregroundStyle(isToday ? accent.onAccent : Palette.textDay)
+                                        .frame(width: 28, height: 28)
+                                        .background(Circle().fill(isToday ? accent.color : .clear))
+                                        .padding(.top, 4)
+                                    Spacer(minLength: 0)
+                                    if let n = week.overflow[i] {
+                                        Text("+\(n)").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.textSecondary)
+                                            .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 4).padding(.bottom, 2)
+                                    }
+                                }
+                                .frame(width: colW, height: geo.size.height)
+                                .contentShape(Rectangle())
                             }
-                            .frame(width: colW, height: geo.size.height)
-                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.press(scale: 0.94, opacity: 0.88))
-                        .opacity(d.month == month.month ? 1 : 0.4)
+                        .opacity(fillHeight ? 1 : (inMonth ? 1 : 0.4))
                         .overlay(alignment: .leading) {
                             if fillHeight && i > 0 {
                                 Rectangle().fill(Palette.separator).frame(width: 1)
@@ -1753,24 +2032,58 @@ struct TimeGrid: View {
         GeometryReader { geo in
             let colW = (geo.size.width - gutter - 8) / CGFloat(days.count)
             VStack(spacing: 0) {
-                HStack(spacing: 0) {
-                    Spacer().frame(width: gutter)
-                    ForEach(days, id: \.self) { d in
-                        Button { tapDay(d) } label: {
-                            VStack(spacing: 2) {
-                                Text(LocalDay.weekdaySymbols[d.weekday]).font(.system(size: 12)).foregroundStyle(Palette.textTertiary)
-                                Text("\(d.day)").font(.system(size: 16, weight: .semibold))
-                                    .foregroundStyle(d == today ? accent.onAccent : Palette.text)
-                                    .frame(width: 30, height: 30)
-                                    .background(Circle().fill(d == today ? accent.color : .clear))
+                if Platform.isMac {
+                    HStack(spacing: 0) {
+                        Spacer().frame(width: gutter)
+                        ForEach(days, id: \.self) { d in
+                            let isToday = d == today
+                            Button { tapDay(d) } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("週\(LocalDay.weekdaySymbols[d.weekday])")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(Palette.textTertiary)
+                                        .lineLimit(1)
+                                    Text("\(d.day)")
+                                        .font(.system(size: 13, weight: isToday ? .semibold : .medium))
+                                        .foregroundStyle(isToday ? accent.onAccent : Palette.text)
+                                        .frame(width: 22, height: 22, alignment: isToday ? .center : .leading)
+                                        .background(Circle().fill(isToday ? accent.color : .clear))
+                                }
+                                .padding(.leading, 8)
+                                .padding(.vertical, 4)
+                                .frame(width: colW, alignment: .leading)
+                                .contentShape(Rectangle())
                             }
-                            .frame(width: colW)
+                            .buttonStyle(.press(scale: 0.96, opacity: 0.88))
+                            .overlay(alignment: .leading) {
+                                Rectangle().fill(Palette.gridColumnLine).frame(width: 1)
+                            }
+                            .accessibilityLabel(DateText.full(d))
                         }
-                        .buttonStyle(.press(scale: 0.94, opacity: 0.88))
-                        .accessibilityLabel(DateText.full(d))
                     }
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(Palette.separator).frame(height: 1)
+                    }
+                } else {
+                    HStack(spacing: 0) {
+                        Spacer().frame(width: gutter)
+                        ForEach(days, id: \.self) { d in
+                            Button { tapDay(d) } label: {
+                                VStack(spacing: 2) {
+                                    Text(LocalDay.weekdaySymbols[d.weekday]).font(.system(size: 12)).foregroundStyle(Palette.textTertiary)
+                                    Text("\(d.day)").font(.system(size: 16, weight: .semibold))
+                                        .foregroundStyle(d == today ? accent.onAccent : Palette.text)
+                                        .frame(width: 30, height: 30)
+                                        .background(Circle().fill(d == today ? accent.color : .clear))
+                                }
+                                .frame(width: colW)
+                            }
+                            .buttonStyle(.press(scale: 0.94, opacity: 0.88))
+                            .accessibilityLabel(DateText.full(d))
+                        }
+                    }
+                    .padding(.bottom, 4)
                 }
-                .padding(.bottom, 4)
 
                 let ad = allDayItems
                 let isDay = days.count == 1
@@ -1792,7 +2105,8 @@ struct TimeGrid: View {
                             Text("全天")
                                 .font(.system(size: 10))
                                 .foregroundStyle(Palette.textFaint)
-                                .frame(width: gutter)
+                                .padding(.trailing, Platform.isMac ? 8 : 0)
+                                .frame(width: gutter, alignment: Platform.isMac ? .trailing : .center)
                                 .padding(.top, 4)
                             ScrollView(.vertical, showsIndicators: totalLanes > maxVisibleLanes) {
                                 ZStack(alignment: .topLeading) {
@@ -1811,7 +2125,12 @@ struct TimeGrid: View {
                         .overlay(alignment: .bottom) { Rectangle().fill(Palette.separator).frame(height: 1) }
                     } else {
                         ZStack(alignment: .topLeading) {
-                            Text("全天").font(.system(size: 10)).foregroundStyle(Palette.textFaint).frame(width: gutter).padding(.top, 4)
+                            Text("全天")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Palette.textFaint)
+                                .padding(.trailing, Platform.isMac ? 8 : 0)
+                                .frame(width: gutter, alignment: Platform.isMac ? .trailing : .center)
+                                .padding(.top, 4)
                             ForEach(Array(ad.filter { $0.lane < maxVisibleLanes }.enumerated()), id: \.offset) { _, item in
                                 allDayChip(item.task, width: colW * CGFloat(item.lastColumn - item.firstColumn + 1) - 3)
                                     .offset(x: gutter + colW * CGFloat(item.firstColumn) + 1.5, y: CGFloat(item.lane) * 21 + 2)
@@ -1843,8 +2162,18 @@ struct TimeGrid: View {
                             VStack(spacing: 0) {
                                 ForEach(0..<25, id: \.self) { h in
                                     HStack(alignment: .top, spacing: 0) {
-                                        Text(h == 24 ? "00" : String(format: "%02d", h)).font(.system(size: 12)).foregroundStyle(Palette.textTertiary)
-                                            .frame(width: gutter, alignment: .center).offset(y: -7)
+                                        if Platform.isMac {
+                                            Text(h == 24 ? "00:00" : String(format: "%02d:00", h))
+                                                .font(.system(size: 11))
+                                                .monospacedDigit()
+                                                .foregroundStyle(Palette.textTertiary)
+                                                .padding(.trailing, 8)
+                                                .frame(width: gutter, alignment: .trailing)
+                                                .offset(y: -6)
+                                        } else {
+                                            Text(h == 24 ? "00" : String(format: "%02d", h)).font(.system(size: 12)).foregroundStyle(Palette.textTertiary)
+                                                .frame(width: gutter, alignment: .center).offset(y: -7)
+                                        }
                                         Rectangle().fill(Palette.gridLine).frame(height: 1)
                                     }
                                     .frame(height: h == 24 ? 1 : hourH, alignment: .top)
@@ -2009,9 +2338,25 @@ struct TimeGrid: View {
         return HStack(alignment: .top, spacing: 0) {
             Rectangle().fill(color).frame(width: 3)
             VStack(alignment: .leading, spacing: 1) {
-                Text(task.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(done ? Palette.done : Palette.text)
-                    .strikethrough(done).lineLimit(h > 40 ? 3 : 1).multilineTextAlignment(.leading)
-                if h > 34, let s = schedule { Text(DateText.range(s)).font(.system(size: 10)).foregroundStyle(Palette.textSecondary).lineLimit(1) }
+                if Platform.isMac {
+                    let prefix = schedule?.startMinute.map { "[\(DateText.hm($0))] " } ?? ""
+                    Text(prefix + task.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(done ? Palette.done : Palette.text)
+                        .strikethrough(done)
+                        .lineLimit(1)
+                    if h >= 36, let s = schedule, let rangeText = macTimeRange(s) {
+                        Text(rangeText)
+                            .font(.system(size: 11, weight: .regular))
+                            .monospacedDigit()
+                            .foregroundStyle(Palette.textSecondary)
+                            .lineLimit(1)
+                    }
+                } else {
+                    Text(task.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(done ? Palette.done : Palette.text)
+                        .strikethrough(done).lineLimit(h > 40 ? 3 : 1).multilineTextAlignment(.leading)
+                    if h > 34, let s = schedule { Text(DateText.range(s)).font(.system(size: 10)).foregroundStyle(Palette.textSecondary).lineLimit(1) }
+                }
             }
             .padding(.horizontal, 4)
             .padding(.vertical, h >= 24 ? 3 : 2)
@@ -2024,6 +2369,12 @@ struct TimeGrid: View {
             }
         }
         .frame(width: w, height: h, alignment: .topLeading)
+    }
+
+    private func macTimeRange(_ s: Schedule) -> String? {
+        guard let sm = s.startMinute else { return nil }
+        guard let end = s.endOffsetMinutes else { return DateText.hm(sm) }
+        return "\(DateText.hm(sm))-\(end >= 1440 ? "隔日 " : "")\(DateText.hm(end))"
     }
 
     // MARK: Drag & Drop
