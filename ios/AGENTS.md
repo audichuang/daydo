@@ -29,22 +29,19 @@
 - 版面：左側圖示欄切分頁；任務分頁是清單欄＋列表主欄＋可拖寬的詳情側欄；頂列自繪、標題靠左，不用系統導覽列；搜尋是浮動面板，設定是左右兩欄。使用者點名過的平板痕跡：列表窄詳情寬、置中標題與圓鈕、卡片式三行任務列、整頁搜尋、一層層點進去的設定、小月曆配行程的日曆。
 - 日曆是 Mac 上最常用的畫面：大螢幕要在月格裡直接看到當天內容，所以 Mac 沒有「清單」模式、預設月檢視；左側小月曆與清單篩選，點任務在右側詳情直接編輯。改日曆要照桌面日曆想，不能只沿用 iPad 版。
 - 擺放：整塊只在 Mac 出現的畫面做成獨立 struct、放同資料夾的獨立檔（如 `MacTaskColumns`、`CalendarMacSidebar`），共用畫面用 `if Platform.isMac` 切過去；Mac 的按鈕、選單外框共用 `Components/MacChrome.swift`。尺寸、字級這類小差異的三元式留在原處即可。為 Mac 改外觀不動共用的修飾，否則會一起改到 iPhone／iPad（年曆對齊曾這樣漏過去）。
-- 平台判斷用 `Platform.isMac` 的一般 `if`（iOS 編譯也檢查得到 Mac 分支）；`#if targetEnvironment(macCatalyst)` 只包 iOS SDK 編不過的 API。鍵盤、觸控板、快捷鍵的新行為也要包 `Platform.isMac`：不分平台時曾讓 iPhone 接外接鍵盤能無確認永久刪除任務。
-- Mac 的 Esc 走 `SelectionShortcutBridge`（它會略過正在輸入的文字框）；SwiftUI 的 `.keyboardShortcut(.cancelAction)` 會連注音組字中的 Esc 一起搶走。
-- 浮動面板（搜尋）蓋在仍在運作的編輯器上：選到底下正在編輯的同一筆任務要回到那個編輯器，不能再開一份，否則舊草稿之後會覆寫新存的內容（`AppModel.openTask` 已處理）。
+- 鍵盤、觸控板、快捷鍵的新行為要包 `Platform.isMac`：不分平台時曾讓 iPhone 接外接鍵盤能無確認永久刪除任務。
+- 同一筆任務同時只能有一份編輯器：浮動面板（搜尋）蓋在仍在運作的編輯器上，再開一份會讓舊草稿覆寫新存的內容。
 - Mac 版沒有 Sign in with Apple（Catalyst 的 Developer ID profile 不支援，Mac 用 `DayDo/DayDo-mac.entitlements`），Apple 登入與連結入口在 Mac 一律隱藏。
-- Mac Debug 與 brew 裝的正式版同 bundle id：Debug 資料、偏好、Keychain 已改用獨立位置，但通知中心仍共用，Mac Debug 不重排提醒。`-DayDoReset`／`-DayDoSkipLogin`／`-DayDoDemo` 只在 Debug 生效（ArchitectureTests 擋）。
-- 驗收：`open -n <uitest.sh mac 印出的 .app> --args -DayDoReset -DayDoSkipLogin -DayDoDemo`（不加 `-DayDoReset` 會重複灌範例資料，每筆任務出現兩次） 實際操作並截圖（lcu 的拖曳在 Catalyst 不會觸發，拖曳用 `swift ios/scripts/mac-drag.swift <x1> <y1> <x2> <y2>`，螢幕 point）；Mac 沒有 UI 測試，動到 `DayDo/Screens` 的 Mac 改動，合併前跑 `ios/scripts/uitest.sh ipad`。
+- Mac Debug 與 brew 裝的正式版同 bundle id：Debug 資料、偏好、Keychain 已改用獨立位置，但通知中心仍共用，Mac Debug 不重排提醒。
+- 動到 `DayDo/Screens` 的改動，合併前跑 `ios/scripts/uitest.sh ipad` 全套，並照 `ios/.claude/skills/verify/`（verify 技能）在 Mac 實際操作一遍。
 
 ## 踩過的雷
 
 - iPad 版面：開任務詳情一律由 `AppModel` 決定內嵌或 sheet，畫面不要自己判斷；內嵌詳情、垃圾桶、設定子頁都在 iPad 上出過資料遺失或遮擋的 bug，改這幾處要用 `ios/scripts/uitest.sh ipad` 跑過。
 - 先改畫面、延遲寫入的樂觀更新：寫入前要重讀任務的最新狀態，否則等待期間同一任務的存檔會把這次動作吞掉。重複任務完成後 id 不變、只換成下一次，樂觀狀態要記「哪一次」，不能只記 id。
 - 被 `.clipped()` 裁掉或收合起來看不見的內容仍然點得到，要另外關掉點擊（日曆收合成單週時，隱藏的那幾週曾經點得到）。
-- 深淺色：顏色只走 `Palette`（`UIColor(dynamicProvider:)`），深色值要和改版前一致；外觀只經 `AppearanceApplier` 設視窗的 override。Info.plist 不能加回 `UIUserInterfaceStyle`，加了「淺色／跟隨系統」就失效；啟動畫面的狀態列靠 `UIStatusBarStyleLightContent` 維持白字。
+- 深淺色：顏色只走 `Palette`（`UIColor(dynamicProvider:)`），深色值要和改版前一致；外觀只經 `AppearanceApplier` 設視窗的 override；啟動畫面的狀態列靠 `UIStatusBarStyleLightContent` 維持白字。
 - UI 測試不要假設現在的時段（日曆測試曾因此在某些時間失敗），也不要假設通知授權已處理。
 - 手機版任務／日曆／搜尋分頁造訪後常駐（`RootView` 的 `CompactTabContent`，為了切換不重建）：從別的分頁回來時畫面要和新建的一樣（選取日期、篩選、搜尋文字、捲動、鍵盤焦點都回初始），隱藏時不載入資料，查詢條件變了先清掉舊資料。第一版漏了這些，審查指出在日曆換清單後回任務頁會先顯示、也能勾到上一個清單的任務。
 - Mac 工具列不顯示 `ToolbarItem(placement: .principal)`；工具列裡的 SwiftUI `Menu` 會忽略 `.menuIndicator(.hidden)`。UIKit pan recognizer 要設 `allowedScrollTypesMask` 才收觸控板捲動。
 - iPad 的 form sheet 會隨鍵盤上下移動：表單內容放得下就不要包 `ScrollView`（點擊會被捲動吃掉），驗證碼欄位不用 `.numberPad`（iPad 是會擋按鈕的浮動小鍵盤）。
-- 任務列表與搜尋結果是 `LazyVStack`：UI 測試要找畫面外的任務列先捲過去。
-- UI 測試沒有結果時，先看 log 最後的 `t = …` 步驟：停在 `Wait for com.audichuang.daydo to idle` 是 App 一直不閒置，是程式問題；log 末行停在 `Resolve Package Graph` 不代表卡在套件解析。先用 main 在同一台模擬器跑同一個測試對照，main 會過就對單一測試 `git bisect run`（每步加 `timeout`），不要先判成模擬器環境壞掉：曾因此誤判、還說別的專案也壞了，實際是刪掉一段看似重複的分頁重設造成的。
