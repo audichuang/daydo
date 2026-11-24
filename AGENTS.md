@@ -80,4 +80,5 @@ repo 沒有 GitHub Actions：push 後不等 CI，合併前以本機測試結果�
 
 - 每個問題照常回報，但標明正常使用 DayDo 會不會碰到；只有異常 client 或極端時序才會發生的，建議記進 `spec/sync.md`「已知限制」，不要求加機制。
 - diff 新增的判斷如果別處已經有一份（同一條規則的第二份），標出來並指出該擴充哪個既有 module。
+- diff 取代既有流程時（例如 Mac 日曆浮窗改成右側詳情），只剩舊流程在用的元件、參數、狀態要在同一個 diff 刪掉；漏刪會變成沒人用卻每次照跑的程式碼，日曆錨點探針就這樣多留了兩輪。
 - 修正一類問題時要附一道護欄：server 加在 `.oxlintrc.json` 或 `tests/architecture.test.ts`，App 加在 `DayDoCore/Tests/DayDoCoreTests/ArchitectureTests.swift`，拿掉修正時它要失敗；做不到就寫明原因。

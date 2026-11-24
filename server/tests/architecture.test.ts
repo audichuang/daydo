@@ -170,6 +170,30 @@ const GUARDS: Guard[] = [
     ],
   },
   {
+    // src/scope holds raw ledger rows and may not import serverops, so it keeps its own check.
+    name: 'live-row check (deletedAt and purgedAt both nil) goes through isLiveRow in serverops/values.ts',
+    dirs: ['src/mcp', 'src/serverops', 'src/ics', 'routes', 'crons'],
+    pattern:
+      /(?<!!)isNil\([^)]*\b(deletedAt|purgedAt)\)\s*&&\s*isNil\([^)]*\b(deletedAt|purgedAt)\)|\b(deletedAt|purgedAt)\s*={2,3}\s*null\s*&&[^;\n]*\b(deletedAt|purgedAt)\s*={2,3}\s*null/,
+    allow: ['src/serverops/values.ts'],
+    bad: [
+      'return isNil(row.deletedAt) && isNil(row.purgedAt);',
+      'tasks.filter((t) => t.row.deletedAt == null && t.row.purgedAt == null);',
+      'if (c.row.purgedAt === null && c.row.deletedAt === null) keep();',
+    ],
+    good: [
+      'if (!existing || (!isNil(existing.row.deletedAt) && isNil(existing.row.purgedAt))) {',
+      'tasks.filter((t) => isLiveRow(t.row));',
+    ],
+  },
+  {
+    name: 'routes map SharingError through withSharingErrors in src/http.ts',
+    dirs: ALL,
+    pattern: /\binstanceof SharingError\b/,
+    allow: ['src/http.ts'],
+    bad: ['if (err instanceof SharingError) return c.json({ error: err.message }, 400);'],
+  },
+  {
     name: 'src/scope/** contains no async or await',
     dirs: ['src/scope'],
     pattern: /\b(async|await)\b/,
