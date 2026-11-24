@@ -23,7 +23,15 @@
 
 ## Mac 版（Mac Catalyst）
 
-- Mac 沿用 iPad 的 regular 畫面，不開 Mac 資料夾；外框與日曆照桌面 App 改（使用者看到「放大版 iPad」會直接說奇怪，舊日曆的大圓鈕、置中大字被說「超級像平板」）：左側圖示欄切分頁；任務分頁是清單欄＋列表主欄＋可拖寬的詳情側欄，頂列自繪、不用系統導覽列；日曆沒有「清單」模式（小月曆配行程是平板排法），左側小月曆與清單篩選，點任務在右側詳情直接編輯；搜尋是浮動面板，設定是左右兩欄。2026-11-24 使用者再次指出的平板痕跡：列表窄詳情寬、置中標題與圓鈕、卡片式三行任務列、整頁搜尋、一層層點進去的設定。Mac 的 Esc 走 `SelectionShortcutBridge`（它會略過正在輸入的文字框）；用 SwiftUI 的 `.keyboardShortcut(.cancelAction)` 會連注音組字中的 Esc 一起搶走。只在 Mac 才有的差異用 `Platform.isMac` 的一般 `if`（iOS 編譯也檢查得到 Mac 分支）；`#if targetEnvironment(macCatalyst)` 只包 iOS SDK 編不過的 API。鍵盤、觸控板、快捷鍵的新行為也要包 `Platform.isMac`：不分平台時曾讓 iPhone 接外接鍵盤能無確認永久刪除任務。
+使用者要的是「桌面 App」，不是放大的 iPad；看到平板痕跡會直接退件。參照是 TickTick Mac。Mac 的 UI 準則：
+
+- 用電腦的操作邏輯：右鍵選單、雙擊空白處新增、hover 回饋、Esc 關閉、可拖寬的欄、快捷鍵；不用觸控邏輯（左滑、長按、大圓鈕、浮動小卡、一層層點進去的頁）。
+- 版面：左側圖示欄切分頁；任務分頁是清單欄＋列表主欄＋可拖寬的詳情側欄；頂列自繪、標題靠左，不用系統導覽列；搜尋是浮動面板，設定是左右兩欄。使用者點名過的平板痕跡：列表窄詳情寬、置中標題與圓鈕、卡片式三行任務列、整頁搜尋、一層層點進去的設定、小月曆配行程的日曆。
+- 日曆是 Mac 上最常用的畫面：大螢幕要在月格裡直接看到當天內容，所以 Mac 沒有「清單」模式、預設月檢視；左側小月曆與清單篩選，點任務在右側詳情直接編輯。改日曆要照桌面日曆想，不能只沿用 iPad 版。
+- 擺放：整塊只在 Mac 出現的畫面做成獨立 struct、放同資料夾的獨立檔（如 `MacTaskColumns`、`CalendarMacSidebar`），共用畫面用 `if Platform.isMac` 切過去；Mac 的按鈕、選單外框共用 `Components/MacChrome.swift`。尺寸、字級這類小差異的三元式留在原處即可。為 Mac 改外觀不動共用的修飾，否則會一起改到 iPhone／iPad（年曆對齊曾這樣漏過去）。
+- 平台判斷用 `Platform.isMac` 的一般 `if`（iOS 編譯也檢查得到 Mac 分支）；`#if targetEnvironment(macCatalyst)` 只包 iOS SDK 編不過的 API。鍵盤、觸控板、快捷鍵的新行為也要包 `Platform.isMac`：不分平台時曾讓 iPhone 接外接鍵盤能無確認永久刪除任務。
+- Mac 的 Esc 走 `SelectionShortcutBridge`（它會略過正在輸入的文字框）；SwiftUI 的 `.keyboardShortcut(.cancelAction)` 會連注音組字中的 Esc 一起搶走。
+- 浮動面板（搜尋）蓋在仍在運作的編輯器上：選到底下正在編輯的同一筆任務要回到那個編輯器，不能再開一份，否則舊草稿之後會覆寫新存的內容（`AppModel.openTask` 已處理）。
 - Mac 版沒有 Sign in with Apple（Catalyst 的 Developer ID profile 不支援，Mac 用 `DayDo/DayDo-mac.entitlements`），Apple 登入與連結入口在 Mac 一律隱藏。
 - Mac Debug 與 brew 裝的正式版同 bundle id：Debug 資料、偏好、Keychain 已改用獨立位置，但通知中心仍共用，Mac Debug 不重排提醒。`-DayDoReset`／`-DayDoSkipLogin`／`-DayDoDemo` 只在 Debug 生效（ArchitectureTests 擋）。
 - 驗收：`open -n <uitest.sh mac 印出的 .app> --args -DayDoReset -DayDoSkipLogin -DayDoDemo`（不加 `-DayDoReset` 會重複灌範例資料，每筆任務出現兩次） 實際操作並截圖（lcu 的拖曳在 Catalyst 不會觸發，拖曳用 `swift ios/scripts/mac-drag.swift <x1> <y1> <x2> <y2>`，螢幕 point）；Mac 沒有 UI 測試，動到 `DayDo/Screens` 的 Mac 改動，合併前跑 `ios/scripts/uitest.sh ipad`。
