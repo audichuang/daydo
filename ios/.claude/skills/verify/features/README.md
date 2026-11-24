@@ -23,7 +23,7 @@ This directory is the maintained source for verifying what a DayDo user sees and
 
 ## Feature entry contract
 
-Each feature file starts with an H1 title and one paragraph describing the user-visible behavior, then exactly four H2 sections in this order: `Sub-features`, `How to get to it (user POV)`, `Driving it with lcu + mac.sh` (starting with `Preconditions:`), and `Gotchas`.
+Each feature file starts with an H1 title and one paragraph describing the user-visible behavior, then exactly four H2 sections in this order: `Sub-features`, `How to get to it (user POV)`, `Driving it with lcu + mac.sh` (`Driving it with uitest.sh` for iPhone/iPad; both start with `Preconditions:`), and `Gotchas`.
 
 ## Features
 

@@ -11,7 +11,7 @@ The touch layouts (compact tabs on iPhone, split view and inline detail on iPad)
 
 - The app on the `DD iPhone 18 Pro` / `DD iPad Pro 11` simulators.
 
-## Driving it with lcu + mac.sh
+## Driving it with uitest.sh
 
 Preconditions:
 
@@ -23,5 +23,4 @@ Preconditions:
 
 ## Gotchas
 
-- Tests must not depend on the current time of day (the time grid scrolls to now).
 - The iPad suite sometimes logs `App animations complete notification not received`; rerun only that test and say so.
