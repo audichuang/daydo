@@ -32,6 +32,96 @@ struct TaskRow: View {
     }
 
     var body: some View {
+        if Platform.isMac {
+            macBody
+        } else {
+            touchBody
+        }
+    }
+
+    /// Mac: one dense desktop row, title and description on the left, date and list on the
+    /// right (TickTick Mac layout) instead of the stacked three-line touch row.
+    private var macBody: some View {
+        let compact = model.compact
+        let project = showProject ? model.project(task.projectId) : nil
+        let line = dateLine
+        return HStack(alignment: .top, spacing: 0) {
+            Button { toggle() } label: {
+                TaskCheckbox(done: isDone, priority: task.priority, size: 15)
+                    .padding(.top, 9)
+                    .frame(width: 32, alignment: .top)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.press(scale: 0.9, opacity: 0.85))
+            .disabled(inTrash || model.isViewer(projectId: task.projectId))
+            .accessibilityLabel((isDone ? "取消完成：" : "完成：") + task.title)
+
+            Button {
+                model.openTask(task.id, sectionId: sectionId, inlineAvailable: usesInlineSelection)
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(task.title)
+                            .txt(14, .medium)
+                            .foregroundStyle(isDone ? Palette.done : Palette.text)
+                            .strikethrough(isDone, color: Palette.done)
+                            .lineLimit(1)
+                        if !compact, !task.content.isEmpty {
+                            Text(firstLine(task.content)).txt(12).foregroundStyle(Palette.textSecondary).lineLimit(1)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .trailing, spacing: 3) {
+                        HStack(spacing: 8) {
+                            if !task.items.isEmpty {
+                                Label("\(task.completedItemCount)/\(task.items.count)", systemImage: "list.bullet").labelStyle(MetaLabel())
+                            }
+                            if task.commentCount > 0 {
+                                Label("\(task.commentCount)", systemImage: "bubble.left").labelStyle(MetaLabel())
+                            }
+                            if !task.attachments.isEmpty {
+                                Label("\(task.attachments.count)", systemImage: "paperclip").labelStyle(MetaLabel())
+                            }
+                            if task.repeat != nil && !isDone {
+                                Image(systemName: "repeat").font(.system(size: 10)).foregroundStyle(Palette.textTertiary)
+                            }
+                            if let countdown = countdownText {
+                                Text(countdown).txt(11, .semibold).foregroundStyle(accent.text)
+                                    .padding(.horizontal, 6).padding(.vertical, 1)
+                                    .background(Capsule().fill(accent.soft))
+                                    .accessibilityIdentifier("taskCountdownBadge")
+                            }
+                            if !line.isEmpty && !isDone {
+                                Text(line).txt(12, .medium).foregroundStyle(dateColor).lineLimit(1)
+                            }
+                        }
+                        if let project, !compact || line.isEmpty {
+                            HStack(spacing: 4) {
+                                ListDot(color: project.color)
+                                Text(project.name).txt(11).foregroundStyle(Palette.textTertiary).lineLimit(1)
+                            }
+                        }
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+                .opacity(isDone ? 0.75 : 1)
+                .animation(Motion.check(reduceMotion), value: isDone)
+                .padding(.vertical, 7)
+                .padding(.trailing, 10)
+                .overlay(alignment: .top) { if separator && !isSelected { Rectangle().fill(Palette.separatorSoft).frame(height: 1) } }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.press(scale: 1, opacity: 0.95, highlight: Palette.pressHighlightStrong))
+        }
+        .padding(.leading, 4)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(isSelected ? accent.soft : .clear))
+        .hoverEffect(.highlight)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .contextMenu { menu }
+    }
+
+    @ViewBuilder
+    private var touchBody: some View {
         let compact = model.compact
         let pad: CGFloat = Platform.isMac ? (compact ? 6 : 8) : (compact ? 9 : 12)
         HStack(alignment: .top, spacing: 0) {

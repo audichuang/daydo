@@ -33,8 +33,47 @@ struct SectionCard: View {
     }
 
     var body: some View {
+        if Platform.isMac {
+            content
+        } else {
+            content
+                .card(16)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+    }
+
+    /// Mac: a flat group like a desktop list ("⌄ 今天 5"), no card around it.
+    private var macHeader: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.textTertiary)
+                .rotationEffect(.degrees(closed ? -90 : 0))
+                .frame(width: 14)
+            Text(section.title).txt(13, .semibold).foregroundStyle(titleColor)
+            Text("\(section.tasks.count)")
+                .txt(12)
+                .foregroundStyle(Palette.textTertiary)
+                .contentTransition(reduceMotion ? .identity : .numericText())
+            Spacer()
+            if section.kind == .overdue,
+               !isViewerScope,
+               !model.editableTaskIds(in: section.tasks).isEmpty {
+                Button("全部延到今天") {
+                    model.postponeOverdue(tasks: section.tasks)
+                }
+                .txt(12, .semibold).foregroundStyle(accent.text).buttonStyle(.press)
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(minHeight: 28)
+        .contentShape(Rectangle())
+    }
+
+    private var content: some View {
         VStack(spacing: 0) {
             Button(action: toggle) {
+              if Platform.isMac {
+                macHeader
+              } else {
                 HStack(spacing: 8) {
                     Text(section.title).txt(15, .bold).foregroundStyle(titleColor)
                     Spacer()
@@ -54,9 +93,10 @@ struct SectionCard: View {
                     Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textTertiary)
                         .rotationEffect(.degrees(closed ? -90 : 0))
                 }
-                .padding(.leading, Platform.isMac ? 12 : 16).padding(.trailing, Platform.isMac ? 12 : 14)
-                .frame(minHeight: Platform.isMac ? 34 : 44)
+                .padding(.leading, 16).padding(.trailing, 14)
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
+              }
             }
             .buttonStyle(.press(scale: 0.99, opacity: 0.92))
             .hoverEffect(.highlight)
@@ -82,8 +122,6 @@ struct SectionCard: View {
                 .transition(Motion.expandTransition(reduceMotion))
             }
         }
-        .card(Platform.isMac ? 12 : 16)
-        .clipShape(RoundedRectangle(cornerRadius: Platform.isMac ? 12 : 16, style: .continuous))
     }
 }
 

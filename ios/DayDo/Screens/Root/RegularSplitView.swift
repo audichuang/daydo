@@ -4,6 +4,7 @@ import DayDoCore
 
 struct RegularSplitView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var columnVisibility: NavigationSplitViewVisibility
     @State private var isWide = false
     @State private var calendarPath = NavigationPath()
@@ -42,6 +43,7 @@ struct RegularSplitView: View {
             syncColumnVisibility(wide: isWide, isTasks: isTasks)
         }
         .onChange(of: isKanban) { _, newIsKanban in
+            if Platform.isMac { return }
             if let next = RegularSplitVisibility.translatedForKanbanToggle(
                 current: columnVisibility,
                 toKanban: newIsKanban,
@@ -68,7 +70,23 @@ struct RegularSplitView: View {
 
     @ViewBuilder
     private var tasksSplitView: some View {
-        if isKanban {
+        if Platform.isMac {
+            // Mac: the list is the main column and the detail a resizable side pane, in both
+            // list and kanban mode (one shape, so a half-edited detail survives the switch).
+            NavigationSplitView(columnVisibility: $columnVisibility) {
+                sidebar
+                    .toolbar(.hidden, for: .navigationBar)
+            } detail: {
+                MacTaskColumns(showsPlaceholder: !isKanban)
+                    .toolbar(.hidden, for: .navigationBar)
+            }
+            .navigationSplitViewStyle(.balanced)
+            .environment(\.macSidebarToggle) {
+                withAnimation(Motion.layout(reduceMotion)) {
+                    columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+                }
+            }
+        } else if isKanban {
             HStack(spacing: 0) {
                 NavigationSplitView(columnVisibility: $columnVisibility) {
                     sidebar
@@ -132,7 +150,8 @@ struct RegularSplitView: View {
 
     private func syncColumnVisibility(wide: Bool, isTasks: Bool) {
         if Platform.isMac && !isTasks { return }
-        columnVisibility = RegularSplitVisibility.defaultVisibility(wide: wide, isTasks: isTasks, isKanban: isKanban)
+        // Mac tasks are always two columns (sidebar + list/detail), like kanban elsewhere.
+        columnVisibility = RegularSplitVisibility.defaultVisibility(wide: wide, isTasks: isTasks, isKanban: Platform.isMac || isKanban)
     }
 
     private var sidebar: some View {
@@ -143,6 +162,68 @@ struct RegularSplitView: View {
                 ideal: Platform.isMac ? 220 : 260,
                 max: Platform.isMac ? 260 : 300
             )
+    }
+}
+
+extension EnvironmentValues {
+    /// Mac only: shows/hides the list sidebar from the list column's own top bar (the
+    /// navigation bar that hosted the system toggle is hidden on Mac).
+    @Entry var macSidebarToggle: (() -> Void)? = nil
+}
+
+/// Mac tasks tab content: list (or kanban) taking the free width, detail pane on the right
+/// with a draggable divider. List mode keeps the pane open with a placeholder, like a
+/// desktop mail/todo app; kanban opens it only for a selected card.
+private struct MacTaskColumns: View {
+    @Environment(AppModel.self) private var model
+    var showsPlaceholder: Bool
+    @AppStorage("macDetailWidth") private var detailWidth: Double = 420
+    @State private var dragStart: Double?
+
+    static let minDetail: Double = 320
+    static let maxDetail: Double = 720
+    static let minList: Double = 360
+
+    var body: some View {
+        GeometryReader { geo in
+            let maxForWindow = max(Self.minDetail, min(Self.maxDetail, geo.size.width - Self.minList))
+            let width = min(max(detailWidth, Self.minDetail), maxForWindow)
+            HStack(spacing: 0) {
+                TaskListScreen(scope: model.scope)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if showsPlaceholder || model.selectedTaskId != nil {
+                    divider(maxForWindow: maxForWindow)
+                    Group {
+                        if let taskId = model.selectedTaskId {
+                            TaskDetailContent(taskId: taskId, isInline: true, showCloseButton: !showsPlaceholder) {
+                                model.selectedTaskId = nil
+                            }
+                            .id(taskId)
+                        } else {
+                            TaskDetailEmptyState()
+                        }
+                    }
+                    .frame(width: width)
+                }
+            }
+        }
+    }
+
+    private func divider(maxForWindow: Double) -> some View {
+        Rectangle().fill(Palette.separator).frame(width: 1)
+            .frame(width: 9)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { v in
+                        let start = dragStart ?? detailWidth
+                        if dragStart == nil { dragStart = start }
+                        detailWidth = min(max(start - v.translation.width, Self.minDetail), maxForWindow)
+                    }
+                    .onEnded { _ in dragStart = nil }
+            )
+            .accessibilityHidden(true)
+            .ignoresSafeArea()
     }
 }
 

@@ -35,7 +35,7 @@ struct CalendarScreen: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var isActive: Bool = true
 
-    @AppStorage("calendarViewMode") private var modeRaw = CalMode.list.rawValue
+    @AppStorage("calendarViewMode") private var modeRaw = Self.overviewMode.rawValue
     @AppStorage("calendarCollapsed") private var collapsed = false
     @AppStorage("agendaTimeline") private var timelineStyle = false
     @AppStorage("weekAgendaStyle") private var weekAgendaStyle = false
@@ -73,7 +73,14 @@ struct CalendarScreen: View {
         isActive ? currentReload : nil
     }
 
-    var mode: CalMode { CalMode(rawValue: modeRaw) ?? .list }
+    /// Mac has no 清單 mode (small month beside a day agenda is a tablet layout); a stored
+    /// `list` from before this change opens as the month view instead.
+    var mode: CalMode {
+        let m = CalMode(rawValue: modeRaw) ?? .list
+        return Platform.isMac && m == .list ? .month : m
+    }
+    /// The overview a year-month tap or deep link lands on.
+    static var overviewMode: CalMode { Platform.isMac ? .month : .list }
     var sel: LocalDay { selected ?? model.today }
     var shownMonth: LocalDay { month ?? sel.firstOfMonth }
     private var effectiveMemberFilter: String? {
@@ -221,7 +228,7 @@ struct CalendarScreen: View {
         shiftDir = 0
         pageSequence += 1
         if mode == .year {
-            modeRaw = CalMode.list.rawValue
+            modeRaw = Self.overviewMode.rawValue
         }
     }
 
@@ -301,7 +308,7 @@ struct CalendarScreen: View {
 
     @ViewBuilder
     private func modeMenuItems(showShortcuts: Bool) -> some View {
-        ForEach(CalMode.allCases) { m in
+        ForEach(CalMode.allCases.filter { !(Platform.isMac && $0 == .list) }) { m in
             let itemTitle = showShortcuts ? (m.macShortcutKey.map { "\(m.label)  \($0)" } ?? m.label) : m.label
             Button {
                 withAnimation(Motion.toggle(reduceMotion)) { modeRaw = m.rawValue }
@@ -667,7 +674,7 @@ struct CalendarScreen: View {
                             shiftPage(direction: 0) {
                                 month = m
                                 selected = m
-                                modeRaw = CalMode.list.rawValue
+                                modeRaw = Self.overviewMode.rawValue
                                 collapsed = false
                             }
                         }, openDay: { d in

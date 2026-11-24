@@ -9,6 +9,7 @@ struct TaskListScreen: View {
     @Environment(\.accent) private var accent
     @Environment(\.isRegularWindow) private var isRegular
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.macSidebarToggle) private var macSidebarToggle
     var scope: TaskScope
     var isActive: Bool = true
 
@@ -102,10 +103,15 @@ struct TaskListScreen: View {
                 Palette.background.ignoresSafeArea()
             }
             ZStack(alignment: .top) {
-                if isKanbanMode {
-                    kanbanContent
-                } else {
-                    listContent
+                VStack(spacing: 0) {
+                    if Platform.isMac {
+                        macHeader
+                    }
+                    if isKanbanMode {
+                        kanbanContent
+                    } else {
+                        listContent
+                    }
                 }
 
                 if !isRegular {
@@ -128,8 +134,9 @@ struct TaskListScreen: View {
         }
         .navigationTitle(Platform.isMac ? model.scopeTitle(scope) : "")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(Platform.isMac ? .hidden : .automatic, for: .navigationBar)
         .toolbar {
-            if isRegular {
+            if isRegular && !Platform.isMac {
                 if !Platform.isMac && isDuplicatingCurrentProject {
                     ToolbarItem(placement: .principal) {
                         duplicatingStatusView
@@ -414,6 +421,48 @@ struct TaskListScreen: View {
     }
 
     @ViewBuilder
+    private var moreMenuItems: some View {
+        if case .project(let id) = scope {
+            let proj = model.project(id)
+            let currentView = proj?.viewMode ?? "list"
+            if !(proj?.isViewer ?? false) {
+                Button("編輯", systemImage: "slider.horizontal.3") { model.editingProjectId = id }
+                if !Platform.isMac {
+                    Menu("視圖", systemImage: "rectangle.grid.1x2") {
+                        viewMenuItem("列表", mode: "list", current: currentView, projectId: id)
+                        viewMenuItem("看板", mode: "kanban", current: currentView, projectId: id)
+                        viewMenuItem("時間軸", mode: "timeline", current: currentView, projectId: id)
+                    }
+                }
+            }
+        }
+        Button(model.compact ? "顯示詳情" : "隱藏詳情", systemImage: model.compact ? "eye" : "eye.slash") {
+            withAnimation(Motion.toggle(reduceMotion)) { model.compact.toggle() }
+        }
+        if !isKanbanMode {
+            Button(closed.contains(TaskSection.Kind.completed.id) ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle(TaskSection.Kind.completed.id) }
+        }
+        if let overdue = visibleSections.first(where: { $0.kind == .overdue }),
+           !isViewerScope,
+           !model.editableTaskIds(in: overdue.tasks).isEmpty {
+            Divider()
+            Button("全部延到今天", systemImage: "arrow.uturn.forward") { model.postponeOverdue(tasks: overdue.tasks) }
+        }
+        if case .project(let id) = scope, let proj = model.project(id), !proj.isInbox {
+            Divider()
+            let isDuplicating = model.isDuplicatingProject(id)
+            Menu("更多", systemImage: "ellipsis.circle") {
+                Button("共享協作", systemImage: "person.2") { model.sharingProjectId = id }
+                Button("分享", systemImage: "square.and.arrow.up") { shareText = projectShareText(proj) }
+                Button(isDuplicating ? "複製中…" : "複製清單", systemImage: "doc.on.doc") {
+                    model.duplicateProject(id: id)
+                }
+                .disabled(isDuplicating)
+            }
+        }
+    }
+
+    @ViewBuilder
     private var trailingActions: some View {
         if case .project(let id) = scope, !(model.project(id)?.isInbox ?? false) {
             HeaderAction(systemName: "person.crop.circle.badge.plus", label: "共享") { model.sharingProjectId = id }
@@ -427,44 +476,7 @@ struct TaskListScreen: View {
         }
         if isActive {
             Menu {
-                if case .project(let id) = scope {
-                    let proj = model.project(id)
-                    let currentView = proj?.viewMode ?? "list"
-                    if !(proj?.isViewer ?? false) {
-                        Button("編輯", systemImage: "slider.horizontal.3") { model.editingProjectId = id }
-                        if !Platform.isMac {
-                            Menu("視圖", systemImage: "rectangle.grid.1x2") {
-                                viewMenuItem("列表", mode: "list", current: currentView, projectId: id)
-                                viewMenuItem("看板", mode: "kanban", current: currentView, projectId: id)
-                                viewMenuItem("時間軸", mode: "timeline", current: currentView, projectId: id)
-                            }
-                        }
-                    }
-                }
-                Button(model.compact ? "顯示詳情" : "隱藏詳情", systemImage: model.compact ? "eye" : "eye.slash") {
-                    withAnimation(Motion.toggle(reduceMotion)) { model.compact.toggle() }
-                }
-                if !isKanbanMode {
-                    Button(closed.contains(TaskSection.Kind.completed.id) ? "顯示已完成" : "隱藏已完成", systemImage: "checkmark.circle") { toggle(TaskSection.Kind.completed.id) }
-                }
-                if let overdue = visibleSections.first(where: { $0.kind == .overdue }),
-                   !isViewerScope,
-                   !model.editableTaskIds(in: overdue.tasks).isEmpty {
-                    Divider()
-                    Button("全部延到今天", systemImage: "arrow.uturn.forward") { model.postponeOverdue(tasks: overdue.tasks) }
-                }
-                if case .project(let id) = scope, let proj = model.project(id), !proj.isInbox {
-                    Divider()
-                    let isDuplicating = model.isDuplicatingProject(id)
-                    Menu("更多", systemImage: "ellipsis.circle") {
-                        Button("共享協作", systemImage: "person.2") { model.sharingProjectId = id }
-                        Button("分享", systemImage: "square.and.arrow.up") { shareText = projectShareText(proj) }
-                        Button(isDuplicating ? "複製中…" : "複製清單", systemImage: "doc.on.doc") {
-                            model.duplicateProject(id: id)
-                        }
-                        .disabled(isDuplicating)
-                    }
-                }
+                moreMenuItems
             } label: {
                 ellipsisLabel
             }
@@ -475,6 +487,36 @@ struct TaskListScreen: View {
         } else {
             ellipsisLabel.accessibilityHidden(true)
         }
+    }
+
+    /// Mac top bar inside the list column: sidebar toggle and left-aligned title, small
+    /// square buttons on the right (same chrome as the calendar), no navigation bar.
+    private var macHeader: some View {
+        HStack(spacing: 8) {
+            if let toggleSidebar = macSidebarToggle {
+                MacCalendarIconButton(systemName: "sidebar.left", label: "顯示／隱藏清單欄", action: toggleSidebar)
+            }
+            Text(model.scopeTitle(scope))
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(Palette.text)
+                .lineLimit(1)
+                .accessibilityAddTraits(.isHeader)
+            if isDuplicatingCurrentProject {
+                duplicatingStatusView
+            }
+            Spacer(minLength: 12)
+            if let proj = editableCustomProject {
+                projectViewModeSwitcher(for: proj)
+            }
+            if case .project(let id) = scope, !(model.project(id)?.isInbox ?? false) {
+                MacCalendarIconButton(systemName: "person.crop.circle.badge.plus", label: "共享") { model.sharingProjectId = id }
+            }
+            MacCalendarMoreMenu(isActive: isActive) { moreMenuItems }
+                .background(ActivityAnchor(text: $shareText))
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 4)
     }
 
     var subtitle: String {
