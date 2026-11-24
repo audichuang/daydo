@@ -40,19 +40,38 @@ struct SettingsScreen: View {
         return "\(v) (\(b))"
     }
 
+    @ViewBuilder
+    private func routeView(_ route: SettingsRoute) -> some View {
+        switch route {
+        case .appearance: AppearanceSettingsView()
+        case .archivedProjects: ArchivedProjectsView()
+        case .data: DataSettingsView()
+        }
+    }
+
     var body: some View {
-        NavigationStack(path: $path) {
-            settingsContent
-                .navigationTitle("設定")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar(isRegular ? .visible : .hidden, for: .navigationBar)
-                .navigationDestination(for: SettingsRoute.self) { route in
-                    switch route {
-                    case .appearance: AppearanceSettingsView()
-                    case .archivedProjects: ArchivedProjectsView()
-                    case .data: DataSettingsView()
-                    }
+        Group {
+            if Platform.isMac {
+                // Mac: categories on the left, the chosen page on the right (desktop
+                // preferences), instead of drilling into one full-width page at a time.
+                NavigationSplitView {
+                    settingsContent
+                        .navigationDestination(for: SettingsRoute.self) { routeView($0) }
+                        .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 420)
+                        .toolbar(.hidden, for: .navigationBar)
+                } detail: {
+                    AppearanceSettingsView()
                 }
+                .navigationSplitViewStyle(.balanced)
+            } else {
+                NavigationStack(path: $path) {
+                    settingsContent
+                        .navigationTitle("設定")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar(isRegular ? .visible : .hidden, for: .navigationBar)
+                        .navigationDestination(for: SettingsRoute.self) { routeView($0) }
+                }
+            }
         }
         .onChange(of: model.tab) { _, tab in
             if tab != .settings && !path.isEmpty {

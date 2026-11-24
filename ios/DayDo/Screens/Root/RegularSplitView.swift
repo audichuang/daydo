@@ -9,6 +9,8 @@ struct RegularSplitView: View {
     @State private var isWide = false
     @State private var calendarPath = NavigationPath()
     @State private var searchPath = NavigationPath()
+    /// Mac: the tab that stays visible under the floating search panel.
+    @State private var macBehindSearch: MainTab = .tasks
 
     var body: some View {
         Group {
@@ -30,6 +32,7 @@ struct RegularSplitView: View {
             }
         }
         .onChange(of: model.tab) { _, tab in
+            if tab != .search { macBehindSearch = tab }
             if tab != .calendar { calendarPath = NavigationPath() }
             if tab != .search { searchPath = NavigationPath() }
         }
@@ -59,12 +62,44 @@ struct RegularSplitView: View {
         model.tab == .tasks && model.isKanbanScope(model.scope)
     }
 
-    @ViewBuilder
+    /// Mac search is a floating panel over the current tab (desktop apps search from a
+    /// panel, not a page); the tab underneath keeps its identity while the panel is open.
     private var macContent: some View {
-        if model.tab == .tasks {
-            tasksSplitView
-        } else {
-            nonTaskTabContent
+        let shown = model.tab == .search ? macBehindSearch : model.tab
+        return ZStack(alignment: .top) {
+            Group {
+                if shown == .tasks {
+                    tasksSplitView
+                } else {
+                    tabContent(shown)
+                }
+            }
+            .allowsHitTesting(model.tab != .search)
+            .accessibilityHidden(model.tab == .search)
+
+            if model.tab == .search {
+                Palette.scrim.ignoresSafeArea()
+                    .onTapGesture { model.tab = macBehindSearch }
+                    .accessibilityLabel("關閉搜尋")
+                    .accessibilityAddTraits(.isButton)
+                SearchScreen()
+                    .frame(width: 640)
+                    .frame(maxHeight: 560)
+                    .background(Palette.background)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Palette.separator, lineWidth: 1)
+                    }
+                    .shadow(color: Palette.navShadow, radius: 24, y: 8)
+                    .padding(.top, 72)
+                    .background {
+                        // Esc closes the panel even while the search field has focus.
+                        Button("關閉搜尋") { model.tab = macBehindSearch }
+                            .keyboardShortcut(.cancelAction)
+                            .hidden()
+                    }
+                    .transition(.opacity)
+            }
         }
     }
 
@@ -130,9 +165,11 @@ struct RegularSplitView: View {
         }
     }
 
+    private var nonTaskTabContent: some View { tabContent(model.tab) }
+
     @ViewBuilder
-    private var nonTaskTabContent: some View {
-        switch model.tab {
+    private func tabContent(_ tab: MainTab) -> some View {
+        switch tab {
         case .calendar:
             NavigationStack(path: $calendarPath) {
                 CalendarScreen()
