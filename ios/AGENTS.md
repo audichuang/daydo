@@ -22,10 +22,10 @@
 
 ## Mac 版（Mac Catalyst）
 
-- Mac 是 iPad 的 regular 版面加鍵盤與滑鼠，不另做畫面、不開 Mac 資料夾。只在 Mac 才有的差異用 `Platform.isMac` 的一般 `if`（iOS 編譯也檢查得到 Mac 分支）；`#if targetEnvironment(macCatalyst)` 只包 iOS SDK 編不過的 API。鍵盤、觸控板、快捷鍵的新行為也要包 `Platform.isMac`：不分平台時曾讓 iPhone 接外接鍵盤能無確認永久刪除任務。
+- Mac 沿用 iPad 的 regular 畫面，不開 Mac 資料夾；只有外框照桌面 App 改（使用者看到「放大版 iPad」會直接說奇怪）：左側圖示欄切分頁、只有任務分頁有清單欄、月曆撐滿視窗。只在 Mac 才有的差異用 `Platform.isMac` 的一般 `if`（iOS 編譯也檢查得到 Mac 分支）；`#if targetEnvironment(macCatalyst)` 只包 iOS SDK 編不過的 API。鍵盤、觸控板、快捷鍵的新行為也要包 `Platform.isMac`：不分平台時曾讓 iPhone 接外接鍵盤能無確認永久刪除任務。
 - Mac 版沒有 Sign in with Apple（Catalyst 的 Developer ID profile 不支援，Mac 用 `DayDo/DayDo-mac.entitlements`），Apple 登入與連結入口在 Mac 一律隱藏。
 - Mac Debug 與 brew 裝的正式版同 bundle id：Debug 資料、偏好、Keychain 已改用獨立位置，但通知中心仍共用，Mac Debug 不重排提醒。`-DayDoReset`／`-DayDoSkipLogin`／`-DayDoDemo` 只在 Debug 生效（ArchitectureTests 擋）。
-- 驗收：`open -n <uitest.sh mac 印出的 .app> --args -DayDoSkipLogin -DayDoDemo` 實際操作並截圖；Mac 沒有 UI 測試，動到 `DayDo/Screens` 的 Mac 改動，合併前跑 `ios/scripts/uitest.sh ipad`。
+- 驗收：`open -n <uitest.sh mac 印出的 .app> --args -DayDoReset -DayDoSkipLogin -DayDoDemo`（不加 `-DayDoReset` 會重複灌範例資料，每筆任務出現兩次） 實際操作並截圖；Mac 沒有 UI 測試，動到 `DayDo/Screens` 的 Mac 改動，合併前跑 `ios/scripts/uitest.sh ipad`。
 
 ## 踩過的雷
 
