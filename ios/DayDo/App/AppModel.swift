@@ -85,6 +85,8 @@ final class AppModel {
 
     // Navigation
     var tab: MainTab = .tasks
+    /// Unsent quick-add titles per scope; kept here so switching list/kanban (which rebuilds TaskListScreen) does not drop them.
+    var quickAddDrafts: [TaskScope: String] = [:]
     var scope: TaskScope = .smart(.today) {
         didSet {
             if oldValue != scope {

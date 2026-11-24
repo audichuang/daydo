@@ -22,7 +22,10 @@ struct TaskListScreen: View {
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var kanbanHorizontalScroll = ScrollPosition(edge: .leading)
     @State private var kanbanScrollResetToken = 0
-    @State private var quickAddText = ""
+    private var quickAddText: String {
+        get { model.quickAddDrafts[scope] ?? "" }
+        nonmutating set { model.quickAddDrafts[scope] = newValue.isEmpty ? nil : newValue }
+    }
     @State private var quickAddSubmitting = false
     @State private var quickAddKeepFocus = false
     @FocusState private var quickAddFocused: Bool
@@ -359,7 +362,7 @@ struct TaskListScreen: View {
             Image(systemName: "plus")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(quickAddFocused ? accent.text : Palette.textTertiary)
-            TextField("新增任務至 \(model.scopeTitle(scope))", text: $quickAddText)
+            TextField("新增任務至 \(model.scopeTitle(scope))", text: Binding(get: { quickAddText }, set: { quickAddText = $0 }))
                 .txt(14)
                 .foregroundStyle(Palette.text)
                 .tint(accent.color)
@@ -397,8 +400,8 @@ struct TaskListScreen: View {
                 quickAddSubmitting = false
             }
             let created = await model.createQuickTask(title: title, in: targetScope)
-            if created != nil, quickAddText == submitted {
-                quickAddText = ""
+            if created != nil, model.quickAddDrafts[targetScope] == submitted {
+                model.quickAddDrafts[targetScope] = nil
             }
             if quickAddKeepFocus && showQuickAdd && isActive && !model.hasActiveRootSheet {
                 quickAddFocused = true
