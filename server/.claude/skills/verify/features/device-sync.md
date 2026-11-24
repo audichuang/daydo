@@ -8,7 +8,7 @@ A signed-in device uploads its first-login data and then its tasks over `/sync/p
 - `seed` creates project `verify-seed` plus N tasks and their checklist items, in batches of 50 ops. It is skipped when the project already exists.
 - `pull` returns all scopes and all pages, and summarizes verify-seed with the MCP liveness rules.
 - `find` locates a task by exact title and optionally checks its status.
-- `soft-delete` writes `deletedAt` on probe tasks with an HLC that beats the server clocks.
+- `trash` writes `deletedAt` on probe tasks with an HLC that beats the server clocks.
 
 ## How to get to it (user POV)
 

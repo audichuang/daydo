@@ -24,7 +24,7 @@ Preconditions:
 
 - `$S/mac.sh doctor` is OK and the window is 1400x900.
 
-- **Month default.** Read AX: `calendarModeMenu` says `目前月`, and month cells list task buttons (e.g. `週會、10:00`). Shot `cal-month`.
+- **Month default.** Read AX: `calendarModeMenu`'s label contains `目前月`, and month cells list task buttons (e.g. `週會、10:00`). Shot `cal-month`.
 - **Cross-month.** Click the button inside a grey next-month container (e.g. `12 月 1 日 週二`). `calendarTitle` reads `<yyyy> 年 <m> 月 1 日 …` and the sidebar month button reads the same month. Shot `cal-cross-month`.
 - **Filter.** Click sidebar row `工作`; it becomes `(selected)` and only 工作 tasks remain. Click `全部清單` to clear.
 - **Inspector.** Click a task button; `taskTitleField` appears with its title. `pressKey('Escape')`; `taskTitleField` is gone.

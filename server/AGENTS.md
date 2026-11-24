@@ -5,7 +5,7 @@
 部署到 Cloudflare 的 Worker（Void 框架，底層 Hono），名稱 `daydo-api`。D1 存跨使用者的資料（帳號、session、成員關係、邀請、`entityHome`／`listScopes`）；任務與清單等列資料存在每位使用者一個的 `Scope` Durable Object。
 
 - `routes/`：HTTP 端點，檔名即路徑；`*.dev.ts` 只在開發建置掛上。邏輯放 `src/`（`auth`、`sync`、`scope`、`membership`、`sharing`、`attachments`、`mcp`、`oauth`、`serverops`、`domain`、`ics`），route 只做轉接。附件檔案存 Cloudflare R2（經 `src/deps.ts` 的 `createStorage` 注入 `AppDeps.storage`；binding 與 key 格式見 `README.md`）。
-- `durable-objects/scope.ts` 只是 RPC 轉接器（開 `transactionSync`、持 HLC 狀態與故障開關）；Scope 帳本的規則在 `src/scope/`（schema、store、push 授權、成員投影、purge、pull、row 檢視），全部是同步函式。Worker↔DO 的 RPC 介面改動必須前後相容：部署期間新舊版本會混跑（`tests/scope-rpc-compat.test.ts` 會拿 main 的舊 DO 實跑）。
+- `durable-objects/scope.ts` 只是 RPC 轉接器（開 `transactionSync`、持 HLC 狀態與故障開關）；Scope 帳本的規則在 `src/scope/`（schema、store、push 授權、成員投影、purge、pull、row 檢視），全部是同步函式。Worker↔DO 的 RPC 介面改動必須前後相容：部署期間新舊版本會混跑（`tests/scope-rpc-compat.test.ts` 會拿測試裡 `LEGACY_COMMIT` 釘住的舊版 DO 實跑）。
 - 名詞（Scope ledger、D1 帳本、OpEnvelope、intent、purged 與 gone）見 `GLOSSARY.md`；`src/membership/` 給可組進 `db.batch()` 的 statement，永久刪除清單的原子性靠同一個 batch。
 - `middleware/01.access.ts`：正式環境的 Cloudflare Access 驗證。
 - `db/schema.ts` → `db/migrations/`：D1 schema；改完用 `npx void db generate` 產新 migration，已有的不改。
@@ -31,4 +31,4 @@
 - `src/domain/`：從 Swift 移植的規則（重複、提醒、排程、sortKey、標籤、uuid），以 `spec/fixtures` 的向量測試，行為要和 Swift 一致，改一邊就要改另一邊。
 - `src/ics/` 與 `crons/ics-sync.ts`：ICS 訂閱同步，cron 每 5 分鐘一輪；cron 經 `productionAppDeps(env)` 拿 db 與 Scope stub，`env` 用 handler 參數。
 - MCP 環境變數、secrets 與正式環境設定見 `README.md`「MCP Server」。
-- 部署後或改了 auth／sync／OAuth／MCP 工具，要在正式環境證明行為時用 `.claude/skills/verify/`（信箱註冊、灌資料、`claude mcp login`、`claude -p` 斷言）；測試帳號 `pokemongo030501@gmail.com` 的 Gmail 在 ego-browser 第 8 個帳號。
+- 部署後或改了 auth／sync／OAuth／MCP 工具，要在正式環境證明行為時用 `.claude/skills/verify/`（信箱註冊、灌資料、`claude mcp login`、`claude -p` 斷言）；測試帳號 `pokemongo030501@gmail.com` 的 Gmail 在 ego-browser 的 Gmail index 8（`mail/u/8`）。

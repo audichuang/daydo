@@ -17,6 +17,7 @@ tf verify --app 6834936769 --build <N> --group "自己" --wait 20m
 - 簽章走 Xcode 已登入的帳號；帶 API key（`-authenticationKey*`）時 Xcode 27.2 回 `Authentication failed: bearer token`。
 - `testflight.sh` 的 `-exportArchive` 用 `ExportOptions.plist` 的 `destination=upload` 同一個指令就上傳；只有 `export.log` 顯示在上傳前失敗（例如取得 App Store Connect store configuration／帳號這步報「No Accounts with App Store Connect Access」加「The request cannot be processed at this time. Please try again later」的暫時錯誤，並非帳號登出）才確定沒上傳，可用同一個 build 號重跑。上傳階段的錯誤（連線中斷、逾時）結果不明，`tf verify` 回 PENDING 時繼續查，確認 Apple 沒收到才重用 build 號。
 - build 號用 `tf next-build` 的流水號，不用時間戳。
+- `asc` 報 keychain read failed／access denied 時，加 `ASC_BYPASS_KEYCHAIN=1` 重跑，改用設定檔或環境變數的憑證。
 - 上傳後 build 不會自動進「自己」，照 `tf verify` 的 `next=` 跑 `tf distribute`，到 `RESULT READY` 才算發出去。
 
 ## Mac（Homebrew）
@@ -30,4 +31,4 @@ cd ios && ./scripts/mac-release.sh
 - 版號 `<MARKETING_VERSION>.<main 的 commit 數>`，tag `mac-v<版號>`，與 TestFlight 的 build 號無關。腳本要求 `HEAD` 等於 `origin/main`；同一版重跑會跳過已完成的步驟（Release 已上傳就只補 cask）。
 - Developer ID 私鑰在 `codexbar-signing` 鑰匙圈（密碼在 1Password Agent），鎖著時 codesign 會跳密碼視窗、xcodebuild 無聲卡住；腳本會先解鎖。公證用 notarytool profile `codexbar-notary`。
 - Release 是公開的，zip 裡含 Access service token（`spec/sync.md` 已接受 token 拆得出來）。
-- 發完用 `brew upgrade --cask audichuang/tap/daydo` 裝起來、開得了並登入成功才算發出去。
+- 發完先 `brew update`（否則 tap 是舊的、看不到新版）再 `brew upgrade --cask audichuang/tap/daydo` 裝起來，開得了並登入成功才算發出去。

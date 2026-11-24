@@ -26,6 +26,7 @@ design/      設計稿
 - API 名稱與欄位對齊 ticktick-mcp（私有 repo `audichuang/ticktick-mcp` 的 `src/tools.ts`，本機沒有 clone，用 `gh api repos/audichuang/ticktick-mcp/contents/src/tools.ts --jq .content | base64 -d` 讀）：priority 0/1/3/5、status 0/2、`TRIGGER:` 提醒、RRULE、ISO 8601 `start`/`due` + `timezone` + `all_day`。MCP（`server/src/mcp/`）也沿用那套工具名。
 - Schema 為同步預留：id 由 client 產生（UUIDv7），時間戳是 epoch ms，刪除用 `deletedAt` 軟刪除，每次寫入在同一 transaction 寫一筆 `change`（outbox，含變更欄位名）。改 schema 用新的 migration，已有的不改。
 - 排序鍵用 `SortKey`（fractional index），不要重新編號。
+- 會顯示其他成員的畫面（共享成員、指派）：名字與頭像取自登入帳號（Google 名字與大頭照、Apple 第一次授權的名字），拿不到才請使用者填；預設值不能人人相同，自己那列標「（你）」，「我」這類佔位名不當成會同步出去的資料。驗收要有兩個帳號並排的截圖或 UI 測試 fixture。
 - 互動照 TickTick，配色與字級照設計稿；兩者衝突時互動跟 TickTick。使用者會貼 TickTick 與 DayDo 的截圖附一句話回饋，先比對 TickTick 截圖的結構與互動再改。
 - 只處理正常使用會碰到的情況：需要異常 client、刻意重用 id、極端並發時序才會發生的，記進 `spec/sync.md`「已知限制」，不加新機制（權限檢查、輸入驗證、防資料遺失不在此限）。功能範圍以家人實際會用到的為準，少用的往後排。
 - 這個 App 目前是測試用：畫面照使用者給的 TickTick 截圖做齊，後端還沒做的功能也保留入口、在本機可操作；不放「尚未開放」「僅存於這台裝置」之類的說明文字。共享掛在清單上，不另開分頁。
@@ -36,7 +37,7 @@ design/      設計稿
 
 ```bash
 cd DayDoCore && swift test                       # 核心單元測試
-cd server && npm ci && npm run check              # 同步後端：lint＋型別檢查＋單元測試＋本機 dev server 上的登入與同步 e2e
+cd server && npm ci && npm run check              # 同步後端完整檢查（lint、型別、單元測試、全部 e2e 含 ics／mcp／fault），合併前跑；日常改動用 npm run check:fast
 cd ios && xcodegen generate                      # 改了 project.yml 或增刪檔案後
 ios/scripts/uitest.sh [build|iphone|ipad] [xcodebuild 參數…]  # 編譯檢查或 UI 流程測試，單一測試加 -only-testing:DayDoUITests/<類別>/<方法>
 ios/scripts/uitest.sh mac                        # Mac 版編譯檢查（不碰模擬器、不拿鎖），印出 .app 路徑；改了 #if targetEnvironment(macCatalyst) 區塊或 project.yml 後
@@ -81,4 +82,5 @@ repo 沒有 GitHub Actions：push 後不等 CI，合併前以本機測試結果�
 - 每個問題照常回報，但標明正常使用 DayDo 會不會碰到；只有異常 client 或極端時序才會發生的，建議記進 `spec/sync.md`「已知限制」，不要求加機制。
 - diff 新增的判斷如果別處已經有一份（同一條規則的第二份），標出來並指出該擴充哪個既有 module。
 - diff 取代既有流程時（例如 Mac 日曆浮窗改成右側詳情），只剩舊流程在用的元件、參數、狀態要在同一個 diff 刪掉；漏刪會變成沒人用卻每次照跑的程式碼，日曆錨點探針就這樣多留了兩輪。
+- 只影響實體鍵盤導覽（iPad 外接鍵盤、用 Tab 在欄位間移動）的 finding 照常列出但不修，也不為它多開一輪審查：使用者不用外接鍵盤，這類意見曾連三輪佔掉審查輪數。Mac 的鍵盤操作、觸控與 VoiceOver 照常處理。
 - 修正一類問題時要附一道護欄：server 加在 `.oxlintrc.json` 或 `tests/architecture.test.ts`，App 加在 `DayDoCore/Tests/DayDoCoreTests/ArchitectureTests.swift`，拿掉修正時它要失敗；做不到就寫明原因。

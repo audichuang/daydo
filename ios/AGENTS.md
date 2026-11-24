@@ -37,7 +37,7 @@
 
 ## 踩過的雷
 
-- iPad 版面：開任務詳情一律由 `AppModel` 決定內嵌或 sheet，畫面不要自己判斷；內嵌詳情、垃圾桶、設定子頁都在 iPad 上出過資料遺失或遮擋的 bug，改這幾處要用 `ios/scripts/uitest.sh ipad` 跑過。
+- iPad 版面：開任務詳情一律走 `AppModel.openTask`（傳入 `inlineAvailable`），畫面不自己建 sheet 或自設內嵌選取；內嵌詳情、垃圾桶、設定子頁都在 iPad 上出過資料遺失或遮擋的 bug，改這幾處要用 `ios/scripts/uitest.sh ipad` 跑過。
 - 先改畫面、延遲寫入的樂觀更新：寫入前要重讀任務的最新狀態，否則等待期間同一任務的存檔會把這次動作吞掉。重複任務完成後 id 不變、只換成下一次，樂觀狀態要記「哪一次」，不能只記 id。
 - 被 `.clipped()` 裁掉或收合起來看不見的內容仍然點得到，要另外關掉點擊（日曆收合成單週時，隱藏的那幾週曾經點得到）。
 - 深淺色：顏色只走 `Palette`（`UIColor(dynamicProvider:)`），深色值要和改版前一致；外觀只經 `AppearanceApplier` 設視窗的 override；啟動畫面的狀態列靠 `UIStatusBarStyleLightContent` 維持白字。
