@@ -335,6 +335,20 @@ private let guards: [Guard] = [
             "#if targetEnvironment(macCatalyst)",
         ]
     ),
+    Guard(
+        name: "Esc goes through SelectionShortcutBridge (skips active text input); .keyboardShortcut(.cancelAction) also steals Esc mid Zhuyin composition",
+        directories: ["ios/DayDo/Screens", "ios/DayDo/Components"],
+        pattern: #"\.keyboardShortcut\(\s*\.cancelAction"#,
+        allow: [
+            // Unresolved risk, not a reason: Esc closes the Mac search panel while its field may be composing Zhuyin.
+            "ios/DayDo/Screens/Root/RegularSplitView.swift",
+            // Unresolved risk, not a reason: Esc on the Mac email-code step while a field may be composing.
+            "ios/DayDo/Screens/Account/SignInView.swift",
+        ],
+        bad: [
+            ".keyboardShortcut(.cancelAction)",
+        ]
+    ),
 ]
 
 @Suite struct ArchitectureTests {
@@ -366,6 +380,20 @@ private let guards: [Guard] = [
         #expect(ownerIdsCalls == 3, "Expected 1 definition + 2 call sites (fetchActive & tasks) for taskOwnerIds(, found \(ownerIdsCalls)")
         #expect(ownerCalls == 2, "Expected 1 definition + 1 call site in taskOwnerIds for taskOwnerId(, found \(ownerCalls)")
         #expect(code.contains("TaskQuery(memberId: memberId)"), "Expected listSections(.smart(.all)) to delegate to fetchActive via TaskQuery(memberId:)")
+    }
+
+    /// A UIUserInterfaceStyle key in the generated Info.plist pins the app to one appearance and
+    /// silently breaks the 淺色／跟隨系統 settings (appearance goes only through AppearanceApplier).
+    @Test func infoPlistDoesNotPinInterfaceStyle() throws {
+        let yml = try String(contentsOf: repoRoot.appendingPathComponent("ios/project.yml"), encoding: .utf8)
+        #expect(yml.contains("UIStatusBarStyleLightContent"), "project.yml moved or lost its info keys; re-point this guard")
+        #expect(!yml.contains("UIUserInterfaceStyle"), "ios/project.yml must not set UIUserInterfaceStyle")
+        let plists = (FileManager.default.enumerator(at: repoRoot.appendingPathComponent("ios/DayDo"), includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL } ?? []).filter { $0.pathExtension == "plist" }
+        for url in plists {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            #expect(!text.contains("<key>UIUserInterfaceStyle</key>"), "\(url.lastPathComponent) must not set UIUserInterfaceStyle")
+        }
     }
 
     /// Every screen that creates a task must hand the result to
