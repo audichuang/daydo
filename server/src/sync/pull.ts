@@ -18,7 +18,8 @@ import {
   type PullMemberRow,
 } from '../membership';
 import type { MembershipRole } from './entities';
-import { chunkArray, type AppDb } from './push';
+import type { AppDb } from '../appDb';
+import { chunkArray } from './push';
 import { scopeOwnerId, userScope } from './scopeName';
 
 export type { PullMemberRow };

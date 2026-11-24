@@ -15,10 +15,10 @@ export const idOf = (t: SnapshotRow) => String(t.row.id);
 const byUpdatedDesc = (a: SnapshotRow, b: SnapshotRow) =>
   num(b, 'updatedAt') - num(a, 'updatedAt') || compareKeys(idOf(a), idOf(b));
 
-export function requireLiveProject(snapshot: Snapshot, id: string): void {
-  if (!snapshot.liveProjects().some((p) => String(p.row.id) === id)) {
-    throw new Error(`Unknown project_id '${id}'; call list_projects first`);
-  }
+export function requireLiveProject(snapshot: Snapshot, id: string): SnapshotRow {
+  const p = snapshot.liveProjects().find((x) => String(x.row.id) === id);
+  if (!p) throw new Error(`Unknown project_id '${id}'; call list_projects first`);
+  return p;
 }
 
 function optionalProject(snapshot: Snapshot, args: Record<string, unknown>): string | undefined {

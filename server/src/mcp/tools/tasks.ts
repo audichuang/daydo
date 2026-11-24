@@ -34,7 +34,7 @@ import {
 } from '../toolkit';
 import { idOf, num, PROJECT_ID, requireLiveProject, TASK_ID, taskIn } from './tasksRead';
 
-export { SEARCH_LIMIT, taskIn, taskReadTools } from './tasksRead';
+export { SEARCH_LIMIT, taskReadTools } from './tasksRead';
 
 // MARK: - Write tools
 

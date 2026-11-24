@@ -21,7 +21,8 @@ import {
   type ServerHlcClock,
 } from '../sync/hlc';
 import { MAX_OPS_PER_PUSH, toEnvelope, type OpEnvelope } from '../sync/envelope';
-import { executeParsedSyncPush, type AppDb } from '../sync/push';
+import type { AppDb } from '../appDb';
+import { executeParsedSyncPush } from '../sync/push';
 import type { ScopeStub } from '../scope/api';
 import { serverClock } from '../sync/serverClock';
 import type { Snapshot } from './snapshot';

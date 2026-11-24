@@ -1,4 +1,4 @@
-// ToolServices from AppDeps, shared by the MCP route (routes/index.ts) and the ICS cron.
+// ToolServices from AppDeps for the MCP route (routes/index.ts).
 import type { AppDeps } from '../deps';
 import { parseInsecureHosts } from '../ics/fetch';
 import type { ToolServices } from './toolkit';

@@ -8,7 +8,7 @@ import { systemNow, type GetNow } from './clock';
 import { logEvent } from './log';
 import { selectMailer, type Mailer } from './mail/mailer';
 import type { ScopeRelocationStub, ScopeStub } from './scope/api';
-import type { AppDb } from './sync/push';
+import type { AppDb } from './appDb';
 
 const SCOPE_LOCATION_HINT: DurableObjectLocationHint = 'apac-ne';
 const EMPTY_PHYSICAL_NAMES: ReadonlyMap<string, string> = new Map();

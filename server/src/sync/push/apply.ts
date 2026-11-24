@@ -12,7 +12,7 @@ import {
   registerListScope,
 } from '../../membership';
 import type { EntityName, MembershipRole } from '../entities';
-import type { AppDb } from '../push';
+import type { AppDb } from '../../appDb';
 import { REJECT_REASON, rejectedResult } from '../rejectReason';
 import { scopeOwnerId } from '../scopeName';
 import {

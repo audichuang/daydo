@@ -5,7 +5,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { acceptInvite, createInvite, updateProjectMemberRole } from '../src/sharing';
 import { syncDueSources, syncSource } from '../src/ics/engine';
-import { MemoryIcsStore, type IcsMapping } from '../src/ics/store';
+import type { IcsMapping } from '../src/ics/store';
+import { MemoryIcsStore } from './helpers/memoryIcsStore';
 import {
   createServerHarness,
   deviceOp,

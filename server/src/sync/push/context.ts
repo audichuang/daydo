@@ -2,7 +2,7 @@ import { entityHome, user } from '@schema';
 import { and, eq, or, type BatchItem } from 'void/db';
 import { collectProjectIds, decodeForUser, forUser, purgedAmong } from '../../membership';
 import type { MembershipRole } from '../entities';
-import type { AppDb } from '../push';
+import type { AppDb } from '../../appDb';
 import type { LookupPair } from './parse';
 
 export const QUERY_CHUNK_SIZE = 50;

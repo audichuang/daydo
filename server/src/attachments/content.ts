@@ -4,7 +4,7 @@ import { and, eq } from 'void/db';
 import { loadProjectAccess, requesterRoleOf } from '../membership';
 import type { ScopeStub } from '../scope/api';
 import { roleCanWrite } from '../sync/access';
-import type { AppDb } from '../sync/push';
+import type { AppDb } from '../appDb';
 import { canReadAttachment } from './access';
 import { attachmentObjectKey, MAX_ATTACHMENT_BYTES } from './r2';
 

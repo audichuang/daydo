@@ -4,7 +4,7 @@ import type { PullScopeRow, ScopeStub } from '../scope/api';
 import { canManageListLifecycle, hasWriteRole, roleOf } from '../sync/access';
 import type { MembershipRole } from '../sync/entities';
 import { executeSyncPull } from '../sync/pull';
-import type { AppDb } from '../sync/push';
+import type { AppDb } from '../appDb';
 import { userScope } from '../sync/scopeName';
 import type { WriteOutcome } from './writer';
 

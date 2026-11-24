@@ -5,12 +5,12 @@ import {
   IcsMappingConflictError,
   LEASE_TTL_MS,
   MAX_SOURCES_PER_USER,
-  MemoryIcsStore,
   type IcsStore,
   type MappingCommit,
   type NewMapping,
 } from '../src/ics/store';
 import { IcsError } from '../src/ics/types';
+import { MemoryIcsStore } from './helpers/memoryIcsStore';
 import { createTestD1 } from './sqliteD1';
 
 const A = 'user-a';

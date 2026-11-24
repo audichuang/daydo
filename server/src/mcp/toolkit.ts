@@ -15,7 +15,7 @@ import {
   type WriterDeps,
 } from '../serverops/writer';
 import type { ServerHlcClock } from '../sync/hlc';
-import type { AppDb } from '../sync/push';
+import type { AppDb } from '../appDb';
 import type { ScopeStub } from '../scope/api';
 
 export interface ToolSchema {

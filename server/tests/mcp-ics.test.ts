@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '../db/schema';
 import { acceptInvite, createInvite } from '../src/sharing';
-import { MemoryIcsStore } from '../src/ics/store';
+import { MemoryIcsStore } from './helpers/memoryIcsStore';
 import { runIcsCron } from '../src/ics/cron';
 import { handleToolCall, HINTS, TOOL_DEFS } from '../src/mcp/registry';
 import type { ToolContext } from '../src/mcp/toolkit';

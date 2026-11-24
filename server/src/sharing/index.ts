@@ -14,7 +14,7 @@ import {
   setActiveMemberRole,
 } from '../membership';
 import { resolveMemberId, type MembershipRole } from '../sync/entities';
-import type { AppDb } from '../sync/push';
+import type { AppDb } from '../appDb';
 import type { ScopeStub } from '../scope/api';
 
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;

@@ -1,5 +1,4 @@
-import type * as schema from '@schema';
-import type { DrizzleD1Database } from 'void/db';
+import type { AppDb } from '../appDb';
 import type { PushOpResult, ScopeStub } from '../scope/api';
 import { toEnvelope, type OpEnvelope } from './envelope';
 import { advanceServerHlc, type ServerHlcClock } from './hlc';
@@ -9,7 +8,6 @@ import { chunkArray, loadPushContext } from './push/context';
 import { collectPushLookups } from './push/parse';
 import { planPushBatch } from './push/plan';
 
-export type AppDb = DrizzleD1Database<typeof schema>;
 
 export { chunkArray };
 

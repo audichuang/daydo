@@ -4,7 +4,7 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../db/schema';
-import type { AppDb } from '../src/sync/push';
+import type { AppDb } from '../src/appDb';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.resolve(__dirname, '../db/migrations');

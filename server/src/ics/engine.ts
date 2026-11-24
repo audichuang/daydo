@@ -18,7 +18,7 @@ import {
 import { isNil, rowSchedule, sameValue, scheduleColumns } from '../serverops/values';
 import { assertHasData, pushIntents, type WriteIntent, type WriteOutcome } from '../serverops/writer';
 import type { ServerHlcClock } from '../sync/hlc';
-import type { AppDb } from '../sync/push';
+import type { AppDb } from '../appDb';
 import { REJECT_REASON } from '../sync/rejectReason';
 import type { ScopeStub } from '../scope/api';
 import { fetchIcs, type FetchIcsOptions } from './fetch';

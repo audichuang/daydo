@@ -1,7 +1,7 @@
 import { entityHome, listScopes, projectMembership, purgedProject, user } from '@schema';
 import { and, eq, inArray, isNull, sql } from 'void/db';
 import type { MembershipRole } from '../sync/entities';
-import type { AppDb } from '../sync/push';
+import type { AppDb } from '../appDb';
 
 // Statement builders return un-awaited queries so callers can place them in the same
 // db.batch() as today; decoders turn that batch slot's rows back into values.

@@ -14,7 +14,7 @@ import {
   ToolValidationError,
   type ToolDef,
 } from '../toolkit';
-import { taskIn } from './tasks';
+import { taskIn } from './tasksRead';
 
 const TEXT_LIMIT_BYTES = 1024 * 1024;
 // Claude rejects images whose base64 payload exceeds 5 MB; base64 inflates bytes by 4/3.

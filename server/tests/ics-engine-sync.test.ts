@@ -3,7 +3,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { acceptInvite, createInvite, updateProjectMemberRole } from '../src/sharing';
 import { syncSource } from '../src/ics/engine';
-import { LEASE_TTL_MS, MemoryIcsStore, type IcsMapping } from '../src/ics/store';
+import { LEASE_TTL_MS, type IcsMapping } from '../src/ics/store';
+import { MemoryIcsStore } from './helpers/memoryIcsStore';
 import {
   createServerHarness,
   deviceOp,

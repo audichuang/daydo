@@ -322,6 +322,10 @@
                 "regex": "^(\\.\\./)+sync/(push|pull|merge|entities)(/|$)",
                 "allowTypeImports": true,
                 "message": "mcp/tools/** and ics/** must not value-import sync/(push|pull|merge|entities)."
+              },
+              {
+                "regex": "^(\\.\\./)+mcp(/|$)",
+                "message": "src/ics/** must not import mcp; the MCP tools sit above ICS."
               }
             ]
           }

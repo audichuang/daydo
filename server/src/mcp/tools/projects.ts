@@ -7,6 +7,7 @@ import { trashTaskIntent } from '../../serverops/taskWrites';
 import { formatProject, openTasksOf, summarizeTask } from '../format';
 import { bySortKey, compareKeys } from '../../serverops/values';
 import { openSession, openWriteSession, requireStr, ToolValidationError, type ToolDef } from '../toolkit';
+import { requireLiveProject } from './tasksRead';
 
 const COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
@@ -16,12 +17,6 @@ export function parseColor(v: unknown): string | undefined {
     throw new ToolValidationError('color', "Argument 'color' must be #RRGGBB or #RGB");
   }
   return v.trim();
-}
-
-function liveProject(snapshot: Snapshot, id: string): SnapshotRow {
-  const p = snapshot.liveProjects().find((x) => String(x.row.id) === id);
-  if (!p) throw new Error(`Unknown project_id '${id}'; call list_projects first`);
-  return p;
 }
 
 /** Inbox first, then by sortKey. */
@@ -54,7 +49,7 @@ export function projectTools(): ToolDef[] {
       inputSchema: { type: 'object', required: ['project_id'], properties: { project_id: PROJECT_ID } },
       run: async (args, ctx) => {
         const { snapshot } = await openSession(ctx);
-        return formatProject(snapshot, liveProject(snapshot, requireStr(args, 'project_id')));
+        return formatProject(snapshot, requireLiveProject(snapshot, requireStr(args, 'project_id')));
       },
     },
     {
@@ -64,7 +59,7 @@ export function projectTools(): ToolDef[] {
       inputSchema: { type: 'object', required: ['project_id'], properties: { project_id: PROJECT_ID } },
       run: async (args, ctx) => {
         const { snapshot } = await openSession(ctx);
-        const project = liveProject(snapshot, requireStr(args, 'project_id'));
+        const project = requireLiveProject(snapshot, requireStr(args, 'project_id'));
         return {
           project: formatProject(snapshot, project),
           tasks: openTasksOf(snapshot, String(project.row.id)).map((t) => summarizeTask(snapshot, t)),
@@ -130,7 +125,7 @@ export function projectTools(): ToolDef[] {
         if (name === undefined && color === undefined) throw new Error('Nothing to update: give name or color');
         const session = await openWriteSession(ctx);
         const { snapshot } = session;
-        liveProject(snapshot, id);
+        requireLiveProject(snapshot, id);
         if (!snapshot.canWrite(id)) {
           throw new Error(`Project '${id}' is read-only for you (role: ${snapshotRole(snapshot, id) ?? 'none'})`);
         }
@@ -140,7 +135,7 @@ export function projectTools(): ToolDef[] {
         };
         await session.write([{ entity: 'project', entityId: id, set }]);
         const { view } = session.readBack('project', id);
-        return formatProject(view, liveProject(view, id));
+        return formatProject(view, requireLiveProject(view, id));
       },
     },
     {
@@ -156,7 +151,7 @@ export function projectTools(): ToolDef[] {
         const id = requireStr(args, 'project_id');
         const session = await openWriteSession(ctx);
         const { snapshot, now } = session;
-        const project = liveProject(snapshot, id);
+        const project = requireLiveProject(snapshot, id);
         if (project.row.isInbox === true) throw new Error('The inbox cannot be deleted');
         if (!canManageLifecycle(snapshot, id)) {
           throw new Error(`Only the owner can delete project '${id}' (your role: ${snapshotRole(snapshot, id) ?? 'none'})`);

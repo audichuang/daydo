@@ -1,8 +1,8 @@
 import { systemNow } from '../clock';
 import { productionAppDeps, type AppBindings } from '../deps';
 import { logEvent } from '../log';
-import { toolServices } from '../mcp/services';
 import { syncDueSources, ICS_SOURCES_PER_RUN, type IcsEngineDeps } from './engine';
+import { parseInsecureHosts } from './fetch';
 import { D1IcsStore } from './store';
 
 export interface IcsCronEnv {
@@ -15,14 +15,14 @@ export interface IcsCronEnv {
 
 function productionDeps(env: IcsCronEnv): IcsEngineDeps {
   const app = productionAppDeps(env);
-  const services = toolServices(app, env);
+  const insecureHosts = parseInsecureHosts(env.ICS_ALLOW_INSECURE_HOSTS);
   return {
-    store: new D1IcsStore(services.db),
-    db: services.db,
-    getScopeStub: services.getScopeStub,
+    store: new D1IcsStore(app.db),
+    db: app.db,
+    getScopeStub: app.getScopeStub,
     getNow: app.getNow,
-    ...(services.defaultTimeZone && { defaultTimeZone: services.defaultTimeZone }),
-    ...(services.ics?.fetchOptions && { fetchOptions: services.ics.fetchOptions }),
+    ...(env.DEFAULT_TIMEZONE && { defaultTimeZone: env.DEFAULT_TIMEZONE }),
+    ...(insecureHosts.length > 0 && { fetchOptions: { insecureHosts } }),
   };
 }
 

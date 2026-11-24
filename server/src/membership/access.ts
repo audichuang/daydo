@@ -1,7 +1,7 @@
 import { entityHome, invite, projectMembership, purgedProject, user } from '@schema';
 import { and, eq, isNull, ne, sql, type BatchItem } from 'void/db';
 import type { MembershipRole } from '../sync/entities';
-import type { AppDb } from '../sync/push';
+import type { AppDb } from '../appDb';
 import { asMembershipRole } from './statements';
 
 export interface MembershipState {
