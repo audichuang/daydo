@@ -2266,7 +2266,6 @@ struct TimeGrid: View {
     /// 學校接小安／學校接小明 to the same prefix.
     static let ownerAvatarMinTitleWidth: CGFloat = 56
     /// Width budget for the Mac single-line `[HH:MM] ` time prefix at 12pt medium.
-    private static let macTimePrefixWidth: CGFloat = 48
 
     func allDayChip(_ t: TodoTask, width: CGFloat) -> some View {
         let color = Palette.listColor(model.project(t.projectId)?.color)
@@ -2342,11 +2341,8 @@ struct TimeGrid: View {
             VStack(alignment: .leading, spacing: 1) {
                 if Platform.isMac {
                     let showRange = h >= 36 && schedule?.startMinute != nil
-                    let avatarReserved: CGFloat = showAvatar ? avatarSize + strokeWidth + 4 : 0
-                    let showTimePrefix = !showRange
-                        && w >= 3 + 4 + Self.macTimePrefixWidth + Self.ownerAvatarMinTitleWidth + 4 + avatarReserved
-                    let prefix = showTimePrefix ? (schedule?.startMinute.map { "[\(DateText.hm($0))] " } ?? "") : ""
-                    Text(prefix + task.title)
+                    // Title only: a "[HH:MM]" prefix crowded out titles of side-by-side blocks and showed the wrong day on cross-midnight continuations.
+                    Text(task.title)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(done ? Palette.done : Palette.text)
                         .strikethrough(done)
