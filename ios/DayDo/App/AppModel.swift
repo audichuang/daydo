@@ -185,6 +185,11 @@ final class AppModel {
     /// Opens a task's detail inline in the split view when in a regular-width
     /// window on the Tasks tab; otherwise opens it as a root sheet.
     func openTask(_ id: String, sectionId: String? = nil, inlineAvailable: Bool, focusIfAlreadyInline: Bool = false) {
+        // Mac search floats over a live editor; a second editor for the same task would let its stale draft win later.
+        if Platform.isMac && tab == .search {
+            if calendarInspectorTaskId == id { tab = .calendar; return }
+            if selectedTaskId == id { tab = .tasks; return }
+        }
         if inlineAvailable && tab == .tasks {
             if let sectionId {
                 selectedTaskRow = TaskRowSelection(sectionId: sectionId, taskId: id)

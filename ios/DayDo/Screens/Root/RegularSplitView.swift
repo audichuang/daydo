@@ -40,9 +40,9 @@ struct RegularSplitView: View {
             proxy.size.width >= 1100
         } action: { wide in
             isWide = wide
-            syncColumnVisibility(wide: wide, isTasks: model.tab == .tasks)
+            syncColumnVisibility(wide: wide, isTasks: shownTab == .tasks)
         }
-        .onChange(of: model.tab == .tasks) { _, isTasks in
+        .onChange(of: shownTab == .tasks) { _, isTasks in
             syncColumnVisibility(wide: isWide, isTasks: isTasks)
         }
         .onChange(of: isKanban) { _, newIsKanban in
@@ -58,6 +58,9 @@ struct RegularSplitView: View {
         }
     }
 
+    /// The tab actually on screen: on Mac the search panel floats over the previous tab.
+    private var shownTab: MainTab { Platform.isMac && model.tab == .search ? macBehindSearch : model.tab }
+
     private var isKanban: Bool {
         // The tasks tab also stays visible under the Mac search panel.
         (model.tab == .tasks || (Platform.isMac && model.tab == .search && macBehindSearch == .tasks))
@@ -67,7 +70,7 @@ struct RegularSplitView: View {
     /// Mac search is a floating panel over the current tab (desktop apps search from a
     /// panel, not a page); the tab underneath keeps its identity while the panel is open.
     private var macContent: some View {
-        let shown = model.tab == .search ? macBehindSearch : model.tab
+        let shown = shownTab
         return ZStack(alignment: .top) {
             Group {
                 if shown == .tasks {

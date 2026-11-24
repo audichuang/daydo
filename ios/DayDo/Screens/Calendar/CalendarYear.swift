@@ -21,7 +21,7 @@ struct YearGrid: View {
             }
             return out
         }()
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: isRegular ? 20 : 14, alignment: .top), count: cols), spacing: isRegular ? 22 : 18) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: isRegular ? 20 : 14, alignment: Platform.isMac ? .top : .center), count: cols), spacing: isRegular ? 22 : 18) {
             ForEach(1...12, id: \.self) { m in
                 YearMonthCell(
                     year: year,

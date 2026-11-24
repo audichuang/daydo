@@ -340,7 +340,9 @@ struct CalendarScreen: View {
             MacCalendarIconButton(systemName: "sidebar.left", label: "顯示／隱藏側欄") {
                 withAnimation(Motion.layout(reduceMotion)) {
                     // Narrow window with the detail open: bring the sidebar back by closing the detail.
-                    if !macSidebarVisible && showMacSidebar { model.calendarInspectorTaskId = nil } else { showMacSidebar.toggle() }
+                    if !macSidebarVisible && showMacSidebar {
+                        if model.inlineDetailSubpageTaskId == nil { model.calendarInspectorTaskId = nil }
+                    } else { showMacSidebar.toggle() }
                 }
             }
             Text(title)
@@ -1078,6 +1080,7 @@ struct CalendarScreen: View {
                     WeekRow(week: w, month: shownMonth, today: model.today, reduceMotion: reduceMotion, fillHeight: true) { d in
                         shiftPage(direction: 0) {
                             selected = d
+                            month = d.firstOfMonth
                             modeRaw = CalMode.day.rawValue
                         }
                     } open: { id, rect in
