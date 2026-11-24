@@ -122,7 +122,7 @@ Notes:
   - `--setting-sources project,local`, so no user hooks or plugins load;
   - `--no-session-persistence`.
 - It asserts on the `tool_result` JSON (and image content blocks) in the stream, never on the model's reply.
-- App 端（iOS `HTTPSyncTransport`）的真實傳輸這支驗不到（App 只有 Apple／Google 登入），改用 DayDoCore 的 stand-in e2e：動到附件上傳／下載（`DayDoCore/Sources/DayDoCore/Sync/`、`server/src/attachments/`、附件路由）時，`devserver.sh up` 後在 `DayDoCore/` 跑 `DAYDO_SYNC_BASE_URL=http://127.0.0.1:8787 DAYDO_SYNC_EMAIL_LOGIN=1 swift test --filter AttachmentTransportE2ETests`，再 `devserver.sh down`。它只准連 loopback；Access header 與實機仍驗不到。
+- App 端（iOS `HTTPSyncTransport`）的真實傳輸這支驗不到（這支用 node 腳本扮裝置，不跑 App），改用 DayDoCore 的 stand-in e2e：動到附件上傳／下載（`DayDoCore/Sources/DayDoCore/Sync/`、`server/src/attachments/`、附件路由）時，`devserver.sh up` 後在 `DayDoCore/` 跑 `DAYDO_SYNC_BASE_URL=http://127.0.0.1:8787 DAYDO_SYNC_EMAIL_LOGIN=1 swift test --filter AttachmentTransportE2ETests`，再 `devserver.sh down`。它只准連 loopback；Access header 與實機仍驗不到。
 
 ## Evidence
 
