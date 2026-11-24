@@ -24,15 +24,11 @@
 #
 # Lease owners: a test run uses `sim-vault run --lease dd:run --boot --deny-other-leases`
 # (a held lease tied to the inherited SIM_VAULT_LEASE_FD, alive while xcodebuild or
-# recordVideo lives, blocking other owners' later ensures, and dropped automatically on exit;
-# any leftover `dd:uitest` from a killed old-version run is released under the project lock
-# first). It refuses (8) when anyone but the caller holds a lease: -DayDoReset wipes the
+# recordVideo lives, blocking other owners' later ensures, and dropped automatically on exit).
+# It refuses (8) when anyone but the caller holds a lease: -DayDoReset wipes the
 # app's data and Keychain. `up` and `down` use $DD_SIM_OWNER when set; otherwise they use
 # sim-vault session leases (`--lease auto --lease-scope <worktree> --lease-prefix dd:up`)
-# and no longer write owner files. During transition, `down` falls back to releasing and
-# removing an existing legacy owner file when `release --lease auto` reports `no-lease`, and
-# test mode allows `whoami` (or the legacy owner file if `whoami` is empty) when DD_SIM_OWNER
-# is unset.
+# and write no owner files; test mode allows the `whoami` lease when DD_SIM_OWNER is unset.
 #
 # DD_UITEST_RECORD=<file.mp4> (record-uitest.sh sets it) records the screen inside the
 # `sim-vault run` child: recordVideo starts once the device is leased and booted, the tests
@@ -165,7 +161,6 @@ fi
 orphan_hint() {
   echo "若 owner 的 worktree 已不存在、或確認那個 session 已結束，可 \`sim-vault release \"${name}\" --lease <owner>\` 清掉；不要清別人仍在用的" >&2
 }
-test_owner="dd:uitest"
 install_hint='uv tool install --force "git+https://github.com/audichuang/sim-vault@v4.1.0"'
 
 usage() {
@@ -297,14 +292,6 @@ if [[ "$mode" == build ]]; then
   exit "$build_rc"
 fi
 
-# Legacy owner file from pre-4.0 `up` (read by test/down during transition; never written).
-case "$target" in
-  iphone|ipad) alias="$target" ;;
-  *) alias="$(printf '%s' "$name" | tr -c 'A-Za-z0-9' '_')" ;;
-esac
-owner_file="$state_dir/owners/daydo-$(printf '%s' "$root" | shasum | cut -c1-40)-$alias"
-recorded_owner() { cat "$owner_file" 2>/dev/null || true; }
-
 # Reads `sim-vault whoami --json`: whether a recognizable session anchor exists (1/0)
 # and the session lease token for this worktree (empty if none or if anchor is null).
 # A null anchor (or failed whoami) must not grant session identity across sessions.
@@ -348,14 +335,15 @@ print(s.get("udid") or "")
   status_udid=$(printf '%s\n' "$parsed" | sed -n 2p)
 }
 
-# Old uitest.sh runs hold no lease and take a different lock; refuse while one of them is
-# testing on this device. Only a running xcodebuild is visible this way.
-legacy_guard() {
+# An xcodebuild testing on this device without our lock or a lease (one started outside
+# this script) would be cut off by a shutdown; refuse while one runs. Only a running
+# xcodebuild is visible this way.
+foreign_xcodebuild_guard() {
   [[ -n "$status_udid" ]] || return 0
   local pid
   for pid in $(pgrep -x xcodebuild || true); do
     if [[ "$(ps -o args= -p "$pid" 2>/dev/null || true)" == *"id=$status_udid"* ]]; then
-      echo "xcodebuild（pid ${pid}）正在「${name}」(${status_udid}) 上測試，大概是沒有 lease 的舊版 uitest.sh；等它結束再$1" >&2
+      echo "xcodebuild（pid ${pid}）正在「${name}」(${status_udid}) 上測試，沒有經過 uitest.sh、不持 lease；等它結束再$1" >&2
       exit 8
     fi
   done
@@ -392,24 +380,15 @@ fi
 
 if [[ "$mode" == down ]]; then
   load_status
-  legacy_guard 關機
+  foreign_xcodebuild_guard 關機
   if [[ -n "${DD_SIM_OWNER:-}" ]]; then
     sim-vault release "$name" --lease "$DD_SIM_OWNER"
   else
     load_whoami
-    rel_action="no-lease"
     if [[ $whoami_has_anchor == 1 ]]; then
-      rel_json=$(sim-vault release "$name" --lease auto --lease-scope "$root" --json)
-      rel_action=$(printf '%s' "$rel_json" | python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("action", ""))')
-    fi
-    if [[ "$rel_action" == no-lease && -e "$owner_file" ]]; then
-      owner="$(recorded_owner)"
-      if [[ -n "$owner" ]]; then
-        sim-vault release "$name" --lease "$owner"
-      fi
-      rm -f "$owner_file"
-    elif [[ $whoami_has_anchor != 1 ]]; then
-      echo "無法辨識目前的 session（未設 DD_SIM_OWNER 且沒有舊 owner 檔），未釋放任何 lease；若要釋放特定 lease 請設 DD_SIM_OWNER=<owner>" >&2
+      sim-vault release "$name" --lease auto --lease-scope "$root" --json >/dev/null
+    else
+      echo "無法辨識目前的 session（未設 DD_SIM_OWNER），未釋放任何 lease；若要釋放特定 lease 請設 DD_SIM_OWNER=<owner>" >&2
     fi
   fi
   if [[ "$count" == 0 ]]; then
@@ -428,10 +407,7 @@ fi
 
 if [[ "$mode" == park ]]; then
   load_status
-  legacy_guard 收
-  # Holding the lock means no test of ours is alive, so a dd:uitest lease is left over
-  # from a run that was killed.
-  sim-vault release "$name" --lease "$test_owner"
+  foreign_xcodebuild_guard 收
   trim=()
   [[ "${DD_PARK_TRIM:-}" == 1 ]] && trim=(--trim-posterboard)
   rc=0
@@ -450,10 +426,6 @@ if [[ $resident == 0 ]]; then
   fi
 fi
 
-# Holding the lock means no same-lock runner is alive, so a dd:uitest lease is left over
-# from a killed old-version run.
-sim-vault release "$name" --lease "$test_owner" --wait 1800
-
 # The caller's own manual-test lease may stay; anyone else's makes run refuse (8) without
 # leasing, checked under sim-vault's device lock. Never allow both DD_SIM_OWNER and whoami.
 caller=""
@@ -462,9 +434,6 @@ if [[ -n "${DD_SIM_OWNER:-}" ]]; then
 else
   load_whoami
   caller="$whoami_lease"
-  if [[ -z "$caller" ]]; then
-    caller="$(recorded_owner)"
-  fi
 fi
 allow=()
 [[ -z "$caller" ]] || allow=(--allow-lease "$caller")
