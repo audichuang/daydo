@@ -61,6 +61,9 @@ struct CalendarScreen: View {
     @State private var monthScrollPosition = ScrollPosition(edge: .top)
     @State private var timeGridScrollReset = 0
     @State private var popoverTarget: CalendarTaskPopoverTarget?
+    /// Mac: task shown in the editable detail pane on the calendar's right edge.
+    @State private var inspectorTaskId: String?
+    @AppStorage("macCalendarSidebar") private var showMacSidebar = true
 
     private var tasks: [TodoTask] { query.value }
     private var tasksVersion: Int { query.version }
@@ -95,16 +98,38 @@ struct CalendarScreen: View {
             if isRegular {
                 Palette.background.ignoresSafeArea()
             }
-            VStack(spacing: 0) {
-                if Platform.isMac {
-                    macHeader
-                } else if !isRegular {
-                    header
+            HStack(spacing: 0) {
+                if Platform.isMac && showMacSidebar {
+                    macSidebar
+                    Rectangle().fill(Palette.separator).frame(width: 1).ignoresSafeArea()
                 }
-                if model.filterMembers.count > 1 || projectFilter != nil {
-                    filters.padding(.horizontal, 16).padding(.top, isRegular && !Platform.isMac ? 8 : 0).padding(.bottom, 6)
+                VStack(spacing: 0) {
+                    if Platform.isMac {
+                        macHeader
+                    } else if !isRegular {
+                        header
+                    }
+                    // The Mac sidebar already shows the chosen list; no duplicate chip.
+                    if model.filterMembers.count > 1 || (projectFilter != nil && !(Platform.isMac && showMacSidebar)) {
+                        filters.padding(.horizontal, 16).padding(.top, isRegular && !Platform.isMac ? 8 : 0).padding(.bottom, 6)
+                    }
+                    content
                 }
-                content
+                if Platform.isMac, let id = inspectorTaskId {
+                    // Desktop calendar: clicking an event edits it in a side pane, not a
+                    // view-only card that then opens a sheet.
+                    Rectangle().fill(Palette.separator).frame(width: 1).ignoresSafeArea()
+                    TaskDetailContent(taskId: id, isInline: true, showCloseButton: true) {
+                        inspectorTaskId = nil
+                    }
+                    .id(id)
+                    .frame(width: 400)
+                    .background {
+                        Button("關閉詳情") { inspectorTaskId = nil }
+                            .keyboardShortcut(.cancelAction)
+                            .hidden()
+                    }
+                }
             }
             if !Platform.isMac && !model.isViewer(projectId: projectFilter) {
                 ComposeFAB { compose(day: sel, minute: nil) }
@@ -234,8 +259,85 @@ struct CalendarScreen: View {
 
     // MARK: Header
 
+    /// Mac calendar sidebar (desktop calendar layout): a mini month to jump to any day and
+    /// the list filter as always-visible rows instead of a submenu.
+    private var macSidebar: some View {
+        let mask: UInt32 = busyDays.reduce(0) { m, d in
+            d.year == shownMonth.year && d.month == shownMonth.month ? m | (1 << UInt32(d.day)) : m
+        }
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                YearMonthCell(
+                    year: shownMonth.year,
+                    month: shownMonth.month,
+                    today: model.today,
+                    busyMask: mask,
+                    isRegular: true,
+                    reduceMotion: reduceMotion,
+                    openMonth: { m in
+                        shiftPage(direction: 0) {
+                            month = m
+                            selected = m
+                            if mode == .year { modeRaw = CalMode.month.rawValue }
+                        }
+                    },
+                    openDay: { d in
+                        shiftPage(direction: 0) {
+                            selected = d
+                            month = d.firstOfMonth
+                            if mode == .year { modeRaw = CalMode.day.rawValue }
+                        }
+                    }
+                )
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("清單").txt(12, .semibold).foregroundStyle(Palette.textTertiary)
+                        .padding(.leading, 8).padding(.bottom, 4)
+                    macFilterRow(id: nil, name: "全部清單", color: nil)
+                    ForEach(model.projects) { p in
+                        macFilterRow(id: p.id, name: p.name, color: p.color)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 16)
+            .padding(.bottom, 20)
+        }
+        .scrollIndicators(.hidden)
+        .frame(width: 236)
+    }
+
+    private func macFilterRow(id: String?, name: String, color: String?) -> some View {
+        let on = projectFilter == id
+        return Button {
+            projectFilter = id
+        } label: {
+            HStack(spacing: 8) {
+                if id == nil {
+                    Image(systemName: "tray.full").font(.system(size: 12)).foregroundStyle(Palette.textSecondary).frame(width: 12)
+                } else {
+                    ListDot(color: color, size: 9).frame(width: 12)
+                }
+                Text(name).txt(13, on ? .semibold : .regular).foregroundStyle(on ? Palette.text : Palette.textBody).lineLimit(1)
+                Spacer(minLength: 4)
+                if on {
+                    Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(accent.text)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(on ? accent.soft : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.highlight)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
     private var macHeader: some View {
         HStack(spacing: 8) {
+            MacCalendarIconButton(systemName: "sidebar.left", label: "顯示／隱藏側欄") {
+                withAnimation(Motion.layout(reduceMotion)) { showMacSidebar.toggle() }
+            }
             Text(title)
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(Palette.text)
@@ -426,6 +528,8 @@ struct CalendarScreen: View {
         let includeYear = Platform.isMac
         switch mode {
         case .year: return "\(String(shownMonth.year)) 年"
+        case .day where Platform.isMac:
+            return "\(String(sel.year)) 年 \(DateText.full(sel))"
         case .week, .threeDay, .day:
             let d = rangeDays.first ?? sel
             return (!includeYear && d.year == thisYear) ? "\(d.month)月" : "\(String(d.year)) 年 \(d.month) 月"
@@ -552,8 +656,8 @@ struct CalendarScreen: View {
 
     private func openTaskOrPopover(_ id: String, rect: CGRect) {
         if Platform.isMac {
-            model.isCalendarPopoverPresented = true
-            popoverTarget = CalendarTaskPopoverTarget(taskId: id, rect: rect)
+            closePopover()
+            inspectorTaskId = id
         } else {
             model.openTask(id, inlineAvailable: false)
         }
@@ -933,7 +1037,7 @@ struct CalendarScreen: View {
                     }
                 } open: { id, rect in
                     openTaskOrPopover(id, rect: rect)
-                }
+                } task: { id in tasks.first { $0.id == id } }
                 .equatable()
             }
         }
@@ -973,6 +1077,8 @@ struct CalendarScreen: View {
                         }
                     } open: { id, rect in
                         openTaskOrPopover(id, rect: rect)
+                    } task: { id in tasks.first { $0.id == id } } create: { d in
+                        if !model.isViewer(projectId: projectFilter) { compose(day: d, minute: nil) }
                     }
                     .equatable()
                 }

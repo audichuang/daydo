@@ -222,6 +222,10 @@ struct WeekRow: View, Equatable {
     var fillHeight: Bool = false
     var pick: (LocalDay) -> Void
     var open: (String, CGRect) -> Void
+    /// Looks up a bar's task for the Mac right-click menu (bars only carry the id).
+    var task: (String) -> TodoTask? = { _ in nil }
+    /// Mac: double-clicking a day cell adds a task on that day.
+    var create: (LocalDay) -> Void = { _ in }
 
     private var laneH: CGFloat {
         fillHeight ? CalendarMonthMetrics.macMonthLaneHeight : 17
@@ -229,6 +233,62 @@ struct WeekRow: View, Equatable {
 
     private var topInset: CGFloat {
         fillHeight ? CalendarMonthMetrics.macMonthTopInset : 36
+    }
+
+    /// Mac month cell: clicking the date number (or "+N") opens the day, double-clicking the
+    /// cell adds a task on it; the cell itself is not a press-to-shrink touch button.
+    @ViewBuilder
+    private func macDayCell(_ d: LocalDay, column i: Int, isToday: Bool, inMonth: Bool, width colW: CGFloat, height: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button { pick(d) } label: {
+                if isToday {
+                    if d.day == 1 {
+                        Text("\(d.month)月1日")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(accent.onAccent)
+                            .padding(.horizontal, 6)
+                            .frame(height: 22)
+                            .background(Capsule().fill(accent.color))
+                    } else {
+                        Text("\(d.day)")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(accent.onAccent)
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(accent.color))
+                    }
+                } else {
+                    Text(d.day == 1 ? "\(d.month)月1日" : "\(d.day)")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(inMonth ? Palette.textDay : Palette.textDisabled)
+                        .frame(minWidth: 22, minHeight: 22, alignment: .leading)
+                }
+            }
+            .buttonStyle(.plain)
+            .hoverEffect(.highlight)
+            .help("開啟單日檢視")
+            .padding(.top, 5)
+            .padding(.leading, 6)
+            Spacer(minLength: 0)
+            if let n = week.overflow[i] {
+                Button { pick(d) } label: {
+                    Text("+\(n)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Palette.textSecondary)
+                        .opacity(inMonth ? 1 : 0.6)
+                        .padding(.horizontal, 4)
+                }
+                .buttonStyle(.plain)
+                .hoverEffect(.highlight)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, 2)
+                .padding(.bottom, 2)
+            }
+        }
+        .frame(width: colW, height: height, alignment: .topLeading)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { create(d) }
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(named: "新增任務") { create(d) }
     }
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
@@ -251,48 +311,11 @@ struct WeekRow: View, Equatable {
                             let hasBar = week.bars.contains { $0.startColumn <= i && i <= $0.endColumn }
                             return hasBar ? "還有 \(n) 項任務，點按切換至單日檢視" : "\(n) 項任務，點按切換至單日檢視"
                         } ?? ""
-                        Button { pick(d) } label: {
+                        Group {
                             if fillHeight {
-                                VStack(alignment: .leading, spacing: 0) {
-                                    Group {
-                                        if isToday {
-                                            if d.day == 1 {
-                                                Text("\(d.month)月1日")
-                                                    .font(.system(size: 12, weight: .semibold))
-                                                    .foregroundStyle(accent.onAccent)
-                                                    .padding(.horizontal, 6)
-                                                    .frame(height: 22)
-                                                    .background(Capsule().fill(accent.color))
-                                            } else {
-                                                Text("\(d.day)")
-                                                    .font(.system(size: 13, weight: .semibold))
-                                                    .foregroundStyle(accent.onAccent)
-                                                    .frame(width: 22, height: 22)
-                                                    .background(Circle().fill(accent.color))
-                                            }
-                                        } else {
-                                            Text(d.day == 1 ? "\(d.month)月1日" : "\(d.day)")
-                                                .font(.system(size: 13, weight: .medium))
-                                                .foregroundStyle(inMonth ? Palette.textDay : Palette.textDisabled)
-                                                .frame(minWidth: 22, minHeight: 22, alignment: .leading)
-                                        }
-                                    }
-                                    .padding(.top, 5)
-                                    .padding(.leading, 6)
-                                    Spacer(minLength: 0)
-                                    if let n = week.overflow[i] {
-                                        Text("+\(n)")
-                                            .font(.system(size: 10, weight: .semibold))
-                                            .foregroundStyle(Palette.textSecondary)
-                                            .opacity(inMonth ? 1 : 0.6)
-                                            .frame(maxWidth: .infinity, alignment: .trailing)
-                                            .padding(.trailing, 4)
-                                            .padding(.bottom, 2)
-                                    }
-                                }
-                                .frame(width: colW, height: geo.size.height, alignment: .topLeading)
-                                .contentShape(Rectangle())
+                                macDayCell(d, column: i, isToday: isToday, inMonth: inMonth, width: colW, height: geo.size.height)
                             } else {
+                                Button { pick(d) } label: {
                                 VStack(spacing: 0) {
                                     Text("\(d.day)")
                                         .font(.system(size: 14, weight: isToday ? .bold : .semibold))
@@ -308,9 +331,11 @@ struct WeekRow: View, Equatable {
                                 }
                                 .frame(width: colW, height: geo.size.height)
                                 .contentShape(Rectangle())
+                            
+                                }
+                                .buttonStyle(.press(scale: 0.94, opacity: 0.88))
                             }
                         }
-                        .buttonStyle(.press(scale: 0.94, opacity: 0.88))
                         .opacity(fillHeight ? 1 : (inMonth ? 1 : 0.4))
                         .overlay(alignment: .leading) {
                             if fillHeight && i > 0 {
@@ -355,6 +380,7 @@ struct WeekRow: View, Equatable {
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
                     .buttonStyle(.press(scale: 0.96, opacity: 0.88))
+                    .macTaskContextMenu(task(bar.taskId))
                     .offset(x: colW * CGFloat(bar.startColumn) + 1.5, y: topInset + CGFloat(bar.lane) * laneH)
                 }
             }

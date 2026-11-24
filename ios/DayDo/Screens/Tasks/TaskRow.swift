@@ -254,6 +254,21 @@ struct TaskRow: View {
     }
 
     @ViewBuilder var menu: some View {
+        TaskContextMenu(task: task, inTrash: inTrash)
+    }
+}
+
+/// Right-click / long-press actions for a task, shared by list rows and Mac calendar blocks.
+struct TaskContextMenu: View {
+    @Environment(AppModel.self) private var model
+    var task: TodoTask
+    var inTrash = false
+
+    var body: some View {
+        menu
+    }
+
+    @ViewBuilder var menu: some View {
         let id = task.id
         let isViewer = model.isViewer(projectId: task.projectId)
         if inTrash {
@@ -262,6 +277,10 @@ struct TaskRow: View {
                 Button("永久刪除", systemImage: "trash", role: .destructive) { Task { await model.purgeTask(id: id) } }
             }
         } else if !isViewer {
+            if Platform.isMac {
+                let done = model.displaysCompleted(task)
+                Button(done ? "取消完成" : "完成", systemImage: done ? "circle" : "checkmark.circle") { model.toggleComplete(task) }
+            }
             Menu("優先級", systemImage: "flag") {
                 ForEach([Priority.high, .medium, .low, .none], id: \.self) { p in
                     Button(p.label) { model.updateTask(id) { $0.priority = p } }
@@ -293,6 +312,18 @@ struct TaskRow: View {
         let s = Schedule.moved(task.schedule, to: d)
         let task = task
         Task { await model.moveTask(task, to: s) }
+    }
+}
+
+extension View {
+    /// Mac only: on iPad a context menu would take the long press that drags calendar blocks.
+    @ViewBuilder
+    func macTaskContextMenu(_ task: TodoTask?) -> some View {
+        if Platform.isMac, let task {
+            contextMenu { TaskContextMenu(task: task) }
+        } else {
+            self
+        }
     }
 }
 

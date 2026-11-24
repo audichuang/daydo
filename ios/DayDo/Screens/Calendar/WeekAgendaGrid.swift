@@ -308,6 +308,7 @@ struct WeekAgendaGrid: View {
             .opacity(isDone ? 0.75 : 1)
         }
         .buttonStyle(.press(scale: 0.97, opacity: 0.88))
+        .macTaskContextMenu(task)
         .hoverEffect(.highlight)
         .accessibilityLabel(taskAccessibilityLabel(task, startMinute: startMinute, isDone: isDone))
         .accessibilityValue(owner.map { "\($0.name)的" } ?? "")

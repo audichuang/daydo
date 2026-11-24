@@ -21,7 +21,7 @@ struct YearGrid: View {
             }
             return out
         }()
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: isRegular ? 20 : 14), count: cols), spacing: isRegular ? 22 : 18) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: isRegular ? 20 : 14, alignment: .top), count: cols), spacing: isRegular ? 22 : 18) {
             ForEach(1...12, id: \.self) { m in
                 YearMonthCell(
                     year: year,
@@ -75,9 +75,18 @@ struct YearMonthCell: View, Equatable {
             }
             .buttonStyle(.press)
             .hoverEffect(.highlight)
-            .accessibilityLabel("\(year) 年 \(month) 月")
+            .accessibilityLabel(Text(verbatim: "\(year) 年 \(month) 月"))
 
             VStack(spacing: 2) {
+                if Platform.isMac {
+                    HStack(spacing: 0) {
+                        ForEach(["日", "一", "二", "三", "四", "五", "六"], id: \.self) { w in
+                            Text(w).font(.system(size: 10)).foregroundStyle(Palette.textTertiary)
+                                .frame(maxWidth: .infinity, minHeight: 16)
+                        }
+                    }
+                    .accessibilityHidden(true)
+                }
                 ForEach(0..<weekCount, id: \.self) { w in
                     HStack(spacing: 0) {
                         ForEach(0..<7, id: \.self) { c in
@@ -91,7 +100,7 @@ struct YearMonthCell: View, Equatable {
                                         .foregroundStyle(isToday ? accent.onAccent : (isBusy ? accent.text : Palette.textSecondary))
                                         .frame(width: circleSize, height: circleSize)
                                         .background(Circle().fill(isToday ? accent.color : .clear))
-                                        .frame(maxWidth: .infinity, minHeight: rowHeight)
+                                        .frame(height: rowHeight).frame(maxWidth: .infinity)
                                         .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.press(scale: 0.9, opacity: 0.85))
@@ -99,7 +108,7 @@ struct YearMonthCell: View, Equatable {
                                 .accessibilityIdentifier("yearDay.\(d)")
                                 .accessibilityLabel(DateText.full(d))
                             } else {
-                                Color.clear.frame(maxWidth: .infinity, minHeight: rowHeight)
+                                Color.clear.frame(height: rowHeight).frame(maxWidth: .infinity)
                             }
                         }
                     }

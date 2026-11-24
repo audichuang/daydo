@@ -192,11 +192,21 @@ struct ComposerSheet: View {
             Spacer(minLength: 0)
 
             Button { submit() } label: {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(canSave ? accent.onAccent : Palette.textFaint)
-                    .frame(width: 38, height: 38)
-                    .background(Circle().fill(canSave ? accent.color : Palette.control))
+                if Platform.isMac {
+                    // Desktop dialog button (Return also submits), not the phone send arrow.
+                    Text("新增")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(canSave ? accent.onAccent : Palette.textFaint)
+                        .padding(.horizontal, 14)
+                        .frame(height: 28)
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(canSave ? accent.color : Palette.control))
+                } else {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(canSave ? accent.onAccent : Palette.textFaint)
+                        .frame(width: 38, height: 38)
+                        .background(Circle().fill(canSave ? accent.color : Palette.control))
+                }
             }
             .buttonStyle(.press)
             .hoverEffect(.highlight)

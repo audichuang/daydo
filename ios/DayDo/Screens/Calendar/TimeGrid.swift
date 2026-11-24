@@ -330,6 +330,7 @@ struct TimeGrid: View {
             .clipShape(RoundedRectangle(cornerRadius: 3))
         }
         .buttonStyle(.press(scale: 0.96, opacity: 0.88))
+        .macTaskContextMenu(t)
         .hoverEffect(.highlight)
         .accessibilityValue(owner.map { "\($0.name)的" } ?? "")
     }
@@ -362,6 +363,7 @@ struct TimeGrid: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(b.task.title + "，" + (b.task.schedule.map { DateText.range($0) } ?? ""))
         .accessibilityValue(owner.map { "\($0.name)的" } ?? "")
+        .macTaskContextMenu(b.task)
     }
 
     private func blockContent(task: TodoTask, schedule: Schedule?, color: Color, owner: Member?, width w: CGFloat, height h: CGFloat) -> some View {
