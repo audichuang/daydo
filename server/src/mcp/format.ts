@@ -1,7 +1,7 @@
 // Output shapes for MCP tools (spec/mcp.md 8): snake_case project, task and tag objects.
 import { scheduleToAPI, type Schedule } from '../domain/schedule';
 import type { Snapshot, SnapshotRow } from '../serverops/snapshot';
-import { bySortKey, compareKeys } from '../serverops/values';
+import { bySortKey, compareKeys, isLiveRow } from '../serverops/values';
 
 export const CONTENT_SUMMARY_LIMIT = 100;
 
@@ -52,7 +52,7 @@ function scheduleOf(r: Record<string, unknown>): Schedule | null {
 function checklistOf(snapshot: Snapshot, taskId: string) {
   return snapshot
     .rows('checklistItem')
-    .filter((c) => c.row.taskId === taskId && absent(c.row, 'deletedAt', 'purgedAt'))
+    .filter((c) => c.row.taskId === taskId && isLiveRow(c.row))
     .sort(bySortKey)
     .map((c) => ({
       id: String(c.row.id),
@@ -65,7 +65,7 @@ function checklistOf(snapshot: Snapshot, taskId: string) {
 function attachmentsOf(snapshot: Snapshot, taskId: string) {
   return snapshot
     .rows('attachment')
-    .filter((a) => a.row.taskId === taskId && absent(a.row, 'deletedAt', 'purgedAt'))
+    .filter((a) => a.row.taskId === taskId && isLiveRow(a.row))
     .sort(
       (a, b) =>
         Number(a.row.createdAt ?? 0) - Number(b.row.createdAt ?? 0) ||

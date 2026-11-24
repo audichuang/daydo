@@ -10,7 +10,7 @@ import { uuidv5, uuidv7 } from '../domain/uuid';
 import { ENTITY_FIELDS } from '../sync/entities';
 import { userScope } from '../sync/scopeName';
 import type { Snapshot, SnapshotRow } from './snapshot';
-import { bySortKey, compareKeys, isNil, rowSchedule, sameSchedule, scheduleColumns } from './values';
+import { bySortKey, compareKeys, isLiveRow, isNil, rowSchedule, sameSchedule, scheduleColumns } from './values';
 import { pushIntents, WriteError, writeOrThrow, type WriteIntent, type WriteOutcome, type WriterDeps } from './writer';
 
 // MARK: - Lists
@@ -29,7 +29,7 @@ export function taskListDenial(
   options: { allowArchived?: boolean } = {},
 ): TaskListDenial | null {
   const project = snapshot.findRow('project', projectId)?.row;
-  if (!project || !isNil(project.deletedAt) || !isNil(project.purgedAt)) return 'missing';
+  if (!project || !isLiveRow(project)) return 'missing';
   if (!options.allowArchived && !isNil(project.archivedAt)) return 'archived';
   return snapshot.canWrite(projectId) ? null : 'read-only';
 }
@@ -95,6 +95,19 @@ export function trashTaskIntent(id: string, nowMs: number): WriteIntent {
   return patchTaskIntent(id, { deletedAt: nowMs });
 }
 
+/** Trashes the list's live tasks, then the list itself (MCP delete_project). Returns the number of tasks trashed. */
+export async function trashProjectWithTasks(deps: WriterDeps, snapshot: Snapshot, projectId: string, nowMs: number): Promise<number> {
+  const tasks = snapshot.rows('task').filter((t) => t.row.projectId === projectId && isLiveRow(t.row));
+  // Tasks in their own push first: they may live in other members' scopes, which one push
+  // does not apply atomically. The list goes only once every task is trashed, so a failed
+  // run leaves the list live and a retry can finish it.
+  if (tasks.length > 0) {
+    await writeOrThrow(deps, snapshot, tasks.map((t) => trashTaskIntent(String(t.row.id), nowMs)), { nowMs });
+  }
+  await writeOrThrow(deps, snapshot, [{ entity: 'project', entityId: projectId, set: { deletedAt: nowMs } }], { nowMs });
+  return tasks.length;
+}
+
 export function moveTaskIntent(id: string, projectId: string): WriteIntent {
   return patchTaskIntent(id, { projectId });
 }
@@ -143,7 +156,7 @@ export function checklistIntents(taskId: string, titles: readonly string[], nowM
 function liveChecklist(snapshot: Snapshot, taskId: string): SnapshotRow[] {
   return snapshot
     .rows('checklistItem')
-    .filter((c) => c.row.taskId === taskId && isNil(c.row.deletedAt) && isNil(c.row.purgedAt));
+    .filter((c) => c.row.taskId === taskId && isLiveRow(c.row));
 }
 
 /** A task to create (LocalDayDoAPI.createTask). A null schedule or repeatRule leaves those columns out. */

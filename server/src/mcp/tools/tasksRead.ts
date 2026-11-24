@@ -2,7 +2,7 @@
 // Visibility comes from snapshot.liveTasks(): no trashed tasks, nothing in trashed or archived lists.
 import { normalizeTags } from '../../domain/tags';
 import type { Snapshot, SnapshotRow } from '../../serverops/snapshot';
-import { bySortKey, compareKeys } from '../../serverops/values';
+import { bySortKey, compareKeys, isLiveRow } from '../../serverops/values';
 import { formatTask, summarizeTask } from '../format';
 import { openSession, requireStr, ToolValidationError, type ToolDef } from '../toolkit';
 
@@ -58,7 +58,7 @@ export function taskIn(snapshot: Snapshot, taskId: string, projectId: string): S
 function checklistTitles(snapshot: Snapshot, taskId: string): string[] {
   return snapshot
     .rows('checklistItem')
-    .filter((c) => c.row.taskId === taskId && c.row.deletedAt == null && c.row.purgedAt == null)
+    .filter((c) => c.row.taskId === taskId && isLiveRow(c.row))
     .map((c) => String(c.row.title ?? '').toLowerCase());
 }
 

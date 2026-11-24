@@ -8,6 +8,11 @@ export function isNil(v: unknown): v is null | undefined {
   return v === null || v === undefined;
 }
 
+/** Neither trashed (deletedAt) nor a tombstone (purgedAt). */
+export function isLiveRow(row: Record<string, unknown>): boolean {
+  return isNil(row.deletedAt) && isNil(row.purgedAt);
+}
+
 /** Row value equality: nil equals nil, arrays compare by content. */
 export function sameValue(a: unknown, b: unknown): boolean {
   const x = isNil(a) ? null : a;

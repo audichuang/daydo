@@ -3,7 +3,7 @@
 import { uniqueProjectKey } from '../../domain/sortKey';
 import { uuidv7 } from '../../domain/uuid';
 import { canManageLifecycle, snapshotRole, type Snapshot, type SnapshotRow } from '../../serverops/snapshot';
-import { trashTaskIntent } from '../../serverops/taskWrites';
+import { trashProjectWithTasks } from '../../serverops/taskWrites';
 import { formatProject, openTasksOf, summarizeTask } from '../format';
 import { bySortKey, compareKeys } from '../../serverops/values';
 import { openSession, openWriteSession, requireStr, ToolValidationError, type ToolDef } from '../toolkit';
@@ -150,23 +150,14 @@ export function projectTools(): ToolDef[] {
       run: async (args, ctx) => {
         const id = requireStr(args, 'project_id');
         const session = await openWriteSession(ctx);
-        const { snapshot, now } = session;
+        const { snapshot, deps, now } = session;
         const project = requireLiveProject(snapshot, id);
         if (project.row.isInbox === true) throw new Error('The inbox cannot be deleted');
         if (!canManageLifecycle(snapshot, id)) {
           throw new Error(`Only the owner can delete project '${id}' (your role: ${snapshotRole(snapshot, id) ?? 'none'})`);
         }
-        const tasks = snapshot
-          .rows('task')
-          .filter((t) => t.row.projectId === id && t.row.deletedAt == null && t.row.purgedAt == null);
-        // Tasks in their own push first: they may live in other members' scopes, which one push
-        // does not apply atomically. The list goes only once every task is trashed, so a failed
-        // run leaves the list live and a retry can finish it.
-        if (tasks.length > 0) {
-          await session.write(tasks.map((t) => trashTaskIntent(String(t.row.id), now)));
-        }
-        await session.write([{ entity: 'project', entityId: id, set: { deletedAt: now } }]);
-        return { deleted: true, project_id: id, name: String(project.row.name ?? ''), trashed_tasks: tasks.length };
+        const trashed = await trashProjectWithTasks(deps, snapshot, id, now);
+        return { deleted: true, project_id: id, name: String(project.row.name ?? ''), trashed_tasks: trashed };
       },
     },
   ];

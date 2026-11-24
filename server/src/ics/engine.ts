@@ -7,7 +7,7 @@ import type { GetNow } from '../clock';
 import { scheduleToAPI } from '../domain/schedule';
 import { before } from '../domain/sortKey';
 import { uuidv7 } from '../domain/uuid';
-import { loadSnapshot } from '../serverops/snapshot';
+import { loadSnapshot, type Snapshot } from '../serverops/snapshot';
 import {
   createTaskIntent,
   firstTaskSortKey,
@@ -15,7 +15,7 @@ import {
   taskListDenial,
   trashTaskIntent,
 } from '../serverops/taskWrites';
-import { isNil, rowSchedule, sameValue, scheduleColumns } from '../serverops/values';
+import { isLiveRow, isNil, rowSchedule, sameValue, scheduleColumns } from '../serverops/values';
 import { assertHasData, pushIntents, type WriteIntent, type WriteOutcome } from '../serverops/writer';
 import type { ServerHlcClock } from '../sync/hlc';
 import type { AppDb } from '../appDb';
@@ -215,26 +215,25 @@ interface Removal {
   write: boolean;
 }
 
-export async function syncSource(
-  deps: IcsEngineDeps,
-  userId: string,
-  sourceId: number,
-  nowMs: number,
-  options: SyncOptions = {},
-): Promise<SyncStats> {
-  const { store } = deps;
-  const dryRun = options.dryRun === true;
-  const source = await store.getSource(userId, sourceId);
-  if (!source || (!source.enabled && !dryRun)) return zeroStats();
-  const stats = zeroStats();
-  if (dryRun) stats.dryRun = true;
-  if (dryRun || options.includeChanges) stats.changes = [];
+/** One sync run's identity and lease. */
+interface RunBase {
+  deps: IcsEngineDeps;
+  userId: string;
+  sourceId: number;
+  source: IcsSource;
+  nowMs: number;
+  options: SyncOptions;
+  dryRun: boolean;
+  token: string;
+  stats: SyncStats;
+}
 
-  // The store checks leases against its own clock, so lease calls use wall time, not nowMs.
-  const token = crypto.randomUUID();
-  if (!dryRun && !(await store.acquireLease(userId, sourceId, token, Date.now(), LEASE_TTL_MS))) {
-    return { ...stats, busy: true };
-  }
+/** The run plus its accumulated results and reporting helpers, shared by the phases of syncSource. */
+type SyncRun = ReturnType<typeof createRun>;
+
+function createRun(base: RunBase) {
+  const { deps, userId, sourceId, dryRun, token, stats } = base;
+  const { store } = deps;
   let renewAfter = Date.now() + LEASE_TTL_MS / 2;
   /** Renews the lease when half spent, and always right before a scope write. */
   const guard = async (scopeWrite = false) => {
@@ -313,6 +312,442 @@ export async function syncSource(
     record(item, 'skip', mapping.taskId, prev, reason);
     if (!dryRun) purges.push({ icsUid: mapping.icsUid, occurrenceId: mapping.occurrenceId, taskId: mapping.taskId, lastError: reason });
   };
+  return { ...base, commits, purges, guard, record, recordMapping, fail, purge };
+}
+
+/** The fetched feed and the source's current mappings. */
+type Feed = Awaited<ReturnType<typeof readFeed>>;
+
+async function readFeed(run: SyncRun) {
+  const { deps, userId, sourceId, source, nowMs } = run;
+  const futureDays = source.filter?.futureDays ?? 90;
+  const pastDays = source.filter?.pastDays ?? 7;
+  if (
+    !Number.isFinite(futureDays) ||
+    !Number.isFinite(pastDays) ||
+    futureDays <= 0 ||
+    futureDays > ICS_MAX_WINDOW_DAYS ||
+    pastDays < 0 ||
+    pastDays > ICS_MAX_WINDOW_DAYS
+  ) {
+    throw new IcsError('Invalid ICS sync date window');
+  }
+  const zone = source.timezone ?? deps.defaultTimeZone ?? FALLBACK_TIMEZONE;
+  const mappings = await deps.store.listMappings(userId, sourceId);
+  const existing = new Map(mappings.map((m) => [identity(m.icsUid, m.occurrenceId), m]));
+  const byUid = new Map<string, IcsMapping[]>();
+  for (const m of mappings) byUid.set(m.icsUid, [...(byUid.get(m.icsUid) ?? []), m]);
+  const text = await fetchIcs(source.url, deps.fetchOptions);
+  const expandTo = nowMs + futureDays * DAY_MS;
+  const parsed = parseIcs(
+    text,
+    { from: nowMs - pastDays * DAY_MS, to: expandTo, includeIdentities: new Set(existing.keys()) },
+    zone,
+  );
+  const sourceIdentities = new Set(parsed.map((e) => identity(e.uid, e.occurrenceId)));
+  // Read from each master, not from the slots parsed in the window.
+  const series = seriesSignatures(text, zone);
+  return { zone, existing, byUid, parsed, sourceIdentities, series, expandTo };
+}
+
+/**
+ * The events to reconcile and the mappings whose event left the source. Refused UIDs are reported
+ * here; throws (nothing written) when the removals trip the mass-delete guard.
+ */
+function selectEvents(run: SyncRun, feed: Feed): { all: ParsedEvent[]; removedMappings: IcsMapping[] } {
+  const { stats, commits, dryRun, source, nowMs, options, recordMapping } = run;
+  const { existing, byUid, parsed, sourceIdentities, series, expandTo } = feed;
+  // Refuse, per UID, a single event turned recurring and a redefined rule (anything but the series
+  // end): their slots cannot be matched safely. Nothing of a refused UID is written or removed;
+  // the other events of the source still sync.
+  const refused = new Map<string, string>();
+  for (const [uid, signature] of series) {
+    if (existing.has(identity(uid))) refused.set(uid, SINGLE_TO_SERIES);
+    else if ((byUid.get(uid) ?? []).some((m) => m.seriesSignature && seriesCore(m.seriesSignature) !== seriesCore(signature))) {
+      refused.set(uid, SERIES_REDEFINED);
+    }
+  }
+  // An exception of a single event that is still mapped, with no recurring master in the feed.
+  for (const e of parsed) {
+    if (e.occurrenceId && !refused.has(e.uid) && existing.has(identity(e.uid))) refused.set(e.uid, SINGLE_TO_SERIES);
+  }
+  for (const [uid, reason] of refused) {
+    stats.errors++;
+    stats.lastError = `${reason} (UID ${uid})`;
+    stats.changes?.push({ uid, occurrenceId: '', action: 'error', reason });
+    for (const m of byUid.get(uid) ?? []) {
+      if (!dryRun && m.state !== 'purged') commits.push({ ...m, state: m.state, lastError: reason });
+    }
+  }
+
+  // The date window limits new imports (parseIcs); identities already imported still update when
+  // moved outside it. Keyword exclusions apply to live events only: a cancellation always lands.
+  const accepted = parsed.filter((e) => !refused.has(e.uid));
+  const events = [
+    ...applyFilter(
+      accepted.filter((e) => !e.cancelled),
+      { ...source.filter, futureDays: undefined, pastDays: undefined },
+      nowMs,
+    ),
+    ...accepted.filter((e) => e.cancelled),
+  ];
+  // A bare cancelled UID cancels its mapped slots without inventing new tasks.
+  const slotCancels = events
+    .filter((e) => e.cancelled && !e.occurrenceId)
+    .flatMap((e) =>
+      (byUid.get(e.uid) ?? []).filter((m) => m.occurrenceId).map((m) => ({ ...e, occurrenceId: m.occurrenceId })),
+    );
+  const all = [...events, ...slotCancels];
+
+  // A validated full snapshot controls existence as well as event fields. Keyword exclusions are
+  // not source deletions. parseIcs visits every slot of a series that starts before expandTo, so a
+  // mapped slot missing from there was dropped (an earlier UNTIL or COUNT, a removed RDATE). Slots
+  // that may lie later stay; the day of slack covers floating slots read as UTC.
+  // An older revision of a UID than the one already imported (a stale cache or mirror) says
+  // nothing about which slots exist now, so none of that UID is removed this run. Read before the
+  // keyword filter: an excluded slot still reveals the revision.
+  const staleUids = new Set(
+    [...accepted, ...slotCancels].filter((e) => {
+      const m = existing.get(identity(e.uid, e.occurrenceId));
+      return !!m && m.state !== 'purged' && older(e, m);
+    }).map((e) => e.uid),
+  );
+  const eventKeys = new Set(all.map((e) => identity(e.uid, e.occurrenceId)));
+  for (const [k, m] of existing) {
+    if (staleUids.has(m.icsUid) && !refused.has(m.icsUid) && !eventKeys.has(k) && !sourceIdentities.has(k)) {
+      stats.skipped++;
+      recordMapping(m, 'skip', undefined, 'Older source revision; slot kept');
+    }
+  }
+  const keepSlot = (m: IcsMapping) =>
+    refused.has(m.icsUid) ||
+    staleUids.has(m.icsUid) ||
+    (!!m.occurrenceId && series.has(m.icsUid) && !(slotInstant(m.occurrenceId) < expandTo - DAY_MS));
+  const removedMappings = [...existing]
+    .filter(([k, m]) => !(eventKeys.has(k) || sourceIdentities.has(k) || keepSlot(m)))
+    .map(([, m]) => m);
+  if (
+    removedMappings.length >= MASS_DELETE_MIN &&
+    removedMappings.length > existing.size * MASS_DELETE_RATIO &&
+    !options.allowMassDelete
+  ) {
+    for (const m of removedMappings) recordMapping(m, 'skip', undefined, 'mass-delete guard');
+    throw new IcsError(
+      `Source removed ${removedMappings.length} of ${existing.size} imported events; sync refused as a safety check (nothing written)`,
+    );
+  }
+  return { all, removedMappings };
+}
+
+/** Splits the events into creates and updates against the snapshot; skips and per-event failures are recorded here. */
+async function planEvents(run: SyncRun, snapshot: Snapshot, feed: Feed, all: ParsedEvent[]) {
+  const { stats, commits, dryRun, nowMs, record, fail, purge } = run;
+  const { zone, existing } = feed;
+  const fingerprints = await Promise.all(all.map(eventFingerprint));
+
+  const seen = new Set<string>();
+  const creates: Planned[] = [];
+  const updates: Planned[] = [];
+  for (const [index, event] of all.entries()) {
+    const key = identity(event.uid, event.occurrenceId);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const fingerprint = fingerprints[index]!;
+    const mapping = existing.get(key) ?? null;
+    if (event.cancelled && !mapping) {
+      stats.skipped++;
+      record({ event }, 'skip', undefined, undefined, 'Cancelled before import');
+      continue;
+    }
+    let draft: TaskDraft | undefined;
+    if (!event.cancelled) {
+      try {
+        draft = eventToTaskDraft(event, zone);
+      } catch (error) {
+        // e.g. an all-day event whose DTEND equals its DTSTART: only this event fails.
+        fail({ event }, mapping, errMsg(error));
+        continue;
+      }
+    }
+    if (!mapping) {
+      creates.push({ event, fingerprint, mapping, draft, row: undefined, delta: {} });
+      continue;
+    }
+    if (mapping.state === 'purged') {
+      stats.skipped++;
+      record({ event, draft }, 'skip', mapping.taskId, undefined, 'Task permanently deleted');
+      continue;
+    }
+    if (older(event, mapping)) {
+      stats.skipped++;
+      record({ event, draft }, 'skip', mapping.taskId, undefined, 'Older source revision');
+      if (mapping.state === 'pending' || mapping.state === 'updating') {
+        stats.errors++;
+        stats.lastError = 'Newer pending revision retained; waiting for current source snapshot';
+      }
+      continue;
+    }
+    // ICS is authoritative one way: an applied fingerprint needs no read or write. App-side edits
+    // (completion included) stay until the source event itself changes.
+    if (mapping.fingerprint === fingerprint && (mapping.state === 'applied' || mapping.state === 'cancelled')) {
+      stats.skipped++;
+      record({ event, draft }, 'skip', mapping.taskId);
+      const seriesSignature = event.seriesSignature ?? mapping.seriesSignature;
+      // A DTSTAMP-only change carries no revision (Outlook stamps the download time).
+      if (!dryRun && ((event.sequence ?? 0) !== mapping.sequence || seriesSignature !== mapping.seriesSignature)) {
+        commits.push({
+          ...mapping,
+          state: mapping.state,
+          sequence: event.sequence ?? 0,
+          dtstamp: event.dtstamp ?? null,
+          seriesSignature,
+        });
+      }
+      continue;
+    }
+    const row = snapshot.findRow('task', mapping.taskId)?.row;
+    if (row && !isNil(row.purgedAt)) {
+      purge({ event, draft }, mapping, 'Task permanently deleted', row);
+      continue;
+    }
+    if (!row && mapping.state !== 'pending') {
+      fail({ event, draft }, mapping, 'Mapped task missing or not visible; mapping preserved');
+      continue;
+    }
+    if (!row) {
+      // The reserved create never landed. A cancelled event stays unimported; the reservation is
+      // kept, so a withdrawn cancellation still creates the task under the same id.
+      if (event.cancelled) {
+        stats.skipped++;
+        record({ event }, 'skip', mapping.taskId, undefined, 'Cancelled before import');
+        continue;
+      }
+      creates.push({ event, fingerprint, mapping, draft, row: undefined, delta: {} });
+      continue;
+    }
+    // A source change reopens a completed task; an unchanged source keeps the completion.
+    const delta = event.cancelled ? cancelDelta(row, nowMs) : ownedDelta(row, draft!, mapping.fingerprint !== fingerprint);
+    updates.push({ event, fingerprint, mapping, draft, row, delta });
+  }
+  return { creates, updates };
+}
+
+/** A dry run reports what the plan would do and writes nothing. */
+function reportDryRun(run: SyncRun, creates: Planned[], updates: Planned[], removals: Removal[]): void {
+  const { stats, record, recordMapping } = run;
+  for (const p of creates) {
+    stats.created++;
+    record(p, 'create', p.mapping?.taskId);
+  }
+  for (const p of updates) {
+    if (Object.keys(p.delta).length === 0) {
+      stats.skipped++;
+      record(p, 'skip', p.mapping!.taskId, p.row);
+    } else if (p.event.cancelled) {
+      stats.deleted++;
+      record(p, 'cancel', p.mapping!.taskId, p.row);
+    } else {
+      stats.updated++;
+      record(p, 'update', p.mapping!.taskId, p.row);
+    }
+  }
+  for (const r of removals) {
+    stats.deleted++;
+    recordMapping(r.mapping, 'delete', r.row, 'Removed from ICS source');
+  }
+}
+
+/**
+ * Reserves new ids, marks updates, then pushes creates, updates and trash writes in one push and
+ * reads the outcomes. Returns the removals whose mapping may go.
+ */
+async function applyPlan(run: SyncRun, snapshot: Snapshot, creates: Planned[], updates: Planned[], removals: Removal[]) {
+  const { deps, userId, sourceId, source, nowMs, token, stats, commits, guard, record, recordMapping, fail, purge } = run;
+  const { store } = deps;
+  // Reserve every new id before any scope write.
+  const fresh = creates.filter((p) => !p.mapping);
+  if (fresh.length > 0) {
+    await guard();
+    const reserved = await store.reserveMappings(
+      userId,
+      sourceId,
+      token,
+      fresh.map((p) => ({
+        icsUid: p.event.uid,
+        occurrenceId: p.event.occurrenceId ?? '',
+        taskId: uuidv7(nowMs),
+        projectId: source.projectId,
+        sequence: p.event.sequence ?? 0,
+        dtstamp: p.event.dtstamp ?? null,
+        seriesSignature: p.event.seriesSignature ?? null,
+      })),
+    );
+    fresh.forEach((p, i) => {
+      p.mapping = reserved[i]!;
+    });
+  }
+
+  // Record the observed revision before writing, so a lost response followed by an older feed
+  // cannot roll the task back. Pending mappings without a row stay pending (create is resent).
+  const writes = updates.filter((p) => Object.keys(p.delta).length > 0);
+  if (writes.length > 0) {
+    await guard();
+    await store.markUpdating(
+      userId,
+      sourceId,
+      token,
+      writes.map((p) => ({
+        ...p.mapping!,
+        sequence: p.event.sequence ?? 0,
+        dtstamp: p.event.dtstamp ?? null,
+      })),
+    );
+    for (const p of writes) {
+      p.mapping = { ...p.mapping!, sequence: p.event.sequence ?? 0, dtstamp: p.event.dtstamp ?? null, state: 'updating' };
+    }
+  }
+
+  const confirm = (p: Planned) => {
+    const m = p.mapping!;
+    commits.push({
+      ...m,
+      fingerprint: p.fingerprint,
+      sequence: p.event.sequence ?? 0,
+      dtstamp: p.event.dtstamp ?? null,
+      state: p.event.cancelled ? 'cancelled' : 'applied',
+      seriesSignature: p.event.seriesSignature ?? m.seriesSignature,
+      lastError: null,
+    });
+  };
+
+  // Rows that already match (a lost response that did land): the snapshot row is the readback.
+  for (const p of updates) {
+    if (Object.keys(p.delta).length > 0) continue;
+    confirm(p);
+    stats.skipped++;
+    record(p, 'skip', p.mapping!.taskId, p.row);
+  }
+
+  const keys = sortKeysBefore(firstTaskSortKey(snapshot, source.projectId), creates.length);
+  const planned: Planned[] = [...creates, ...writes];
+  const trash = removals.filter((r) => r.write);
+  const intents: WriteIntent[] = [
+    ...creates.map((p, i) => createIntent(p.mapping!.taskId, p.mapping!.projectId, p.draft!, source, keys[i]!)),
+    ...writes.map((p) => patchTaskIntent(p.mapping!.taskId, p.delta)),
+    // Source deletion is the one case ICS writes deletedAt: a soft delete the user can restore.
+    ...trash.map((r) => trashTaskIntent(r.mapping.taskId, nowMs)),
+  ];
+
+  /** Removals whose mapping may go: no write was needed, or the trash write was confirmed. */
+  const settled = removals.filter((r) => !r.write);
+  if (intents.length > 0) {
+    await guard(true);
+    let outcomes: WriteOutcome[] | null = null;
+    let pushError = '';
+    try {
+      outcomes = await pushIntents(
+        { db: deps.db, userId, deviceId: 'ics', getScopeStub: deps.getScopeStub, clock: deps.clock },
+        snapshot,
+        intents,
+        { nowMs },
+      );
+    } catch (error) {
+      // Unknown result: mappings keep their state and the next run reads what actually landed.
+      pushError = `Task write could not be confirmed; retry keeps reserved task ID (${errMsg(error)})`;
+    }
+    planned.forEach((p, i) => {
+      const outcome = outcomes?.[i];
+      if (outcome && isPurgedOutcome(outcome)) {
+        purge(p, p.mapping!, describeOutcome(outcome), p.row);
+        return;
+      }
+      if (!outcome || outcome.status !== 'applied') {
+        fail(p, p.mapping, outcome ? describeOutcome(outcome) : pushError, p.row);
+        return;
+      }
+      confirm(p);
+      if (!p.row) {
+        stats.created++;
+        record(p, 'create', p.mapping!.taskId);
+      } else if (p.event.cancelled) {
+        stats.deleted++;
+        record(p, 'cancel', p.mapping!.taskId, p.row);
+      } else {
+        stats.updated++;
+        record(p, 'update', p.mapping!.taskId, p.row);
+      }
+    });
+    trash.forEach((r, j) => {
+      const outcome = outcomes?.[planned.length + j];
+      // A tombstone or a purged list is gone for good: the mapping can go as well.
+      if (outcome && (outcome.status === 'applied' || isPurgedOutcome(outcome))) {
+        settled.push(r);
+        return;
+      }
+      const reason = `Source deletion not confirmed; mapping preserved for retry (${outcome ? describeOutcome(outcome) : pushError})`;
+      stats.errors++;
+      stats.lastError = reason;
+      recordMapping(r.mapping, 'error', r.row, reason);
+    });
+  }
+  return settled;
+}
+
+/** Stores the run's mapping commits and purges, deletes settled mappings and records the source status. */
+async function finishRun(run: SyncRun, settled: Removal[]): Promise<void> {
+  const { deps, userId, sourceId, nowMs, token, stats, commits, purges, guard, recordMapping } = run;
+  const { store } = deps;
+  if (commits.length > 0) {
+    await guard();
+    await store.commitMappings(userId, sourceId, token, commits);
+  }
+  if (purges.length > 0) {
+    await guard();
+    await store.markPurged(userId, sourceId, token, purges);
+  }
+  for (const r of settled) {
+    try {
+      await guard();
+      await store.deleteMapping(userId, sourceId, token, r.mapping);
+      stats.deleted++;
+      recordMapping(r.mapping, 'delete', r.row, 'Removed from ICS source');
+    } catch (error) {
+      // The task is already in the trash (or gone); the next run deletes the mapping without a write.
+      stats.errors++;
+      stats.lastError = errMsg(error);
+      recordMapping(r.mapping, 'error', r.row, stats.lastError);
+    }
+  }
+  await guard(true);
+  await store.setSourceSync(
+    userId,
+    sourceId,
+    { lastSyncAt: nowMs, lastStatus: stats.errors ? 'partial' : 'success', lastStats: JSON.stringify(stats) },
+    token,
+  );
+}
+
+export async function syncSource(
+  deps: IcsEngineDeps,
+  userId: string,
+  sourceId: number,
+  nowMs: number,
+  options: SyncOptions = {},
+): Promise<SyncStats> {
+  const { store } = deps;
+  const dryRun = options.dryRun === true;
+  const source = await store.getSource(userId, sourceId);
+  if (!source || (!source.enabled && !dryRun)) return zeroStats();
+  const stats = zeroStats();
+  if (dryRun) stats.dryRun = true;
+  if (dryRun || options.includeChanges) stats.changes = [];
+
+  // The store checks leases against its own clock, so lease calls use wall time, not nowMs.
+  const token = crypto.randomUUID();
+  if (!dryRun && !(await store.acquireLease(userId, sourceId, token, Date.now(), LEASE_TTL_MS))) {
+    return { ...stats, busy: true };
+  }
+  const run = createRun({ deps, userId, sourceId, source, nowMs, options, dryRun, token, stats });
 
   try {
     const snapshot = await loadSnapshot(deps.db, userId, deps.getScopeStub);
@@ -322,385 +757,21 @@ export async function syncSource(
       throw new IcsError('The source list is missing or not writable for this account; nothing was written');
     }
 
-    const futureDays = source.filter?.futureDays ?? 90;
-    const pastDays = source.filter?.pastDays ?? 7;
-    if (
-      !Number.isFinite(futureDays) ||
-      !Number.isFinite(pastDays) ||
-      futureDays <= 0 ||
-      futureDays > ICS_MAX_WINDOW_DAYS ||
-      pastDays < 0 ||
-      pastDays > ICS_MAX_WINDOW_DAYS
-    ) {
-      throw new IcsError('Invalid ICS sync date window');
-    }
-    const zone = source.timezone ?? deps.defaultTimeZone ?? FALLBACK_TIMEZONE;
-    const mappings = await store.listMappings(userId, sourceId);
-    const existing = new Map(mappings.map((m) => [identity(m.icsUid, m.occurrenceId), m]));
-    const byUid = new Map<string, IcsMapping[]>();
-    for (const m of mappings) byUid.set(m.icsUid, [...(byUid.get(m.icsUid) ?? []), m]);
-    const text = await fetchIcs(source.url, deps.fetchOptions);
-    const expandTo = nowMs + futureDays * DAY_MS;
-    const parsed = parseIcs(
-      text,
-      { from: nowMs - pastDays * DAY_MS, to: expandTo, includeIdentities: new Set(existing.keys()) },
-      zone,
-    );
-    const sourceIdentities = new Set(parsed.map((e) => identity(e.uid, e.occurrenceId)));
-    // Read from each master, not from the slots parsed in the window.
-    const series = seriesSignatures(text, zone);
-
-    // Refuse, per UID, a single event turned recurring and a redefined rule (anything but the series
-    // end): their slots cannot be matched safely. Nothing of a refused UID is written or removed;
-    // the other events of the source still sync.
-    const refused = new Map<string, string>();
-    for (const [uid, signature] of series) {
-      if (existing.has(identity(uid))) refused.set(uid, SINGLE_TO_SERIES);
-      else if ((byUid.get(uid) ?? []).some((m) => m.seriesSignature && seriesCore(m.seriesSignature) !== seriesCore(signature))) {
-        refused.set(uid, SERIES_REDEFINED);
-      }
-    }
-    // An exception of a single event that is still mapped, with no recurring master in the feed.
-    for (const e of parsed) {
-      if (e.occurrenceId && !refused.has(e.uid) && existing.has(identity(e.uid))) refused.set(e.uid, SINGLE_TO_SERIES);
-    }
-    for (const [uid, reason] of refused) {
-      stats.errors++;
-      stats.lastError = `${reason} (UID ${uid})`;
-      stats.changes?.push({ uid, occurrenceId: '', action: 'error', reason });
-      for (const m of byUid.get(uid) ?? []) {
-        if (!dryRun && m.state !== 'purged') commits.push({ ...m, state: m.state, lastError: reason });
-      }
-    }
-
-    // The date window limits new imports (parseIcs); identities already imported still update when
-    // moved outside it. Keyword exclusions apply to live events only: a cancellation always lands.
-    const accepted = parsed.filter((e) => !refused.has(e.uid));
-    const events = [
-      ...applyFilter(
-        accepted.filter((e) => !e.cancelled),
-        { ...source.filter, futureDays: undefined, pastDays: undefined },
-        nowMs,
-      ),
-      ...accepted.filter((e) => e.cancelled),
-    ];
-    // A bare cancelled UID cancels its mapped slots without inventing new tasks.
-    const slotCancels = events
-      .filter((e) => e.cancelled && !e.occurrenceId)
-      .flatMap((e) =>
-        (byUid.get(e.uid) ?? []).filter((m) => m.occurrenceId).map((m) => ({ ...e, occurrenceId: m.occurrenceId })),
-      );
-    const all = [...events, ...slotCancels];
-
-    // A validated full snapshot controls existence as well as event fields. Keyword exclusions are
-    // not source deletions. parseIcs visits every slot of a series that starts before expandTo, so a
-    // mapped slot missing from there was dropped (an earlier UNTIL or COUNT, a removed RDATE). Slots
-    // that may lie later stay; the day of slack covers floating slots read as UTC.
-    // An older revision of a UID than the one already imported (a stale cache or mirror) says
-    // nothing about which slots exist now, so none of that UID is removed this run. Read before the
-    // keyword filter: an excluded slot still reveals the revision.
-    const staleUids = new Set(
-      [...accepted, ...slotCancels].filter((e) => {
-        const m = existing.get(identity(e.uid, e.occurrenceId));
-        return !!m && m.state !== 'purged' && older(e, m);
-      }).map((e) => e.uid),
-    );
-    const eventKeys = new Set(all.map((e) => identity(e.uid, e.occurrenceId)));
-    for (const [k, m] of existing) {
-      if (staleUids.has(m.icsUid) && !refused.has(m.icsUid) && !eventKeys.has(k) && !sourceIdentities.has(k)) {
-        stats.skipped++;
-        recordMapping(m, 'skip', undefined, 'Older source revision; slot kept');
-      }
-    }
-    const keepSlot = (m: IcsMapping) =>
-      refused.has(m.icsUid) ||
-      staleUids.has(m.icsUid) ||
-      (!!m.occurrenceId && series.has(m.icsUid) && !(slotInstant(m.occurrenceId) < expandTo - DAY_MS));
-    const removedMappings = [...existing]
-      .filter(([k, m]) => !(eventKeys.has(k) || sourceIdentities.has(k) || keepSlot(m)))
-      .map(([, m]) => m);
-    if (
-      removedMappings.length >= MASS_DELETE_MIN &&
-      removedMappings.length > existing.size * MASS_DELETE_RATIO &&
-      !options.allowMassDelete
-    ) {
-      for (const m of removedMappings) recordMapping(m, 'skip', undefined, 'mass-delete guard');
-      throw new IcsError(
-        `Source removed ${removedMappings.length} of ${existing.size} imported events; sync refused as a safety check (nothing written)`,
-      );
-    }
-    const fingerprints = await Promise.all(all.map(eventFingerprint));
-
-    const seen = new Set<string>();
-    const creates: Planned[] = [];
-    const updates: Planned[] = [];
-    for (const [index, event] of all.entries()) {
-      const key = identity(event.uid, event.occurrenceId);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const fingerprint = fingerprints[index]!;
-      const mapping = existing.get(key) ?? null;
-      if (event.cancelled && !mapping) {
-        stats.skipped++;
-        record({ event }, 'skip', undefined, undefined, 'Cancelled before import');
-        continue;
-      }
-      let draft: TaskDraft | undefined;
-      if (!event.cancelled) {
-        try {
-          draft = eventToTaskDraft(event, zone);
-        } catch (error) {
-          // e.g. an all-day event whose DTEND equals its DTSTART: only this event fails.
-          fail({ event }, mapping, errMsg(error));
-          continue;
-        }
-      }
-      if (!mapping) {
-        creates.push({ event, fingerprint, mapping, draft, row: undefined, delta: {} });
-        continue;
-      }
-      if (mapping.state === 'purged') {
-        stats.skipped++;
-        record({ event, draft }, 'skip', mapping.taskId, undefined, 'Task permanently deleted');
-        continue;
-      }
-      if (older(event, mapping)) {
-        stats.skipped++;
-        record({ event, draft }, 'skip', mapping.taskId, undefined, 'Older source revision');
-        if (mapping.state === 'pending' || mapping.state === 'updating') {
-          stats.errors++;
-          stats.lastError = 'Newer pending revision retained; waiting for current source snapshot';
-        }
-        continue;
-      }
-      // ICS is authoritative one way: an applied fingerprint needs no read or write. App-side edits
-      // (completion included) stay until the source event itself changes.
-      if (mapping.fingerprint === fingerprint && (mapping.state === 'applied' || mapping.state === 'cancelled')) {
-        stats.skipped++;
-        record({ event, draft }, 'skip', mapping.taskId);
-        const seriesSignature = event.seriesSignature ?? mapping.seriesSignature;
-        // A DTSTAMP-only change carries no revision (Outlook stamps the download time).
-        if (!dryRun && ((event.sequence ?? 0) !== mapping.sequence || seriesSignature !== mapping.seriesSignature)) {
-          commits.push({
-            ...mapping,
-            state: mapping.state,
-            sequence: event.sequence ?? 0,
-            dtstamp: event.dtstamp ?? null,
-            seriesSignature,
-          });
-        }
-        continue;
-      }
-      const row = snapshot.findRow('task', mapping.taskId)?.row;
-      if (row && !isNil(row.purgedAt)) {
-        purge({ event, draft }, mapping, 'Task permanently deleted', row);
-        continue;
-      }
-      if (!row && mapping.state !== 'pending') {
-        fail({ event, draft }, mapping, 'Mapped task missing or not visible; mapping preserved');
-        continue;
-      }
-      if (!row) {
-        // The reserved create never landed. A cancelled event stays unimported; the reservation is
-        // kept, so a withdrawn cancellation still creates the task under the same id.
-        if (event.cancelled) {
-          stats.skipped++;
-          record({ event }, 'skip', mapping.taskId, undefined, 'Cancelled before import');
-          continue;
-        }
-        creates.push({ event, fingerprint, mapping, draft, row: undefined, delta: {} });
-        continue;
-      }
-      // A source change reopens a completed task; an unchanged source keeps the completion.
-      const delta = event.cancelled ? cancelDelta(row, nowMs) : ownedDelta(row, draft!, mapping.fingerprint !== fingerprint);
-      updates.push({ event, fingerprint, mapping, draft, row, delta });
-    }
-
+    const feed = await readFeed(run);
+    const { all, removedMappings } = selectEvents(run, feed);
+    const { creates, updates } = await planEvents(run, snapshot, feed, all);
     const removals: Removal[] = removedMappings.map((mapping) => {
       const row = snapshot.findRow('task', mapping.taskId)?.row;
-      const write = mapping.state !== 'purged' && !!row && isNil(row.purgedAt) && isNil(row.deletedAt);
+      const write = mapping.state !== 'purged' && !!row && isLiveRow(row);
       return { mapping, row, write };
     });
 
     if (dryRun) {
-      for (const p of creates) {
-        stats.created++;
-        record(p, 'create', p.mapping?.taskId);
-      }
-      for (const p of updates) {
-        if (Object.keys(p.delta).length === 0) {
-          stats.skipped++;
-          record(p, 'skip', p.mapping!.taskId, p.row);
-        } else if (p.event.cancelled) {
-          stats.deleted++;
-          record(p, 'cancel', p.mapping!.taskId, p.row);
-        } else {
-          stats.updated++;
-          record(p, 'update', p.mapping!.taskId, p.row);
-        }
-      }
-      for (const r of removals) {
-        stats.deleted++;
-        recordMapping(r.mapping, 'delete', r.row, 'Removed from ICS source');
-      }
+      reportDryRun(run, creates, updates, removals);
       return stats;
     }
-
-    // Reserve every new id before any scope write.
-    const fresh = creates.filter((p) => !p.mapping);
-    if (fresh.length > 0) {
-      await guard();
-      const reserved = await store.reserveMappings(
-        userId,
-        sourceId,
-        token,
-        fresh.map((p) => ({
-          icsUid: p.event.uid,
-          occurrenceId: p.event.occurrenceId ?? '',
-          taskId: uuidv7(nowMs),
-          projectId: source.projectId,
-          sequence: p.event.sequence ?? 0,
-          dtstamp: p.event.dtstamp ?? null,
-          seriesSignature: p.event.seriesSignature ?? null,
-        })),
-      );
-      fresh.forEach((p, i) => {
-        p.mapping = reserved[i]!;
-      });
-    }
-
-    // Record the observed revision before writing, so a lost response followed by an older feed
-    // cannot roll the task back. Pending mappings without a row stay pending (create is resent).
-    const writes = updates.filter((p) => Object.keys(p.delta).length > 0);
-    if (writes.length > 0) {
-      await guard();
-      await store.markUpdating(
-        userId,
-        sourceId,
-        token,
-        writes.map((p) => ({
-          ...p.mapping!,
-          sequence: p.event.sequence ?? 0,
-          dtstamp: p.event.dtstamp ?? null,
-        })),
-      );
-      for (const p of writes) {
-        p.mapping = { ...p.mapping!, sequence: p.event.sequence ?? 0, dtstamp: p.event.dtstamp ?? null, state: 'updating' };
-      }
-    }
-
-    const confirm = (p: Planned) => {
-      const m = p.mapping!;
-      commits.push({
-        ...m,
-        fingerprint: p.fingerprint,
-        sequence: p.event.sequence ?? 0,
-        dtstamp: p.event.dtstamp ?? null,
-        state: p.event.cancelled ? 'cancelled' : 'applied',
-        seriesSignature: p.event.seriesSignature ?? m.seriesSignature,
-        lastError: null,
-      });
-    };
-
-    // Rows that already match (a lost response that did land): the snapshot row is the readback.
-    for (const p of updates) {
-      if (Object.keys(p.delta).length > 0) continue;
-      confirm(p);
-      stats.skipped++;
-      record(p, 'skip', p.mapping!.taskId, p.row);
-    }
-
-    const keys = sortKeysBefore(firstTaskSortKey(snapshot, source.projectId), creates.length);
-    const planned: Planned[] = [...creates, ...writes];
-    const trash = removals.filter((r) => r.write);
-    const intents: WriteIntent[] = [
-      ...creates.map((p, i) => createIntent(p.mapping!.taskId, p.mapping!.projectId, p.draft!, source, keys[i]!)),
-      ...writes.map((p) => patchTaskIntent(p.mapping!.taskId, p.delta)),
-      // Source deletion is the one case ICS writes deletedAt: a soft delete the user can restore.
-      ...trash.map((r) => trashTaskIntent(r.mapping.taskId, nowMs)),
-    ];
-
-    /** Removals whose mapping may go: no write was needed, or the trash write was confirmed. */
-    const settled = removals.filter((r) => !r.write);
-    if (intents.length > 0) {
-      await guard(true);
-      let outcomes: WriteOutcome[] | null = null;
-      let pushError = '';
-      try {
-        outcomes = await pushIntents(
-          { db: deps.db, userId, deviceId: 'ics', getScopeStub: deps.getScopeStub, clock: deps.clock },
-          snapshot,
-          intents,
-          { nowMs },
-        );
-      } catch (error) {
-        // Unknown result: mappings keep their state and the next run reads what actually landed.
-        pushError = `Task write could not be confirmed; retry keeps reserved task ID (${errMsg(error)})`;
-      }
-      planned.forEach((p, i) => {
-        const outcome = outcomes?.[i];
-        if (outcome && isPurgedOutcome(outcome)) {
-          purge(p, p.mapping!, describeOutcome(outcome), p.row);
-          return;
-        }
-        if (!outcome || outcome.status !== 'applied') {
-          fail(p, p.mapping, outcome ? describeOutcome(outcome) : pushError, p.row);
-          return;
-        }
-        confirm(p);
-        if (!p.row) {
-          stats.created++;
-          record(p, 'create', p.mapping!.taskId);
-        } else if (p.event.cancelled) {
-          stats.deleted++;
-          record(p, 'cancel', p.mapping!.taskId, p.row);
-        } else {
-          stats.updated++;
-          record(p, 'update', p.mapping!.taskId, p.row);
-        }
-      });
-      trash.forEach((r, j) => {
-        const outcome = outcomes?.[planned.length + j];
-        // A tombstone or a purged list is gone for good: the mapping can go as well.
-        if (outcome && (outcome.status === 'applied' || isPurgedOutcome(outcome))) {
-          settled.push(r);
-          return;
-        }
-        const reason = `Source deletion not confirmed; mapping preserved for retry (${outcome ? describeOutcome(outcome) : pushError})`;
-        stats.errors++;
-        stats.lastError = reason;
-        recordMapping(r.mapping, 'error', r.row, reason);
-      });
-    }
-
-    if (commits.length > 0) {
-      await guard();
-      await store.commitMappings(userId, sourceId, token, commits);
-    }
-    if (purges.length > 0) {
-      await guard();
-      await store.markPurged(userId, sourceId, token, purges);
-    }
-    for (const r of settled) {
-      try {
-        await guard();
-        await store.deleteMapping(userId, sourceId, token, r.mapping);
-        stats.deleted++;
-        recordMapping(r.mapping, 'delete', r.row, 'Removed from ICS source');
-      } catch (error) {
-        // The task is already in the trash (or gone); the next run deletes the mapping without a write.
-        stats.errors++;
-        stats.lastError = errMsg(error);
-        recordMapping(r.mapping, 'error', r.row, stats.lastError);
-      }
-    }
-    await guard(true);
-    await store.setSourceSync(
-      userId,
-      sourceId,
-      { lastSyncAt: nowMs, lastStatus: stats.errors ? 'partial' : 'success', lastStats: JSON.stringify(stats) },
-      token,
-    );
+    const settled = await applyPlan(run, snapshot, creates, updates, removals);
+    await finishRun(run, settled);
   } catch (error) {
     stats.errors++;
     stats.lastError = errMsg(error);

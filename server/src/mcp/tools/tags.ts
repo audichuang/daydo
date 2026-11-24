@@ -3,7 +3,7 @@ import { normalizeTagLabels } from '../../domain/tags';
 import { after } from '../../domain/sortKey';
 import type { Snapshot, SnapshotRow } from '../../serverops/snapshot';
 import { userScope } from '../../sync/scopeName';
-import { bySortKey, compareKeys } from '../../serverops/values';
+import { bySortKey, compareKeys, isLiveRow } from '../../serverops/values';
 import { openSession, openWriteSession, requireStr, ToolValidationError, type ToolContext, type ToolDef } from '../toolkit';
 import { parseColor } from './projects';
 
@@ -22,8 +22,6 @@ function formatTag(snapshot: Snapshot, row: Record<string, unknown>) {
   };
 }
 
-const isLive = (t: SnapshotRow) => t.row.deletedAt == null && t.row.purgedAt == null;
-
 export function tagTools(): ToolDef[] {
   return [
     {
@@ -32,7 +30,7 @@ export function tagTools(): ToolDef[] {
       inputSchema: { type: 'object', properties: {} },
       run: async (_args, ctx: ToolContext) => {
         const { snapshot } = await openSession(ctx);
-        return ownTags(snapshot, ctx.userId).filter(isLive).sort(bySortKey).map((t) => formatTag(snapshot, t.row));
+        return ownTags(snapshot, ctx.userId).filter((t) => isLiveRow(t.row)).sort(bySortKey).map((t) => formatTag(snapshot, t.row));
       },
     },
     {
@@ -56,7 +54,7 @@ export function tagTools(): ToolDef[] {
         const { snapshot } = session;
         const own = ownTags(snapshot, ctx.userId);
         const existing = own.find((t) => t.row.name === tag.name);
-        if (existing && isLive(existing)) return formatTag(snapshot, existing.row);
+        if (existing && isLiveRow(existing.row)) return formatTag(snapshot, existing.row);
         // A trashed tag is revived; its key (the name) cannot be reused for a new row.
         const set: Record<string, unknown> = existing
           ? { label: tag.label, deletedAt: null, ...(color !== undefined && { color }) }

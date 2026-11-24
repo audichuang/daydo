@@ -22,7 +22,7 @@ import {
   trashTaskIntent,
   uncompleteTaskIntent,
 } from '../../serverops/taskWrites';
-import { isNil, rowSchedule } from '../../serverops/values';
+import { isLiveRow, isNil, rowSchedule } from '../../serverops/values';
 import { formatTask, openTasksOf } from '../format';
 import {
   openWriteSession,
@@ -354,8 +354,7 @@ export function taskWriteTools(): ToolDef[] {
         }
         const origProjectId = String(task.row.projectId ?? '');
         const origProject = snapshot.findRow('project', origProjectId);
-        const origAlive =
-          origProject !== undefined && isNil(origProject.row.deletedAt) && isNil(origProject.row.purgedAt);
+        const origAlive = origProject !== undefined && isLiveRow(origProject.row);
         if (origProject !== undefined && isNil(origProject.row.purgedAt) && !snapshot.canWrite(origProjectId)) {
           throw new Error(
             `Project '${origProjectId}' is read-only for you (role: ${snapshotRole(snapshot, origProjectId) ?? 'none'})`,
