@@ -283,6 +283,10 @@ func makeAPI(now: Date = noon) async throws -> LocalDayDoAPI {
         let folderLists = try await api.listProjects(includeArchived: false).filter { $0.folderId == folder.id }
         #expect(folderLists.map(\.name) == ["F2", "F1"])
 
+        // Renaming a folder to blank is rejected like creating one; names are trimmed.
+        await #expect(throws: DayDoError.self) { try await api.updateFolder(id: folder.id, name: "  ") }
+        #expect(try await api.updateFolder(id: folder.id, name: " 工作 ").name == "工作")
+
         // Inbox cannot be reordered, and cross-group move is rejected.
         await #expect(throws: DayDoError.self) { try await api.moveProject(id: initial[0].id, beforeProjectId: work.id) }
         await #expect(throws: DayDoError.self) { try await api.moveProject(id: f1.id, beforeProjectId: work.id) }

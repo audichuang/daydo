@@ -356,6 +356,8 @@ extension LocalDayDoAPI {
     }
 
     public func updateFolder(id: String, name: String) async throws -> Folder {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw DayDoError.invalid("Folder name is required") }
         let now = now()
         return try await writer.write { db in
             guard var f = try FolderRecord.fetchOne(db, key: id), f.deletedAt == nil else { throw DayDoError.notFound("folder", id) }

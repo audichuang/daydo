@@ -216,6 +216,11 @@ struct DrawerView: View {
                     }
                     .padding(.leading, 12)
                     .padding(.top, Platform.isMac ? 10 : 14)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(dropTarget == "" ? accent.soft : .clear))
+                    .dropDestination(for: String.self) { ids, _ in
+                        guard let id = ids.first else { return false }
+                        return move(id, to: nil)
+                    } isTargeted: { dropTarget = $0 ? "" : (dropTarget == "" ? nil : dropTarget) }
 
                     ForEach(model.folders) { f in folderRow(f) }
                     ForEach(lists(in: nil)) { p in listRow(p, indent: false) }
@@ -255,6 +260,16 @@ struct DrawerView: View {
                     Color.clear.contentShape(Rectangle()).onTapGesture { closeSwipe() }
                 }
             }
+            .confirmationDialog(
+                "刪除資料夾「\(deletingFolder?.name ?? "")」？裡面的清單會留著、移到資料夾外。",
+                isPresented: Binding(get: { deletingFolder != nil }, set: { if !$0 { deletingFolder = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("刪除資料夾", role: .destructive) {
+                    guard let id = deletingFolder?.id else { return }
+                    Task { await model.perform { try await $0.deleteFolder(id: id) } }
+                }
+            }
             .onScrollPhaseChange { _, phase in
                 if phase == .interacting || phase == .decelerating, swipedId != nil {
                     closeSwipe()
@@ -278,6 +293,7 @@ struct DrawerView: View {
                 let name = newFolder ?? ""
                 Task { await model.perform { try await $0.createFolder(name: name) } }
             }
+            .disabled((newFolder ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
         }
         .alert("重新命名資料夾", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("資料夾名稱", text: $renameText)
@@ -286,6 +302,7 @@ struct DrawerView: View {
                 let id = renaming!.id, name = renameText
                 Task { await model.perform { try await $0.updateFolder(id: id, name: name) } }
             }
+            .disabled(renameText.trimmingCharacters(in: .whitespaces).isEmpty)
         }
         .confirmationDialog(
             "刪除「\(deletingProject?.name ?? "")」？清單內的任務會移到垃圾桶。",
@@ -305,6 +322,9 @@ struct DrawerView: View {
     @State private var newFolder: String?
     @State private var renaming: Folder?
     @State private var renameText = ""
+    @State private var deletingFolder: Folder?
+    /// Folder id under a list being dragged; "" means the 清單 header (move out of a folder).
+    @State private var dropTarget: String?
 
     var header: some View {
         HStack(spacing: Platform.isMac ? 8 : 10) {
@@ -380,8 +400,10 @@ struct DrawerView: View {
     func folderRow(_ f: Folder) -> some View {
         let open = model.openFolders.contains(f.id)
         let children = lists(in: f.id)
+        let hidesCurrent = !open && children.contains { isCurrent(.project($0.id)) }
         return VStack(spacing: 2) {
             row(icon: Image(systemName: "folder"), title: f.name, count: children.reduce(0) { $0 + $1.activeCount }, current: false, indent: false,
+                highlighted: hidesCurrent || dropTarget == f.id,
                 trailing: AnyView(Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textTertiary).rotationEffect(.degrees(open ? 90 : 0)))) {
                 if swipedId != nil { closeSwipe(); return }
                 withAnimation(Motion.toggle(reduceMotion)) {
@@ -390,10 +412,12 @@ struct DrawerView: View {
             }
             .contextMenu {
                 Button("重新命名", systemImage: "pencil") { renameText = f.name; renaming = f }
-                Button("刪除資料夾（保留清單）", systemImage: "trash", role: .destructive) {
-                    Task { await model.perform { try await $0.deleteFolder(id: f.id) } }
-                }
+                Button("刪除資料夾（保留清單）", systemImage: "trash", role: .destructive) { deletingFolder = f }
             }
+            .dropDestination(for: String.self) { ids, _ in
+                guard let id = ids.first else { return false }
+                return move(id, to: f.id)
+            } isTargeted: { dropTarget = $0 ? f.id : (dropTarget == f.id ? nil : dropTarget) }
             .accessibilityValue(open ? "已展開" : "已收合")
             if open {
                 VStack(spacing: 2) {
@@ -411,20 +435,61 @@ struct DrawerView: View {
         Task { await model.perform { try await $0.moveProject(id: p.id, beforeProjectId: first.id) } }
     }
 
-    @ViewBuilder
-    func listRow(_ p: Project, indent: Bool) -> some View {
-        let rowBody = row(icon: ListDot(color: p.color, size: 9), title: p.name, count: p.activeCount, current: isCurrent(.project(p.id)), indent: indent, highlighted: false,
+    /// Moves a list into a folder (nil = out of any folder). Returns false when nothing moves.
+    @discardableResult
+    func move(_ id: String, to folder: String?) -> Bool {
+        guard let p = model.projects.first(where: { $0.id == id }), !p.isInbox, !p.isViewer, p.folderId != folder else { return false }
+        var u = UpdateProjectInput(projectId: id)
+        u.folderId = folder.map { .set($0) } ?? .clear
+        let input = u
+        Task {
+            if await model.perform({ try await $0.updateProject(input) }) != nil, let folder {
+                model.openFolders.insert(folder)
+            }
+        }
+        return true
+    }
+
+    func listRowBody(_ p: Project, indent: Bool, highlighted: Bool) -> some View {
+        row(icon: ListDot(color: p.color, size: 9), title: p.name, count: p.activeCount, current: isCurrent(.project(p.id)), indent: indent, highlighted: highlighted,
             trailing: p.isShared ? AnyView(Image(systemName: "person.2").font(.system(size: 11)).foregroundStyle(Palette.textTertiary).accessibilityLabel("共享清單")) : nil) {
             if swipedId != nil { closeSwipe(); return }
             pick(.project(p.id))
         }
         .accessibilityIdentifier("drawer.list.\(p.name)")
+    }
 
+    @ViewBuilder
+    func listMenu(_ p: Project) -> some View {
+        Button("置頂", systemImage: "arrow.up.to.line") { pinToTop(p) }
+        Button("編輯清單", systemImage: "slider.horizontal.3") { close(); model.openEditProject(p.id) }
+        if model.folders.contains(where: { $0.id != p.folderId }) || p.folderId != nil {
+            Menu("移到資料夾", systemImage: "folder") {
+                if p.folderId != nil {
+                    Button("移出資料夾") { move(p.id, to: nil) }
+                }
+                ForEach(model.folders.filter { $0.id != p.folderId }) { f in
+                    Button(f.name) { move(p.id, to: f.id) }
+                }
+            }
+        }
+        if p.isOwner {
+            Button("刪除", systemImage: "trash", role: .destructive) { deletingProject = p }
+        }
+    }
+
+    @ViewBuilder
+    func listRow(_ p: Project, indent: Bool) -> some View {
         if p.isViewer {
-            rowBody
+            listRowBody(p, indent: indent, highlighted: false)
                 .contextMenu {
                     Button("共享協作", systemImage: "person.2") { close(); model.openShareProject(p.id) }
                 }
+        } else if Platform.isMac {
+            // Mac: right-click menu and dragging onto a folder replace the touch swipe actions.
+            listRowBody(p, indent: indent, highlighted: false)
+                .contextMenu { listMenu(p) }
+                .draggable(p.id)
         } else {
             SwipeableListRow(
                 project: p,
@@ -434,21 +499,10 @@ struct DrawerView: View {
                 onEdit: { close(); model.openEditProject(p.id) },
                 onDelete: p.isOwner ? { deletingProject = p } : nil
             ) { isSwiped in
-                row(icon: ListDot(color: p.color, size: 9), title: p.name, count: p.activeCount, current: isCurrent(.project(p.id)), indent: indent, highlighted: isSwiped,
-                    trailing: p.isShared ? AnyView(Image(systemName: "person.2").font(.system(size: 11)).foregroundStyle(Palette.textTertiary).accessibilityLabel("共享清單")) : nil) {
-                    if swipedId != nil { closeSwipe(); return }
-                    pick(.project(p.id))
-                }
-                .accessibilityIdentifier("drawer.list.\(p.name)")
-                .accessibilityAction(named: "置頂") { pinToTop(p) }
-                .accessibilityAction(named: "編輯") { close(); model.openEditProject(p.id) }
-                .contextMenu {
-                    Button("置頂", systemImage: "arrow.up.to.line") { pinToTop(p) }
-                    Button("編輯清單", systemImage: "slider.horizontal.3") { close(); model.openEditProject(p.id) }
-                    if p.isOwner {
-                        Button("刪除", systemImage: "trash", role: .destructive) { deletingProject = p }
-                    }
-                }
+                listRowBody(p, indent: indent, highlighted: isSwiped)
+                    .accessibilityAction(named: "置頂") { pinToTop(p) }
+                    .accessibilityAction(named: "編輯") { close(); model.openEditProject(p.id) }
+                    .contextMenu { listMenu(p) }
             }
         }
     }
