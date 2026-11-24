@@ -265,10 +265,10 @@ public enum DateText {
 
     /// Time range for a block; the end is prefixed with 隔日 when it is on
     /// the next day.
-    public static func range(_ s: Schedule) -> String {
+    public static func range(_ s: Schedule, separator: String = " – ") -> String {
         guard let sm = s.startMinute else { return "全天" }
         guard let end = s.endOffsetMinutes else { return hm(sm) }
-        return hm(sm) + " – " + (end >= 1440 ? "隔日 " : "") + hm(end)
+        return hm(sm) + separator + (end >= 1440 ? "隔日 " : "") + hm(end)
     }
 
     /// The meta line under a task title.

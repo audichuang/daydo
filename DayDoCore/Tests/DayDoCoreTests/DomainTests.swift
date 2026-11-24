@@ -68,6 +68,15 @@ func day(_ s: String) -> LocalDay { LocalDay(s)! }
         #expect(m.lastDay == day("2026-11-15"))
     }
 
+    @Test func rangeCustomSeparator() {
+        let d = day("2026-11-15")
+        #expect(DateText.range(.timed(d, start: 600, end: 660)) == "10:00 – 11:00")
+        #expect(DateText.range(.timed(d, start: 600, end: 660), separator: "-") == "10:00-11:00")
+        #expect(DateText.range(.timed(d, start: 1410, end: 30), separator: "-") == "23:30-隔日 00:30")
+        #expect(DateText.range(.timed(d, start: 600, end: nil), separator: "-") == "10:00")
+        #expect(DateText.range(.allDay(d), separator: "-") == "全天")
+    }
+
     @Test func rejectsEndBeforeStart() {
         #expect(throws: ScheduleError.endBeforeStart) {
             _ = try Schedule.fromAPI(start: "2026-11-15T18:00", due: "2026-11-15T17:00", allDay: nil, timeZone: nil)

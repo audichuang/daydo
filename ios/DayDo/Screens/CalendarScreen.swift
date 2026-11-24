@@ -2265,6 +2265,8 @@ struct TimeGrid: View {
     /// (VoiceOver still reads the owner) rather than truncating titles such as
     /// 學校接小安／學校接小明 to the same prefix.
     static let ownerAvatarMinTitleWidth: CGFloat = 56
+    /// Width budget for the Mac single-line `[HH:MM] ` time prefix at 12pt medium.
+    private static let macTimePrefixWidth: CGFloat = 48
 
     func allDayChip(_ t: TodoTask, width: CGFloat) -> some View {
         let color = Palette.listColor(model.project(t.projectId)?.color)
@@ -2323,7 +2325,7 @@ struct TimeGrid: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isButton)
-        .accessibilityLabel(b.task.title + "，" + (b.task.schedule.map(DateText.range) ?? ""))
+        .accessibilityLabel(b.task.title + "，" + (b.task.schedule.map { DateText.range($0) } ?? ""))
         .accessibilityValue(owner.map { "\($0.name)的" } ?? "")
     }
 
@@ -2339,14 +2341,18 @@ struct TimeGrid: View {
             Rectangle().fill(color).frame(width: 3)
             VStack(alignment: .leading, spacing: 1) {
                 if Platform.isMac {
-                    let prefix = schedule?.startMinute.map { "[\(DateText.hm($0))] " } ?? ""
+                    let showRange = h >= 36 && schedule?.startMinute != nil
+                    let avatarReserved: CGFloat = showAvatar ? avatarSize + strokeWidth + 4 : 0
+                    let showTimePrefix = !showRange
+                        && w >= 3 + 4 + Self.macTimePrefixWidth + Self.ownerAvatarMinTitleWidth + 4 + avatarReserved
+                    let prefix = showTimePrefix ? (schedule?.startMinute.map { "[\(DateText.hm($0))] " } ?? "") : ""
                     Text(prefix + task.title)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(done ? Palette.done : Palette.text)
                         .strikethrough(done)
                         .lineLimit(1)
-                    if h >= 36, let s = schedule, let rangeText = macTimeRange(s) {
-                        Text(rangeText)
+                    if showRange, let s = schedule {
+                        Text(DateText.range(s, separator: "-"))
                             .font(.system(size: 11, weight: .regular))
                             .monospacedDigit()
                             .foregroundStyle(Palette.textSecondary)
@@ -2369,12 +2375,6 @@ struct TimeGrid: View {
             }
         }
         .frame(width: w, height: h, alignment: .topLeading)
-    }
-
-    private func macTimeRange(_ s: Schedule) -> String? {
-        guard let sm = s.startMinute else { return nil }
-        guard let end = s.endOffsetMinutes else { return DateText.hm(sm) }
-        return "\(DateText.hm(sm))-\(end >= 1440 ? "隔日 " : "")\(DateText.hm(end))"
     }
 
     // MARK: Drag & Drop
