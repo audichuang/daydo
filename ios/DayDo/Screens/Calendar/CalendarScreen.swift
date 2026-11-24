@@ -130,17 +130,6 @@ struct CalendarScreen: View {
                     }
                     .id(id)
                     .frame(width: min(CGFloat(macDetailWidth), max(300, macWidth * 0.34)))
-                    .background {
-                        // Same rule as the tasks tab: Esc leaves a focused field or a date
-                        // subpage alone, and is not claimed while the search panel is on top.
-                        if model.tab == .calendar
-                            && model.inlineDetailSubpageTaskId != id
-                            && model.inlineDetailFocusedTaskId != id {
-                            Button("關閉詳情") { model.calendarInspectorTaskId = nil }
-                                .keyboardShortcut(.cancelAction)
-                                .hidden()
-                        }
-                    }
                 }
             }
             if !Platform.isMac && !model.isViewer(projectId: projectFilter) {

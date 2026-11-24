@@ -87,7 +87,7 @@ struct RootView: View {
                                 && model.isSignedIn
                                 && !model.hasActiveRootSheet
                                 && ((model.tab == .tasks && model.inlineDetailAllowsSelectionShortcuts)
-                                    || (Platform.isMac && model.tab == .calendar)),
+                                    || (Platform.isMac && model.tab == .calendar && model.inlineDetailSubpageTaskId == nil)),
                             tab: model.tab,
                             scope: model.scope,
                             selectedTaskId: model.selectedTaskId,
@@ -98,7 +98,9 @@ struct RootView: View {
                                 model.toggleSelectedTaskCompletion(id: id)
                             },
                             onEscape: {
-                                if model.selectedTaskId != nil {
+                                if model.tab == .calendar {
+                                    model.calendarInspectorTaskId = nil
+                                } else if model.selectedTaskId != nil {
                                     model.selectedTaskId = nil
                                 }
                             },
@@ -434,6 +436,11 @@ final class SelectionShortcutViewController: UIViewController {
                     handled = true
                 case .keyboardT:
                     onCalendarCommand?(.today)
+                    handled = true
+                case .keyboardEscape:
+                    // Closes the calendar's detail pane; skipped while a text field is
+                    // active (guard above), so Esc still cancels Zhuyin composition there.
+                    onEscape?()
                     handled = true
                 default:
                     break
