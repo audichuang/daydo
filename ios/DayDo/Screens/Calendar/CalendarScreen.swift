@@ -708,10 +708,11 @@ struct CalendarScreen: View {
                 .scrollPosition($yearScrollPosition)
                 .gesture(horizontalOnlySwipe)
             case .month:
-                if Platform.isMac {
+                // iPad and Mac fill the screen with a TickTick-style grid; the phone keeps the scrolling month.
+                if Platform.isMac || isRegular {
                     GeometryReader { geo in
                         ZStack {
-                            macEventMonth(availableHeight: geo.size.height)
+                            fullHeightEventMonth(availableHeight: geo.size.height)
                                 .id("month-\(pageSequence)")
                                 .transition(pageTransition)
                         }
@@ -950,7 +951,7 @@ struct CalendarScreen: View {
         }
     }
 
-    private func macEventMonth(availableHeight: CGFloat) -> some View {
+    private func fullHeightEventMonth(availableHeight: CGFloat) -> some View {
         let weekCount = max(1, cache.gridDays(for: shownMonth).count / 7)
         let gridHeight = max(0, availableHeight - Self.macMonthWeekdayHeaderHeight)
         let cellHeight = gridHeight / CGFloat(weekCount)

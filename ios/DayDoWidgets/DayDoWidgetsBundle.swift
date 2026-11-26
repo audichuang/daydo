@@ -281,7 +281,8 @@ struct DayDoCalendarWidget: Widget {
         }
         .configurationDisplayName("日曆")
         .description("這個月排了什麼。事件名稱、跨日長條與＋N。")
-        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        // Extra large is iPad-only: same month grid, twice as wide so titles stay readable.
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .systemExtraLarge])
         .contentMarginsDisabled()
     }
 }

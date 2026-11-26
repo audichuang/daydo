@@ -21,7 +21,7 @@ struct CalendarWidgetView: View {
                         capLanes: 2,
                         layoutForLanes: { data.twoWeekLayout(maxLanes: $0) }
                     )
-                case .systemLarge:
+                case .systemLarge, .systemExtraLarge:
                     wide(
                         data,
                         showMonthTitle: true,

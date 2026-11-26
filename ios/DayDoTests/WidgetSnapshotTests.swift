@@ -53,6 +53,7 @@ final class WidgetSnapshotTests: XCTestCase {
             ("calendar-small", .systemSmall, CGSize(width: 162, height: 162), AnyView(CalendarWidgetView(data: calData, family: .systemSmall, accent: accent))),
             ("calendar-medium", .systemMedium, CGSize(width: 346, height: 162), AnyView(CalendarWidgetView(data: calData, family: .systemMedium, accent: accent))),
             ("calendar-large", .systemLarge, CGSize(width: 346, height: 364), AnyView(CalendarWidgetView(data: calData, family: .systemLarge, accent: accent))),
+            ("calendar-xl", .systemExtraLarge, CGSize(width: 715, height: 364), AnyView(CalendarWidgetView(data: calData, family: .systemExtraLarge, accent: accent))),
         ]
         _ = projectsById
 

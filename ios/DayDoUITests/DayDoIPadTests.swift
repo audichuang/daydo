@@ -147,6 +147,17 @@ final class DayDoIPadTests: XCTestCase {
         XCTAssertTrue(modeButton.waitForExistence(timeout: 3))
         shot("ipad-portrait-calendar-week")
 
+        // 月 fills the screen like TickTick: the full-height grid labels columns 週一…, the phone month does not.
+        modeButton.tap()
+        XCTAssertTrue(app.buttons["月"].waitForExistence(timeout: 3))
+        app.buttons["月"].tap()
+        XCTAssertTrue(app.staticTexts["週一"].waitForExistence(timeout: 3), app.debugDescription)
+        shot("ipad-portrait-calendar-month")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.staticTexts["週一"].waitForExistence(timeout: 3))
+        shot("ipad-landscape-calendar-month")
+        XCUIDevice.shared.orientation = .portrait
+
         // ⌘4 switches to Settings.
         app.typeKey("4", modifierFlags: .command)
         XCTAssertTrue(app.buttons["外觀"].waitForExistence(timeout: 3), app.debugDescription)
