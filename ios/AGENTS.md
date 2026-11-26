@@ -2,6 +2,8 @@
 
 > 本檔只寫 ios 的增量；跨 App 與 server 的規則、指令、模擬器與發版在根目錄 AGENTS.md。
 
+UI 改動一律同時維護 iPhone、iPad、Mac 三個平台：同一個畫面三邊都要看過、附截圖；只改其中一邊時，回報寫明另外兩邊為什麼不用改（iPad 月曆曾停在手機版小月格，Mac 早已有撐滿的月格卻沒跟上）。
+
 狀態與寫入都經 `DayDo/App/AppModel.swift`（`@Observable`，持有 DayDoCore 的 `DeviceStore`）；規則改在 DayDoCore，不寫在畫面裡。
 
 ## 畫面地圖（`DayDo/Screens/` → 設計板號）
