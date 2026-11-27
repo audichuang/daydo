@@ -43,7 +43,7 @@ set_size() {
 
 case "${1:-}" in
   build)
-    heavy -- "$ROOT/ios/scripts/uitest.sh" mac >"$STATE/build.log" 2>&1 || { tail -20 "$STATE/build.log"; die "build failed (log: $STATE/build.log)"; }
+    "$ROOT/ios/scripts/uitest.sh" mac >"$STATE/build.log" 2>&1 || { tail -20 "$STATE/build.log"; die "build failed (log: $STATE/build.log)"; }
     # Stamp the build, not the binary: a comment-only edit compiles to identical objects and Xcode skips relinking.
     touch "$STATE/built"
     app_path ;;

@@ -16,7 +16,7 @@ S="$(git rev-parse --show-toplevel)/ios/.claude/skills/verify/scripts"
 Mac:
 
 ```bash
-$S/mac.sh build                       # heavy -- ios/scripts/uitest.sh mac, prints the .app of THIS worktree
+$S/mac.sh build                       # ios/scripts/uitest.sh mac (queues on heavy itself), prints the .app of THIS worktree
 DAYDO_VERIFY_RUN=<topic> $S/mac.sh evidence   # evidence dir: <main checkout>/.agent-work/verify/<topic>/
 $S/mac.sh launch [calendar|events|week|day|search|settings|detail|...] [1400x900]
 ```
