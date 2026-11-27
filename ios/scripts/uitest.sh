@@ -11,14 +11,15 @@
 #
 # Every mode first takes the DayDo lock (build just needs no sim-vault), a flock on a fixed
 # file (not $TMPDIR: sessions have different ones). The fd is inherited by xcodebuild and
-# recordVideo, so the lock lasts while any test process is alive, even if this shell is
-# killed. test and build then also wait for every xcodebuild on the Mac to finish (two at
+# recordVideo, so the lock lasts while any test process is alive (if heavy itself is
+# SIGKILLed, see below, those orphans keep it). test and build then also wait for every xcodebuild on the Mac to finish (two at
 # once fail with "Failed to send signal 19"; DerivedData and CPU are shared). Waiting for
 # either gives up after 30 min with exit 8.
 #
 # test, build and mac first queue on the machine-wide `heavy` lock (name build), before the
 # DayDo lock, so every caller takes the two in the same order and none waits on the other
-# while holding one. A caller already inside `heavy` (HEAVY_HELD has build) skips the queue.
+# while holding one. The heavy queue has no time limit; the 30 min above starts after it.
+# A caller already inside `heavy` (HEAVY_HELD has build) skips the queue.
 # up, down and park do not queue: they compile nothing and must not wait behind builds.
 # When this script exits, heavy terminates whatever is still running in its process group
 # before freeing the slot (`heavy --help`), so a test left behind by a killed shell is
