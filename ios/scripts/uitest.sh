@@ -16,6 +16,14 @@
 # once fail with "Failed to send signal 19"; DerivedData and CPU are shared). Waiting for
 # either gives up after 30 min with exit 8.
 #
+# test, build and mac first queue on the machine-wide `heavy` lock (name build), before the
+# DayDo lock, so every caller takes the two in the same order and none waits on the other
+# while holding one. A caller already inside `heavy` (HEAVY_HELD has build) skips the queue.
+# up, down and park do not queue: they compile nothing and must not wait behind builds.
+# When this script exits, heavy terminates whatever is still running in its process group
+# before freeing the slot (`heavy --help`), so a test left behind by a killed shell is
+# stopped rather than kept alive with the DayDo lock.
+#
 # Requires sim-vault >= 4.0.0 (`uv tool install --force "git+https://github.com/audichuang/sim-vault@v4.1.0"`).
 # Devices come from sim-vault with a lease, which park and `sim-vault shutdown` respect:
 # resident devices are restored from the NAS when parked (never created here: on 3 no
@@ -183,6 +191,14 @@ if [[ "$mode" != build && "$mode" != mac ]]; then
     *) usage ;;
   esac
 fi
+
+case "$mode" in
+  test|build|mac)
+    if [[ ",${HEAVY_HELD:-}," != *,build,* ]]; then
+      exec heavy --name build -- "$BASH" "$0" "$@"
+    fi
+    ;;
+esac
 
 # Building the app workspace rewrites DayDoCore/Package.resolved with the app's own pins
 # (GoogleSignIn, AppAuth, ...). Put it back afterwards, but only if it was clean before:

@@ -427,6 +427,16 @@ fi
 exit 0
 EOF
 
+# Stub heavy: logs the call to heavy.log (events.log stays sim-vault/xcodebuild only), then runs the command in place (exec keeps the pid that the
+# signal tests watch) with HEAVY_HELD set, as real heavy does for its child.
+cat >"$STUB/heavy" <<'EOF'
+#!/bin/bash
+echo "heavy $*" >>"$STUB_STATE/heavy.log"
+while [[ $# -gt 0 && "$1" != -- ]]; do shift; done
+shift
+HEAVY_HELD=build exec "$@"
+EOF
+
 cat >"$STUB/pgrep" <<'EOF'
 #!/bin/bash
 S="$STUB_STATE"
@@ -581,8 +591,8 @@ EOF
 
 chmod +x "$STUB"/* "$STUB_REALVAULT"/*
 ln -s "$REAL_PY" "$STUB/python3"
-for f in xcodebuild xcrun pgrep ps python3; do ln -s "$STUB/$f" "$STUB_NOVAULT/$f"; done
-for f in xcodebuild pgrep ps python3; do ln -s "$STUB/$f" "$STUB_REALVAULT/$f"; done
+for f in heavy xcodebuild xcrun pgrep ps python3; do ln -s "$STUB/$f" "$STUB_NOVAULT/$f"; done
+for f in heavy xcodebuild pgrep ps python3; do ln -s "$STUB/$f" "$STUB_REALVAULT/$f"; done
 
 # ---------------------------------------------------------------- helpers
 setup() {
@@ -597,7 +607,7 @@ setup() {
 set_env() {
   ENVCMD=(env -u BASH_ENV -u DD_SIM_OWNER -u DD_PARK_TRIM -u DD_UITEST_RECORD
     -u DD_UITEST_LOCK_PID -u DD_UITEST_LOCK_FD -u DD_UITEST_LOCK_RC -u DD_UITEST_KILL_AFTER
-    -u CLAUDE_PID -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID -u SIM_VAULT_ANCHOR_PID
+    -u CLAUDE_PID -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID -u HEAVY_HELD -u SIM_VAULT_ANCHOR_PID
     HOME="$T/home" TMPDIR="$T/tmp" STUB_STATE="$S"
     DD_UITEST_POLL=0.05 DD_UITEST_LOCK_WAIT=30
     PATH="$1:/usr/bin:/bin")
@@ -618,7 +628,7 @@ plistlib.dump({
 ' "$T/home/Library/Developer/CoreSimulator/Devices/UDID-REAL-001"
   ENVCMD=(env -u BASH_ENV -u DD_SIM_OWNER -u DD_PARK_TRIM -u DD_UITEST_RECORD
     -u DD_UITEST_LOCK_PID -u DD_UITEST_LOCK_FD -u DD_UITEST_LOCK_RC -u DD_UITEST_KILL_AFTER
-    -u CLAUDE_PID -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID
+    -u CLAUDE_PID -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID -u HEAVY_HELD
     HOME="$T/home" TMPDIR="$T/tmp" STUB_STATE="$S"
     SIM_VAULT_DIR="$T/vault" SIM_VAULT_HISTORY="$T/history.jsonl"
     SIM_VAULT_ANCHOR_PID="$$"
@@ -706,18 +716,18 @@ check_stubs() {
   local T="$WORK/gate" S="$WORK/gate" out
   mkdir -p "$T"
   set_env "$STUB"
-  out="$("${ENVCMD[@]}" bash --noprofile --norc -c 'command -v sim-vault xcrun xcodebuild pgrep ps python3')"
-  if [[ "$(printf '%s\n' "$out" | grep -c "^$STUB/")" != 6 ]]; then
+  out="$("${ENVCMD[@]}" bash --noprofile --norc -c 'command -v heavy sim-vault xcrun xcodebuild pgrep ps python3')"
+  if [[ "$(printf '%s\n' "$out" | grep -c "^$STUB/")" != 7 ]]; then
     echo "stub PATH check failed, not running tests:"; echo "$out"; exit 1
   fi
   set_env "$STUB_NOVAULT"
-  out="$("${ENVCMD[@]}" bash --noprofile --norc -c 'command -v sim-vault xcrun xcodebuild pgrep ps python3')"
-  if [[ "$(printf '%s\n' "$out" | grep -c "^$STUB_NOVAULT/")" != 5 ]] || [[ "$out" == *sim-vault* ]]; then
+  out="$("${ENVCMD[@]}" bash --noprofile --norc -c 'command -v heavy sim-vault xcrun xcodebuild pgrep ps python3')"
+  if [[ "$(printf '%s\n' "$out" | grep -c "^$STUB_NOVAULT/")" != 6 ]] || [[ "$out" == *sim-vault* ]]; then
     echo "no-vault PATH check failed, not running tests:"; echo "$out"; exit 1
   fi
   set_env "$STUB_REALVAULT"
-  out="$("${ENVCMD[@]}" bash --noprofile --norc -c 'command -v sim-vault xcrun xcodebuild pgrep ps python3')"
-  if [[ "$(printf '%s\n' "$out" | grep -c "^$STUB_REALVAULT/")" != 6 ]]; then
+  out="$("${ENVCMD[@]}" bash --noprofile --norc -c 'command -v heavy sim-vault xcrun xcodebuild pgrep ps python3')"
+  if [[ "$(printf '%s\n' "$out" | grep -c "^$STUB_REALVAULT/")" != 7 ]]; then
     echo "realvault PATH check failed, not running tests:"; echo "$out"; exit 1
   fi
 }
@@ -1075,6 +1085,29 @@ t_no_sim_vault() {
   eq "$(last_line "$T/out")" "park rc=2" "rc line"
   run -- build
   eq "$RC" 0 "build needs no sim-vault"
+}
+
+# test, build and mac queue on heavy before the DayDo lock; up/down/park never do; a caller
+# already inside heavy is not queued again.
+t_heavy_wraps_compiling_modes() {
+  local h="$S/heavy.log"
+  heavy_calls() { grep -cE -- "$1" "$h" 2>/dev/null || true; }
+  run -- iphone
+  eq "$RC" 0 "test rc"
+  eq "$(heavy_calls '^heavy --name build -- ')" 1 "test queues on heavy once (the re-exec under the lock skips it)"
+  : >"$h"
+  run -- build
+  eq "$RC" 0 "build rc"
+  eq "$(heavy_calls '^heavy --name build -- ')" 1 "build queues on heavy"
+  : >"$h"
+  run -- up iphone
+  eq "$RC" 0 "up rc"
+  run -- down iphone
+  run -- park iphone
+  eq "$(heavy_calls '^heavy ')" 0 "up/down/park do not queue on heavy"
+  run HEAVY_HELD=build -- iphone
+  eq "$RC" 0 "nested test rc"
+  eq "$(heavy_calls '^heavy ')" 0 "caller inside heavy is not queued again"
 }
 
 # The app build rewrites DayDoCore/Package.resolved; uitest.sh must put a clean file back.
@@ -1603,7 +1636,7 @@ t_null_anchor_and_whoami_failure
 t_test_child_and_teardown_rc_8_no_busy_msg t_down_releases_and_shuts_down
  t_down_interleaved_lease t_down_missing_device
 t_park_foreign_xcodebuild_guard t_down_foreign_xcodebuild_guard t_park_rc_passthrough t_park_lock_timeout
-t_old_sim_vault t_no_sim_vault t_build_restores_resolved t_mac_build_no_lock_and_restores_resolved t_temp_device_missing t_full_name_is_resident
+t_old_sim_vault t_no_sim_vault t_heavy_wraps_compiling_modes t_build_restores_resolved t_mac_build_no_lock_and_restores_resolved t_temp_device_missing t_full_name_is_resident
 t_test_waits_for_other_xcodebuild t_teardown_failure_rc t_record_relative_path t_record_basic
 t_record_recorder_dies_midway t_record_test_failure_rc t_record_recorder_fails
 t_record_test_refused t_record_rm_log_failure_preserves_rc t_sigterm_stops_child_and_recorder
