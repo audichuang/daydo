@@ -18,6 +18,8 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/dd-uitest-test.XXXXXX")"
 STUB="$WORK/stub"
 STUB_NOVAULT="$WORK/stub-novault"
 STUB_REALVAULT="$WORK/stub-realvault"
+STUB_REALHEAVY="$WORK/stub-realheavy"
+REAL_HEAVY="$(command -v heavy || true)"
 FAILS=0
 FAILED_TESTS=""
 CURRENT=""
@@ -89,7 +91,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ---------------------------------------------------------------- stubs
-mkdir -p "$STUB" "$STUB_NOVAULT" "$STUB_REALVAULT"
+mkdir -p "$STUB" "$STUB_NOVAULT" "$STUB_REALVAULT" "$STUB_REALHEAVY"
 
 cat >"$STUB/sim-vault" <<'EOF'
 #!/bin/bash
@@ -593,6 +595,8 @@ chmod +x "$STUB"/* "$STUB_REALVAULT"/*
 ln -s "$REAL_PY" "$STUB/python3"
 for f in heavy xcodebuild xcrun pgrep ps python3; do ln -s "$STUB/$f" "$STUB_NOVAULT/$f"; done
 for f in heavy xcodebuild pgrep ps python3; do ln -s "$STUB/$f" "$STUB_REALVAULT/$f"; done
+for f in sim-vault xcodebuild xcrun pgrep ps python3; do ln -s "$STUB/$f" "$STUB_REALHEAVY/$f"; done
+[[ -z "$REAL_HEAVY" ]] || ln -s "$REAL_HEAVY" "$STUB_REALHEAVY/heavy"
 
 # ---------------------------------------------------------------- helpers
 setup() {
@@ -1100,6 +1104,10 @@ t_heavy_wraps_compiling_modes() {
   eq "$RC" 0 "build rc"
   eq "$(heavy_calls '^heavy --name build -- ')" 1 "build queues on heavy"
   : >"$h"
+  run -- mac
+  eq "$RC" 0 "mac rc"
+  eq "$(heavy_calls '^heavy --name build -- ')" 1 "mac queues on heavy"
+  : >"$h"
   run -- up iphone
   eq "$RC" 0 "up rc"
   run -- down iphone
@@ -1108,6 +1116,23 @@ t_heavy_wraps_compiling_modes() {
   run HEAVY_HELD=build -- iphone
   eq "$RC" 0 "nested test rc"
   eq "$(heavy_calls '^heavy ')" 0 "caller inside heavy is not queued again"
+}
+
+# The real heavy (slots under $T/home/.cache/heavy, so the machine's queue is untouched):
+# one slot held during the build, by uitest.sh itself (no stacked heavy), none left after.
+t_real_heavy_build_no_leftover() {
+  if [[ -z "$REAL_HEAVY" ]]; then echo "  skip: heavy not installed"; return; fi
+  set_env "$STUB_REALHEAVY"
+  # shellcheck disable=SC2016 # expanded inside the stub xcodebuild
+  printf '%s\n' 'echo "held=$HEAVY_HELD" >"$S/held"; heavy status >"$S/status-during" 2>&1' >"$S/hook.xcodebuild"
+  run -- build
+  rm -f "$S/hook.xcodebuild"
+  eq "$RC" 0 "build rc"
+  eq "$(cat "$S/held" 2>/dev/null)" "held=build" "xcodebuild runs inside heavy"
+  eq "$(grep -cE '^ *持有 ' "$S/status-during")" 1 "one slot held during the build"
+  has "$S/status-during" "^ *持有 .*uitest\.sh build" "the holder is uitest.sh, not a nested heavy"
+  "${ENVCMD[@]}" heavy status >"$T/status-after" 2>&1
+  hasnt "$T/status-after" "^ *(持有|排隊) " "no holder or waiter left after the build"
 }
 
 # The app build rewrites DayDoCore/Package.resolved; uitest.sh must put a clean file back.
@@ -1636,7 +1661,7 @@ t_null_anchor_and_whoami_failure
 t_test_child_and_teardown_rc_8_no_busy_msg t_down_releases_and_shuts_down
  t_down_interleaved_lease t_down_missing_device
 t_park_foreign_xcodebuild_guard t_down_foreign_xcodebuild_guard t_park_rc_passthrough t_park_lock_timeout
-t_old_sim_vault t_no_sim_vault t_heavy_wraps_compiling_modes t_build_restores_resolved t_mac_build_no_lock_and_restores_resolved t_temp_device_missing t_full_name_is_resident
+t_old_sim_vault t_no_sim_vault t_heavy_wraps_compiling_modes t_real_heavy_build_no_leftover t_build_restores_resolved t_mac_build_no_lock_and_restores_resolved t_temp_device_missing t_full_name_is_resident
 t_test_waits_for_other_xcodebuild t_teardown_failure_rc t_record_relative_path t_record_basic
 t_record_recorder_dies_midway t_record_test_failure_rc t_record_recorder_fails
 t_record_test_refused t_record_rm_log_failure_preserves_rc t_sigterm_stops_child_and_recorder
