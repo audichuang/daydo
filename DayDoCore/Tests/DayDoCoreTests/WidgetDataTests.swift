@@ -329,6 +329,70 @@ extension FileBackedDatabaseTests {
         #expect(!hidden.monthLayout.weeks[1].bars.contains(where: { $0.task.title == "已完成事件" }))
         #expect(hidden.monthLayout.weeks[2].overflow[0] == nil)
         #expect(hidden.monthLayout.weeks[2].bars.allSatisfy { !$0.task.isCompleted })
+        #expect(shown.weekDays[0].events.count == 4)
+        #expect(hidden.weekDays[0].events.map(\.task.title).sorted() == ["未完成 A", "未完成 B"])
+    }
+
+    @Test func calendarDataBuildsWeekDaysAndFourDayAgendaWithTimesAndRollover() async throws {
+        // 2026-11-28 is Saturday; its Sunday-first week is 2026-11-22..2026-11-28.
+        // Upcoming 4 days cross the month boundary: 11/28, 11/29, 11/30, 12/1.
+        let sat = day("2026-11-28")
+        let projects = [
+            "work": makeProject("work", name: "工作", color: "#4AA8E8"),
+            "home": makeProject("home", name: "生活", color: "#E98A5B"),
+        ]
+        let tasks = [
+            makeTask("late", title: "晚餐", projectId: "home", schedule: .timed(sat, start: 18 * 60 + 30, end: 20 * 60, timeZone: "Asia/Taipei")),
+            makeTask("early", title: "讀書", projectId: "work", schedule: .timed(sat, start: 15 * 60, end: 16 * 60, timeZone: "Asia/Taipei")),
+            makeTask("allday", title: "洗衣服", projectId: "home", schedule: .allDay(sat)),
+            makeTask("done", title: "已完成", projectId: "work", status: 2, schedule: .timed(sat, start: 9 * 60, end: 10 * 60, timeZone: "Asia/Taipei")),
+            makeTask("cross", title: "跨夜活動", projectId: "work", schedule: .timed(day("2026-11-27"), start: 23 * 60, end: 1 * 60, timeZone: "Asia/Taipei")),
+            makeTask("dec1", title: "十二月活動", projectId: "work", schedule: .timed(day("2026-12-01"), start: 10 * 60, end: 11 * 60, timeZone: "Asia/Taipei")),
+        ]
+
+        let data = WidgetCalendarData.build(tasks: tasks, projectsById: projects, today: sat, includeCompleted: true)
+        #expect(data.weekDays.count == 7)
+        #expect(data.weekDays.first?.day == day("2026-11-22"))
+        #expect(data.weekDays.last?.day == sat)
+        #expect(data.weekRangeText == "11/22 – 28")
+
+        // Saturday's ordering: all-day first, then timed ascending (cross-midnight at 00:00, 15:00, 18:30), then completed.
+        let satEvents = data.weekDays[6].events
+        #expect(satEvents.map(\.task.id) == ["allday", "cross", "early", "late", "done"])
+        #expect(satEvents.map(\.timeText) == [nil, "00:00", "15:00", "18:30", "09:00"])
+        #expect(satEvents[0].projectColorHex == "#E98A5B")
+        #expect(data.todayEvents == satEvents)
+
+        // Four-day agenda covers 11/28..12/01.
+        #expect(data.upcomingDays.map(\.day) == [day("2026-11-28"), day("2026-11-29"), day("2026-11-30"), day("2026-12-01")])
+        #expect(data.upcomingDays[3].events.map(\.task.id) == ["dec1"])
+        #expect(data.upcomingDays[3].events.first?.timeText == "10:00")
+
+        // Hiding completed removes "done".
+        let hidden = WidgetCalendarData.build(tasks: tasks, projectsById: projects, today: sat, includeCompleted: false)
+        #expect(hidden.todayEvents.map(\.task.id) == ["allday", "cross", "early", "late"])
+
+        // Midnight rollover from Saturday 11/28 to Sunday 11/29 advances to the cross-month week 11/29 – 12/5.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("daydo-widget-week-rollover-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let now = sat.date(minute: 22 * 60, in: taipei)
+        let clock = Clock.fixed(now, timeZone: taipei)
+        do {
+            let store = try DayDoStorage.openForApp(in: dir, clock: clock)
+            try await store.bootstrap()
+            _ = try await store.api.createTask(CreateTaskInput(title: "十二月驗收", start: "2026-12-01T13:00:00+0800", timeZone: "Asia/Taipei"))
+        }
+        let readAPI = try DayDoStorage.openReadOnly(in: dir, clock: clock)
+        let entries = try await WidgetCalendarData.loadTimeline(from: readAPI, now: now, timeZone: taipei, includeCompleted: true)
+        #expect(entries.count == 2)
+        #expect(entries[0].data.weekRangeText == "11/22 – 28")
+        #expect(entries[1].date == day("2026-11-29").date(minute: 0, in: taipei))
+        #expect(entries[1].data.weekRangeText == "11/29 – 12/5")
+        #expect(entries[1].data.weekDays[2].day == day("2026-12-01"))
+        #expect(entries[1].data.weekDays[2].events.map(\.task.title) == ["十二月驗收"])
+        #expect(entries[1].data.weekDays[2].events.first?.timeText == "13:00")
     }
 }
 }

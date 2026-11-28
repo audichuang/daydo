@@ -275,6 +275,14 @@ private struct CalendarEntryView: View {
 struct DayDoCalendarWidget: Widget {
     let kind = "DayDoCalendarWidget"
 
+    private static var supportedFamilies: [WidgetFamily] {
+        var families: [WidgetFamily] = [.systemSmall, .systemMedium, .systemLarge, .systemExtraLarge]
+        if #available(iOS 27.0, *) {
+            families.append(.systemExtraLargePortrait)
+        }
+        return families
+    }
+
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: CalendarProvider()) { entry in
             CalendarEntryView(entry: entry)
@@ -282,7 +290,45 @@ struct DayDoCalendarWidget: Widget {
         .configurationDisplayName("日曆")
         .description("這個月排了什麼。事件名稱、跨日長條與＋N。")
         // Extra large is iPad-only: same month grid, twice as wide so titles stay readable.
-        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .systemExtraLarge])
+        .supportedFamilies(Self.supportedFamilies)
+        .contentMarginsDisabled()
+    }
+}
+
+// MARK: - 本週
+
+private struct WeekEntryView: View {
+    @Environment(\.widgetFamily) private var family
+    var entry: CalendarEntry
+
+    var body: some View {
+        WeekWidgetView(data: entry.data, family: family, accent: entry.accent)
+            .widgetAppearance(entry.appearance)
+            .containerBackground(for: .widget) {
+                WidgetPalette.background
+                    .widgetAppearance(entry.appearance)
+            }
+    }
+}
+
+struct DayDoWeekWidget: Widget {
+    let kind = "DayDoWeekWidget"
+
+    private static var supportedFamilies: [WidgetFamily] {
+        var families: [WidgetFamily] = [.systemMedium, .systemLarge, .systemExtraLarge]
+        if #available(iOS 27.0, *) {
+            families.append(.systemExtraLargePortrait)
+        }
+        return families
+    }
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: CalendarProvider()) { entry in
+            WeekEntryView(entry: entry)
+        }
+        .configurationDisplayName("本週")
+        .description("這一週排了什麼。每天行程與時間一眼看完。")
+        .supportedFamilies(Self.supportedFamilies)
         .contentMarginsDisabled()
     }
 }
@@ -295,5 +341,6 @@ struct DayDoWidgetsBundle: WidgetBundle {
         DayDoTodayWidget()
         DayDoNextWidget()
         DayDoCalendarWidget()
+        DayDoWeekWidget()
     }
 }

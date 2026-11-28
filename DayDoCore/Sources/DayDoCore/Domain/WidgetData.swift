@@ -353,16 +353,56 @@ public struct WidgetNextData: Equatable, Sendable {
     }
 }
 
-/// Snapshot for the 日曆 widget. Mirrors the App's "日曆" view.
+/// Snapshot for the 日曆 and 本週 widgets. Mirrors the App's "日曆" view.
 public struct WidgetCalendarData: Sendable {
+    public struct DayAgenda: Equatable, Sendable, Identifiable {
+        public struct Event: Hashable, Sendable, Identifiable {
+            public var task: TodoTask
+            public var projectColorHex: String?
+            /// Start time formatted as `HH:mm` on this day, or `nil` for all-day tasks.
+            public var timeText: String?
+            public var id: String { task.id }
+
+            public init(task: TodoTask, projectColorHex: String?, timeText: String?) {
+                self.task = task
+                self.projectColorHex = projectColorHex
+                self.timeText = timeText
+            }
+        }
+
+        public var day: LocalDay
+        public var events: [Event]
+        public var id: LocalDay { day }
+
+        public init(day: LocalDay, events: [Event]) {
+            self.day = day
+            self.events = events
+        }
+    }
+
     public var today: LocalDay
     public var month: LocalDay
     public var miniDays: [LocalDay]
     public var daysWithEvents: Set<LocalDay>
     public var twoWeekLayout: MonthLayout
     public var monthLayout: MonthLayout
+    public var weekDays: [DayAgenda]
+    public var upcomingDays: [DayAgenda]
     public var projectColorsById: [String: String]
     private let orderedTasks: [TodoTask]
+
+    /// Formatted current-week span for widget headers (e.g. "11/23 – 29" or "11/29 – 12/5").
+    public var weekRangeText: String {
+        guard let first = weekDays.first?.day, let last = weekDays.last?.day else { return "" }
+        if first.month == last.month {
+            return "\(first.month)/\(first.day) – \(last.day)"
+        }
+        return "\(first.month)/\(first.day) – \(last.month)/\(last.day)"
+    }
+
+    public var todayEvents: [DayAgenda.Event] {
+        upcomingDays.first?.events ?? []
+    }
 
     public func twoWeekLayout(maxLanes: Int) -> MonthLayout {
         let twoWeekStart = today.startOfWeek
@@ -381,6 +421,25 @@ public struct WidgetCalendarData: Sendable {
         let lower = min(grid.first ?? today, twoWeekStart)
         let upper = max(grid.last ?? today, twoWeekEnd)
         return lower...upper
+    }
+
+    private static func buildDayAgenda(
+        for day: LocalDay,
+        tasks: [TodoTask],
+        projectColorsById: [String: String]
+    ) -> DayAgenda {
+        let dayTasks = TaskGrouping.calendarDayTasks(tasks, on: day)
+        let events = dayTasks.map { task in
+            let timeText = task.schedule
+                .flatMap { DayLayout.clippedRange(for: $0, on: day) }
+                .map { DateText.hm($0.start) }
+            return DayAgenda.Event(
+                task: task,
+                projectColorHex: projectColorsById[task.projectId],
+                timeText: timeText
+            )
+        }
+        return DayAgenda(day: day, events: events)
     }
 
     public static func build(
@@ -414,6 +473,13 @@ public struct WidgetCalendarData: Sendable {
             if let c = p.color { colors[id] = c }
         }
 
+        let weekDays = (0..<7).map { offset in
+            buildDayAgenda(for: twoWeekStart.adding(days: offset), tasks: orderedTasks, projectColorsById: colors)
+        }
+        let upcomingDays = (0..<4).map { offset in
+            buildDayAgenda(for: today.adding(days: offset), tasks: orderedTasks, projectColorsById: colors)
+        }
+
         return WidgetCalendarData(
             today: today,
             month: month,
@@ -421,6 +487,8 @@ public struct WidgetCalendarData: Sendable {
             daysWithEvents: daysWithEvents,
             twoWeekLayout: twoWeekLayout,
             monthLayout: monthLayout,
+            weekDays: weekDays,
+            upcomingDays: upcomingDays,
             projectColorsById: colors,
             orderedTasks: orderedTasks
         )
