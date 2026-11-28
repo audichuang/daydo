@@ -3,6 +3,8 @@ import WidgetKit
 import DayDoCore
 
 struct CalendarWidgetView: View {
+    @Environment(\.legibilityWeight) private var legibilityWeight
+
     var data: WidgetCalendarData?
     var family: WidgetFamily
     var accent: WidgetAccent
@@ -210,7 +212,11 @@ struct CalendarWidgetView: View {
                 .padding(.vertical, 6)
 
             GeometryReader { geo in
-                let limits = Self.allocateAgendaLimits(days: data.upcomingDays, availableHeight: geo.size.height)
+                let limits = Self.allocateAgendaLimits(
+                    days: data.upcomingDays,
+                    availableHeight: geo.size.height,
+                    isBold: legibilityWeight == .bold
+                )
 
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(data.upcomingDays.enumerated()), id: \.element.id) { idx, dayAgenda in
@@ -242,11 +248,7 @@ struct CalendarWidgetView: View {
                                     )
                                 }
                                 if overflow > 0 {
-                                    Text("+\(overflow)")
-                                        .font(.system(size: 11, weight: .medium))
-                                        .monospacedDigit()
-                                        .foregroundStyle(WidgetPalette.textMuted)
-                                        .lineLimit(1)
+                                    WidgetOverflowLink(count: overflow, day: dayAgenda.day)
                                 }
                             }
                         }
@@ -270,19 +272,21 @@ struct CalendarWidgetView: View {
 
     private static func allocateAgendaLimits(
         days: [WidgetCalendarData.DayAgenda],
-        availableHeight: CGFloat
+        availableHeight: CGFloat,
+        isBold: Bool
     ) -> [Int] {
         guard !days.isEmpty else { return [] }
         let rowSpacing: CGFloat = 3
         let sectionGap: CGFloat = 7
-        let moreH: CGFloat = 14
+        let boldPad: CGFloat = isBold ? 1.5 : 0
+        let moreH: CGFloat = 14 + boldPad
 
         func sectionHeight(index: Int, shown: Int, total: Int) -> CGFloat {
-            let headerH: CGFloat = index == 0 ? 17 : 15.5
-            let rowH: CGFloat = index == 0 ? 17 : 15.5
+            let headerH: CGFloat = (index == 0 ? 17 : 15.5) + boldPad
+            let rowH: CGFloat = (index == 0 ? 17 : 15.5) + boldPad
             let topGap: CGFloat = index == 0 ? 0 : sectionGap
             if total == 0 {
-                return topGap + headerH + rowSpacing + 14
+                return topGap + headerH + rowSpacing + 14 + boldPad
             }
             let hasOverflow = shown < total
             let rows = CGFloat(shown) * rowH + CGFloat(shown) * rowSpacing

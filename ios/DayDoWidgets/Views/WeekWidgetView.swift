@@ -1,9 +1,10 @@
 import SwiftUI
-import UIKit
 import WidgetKit
 import DayDoCore
 
 struct WeekWidgetView: View {
+    @Environment(\.legibilityWeight) private var legibilityWeight
+
     var data: WidgetCalendarData?
     var family: WidgetFamily
     var accent: WidgetAccent
@@ -49,6 +50,7 @@ struct WeekWidgetView: View {
 
     private func medium(_ data: WidgetCalendarData) -> some View {
         let todayEvents = Array(data.todayEvents.prefix(2))
+        let extra = max(0, data.todayEvents.count - todayEvents.count)
         return VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 0) {
                 ForEach(data.weekDays) { dayAgenda in
@@ -88,15 +90,41 @@ struct WeekWidgetView: View {
                 Text("今天沒有行程")
                     .font(.system(size: 12))
                     .foregroundStyle(WidgetPalette.textMuted)
-            } else {
+                Spacer(minLength: 0)
+            } else if extra == 0 {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(todayEvents) { event in
                         WidgetAgendaEventRow(event: event, titleSize: 12, timeSize: 11.5)
                     }
                 }
-            }
+                Spacer(minLength: 0)
+            } else {
+                // Place "+N" on its own line when height allows (iPhone), or inline on the
+                // second row when height is compact (iPad mini landscape 253x117).
+                ViewThatFits(in: .vertical) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(todayEvents) { event in
+                            WidgetAgendaEventRow(event: event, titleSize: 12, timeSize: 11.5)
+                        }
+                        WidgetOverflowLink(count: extra, day: data.today)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
 
-            Spacer(minLength: 0)
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let first = todayEvents.first {
+                            WidgetAgendaEventRow(event: first, titleSize: 12, timeSize: 11.5)
+                        }
+                        if todayEvents.count > 1 {
+                            HStack(spacing: 6) {
+                                WidgetAgendaEventRow(event: todayEvents[1], titleSize: 12, timeSize: 11.5)
+                                WidgetOverflowLink(count: extra, day: data.today)
+                            }
+                        }
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
         }
     }
 
@@ -160,12 +188,7 @@ struct WeekWidgetView: View {
                                 }
                             }
                             if extra > 0 {
-                                Text("+\(extra)")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .monospacedDigit()
-                                    .foregroundStyle(WidgetPalette.textMuted)
-                                    .fixedSize()
-                                    .layoutPriority(1)
+                                WidgetOverflowLink(count: extra, day: dayAgenda.day)
                             }
                             Spacer(minLength: 0)
                         }
@@ -194,19 +217,11 @@ struct WeekWidgetView: View {
                 let headerH: CGFloat = 20
                 let itemGap: CGFloat = 4
                 let colW = max(20, (geo.size.width - colSpacing * 6) / 7)
-                let availH = max(0, geo.size.height - colPadding * 2 - headerH - itemGap)
-                let textW = max(12, colW - colPadding * 2 - 3 - 4)
 
                 HStack(alignment: .top, spacing: colSpacing) {
                     ForEach(data.weekDays) { dayAgenda in
                         let isToday = dayAgenda.day == data.today
                         let isPast = dayAgenda.day < data.today
-                        let (visible, overflow) = Self.fitColumnEvents(
-                            dayAgenda.events,
-                            availableHeight: availH,
-                            textWidth: textW,
-                            gap: itemGap
-                        )
 
                         VStack(alignment: .leading, spacing: itemGap) {
                             Link(destination: WidgetDeepLink.calendar(dayAgenda.day).url) {
@@ -228,43 +243,23 @@ struct WeekWidgetView: View {
                                 .frame(maxWidth: .infinity, minHeight: headerH, maxHeight: headerH, alignment: .leading)
                             }
 
-                            ForEach(visible) { event in
-                                let done = event.task.isCompleted
-                                let barColor = done ? WidgetPalette.doneText : WidgetPalette.listColor(event.projectColorHex)
-                                Link(destination: WidgetDeepLink.task(event.task.id).url) {
-                                    HStack(alignment: .top, spacing: 4) {
-                                        RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                                            .fill(barColor)
-                                            .frame(width: 3)
-                                        VStack(alignment: .leading, spacing: 1) {
-                                            if let time = event.timeText {
-                                                Text(time)
-                                                    .font(.system(size: 10))
-                                                    .monospacedDigit()
-                                                    .foregroundStyle(WidgetPalette.textSecondary)
-                                                    .lineLimit(1)
-                                            }
-                                            Text(event.task.title)
-                                                .font(.system(size: 11))
-                                                .foregroundStyle(done ? WidgetPalette.doneText : WidgetPalette.text)
-                                                .lineLimit(2)
-                                                .multilineTextAlignment(.leading)
-                                        }
+                            if !dayAgenda.events.isEmpty {
+                                // Measured by SwiftUI directly so Bold Text and wrapping never clip the last row or +N.
+                                FittingColumnList(
+                                    totalCount: dayAgenda.events.count,
+                                    maxShown: min(dayAgenda.events.count, 12),
+                                    gap: itemGap,
+                                    item: { idx in
+                                        columnEventRow(dayAgenda.events[idx])
+                                    },
+                                    overflow: { count in
+                                        WidgetOverflowLink(count: count, day: dayAgenda.day)
                                     }
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                }
+                                )
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            } else {
+                                Spacer(minLength: 0)
                             }
-
-                            if overflow > 0 {
-                                Text("+\(overflow)")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .monospacedDigit()
-                                    .foregroundStyle(WidgetPalette.textMuted)
-                                    .lineLimit(1)
-                            }
-
-                            Spacer(minLength: 0)
                         }
                         .padding(colPadding)
                         .frame(width: colW, height: geo.size.height, alignment: .topLeading)
@@ -280,28 +275,58 @@ struct WeekWidgetView: View {
         }
     }
 
+    private func columnEventRow(_ event: WidgetCalendarData.DayAgenda.Event) -> some View {
+        let done = event.task.isCompleted
+        let barColor = done ? WidgetPalette.doneText : WidgetPalette.listColor(event.projectColorHex)
+        return Link(destination: WidgetDeepLink.task(event.task.id).url) {
+            HStack(alignment: .top, spacing: 4) {
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(barColor)
+                    .frame(width: 3)
+                VStack(alignment: .leading, spacing: 1) {
+                    if let time = event.timeText {
+                        Text(time)
+                            .font(.system(size: 10))
+                            .monospacedDigit()
+                            .foregroundStyle(WidgetPalette.textSecondary)
+                            .lineLimit(1)
+                    }
+                    Text(event.task.title)
+                        .font(.system(size: 11))
+                        .foregroundStyle(done ? WidgetPalette.doneText : WidgetPalette.text)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     // MARK: - P2 (systemExtraLargePortrait)
 
     private func portraitXL(_ data: WidgetCalendarData) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let isBold = legibilityWeight == .bold
+        return VStack(alignment: .leading, spacing: 0) {
             weekHeader(data)
                 .padding(.bottom, 6)
 
             GeometryReader { geo in
-                let rowH = geo.size.height / 7
-                let usableH = max(0, rowH - 6)
+                let allocation = Self.allocateWeekPortraitLimits(
+                    days: data.weekDays,
+                    today: data.today,
+                    availableHeight: geo.size.height,
+                    isBold: isBold
+                )
+                let extraPadding = max(0, min(5, (geo.size.height - allocation.usedHeight) / CGFloat(max(1, data.weekDays.count * 2))))
 
-                VStack(spacing: 0) {
-                    ForEach(data.weekDays) { dayAgenda in
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(data.weekDays.enumerated()), id: \.element.id) { idx, dayAgenda in
                         let isToday = dayAgenda.day == data.today
                         let isPast = dayAgenda.day < data.today
-                        let (visible, overflow) = Self.fitSingleLineEvents(
-                            dayAgenda.events,
-                            availableHeight: usableH,
-                            rowHeight: 14,
-                            spacing: 1.5,
-                            moreHeight: 13
-                        )
+                        let limit = idx < allocation.counts.count ? allocation.counts[idx] : 0
+                        let visible = Array(dayAgenda.events.prefix(limit))
+                        let overflow = max(0, dayAgenda.events.count - visible.count)
 
                         HStack(alignment: .top, spacing: 8) {
                             Link(destination: WidgetDeepLink.calendar(dayAgenda.day).url) {
@@ -331,24 +356,19 @@ struct WeekWidgetView: View {
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                             } else {
-                                VStack(alignment: .leading, spacing: 1.5) {
+                                VStack(alignment: .leading, spacing: 2) {
                                     ForEach(visible) { event in
-                                        WidgetAgendaEventRow(event: event, titleSize: 11.5, timeSize: 11)
+                                        WidgetAgendaEventRow(event: event, titleSize: 12, timeSize: 11.5)
                                     }
                                     if overflow > 0 {
-                                        Text("+\(overflow)")
-                                            .font(.system(size: 11, weight: .medium))
-                                            .monospacedDigit()
-                                            .foregroundStyle(WidgetPalette.textMuted)
-                                            .lineLimit(1)
+                                        WidgetOverflowLink(count: overflow, day: dayAgenda.day)
                                     }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .topLeading)
                             }
                         }
-                        .padding(.top, 3)
-                        .padding(.bottom, 2)
-                        .frame(height: rowH, alignment: .topLeading)
+                        .padding(.top, 4 + extraPadding)
+                        .padding(.bottom, 4 + extraPadding)
                         .overlay(alignment: .top) {
                             Rectangle()
                                 .fill(WidgetPalette.divider)
@@ -356,6 +376,7 @@ struct WeekWidgetView: View {
                         }
                         .opacity(isPast ? 0.5 : 1)
                     }
+                    Spacer(minLength: 0)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -377,67 +398,131 @@ struct WeekWidgetView: View {
         }
     }
 
-    private static func estimatedColumnEventHeight(
-        _ event: WidgetCalendarData.DayAgenda.Event,
-        textWidth: CGFloat
-    ) -> CGFloat {
-        let titleFont = UIFont.systemFont(ofSize: 11)
-        let rect = (event.task.title as NSString).boundingRect(
-            with: CGSize(width: max(1, textWidth), height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: [.font: titleFont],
-            context: nil
-        )
-        let lines = max(1, min(2, Int(ceil(rect.height / titleFont.lineHeight))))
-        let titleH = CGFloat(lines) * ceil(titleFont.lineHeight)
-        let timeH: CGFloat = event.timeText == nil ? 0 : 13
-        return titleH + timeH + 1
+    private struct PortraitAllocation {
+        var counts: [Int]
+        var usedHeight: CGFloat
     }
 
-    private static func fitColumnEvents(
-        _ events: [WidgetCalendarData.DayAgenda.Event],
+    /// Allocates visible event counts across the 7 week rows by content height so
+    /// quiet days stay compact and busy days use the remaining vertical space.
+    private static func allocateWeekPortraitLimits(
+        days: [WidgetCalendarData.DayAgenda],
+        today: LocalDay,
         availableHeight: CGFloat,
-        textWidth: CGFloat,
-        gap: CGFloat
-    ) -> ([WidgetCalendarData.DayAgenda.Event], Int) {
-        guard !events.isEmpty else { return ([], 0) }
-        let heights = events.map { estimatedColumnEventHeight($0, textWidth: textWidth) }
-        let totalHeight = heights.reduce(0, +) + gap * CGFloat(max(0, events.count - 1))
-        if totalHeight <= availableHeight {
-            return (events, 0)
-        }
-        let moreH: CGFloat = 14
-        let budget = availableHeight - moreH
-        var used: CGFloat = 0
-        var count = 0
-        for h in heights {
-            let needed = (count > 0 ? gap : 0) + h + gap
-            if used + needed <= budget {
-                used += (count > 0 ? gap : 0) + h
-                count += 1
+        isBold: Bool
+    ) -> PortraitAllocation {
+        guard !days.isEmpty else { return PortraitAllocation(counts: [], usedHeight: 0) }
+        let dayBadgeH: CGFloat = isBold ? 34 : 32
+        let rowChromeH: CGFloat = 9 // 1pt divider + 4pt top + 4pt bottom
+        let lineH: CGFloat = isBold ? 16.5 : 15.5
+        let spacing: CGFloat = 2
+        let moreH: CGFloat = isBold ? 15 : 14
+
+        func rowHeight(total: Int, shown: Int) -> CGFloat {
+            if total == 0 {
+                return max(dayBadgeH, lineH) + rowChromeH
+            }
+            let hasOverflow = shown < total
+            let contentH: CGFloat
+            if shown == 0 {
+                contentH = moreH
             } else {
-                break
+                let itemsH = CGFloat(shown) * lineH + CGFloat(shown - 1) * spacing
+                contentH = hasOverflow ? (itemsH + spacing + moreH) : itemsH
+            }
+            return max(dayBadgeH, contentH) + rowChromeH
+        }
+
+        func totalHeight(for counts: [Int]) -> CGFloat {
+            counts.enumerated().reduce(0) { acc, pair in
+                acc + rowHeight(total: days[pair.offset].events.count, shown: pair.element)
             }
         }
-        return (Array(events.prefix(count)), events.count - count)
+
+        let full = days.map(\.events.count)
+        let fullHeight = totalHeight(for: full)
+        if fullHeight <= availableHeight {
+            return PortraitAllocation(counts: full, usedHeight: fullHeight)
+        }
+
+        // Prioritize today, then remaining days this week, then past days.
+        let todayIdx = days.firstIndex(where: { $0.day == today }) ?? 0
+        let priorityOrder = Array(todayIdx..<days.count) + Array(0..<todayIdx)
+
+        var counts = days.map { $0.events.isEmpty ? 0 : 1 }
+        while totalHeight(for: counts) > availableHeight {
+            guard let idx = priorityOrder.reversed().first(where: { counts[$0] > 0 }) else { break }
+            counts[idx] -= 1
+        }
+
+        var grew = true
+        while grew {
+            grew = false
+            for idx in priorityOrder where counts[idx] < days[idx].events.count {
+                var candidate = counts
+                candidate[idx] += 1
+                if totalHeight(for: candidate) <= availableHeight {
+                    counts = candidate
+                    grew = true
+                }
+            }
+        }
+        return PortraitAllocation(counts: counts, usedHeight: totalHeight(for: counts))
+    }
+}
+
+/// Picks the longest prefix of items (plus optional overflow footer) whose actual
+/// SwiftUI layout height fits in the proposed vertical space.
+private struct FittingColumnList<ItemView: View, OverflowView: View>: View {
+    var totalCount: Int
+    var maxShown: Int
+    var gap: CGFloat
+    @ViewBuilder var item: (Int) -> ItemView
+    @ViewBuilder var overflow: (Int) -> OverflowView
+
+    var body: some View {
+        buildBody(shown: maxShown)
     }
 
-    private static func fitSingleLineEvents(
-        _ events: [WidgetCalendarData.DayAgenda.Event],
-        availableHeight: CGFloat,
-        rowHeight: CGFloat,
-        spacing: CGFloat,
-        moreHeight: CGFloat
-    ) -> ([WidgetCalendarData.DayAgenda.Event], Int) {
-        guard !events.isEmpty else { return ([], 0) }
-        let step = rowHeight + spacing
-        let maxAll = max(0, Int(floor((availableHeight + spacing) / step)))
-        if events.count <= maxAll {
-            return (events, 0)
+    private func buildBody(shown: Int) -> AnyView {
+        if shown <= 0 {
+            if totalCount > 0 {
+                return AnyView(overflow(totalCount))
+            }
+            return AnyView(EmptyView())
         }
-        let maxWithMore = max(0, Int(floor((availableHeight - moreHeight) / step)))
-        let shown = min(events.count, maxWithMore)
-        return (Array(events.prefix(shown)), events.count - shown)
+        return AnyView(
+            ViewThatFits(in: .vertical) {
+                VStack(alignment: .leading, spacing: gap) {
+                    ForEach(0..<shown, id: \.self) { idx in
+                        item(idx)
+                    }
+                    if totalCount > shown {
+                        overflow(totalCount - shown)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+
+                buildBody(shown: shown - 1)
+            }
+        )
+    }
+}
+
+struct WidgetOverflowLink: View {
+    var count: Int
+    var day: LocalDay
+
+    var body: some View {
+        Link(destination: WidgetDeepLink.calendar(day).url) {
+            Text("+\(count)")
+                .font(.system(size: 11, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(WidgetPalette.textMuted)
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .layoutPriority(1)
     }
 }
 

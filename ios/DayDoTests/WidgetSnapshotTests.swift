@@ -41,6 +41,54 @@ final class WidgetSnapshotTests: XCTestCase {
         let midWeekCalData = try await WidgetCalendarData.loadTimeline(from: readAPI, now: midWeekNow, timeZone: taipei).first?.data
         XCTAssertNotNil(midWeekCalData)
 
+        let denseToday = LocalDay(year: 2026, month: 11, day: 18) // Wednesday
+        let denseProjects = [
+            "w": Project(id: "w", name: "工作", color: "#4AA8E8", viewMode: "list", kind: "TASK", isInbox: false, ownerId: "me", sortKey: "a", showInSmart: "all", notifyMode: "all", archived: false, memberIds: ["me"], activeCount: 0, createdAt: 0, updatedAt: 0),
+            "p": Project(id: "p", name: "個人", color: "#E98A5B", viewMode: "list", kind: "TASK", isInbox: false, ownerId: "me", sortKey: "b", showInSmart: "all", notifyMode: "all", archived: false, memberIds: ["me"], activeCount: 0, createdAt: 0, updatedAt: 0),
+            "o": Project(id: "o", name: "行程", color: "#E8C14E", viewMode: "list", kind: "TASK", isInbox: false, ownerId: "me", sortKey: "c", showInSmart: "all", notifyMode: "all", archived: false, memberIds: ["me"], activeCount: 0, createdAt: 0, updatedAt: 0),
+        ]
+        func denseTask(_ id: String, _ title: String, _ projectId: String, _ day: LocalDay, _ startMin: Int? = nil, _ endMin: Int? = nil) -> TodoTask {
+            let sched: Schedule = startMin.map { .timed(day, start: $0, end: endMin, timeZone: "Asia/Taipei") } ?? .allDay(day)
+            return TodoTask(
+                id: id, projectId: projectId, title: title, content: "", priority: .none, status: 0,
+                schedule: sched, start: nil, due: nil, allDay: sched.isAllDay, timeZone: nil,
+                reminders: [], repeat: nil, tags: [], items: [], assigneeId: nil, sortKey: id,
+                completedAt: nil, createdAt: 0, updatedAt: 0, deletedAt: nil, attachments: [],
+                commentCount: 0, sourceRaw: nil, importNote: nil
+            )
+        }
+        // Dense day (6 timed events on Wed 11/18) + dense week across all 7 days for overflow testing.
+        let denseTasks: [TodoTask] = [
+            denseTask("d1", "產品晨會同步進度", "w", denseToday, 9 * 60, 9 * 60 + 30),
+            denseTask("d2", "架構設計討論會議", "w", denseToday, 10 * 60 + 30, 11 * 60 + 30),
+            denseTask("d3", "客戶需求訪談紀錄", "o", denseToday, 13 * 60, 14 * 60),
+            denseTask("d4", "Q4 季度績效檢討", "w", denseToday, 15 * 60, 16 * 60),
+            denseTask("d5", "跨團隊聯調與驗收", "p", denseToday, 17 * 60, 18 * 60),
+            denseTask("d6", "晚餐：家族聚餐", "o", denseToday, 19 * 60, 21 * 60),
+            denseTask("s1", "週日採買清單", "p", LocalDay(year: 2026, month: 11, day: 15)),
+            denseTask("s2", "整理房間與書櫃", "p", LocalDay(year: 2026, month: 11, day: 15), 14 * 60, 16 * 60),
+            denseTask("s3", "慢跑五公里", "o", LocalDay(year: 2026, month: 11, day: 15), 17 * 60, 18 * 60),
+            denseTask("s4", "準備下週簡報", "w", LocalDay(year: 2026, month: 11, day: 15), 20 * 60, 21 * 60),
+            denseTask("m1", "週一站會", "w", LocalDay(year: 2026, month: 11, day: 16), 10 * 60, 10 * 60 + 30),
+            denseTask("m2", "繳信用卡帳單", "p", LocalDay(year: 2026, month: 11, day: 16)),
+            denseTask("m3", "專案里程碑檢視", "w", LocalDay(year: 2026, month: 11, day: 16), 14 * 60, 15 * 60),
+            denseTask("m4", "健身房訓練", "p", LocalDay(year: 2026, month: 11, day: 16), 19 * 60, 20 * 60),
+            denseTask("m5", "英文口說練習", "o", LocalDay(year: 2026, month: 11, day: 16), 21 * 60, 22 * 60),
+            denseTask("t1", "程式審查", "w", LocalDay(year: 2026, month: 11, day: 17), 11 * 60, 12 * 60),
+            denseTask("t2", "牙醫回診", "p", LocalDay(year: 2026, month: 11, day: 17), 15 * 60, 16 * 60),
+            denseTask("t3", "讀書會討論", "o", LocalDay(year: 2026, month: 11, day: 17), 20 * 60, 21 * 60),
+            denseTask("th1", "法務合約確認", "w", LocalDay(year: 2026, month: 11, day: 19), 10 * 60, 11 * 60),
+            denseTask("th2", "設計稿走查", "w", LocalDay(year: 2026, month: 11, day: 19), 14 * 60, 15 * 60),
+            denseTask("th3", "接小孩放學", "o", LocalDay(year: 2026, month: 11, day: 19), 17 * 60, 18 * 60),
+            denseTask("th4", "補貨日用品", "p", LocalDay(year: 2026, month: 11, day: 19)),
+            denseTask("f1", "週五發版驗收", "w", LocalDay(year: 2026, month: 11, day: 20), 11 * 60, 12 * 60),
+            denseTask("f2", "慶功聚餐", "o", LocalDay(year: 2026, month: 11, day: 20), 19 * 60, 21 * 60),
+            denseTask("f3", "整理週報", "w", LocalDay(year: 2026, month: 11, day: 20), 16 * 60, 17 * 60),
+            denseTask("sa1", "週末踏青", "o", LocalDay(year: 2026, month: 11, day: 21), 9 * 60, 15 * 60),
+            denseTask("sa2", "洗車", "p", LocalDay(year: 2026, month: 11, day: 21), 16 * 60, 17 * 60),
+        ]
+        let denseCalData = WidgetCalendarData.build(tasks: denseTasks, projectsById: denseProjects, today: denseToday)
+
         let accent = WidgetAccent(hex: "#FF8A1E")
         let outDir = ProcessInfo.processInfo.environment["DAYDO_WIDGET_SHOTS"]
         if let outDir {
@@ -65,6 +113,7 @@ final class WidgetSnapshotTests: XCTestCase {
             ("week-medium-ipadmini", .systemMedium, CGSize(width: 253, height: 117), AnyView(WeekWidgetView(data: calData, family: .systemMedium, accent: accent))),
             ("week-large-ipadmini", .systemLarge, CGSize(width: 253, height: 253), AnyView(WeekWidgetView(data: calData, family: .systemLarge, accent: accent))),
             ("week-xl-ipadmini", .systemExtraLarge, CGSize(width: 527, height: 253), AnyView(WeekWidgetView(data: calData, family: .systemExtraLarge, accent: accent))),
+            ("week-xl-bold-dense-ipadmini", .systemExtraLarge, CGSize(width: 527, height: 253), AnyView(WeekWidgetView(data: denseCalData, family: .systemExtraLarge, accent: accent).environment(\.legibilityWeight, .bold))),
             ("week-medium-midweek-ipadmini", .systemMedium, CGSize(width: 253, height: 117), AnyView(WeekWidgetView(data: midWeekCalData, family: .systemMedium, accent: accent))),
             ("week-large-midweek-ipadmini", .systemLarge, CGSize(width: 253, height: 253), AnyView(WeekWidgetView(data: midWeekCalData, family: .systemLarge, accent: accent))),
             ("week-xl-midweek-ipadmini", .systemExtraLarge, CGSize(width: 527, height: 253), AnyView(WeekWidgetView(data: midWeekCalData, family: .systemExtraLarge, accent: accent))),
@@ -73,6 +122,7 @@ final class WidgetSnapshotTests: XCTestCase {
             specs.append(contentsOf: [
                 ("week-portrait-ipadmini", .systemExtraLargePortrait, CGSize(width: 253, height: 527), AnyView(WeekWidgetView(data: calData, family: .systemExtraLargePortrait, accent: accent))),
                 ("week-portrait-midweek-ipadmini", .systemExtraLargePortrait, CGSize(width: 253, height: 527), AnyView(WeekWidgetView(data: midWeekCalData, family: .systemExtraLargePortrait, accent: accent))),
+                ("week-portrait-dense-ipadmini", .systemExtraLargePortrait, CGSize(width: 253, height: 527), AnyView(WeekWidgetView(data: denseCalData, family: .systemExtraLargePortrait, accent: accent))),
                 ("calendar-portrait-ipadmini", .systemExtraLargePortrait, CGSize(width: 253, height: 527), AnyView(CalendarWidgetView(data: calData, family: .systemExtraLargePortrait, accent: accent))),
             ])
         }
