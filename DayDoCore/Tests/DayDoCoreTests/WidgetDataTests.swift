@@ -333,9 +333,8 @@ extension FileBackedDatabaseTests {
         #expect(hidden.weekDays[0].events.map(\.task.title).sorted() == ["未完成 A", "未完成 B"])
     }
 
-    @Test func calendarDataBuildsWeekDaysAndFourDayAgendaWithTimesAndRollover() async throws {
+    @Test func calendarDataBuildsWeekDaysWithTimesAndRollover() async throws {
         // 2026-11-28 is Saturday; its Sunday-first week is 2026-11-22..2026-11-28.
-        // Upcoming 4 days cross the month boundary: 11/28, 11/29, 11/30, 12/1.
         let sat = day("2026-11-28")
         let projects = [
             "work": makeProject("work", name: "工作", color: "#4AA8E8"),
@@ -347,7 +346,6 @@ extension FileBackedDatabaseTests {
             makeTask("allday", title: "洗衣服", projectId: "home", schedule: .allDay(sat)),
             makeTask("done", title: "已完成", projectId: "work", status: 2, schedule: .timed(sat, start: 9 * 60, end: 10 * 60, timeZone: "Asia/Taipei")),
             makeTask("cross", title: "跨夜活動", projectId: "work", schedule: .timed(day("2026-11-27"), start: 23 * 60, end: 1 * 60, timeZone: "Asia/Taipei")),
-            makeTask("dec1", title: "十二月活動", projectId: "work", schedule: .timed(day("2026-12-01"), start: 10 * 60, end: 11 * 60, timeZone: "Asia/Taipei")),
         ]
 
         let data = WidgetCalendarData.build(tasks: tasks, projectsById: projects, today: sat, includeCompleted: true)
@@ -362,11 +360,6 @@ extension FileBackedDatabaseTests {
         #expect(satEvents.map(\.timeText) == [nil, "00:00", "15:00", "18:30", "09:00"])
         #expect(satEvents[0].projectColorHex == "#E98A5B")
         #expect(data.todayEvents == satEvents)
-
-        // Four-day agenda covers 11/28..12/01.
-        #expect(data.upcomingDays.map(\.day) == [day("2026-11-28"), day("2026-11-29"), day("2026-11-30"), day("2026-12-01")])
-        #expect(data.upcomingDays[3].events.map(\.task.id) == ["dec1"])
-        #expect(data.upcomingDays[3].events.first?.timeText == "10:00")
 
         // Hiding completed removes "done".
         let hidden = WidgetCalendarData.build(tasks: tasks, projectsById: projects, today: sat, includeCompleted: false)

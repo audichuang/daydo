@@ -3,35 +3,22 @@ import WidgetKit
 import DayDoCore
 
 struct WeekWidgetView: View {
-    @Environment(\.legibilityWeight) private var legibilityWeight
-
     var data: WidgetCalendarData?
     var family: WidgetFamily
     var accent: WidgetAccent
 
-    private var isExtraLargePortrait: Bool {
-        if #available(iOS 27.0, *) {
-            return family == .systemExtraLargePortrait
-        }
-        return false
-    }
-
     var body: some View {
         Group {
             if let data {
-                if isExtraLargePortrait {
-                    portraitXL(data)
-                } else {
-                    switch family {
-                    case .systemMedium:
-                        medium(data)
-                    case .systemLarge:
-                        large(data)
-                    case .systemExtraLarge:
-                        extraLarge(data)
-                    default:
-                        medium(data)
-                    }
+                switch family {
+                case .systemMedium:
+                    medium(data)
+                case .systemLarge:
+                    large(data)
+                case .systemExtraLarge:
+                    extraLarge(data)
+                default:
+                    medium(data)
                 }
             } else {
                 WidgetUnavailableView(
@@ -303,86 +290,6 @@ struct WeekWidgetView: View {
         }
     }
 
-    // MARK: - P2 (systemExtraLargePortrait)
-
-    private func portraitXL(_ data: WidgetCalendarData) -> some View {
-        let isBold = legibilityWeight == .bold
-        return VStack(alignment: .leading, spacing: 0) {
-            weekHeader(data)
-                .padding(.bottom, 6)
-
-            GeometryReader { geo in
-                let allocation = Self.allocateWeekPortraitLimits(
-                    days: data.weekDays,
-                    today: data.today,
-                    availableHeight: geo.size.height,
-                    isBold: isBold
-                )
-                let extraPadding = max(0, min(5, (geo.size.height - allocation.usedHeight) / CGFloat(max(1, data.weekDays.count * 2))))
-
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(data.weekDays.enumerated()), id: \.element.id) { idx, dayAgenda in
-                        let isToday = dayAgenda.day == data.today
-                        let isPast = dayAgenda.day < data.today
-                        let limit = idx < allocation.counts.count ? allocation.counts[idx] : 0
-                        let visible = Array(dayAgenda.events.prefix(limit))
-                        let overflow = max(0, dayAgenda.events.count - visible.count)
-
-                        HStack(alignment: .top, spacing: 8) {
-                            Link(destination: WidgetDeepLink.calendar(dayAgenda.day).url) {
-                                VStack(spacing: 1) {
-                                    Text(LocalDay.weekdaySymbols[dayAgenda.day.weekday])
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(WidgetPalette.textSecondary)
-                                    Text("\(dayAgenda.day.day)")
-                                        .font(.system(size: 14, weight: isToday ? .bold : .semibold))
-                                        .monospacedDigit()
-                                        .foregroundStyle(isToday ? accent.onAccent : WidgetPalette.textDay)
-                                        .padding(.horizontal, isToday ? 5 : 0)
-                                        .frame(minWidth: 22, minHeight: 18)
-                                        .background(
-                                            Capsule()
-                                                .fill(isToday ? accent.color : .clear)
-                                        )
-                                }
-                                .frame(width: 30)
-                            }
-
-                            if dayAgenda.events.isEmpty {
-                                Link(destination: WidgetDeepLink.calendar(dayAgenda.day).url) {
-                                    Text("—")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(WidgetPalette.textMuted)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                            } else {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    ForEach(visible) { event in
-                                        WidgetAgendaEventRow(event: event, titleSize: 12, timeSize: 11.5)
-                                    }
-                                    if overflow > 0 {
-                                        WidgetOverflowLink(count: overflow, day: dayAgenda.day)
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .topLeading)
-                            }
-                        }
-                        .padding(.top, 4 + extraPadding)
-                        .padding(.bottom, 4 + extraPadding)
-                        .overlay(alignment: .top) {
-                            Rectangle()
-                                .fill(WidgetPalette.divider)
-                                .frame(height: 1)
-                        }
-                        .opacity(isPast ? 0.5 : 1)
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-
     // MARK: - Helpers
 
     private func weekHeader(_ data: WidgetCalendarData) -> some View {
@@ -396,78 +303,6 @@ struct WeekWidgetView: View {
                 .monospacedDigit()
                 .foregroundStyle(WidgetPalette.textSecondary)
         }
-    }
-
-    private struct PortraitAllocation {
-        var counts: [Int]
-        var usedHeight: CGFloat
-    }
-
-    /// Allocates visible event counts across the 7 week rows by content height so
-    /// quiet days stay compact and busy days use the remaining vertical space.
-    private static func allocateWeekPortraitLimits(
-        days: [WidgetCalendarData.DayAgenda],
-        today: LocalDay,
-        availableHeight: CGFloat,
-        isBold: Bool
-    ) -> PortraitAllocation {
-        guard !days.isEmpty else { return PortraitAllocation(counts: [], usedHeight: 0) }
-        let dayBadgeH: CGFloat = isBold ? 34 : 32
-        let rowChromeH: CGFloat = 9 // 1pt divider + 4pt top + 4pt bottom
-        let lineH: CGFloat = isBold ? 16.5 : 15.5
-        let spacing: CGFloat = 2
-        let moreH: CGFloat = isBold ? 15 : 14
-
-        func rowHeight(total: Int, shown: Int) -> CGFloat {
-            if total == 0 {
-                return max(dayBadgeH, lineH) + rowChromeH
-            }
-            let hasOverflow = shown < total
-            let contentH: CGFloat
-            if shown == 0 {
-                contentH = moreH
-            } else {
-                let itemsH = CGFloat(shown) * lineH + CGFloat(shown - 1) * spacing
-                contentH = hasOverflow ? (itemsH + spacing + moreH) : itemsH
-            }
-            return max(dayBadgeH, contentH) + rowChromeH
-        }
-
-        func totalHeight(for counts: [Int]) -> CGFloat {
-            counts.enumerated().reduce(0) { acc, pair in
-                acc + rowHeight(total: days[pair.offset].events.count, shown: pair.element)
-            }
-        }
-
-        let full = days.map(\.events.count)
-        let fullHeight = totalHeight(for: full)
-        if fullHeight <= availableHeight {
-            return PortraitAllocation(counts: full, usedHeight: fullHeight)
-        }
-
-        // Prioritize today, then remaining days this week, then past days.
-        let todayIdx = days.firstIndex(where: { $0.day == today }) ?? 0
-        let priorityOrder = Array(todayIdx..<days.count) + Array(0..<todayIdx)
-
-        var counts = days.map { $0.events.isEmpty ? 0 : 1 }
-        while totalHeight(for: counts) > availableHeight {
-            guard let idx = priorityOrder.reversed().first(where: { counts[$0] > 0 }) else { break }
-            counts[idx] -= 1
-        }
-
-        var grew = true
-        while grew {
-            grew = false
-            for idx in priorityOrder where counts[idx] < days[idx].events.count {
-                var candidate = counts
-                candidate[idx] += 1
-                if totalHeight(for: candidate) <= availableHeight {
-                    counts = candidate
-                    grew = true
-                }
-            }
-        }
-        return PortraitAllocation(counts: counts, usedHeight: totalHeight(for: counts))
     }
 }
 

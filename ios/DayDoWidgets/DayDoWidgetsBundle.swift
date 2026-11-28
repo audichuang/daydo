@@ -275,14 +275,6 @@ private struct CalendarEntryView: View {
 struct DayDoCalendarWidget: Widget {
     let kind = "DayDoCalendarWidget"
 
-    private static var supportedFamilies: [WidgetFamily] {
-        var families: [WidgetFamily] = [.systemSmall, .systemMedium, .systemLarge, .systemExtraLarge]
-        if #available(iOS 27.0, *) {
-            families.append(.systemExtraLargePortrait)
-        }
-        return families
-    }
-
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: CalendarProvider()) { entry in
             CalendarEntryView(entry: entry)
@@ -290,7 +282,7 @@ struct DayDoCalendarWidget: Widget {
         .configurationDisplayName("日曆")
         .description("這個月排了什麼。事件名稱、跨日長條與＋N。")
         // Extra large is iPad-only: same month grid, twice as wide so titles stay readable.
-        .supportedFamilies(Self.supportedFamilies)
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .systemExtraLarge])
         .contentMarginsDisabled()
     }
 }
@@ -314,21 +306,13 @@ private struct WeekEntryView: View {
 struct DayDoWeekWidget: Widget {
     let kind = "DayDoWeekWidget"
 
-    private static var supportedFamilies: [WidgetFamily] {
-        var families: [WidgetFamily] = [.systemMedium, .systemLarge, .systemExtraLarge]
-        if #available(iOS 27.0, *) {
-            families.append(.systemExtraLargePortrait)
-        }
-        return families
-    }
-
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: CalendarProvider()) { entry in
             WeekEntryView(entry: entry)
         }
         .configurationDisplayName("本週")
         .description("這一週排了什麼。每天行程與時間一眼看完。")
-        .supportedFamilies(Self.supportedFamilies)
+        .supportedFamilies([.systemMedium, .systemLarge, .systemExtraLarge])
         .contentMarginsDisabled()
     }
 }

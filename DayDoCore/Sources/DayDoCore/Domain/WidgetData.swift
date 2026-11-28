@@ -387,7 +387,6 @@ public struct WidgetCalendarData: Sendable {
     public var twoWeekLayout: MonthLayout
     public var monthLayout: MonthLayout
     public var weekDays: [DayAgenda]
-    public var upcomingDays: [DayAgenda]
     public var projectColorsById: [String: String]
     private let orderedTasks: [TodoTask]
 
@@ -401,7 +400,7 @@ public struct WidgetCalendarData: Sendable {
     }
 
     public var todayEvents: [DayAgenda.Event] {
-        upcomingDays.first?.events ?? []
+        weekDays.first(where: { $0.day == today })?.events ?? []
     }
 
     public func twoWeekLayout(maxLanes: Int) -> MonthLayout {
@@ -476,9 +475,6 @@ public struct WidgetCalendarData: Sendable {
         let weekDays = (0..<7).map { offset in
             buildDayAgenda(for: twoWeekStart.adding(days: offset), tasks: orderedTasks, projectColorsById: colors)
         }
-        let upcomingDays = (0..<4).map { offset in
-            buildDayAgenda(for: today.adding(days: offset), tasks: orderedTasks, projectColorsById: colors)
-        }
 
         return WidgetCalendarData(
             today: today,
@@ -488,7 +484,6 @@ public struct WidgetCalendarData: Sendable {
             twoWeekLayout: twoWeekLayout,
             monthLayout: monthLayout,
             weekDays: weekDays,
-            upcomingDays: upcomingDays,
             projectColorsById: colors,
             orderedTasks: orderedTasks
         )

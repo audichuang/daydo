@@ -96,8 +96,8 @@ final class WidgetSnapshotTests: XCTestCase {
         }
 
         // iPad mini landscape widget sizes in pt:
-        // small 117x117, medium 253x117, large 253x253, extra large 527x253, extra large portrait 253x527.
-        var specs: [(String, WidgetFamily, CGSize, AnyView)] = [
+        // small 117x117, medium 253x117, large 253x253, extra large 527x253.
+        let specs: [(String, WidgetFamily, CGSize, AnyView)] = [
             ("today-small", .systemSmall, CGSize(width: 162, height: 162), AnyView(TodayWidgetView(data: todayData, family: .systemSmall, accent: accent))),
             ("today-medium", .systemMedium, CGSize(width: 346, height: 162), AnyView(TodayWidgetView(data: todayData, family: .systemMedium, accent: accent))),
             ("today-large", .systemLarge, CGSize(width: 346, height: 364), AnyView(TodayWidgetView(data: todayData, family: .systemLarge, accent: accent))),
@@ -118,14 +118,6 @@ final class WidgetSnapshotTests: XCTestCase {
             ("week-large-midweek-ipadmini", .systemLarge, CGSize(width: 253, height: 253), AnyView(WeekWidgetView(data: midWeekCalData, family: .systemLarge, accent: accent))),
             ("week-xl-midweek-ipadmini", .systemExtraLarge, CGSize(width: 527, height: 253), AnyView(WeekWidgetView(data: midWeekCalData, family: .systemExtraLarge, accent: accent))),
         ]
-        if #available(iOS 27.0, *) {
-            specs.append(contentsOf: [
-                ("week-portrait-ipadmini", .systemExtraLargePortrait, CGSize(width: 253, height: 527), AnyView(WeekWidgetView(data: calData, family: .systemExtraLargePortrait, accent: accent))),
-                ("week-portrait-midweek-ipadmini", .systemExtraLargePortrait, CGSize(width: 253, height: 527), AnyView(WeekWidgetView(data: midWeekCalData, family: .systemExtraLargePortrait, accent: accent))),
-                ("week-portrait-dense-ipadmini", .systemExtraLargePortrait, CGSize(width: 253, height: 527), AnyView(WeekWidgetView(data: denseCalData, family: .systemExtraLargePortrait, accent: accent))),
-                ("calendar-portrait-ipadmini", .systemExtraLargePortrait, CGSize(width: 253, height: 527), AnyView(CalendarWidgetView(data: calData, family: .systemExtraLargePortrait, accent: accent))),
-            ])
-        }
         _ = projectsById
 
         // Verify 6-week month rendering at actual iPhone systemLarge size too.
@@ -139,16 +131,6 @@ final class WidgetSnapshotTests: XCTestCase {
         )
         sixWeekRenderer.scale = 2.0
         XCTAssertNotNil(sixWeekRenderer.uiImage)
-        if #available(iOS 27.0, *) {
-            let sixWeekPortraitRenderer = ImageRenderer(
-                content: CalendarWidgetView(data: sixWeekCal, family: .systemExtraLargePortrait, accent: accent)
-                    .frame(width: 253, height: 527)
-                    .background(WidgetPalette.background)
-                    .environment(\.colorScheme, .dark)
-            )
-            sixWeekPortraitRenderer.scale = 2.0
-            XCTAssertNotNil(sixWeekPortraitRenderer.uiImage)
-        }
 
         for (name, family, size, content) in specs {
             let radius: CGFloat = family == .systemLarge ? 24 : 22
