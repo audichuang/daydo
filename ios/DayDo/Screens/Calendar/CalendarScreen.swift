@@ -2,30 +2,6 @@ import Observation
 import SwiftUI
 import DayDoCore
 
-extension CalMode {
-    var label: String {
-        switch self { case .list: "清單"; case .year: "年"; case .month: "月"; case .week: "週"; case .threeDay: "3日"; case .day: "日" }
-    }
-    var icon: String {
-        switch self {
-        case .list: "list.bullet.below.rectangle"
-        case .year: "square.grid.3x3"
-        case .month: "calendar"
-        case .week: "rectangle.split.3x1"
-        case .threeDay: "rectangle.split.2x1"
-        case .day: "rectangle"
-        }
-    }
-    var macShortcutKey: String? {
-        switch self {
-        case .month: "M"
-        case .week: "W"
-        case .day: "D"
-        case .list, .year, .threeDay: nil
-        }
-    }
-}
-
 /// 日曆: 清單 (date grid + the selected day's items, 2a/2b), 年, 月 (event
 /// bars, 2c), and 週／3日／日 time grids.
 struct CalendarScreen: View {
@@ -537,6 +513,14 @@ struct CalendarScreen: View {
         }
     }
 
+    private func openDayView(_ d: LocalDay) {
+        shiftPage(direction: 0) {
+            selected = d
+            month = d.firstOfMonth
+            modeRaw = CalMode.day.rawValue
+        }
+    }
+
     func goToday() {
         shiftPage(direction: 0) {
             selected = model.today
@@ -656,25 +640,16 @@ struct CalendarScreen: View {
                             .padding(.top, 8)
                         } else {
                             ScrollView {
-                                VStack(spacing: 12) {
-                                    dateGrid
-                                    if timelineStyle { timelineAgenda } else { cardAgenda }
-                                }
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, 32)
+                                stackedList.padding(.bottom, 32)
                             }
                             .scrollIndicators(.hidden)
                         }
                     }
                 } else {
                     ScrollView {
-                        VStack(spacing: 12) {
-                            dateGrid
-                            if timelineStyle { timelineAgenda } else { cardAgenda }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 170)
-                        .enclosingScrollsToTop(isActive)
+                        stackedList
+                            .padding(.bottom, 170)
+                            .enclosingScrollsToTop(isActive)
                     }
                     .scrollPosition($listScrollPosition)
                     .scrollIndicators(.hidden)
@@ -689,13 +664,7 @@ struct CalendarScreen: View {
                                 modeRaw = Self.overviewMode.rawValue
                                 collapsed = false
                             }
-                        }, openDay: { d in
-                            shiftPage(direction: 0) {
-                                selected = d
-                                month = d.firstOfMonth
-                                modeRaw = CalMode.day.rawValue
-                            }
-                        })
+                        }, openDay: openDayView)
                         .id("year-\(pageSequence)")
                         .transition(pageTransition)
                     }
@@ -708,8 +677,8 @@ struct CalendarScreen: View {
                 .scrollPosition($yearScrollPosition)
                 .gesture(horizontalOnlySwipe)
             case .month:
-                // iPad and Mac fill the screen with a TickTick-style grid; the phone keeps the scrolling month.
-                if Platform.isMac || isRegular {
+                // iPad and Mac (always regular) fill the screen with a TickTick-style grid; the phone keeps the scrolling month.
+                if isRegular {
                     GeometryReader { geo in
                         ZStack {
                             fullHeightEventMonth(availableHeight: geo.size.height)
@@ -732,8 +701,8 @@ struct CalendarScreen: View {
                         }
                         .modifier(HorizontalDragOffsetModifier(drag: drag, reduceMotion: reduceMotion))
                         .clipped()
-                        .padding(.horizontal, isRegular ? 16 : 8)
-                        .padding(.bottom, isRegular ? 32 : 170)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 170)
                         .enclosingScrollsToTop(isActive)
                     }
                     .scrollPosition($monthScrollPosition)
@@ -761,13 +730,7 @@ struct CalendarScreen: View {
                             isViewerFilter: model.isViewer(projectId: projectFilter),
                             openTask: openCalendarTask,
                             tapEmpty: { d in compose(day: d, minute: nil) },
-                            openDay: { d in
-                                shiftPage(direction: 0) {
-                                    selected = d
-                                    month = d.firstOfMonth
-                                    modeRaw = CalMode.day.rawValue
-                                }
-                            },
+                            openDay: openDayView,
                             pickMiniDay: { d in
                                 let oldWeekStart = sel.startOfWeek
                                 let newWeekStart = d.startOfWeek
@@ -819,6 +782,15 @@ struct CalendarScreen: View {
         .onDisappear {
             gridDragLock.isActive = false
         }
+    }
+
+    /// Date grid above the agenda: the phone, and iPad when too narrow for side-by-side.
+    private var stackedList: some View {
+        VStack(spacing: 12) {
+            dateGrid
+            if timelineStyle { timelineAgenda } else { cardAgenda }
+        }
+        .padding(.horizontal, 16)
     }
 
     var busyDays: Set<LocalDay> {
@@ -999,40 +971,3 @@ struct CalendarScreen: View {
         }
     }
 }
-
-/// High-frequency gesture offsets kept out of `CalendarScreen.body` so dragging
-/// does not re-evaluate layouts or diff tasks on every frame.
-@MainActor
-@Observable
-final class CalendarDragState {
-    var horizontalOffset: CGFloat = 0
-    var collapseY: CGFloat = 0
-}
-
-struct HorizontalDragOffsetModifier: ViewModifier {
-    var drag: CalendarDragState
-    var reduceMotion: Bool
-
-    func body(content: Content) -> some View {
-        content.offset(x: reduceMotion ? 0 : drag.horizontalOffset)
-    }
-}
-
-struct CalReload: Hashable {
-    var range: ClosedRange<LocalDay>
-    var member: String?
-    var completed: Bool
-    var revision: Int
-
-    fileprivate var queryKey: CalQueryKey {
-        CalQueryKey(range: range, member: member, completed: completed)
-    }
-}
-
-struct CalActivation: Equatable { var isActive: Bool; var navTrigger: Int }
-
-struct TimeGridScrollKey: Equatable { var days: [LocalDay]; var resetToken: Int }
-
-struct CalQueryKey: Equatable { var range: ClosedRange<LocalDay>; var member: String?; var completed: Bool }
-
-struct CalAgendaContext: Hashable { var day: LocalDay; var member: String?; var project: String?; var completed: Bool }

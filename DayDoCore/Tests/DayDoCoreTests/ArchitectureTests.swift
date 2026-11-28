@@ -346,6 +346,13 @@ private let guards: [Guard] = [
         bad: ["if UIDevice.current.userInterfaceIdiom == .pad {"]
     ),
     Guard(
+        name: "Mac windows are always regular width, so `Platform.isMac || isRegular` is just `isRegular` (the calendar month view carried one with dead phone ternaries)",
+        directories: ["ios/DayDo/Screens", "ios/DayDo/Components"],
+        pattern: #"Platform\.isMac\s*\|\|\s*isRegular|isRegular\w*\s*\|\|\s*Platform\.isMac"#,
+        allow: [],
+        bad: ["if Platform.isMac || isRegular {", "isRegularWindow || Platform.isMac"]
+    ),
+    Guard(
         name: "Esc goes through SelectionShortcutBridge (skips active text input); .keyboardShortcut(.cancelAction) also steals Esc mid Zhuyin composition",
         directories: ["ios/DayDo/Screens", "ios/DayDo/Components"],
         pattern: #"\.keyboardShortcut\(\s*(KeyboardShortcut)?\.(cancelAction|escape)"#,
