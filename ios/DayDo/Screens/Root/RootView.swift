@@ -34,7 +34,9 @@ struct RootView: View {
             if model.ready {
                 if model.isSignedIn {
                     Group {
-                        if isRegular {
+                        if Platform.isMac {
+                            MacRootView(columnVisibility: $columnVisibility)
+                        } else if isRegular {
                             RegularSplitView(columnVisibility: $columnVisibility)
                         } else {
                             ZStack(alignment: .bottom) {

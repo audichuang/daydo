@@ -2,25 +2,17 @@ import SwiftUI
 import UIKit
 import DayDoCore
 
+/// iPad shell (regular width). The Mac shell is `MacRootView`; keep Mac branches out of here.
 struct RegularSplitView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var columnVisibility: NavigationSplitViewVisibility
     @State private var isWide = false
     @State private var calendarPath = NavigationPath()
     @State private var searchPath = NavigationPath()
-    /// Mac: the tab that stays visible under the floating search panel.
-    @State private var macBehindSearch: MainTab = .tasks
 
     var body: some View {
         Group {
-            if Platform.isMac {
-                HStack(spacing: 0) {
-                    MacIconRail()
-                    macContent
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            } else if model.tab == .tasks {
+            if model.tab == .tasks {
                 tasksSplitView
             } else {
                 NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -32,7 +24,6 @@ struct RegularSplitView: View {
             }
         }
         .onChange(of: model.tab) { _, tab in
-            if tab != .search { macBehindSearch = tab }
             if tab != .calendar { calendarPath = NavigationPath() }
             if tab != .search { searchPath = NavigationPath() }
         }
@@ -40,13 +31,12 @@ struct RegularSplitView: View {
             proxy.size.width >= 1100
         } action: { wide in
             isWide = wide
-            syncColumnVisibility(wide: wide, isTasks: shownTab == .tasks)
+            syncColumnVisibility(wide: wide, isTasks: model.tab == .tasks)
         }
-        .onChange(of: shownTab == .tasks) { _, isTasks in
+        .onChange(of: model.tab == .tasks) { _, isTasks in
             syncColumnVisibility(wide: isWide, isTasks: isTasks)
         }
         .onChange(of: isKanban) { _, newIsKanban in
-            if Platform.isMac { return }
             if let next = RegularSplitVisibility.translatedForKanbanToggle(
                 current: columnVisibility,
                 toKanban: newIsKanban,
@@ -58,75 +48,13 @@ struct RegularSplitView: View {
         }
     }
 
-    /// The tab actually on screen: on Mac the search panel floats over the previous tab.
-    private var shownTab: MainTab { Platform.isMac && model.tab == .search ? macBehindSearch : model.tab }
-
     private var isKanban: Bool {
-        // The tasks tab also stays visible under the Mac search panel.
-        (model.tab == .tasks || (Platform.isMac && model.tab == .search && macBehindSearch == .tasks))
-            && model.isKanbanScope(model.scope)
-    }
-
-    /// Mac search is a floating panel over the current tab (desktop apps search from a
-    /// panel, not a page); the tab underneath keeps its identity while the panel is open.
-    private var macContent: some View {
-        let shown = shownTab
-        return ZStack(alignment: .top) {
-            Group {
-                if shown == .tasks {
-                    tasksSplitView
-                } else {
-                    tabContent(shown)
-                }
-            }
-            .allowsHitTesting(model.tab != .search)
-            .accessibilityHidden(model.tab == .search)
-
-            if model.tab == .search {
-                Palette.scrim.ignoresSafeArea()
-                    .onTapGesture { model.tab = macBehindSearch }
-                    .accessibilityLabel("關閉搜尋")
-                    .accessibilityAddTraits(.isButton)
-                SearchScreen()
-                    .frame(width: 640)
-                    .frame(maxHeight: 560)
-                    .background(Palette.background)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Palette.separator, lineWidth: 1)
-                    }
-                    .shadow(color: Palette.navShadow, radius: 24, y: 8)
-                    .padding(.top, 72)
-                    .background {
-                        // Esc closes the panel even while the search field has focus.
-                        Button("關閉搜尋") { model.tab = macBehindSearch }
-                            .keyboardShortcut(.cancelAction)
-                            .hidden()
-                    }
-                    .transition(.opacity)
-            }
-        }
+        model.tab == .tasks && model.isKanbanScope(model.scope)
     }
 
     @ViewBuilder
     private var tasksSplitView: some View {
-        if Platform.isMac {
-            // Mac: the list is the main column and the detail a resizable side pane, in both
-            // list and kanban mode (one shape, so a half-edited detail survives the switch).
-            NavigationSplitView(columnVisibility: $columnVisibility) {
-                sidebar
-                    .toolbar(.hidden, for: .navigationBar)
-            } detail: {
-                MacTaskColumns(showsPlaceholder: !isKanban)
-                    .toolbar(.hidden, for: .navigationBar)
-            }
-            .navigationSplitViewStyle(.balanced)
-            .environment(\.macSidebarToggle) {
-                withAnimation(Motion.layout(reduceMotion)) {
-                    columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
-                }
-            }
-        } else if isKanban {
+        if isKanban {
             HStack(spacing: 0) {
                 NavigationSplitView(columnVisibility: $columnVisibility) {
                     sidebar
@@ -142,7 +70,7 @@ struct RegularSplitView: View {
                         model.selectedTaskId = nil
                     }
                     .id(taskId)
-                    .frame(width: Platform.isMac ? 380 : 360)
+                    .frame(width: 360)
                 }
             }
         } else {
@@ -163,8 +91,6 @@ struct RegularSplitView: View {
                     }
                 }
                 .navigationTitle("")
-                .navigationBarTitleDisplayMode(Platform.isMac ? .inline : .automatic)
-                .toolbar(Platform.isMac ? .hidden : .automatic, for: .navigationBar)
             }
             .navigationSplitViewStyle(.balanced)
         }
@@ -191,19 +117,13 @@ struct RegularSplitView: View {
     }
 
     private func syncColumnVisibility(wide: Bool, isTasks: Bool) {
-        if Platform.isMac && !isTasks { return }
-        // Mac tasks are always two columns (sidebar + list/detail), like kanban elsewhere.
-        columnVisibility = RegularSplitVisibility.defaultVisibility(wide: wide, isTasks: isTasks, isKanban: Platform.isMac || isKanban)
+        columnVisibility = RegularSplitVisibility.defaultVisibility(wide: wide, isTasks: isTasks, isKanban: isKanban)
     }
 
     private var sidebar: some View {
         DrawerView(close: {}, rowDragging: .constant(false), isSidebar: true)
             .navigationBarTitleDisplayMode(.inline)
-            .navigationSplitViewColumnWidth(
-                min: Platform.isMac ? 196 : 230,
-                ideal: Platform.isMac ? 220 : 260,
-                max: Platform.isMac ? 260 : 300
-            )
+            .navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 300)
     }
 }
 

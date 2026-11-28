@@ -341,7 +341,7 @@ private let guards: [Guard] = [
         pattern: #"\.keyboardShortcut\(\s*(KeyboardShortcut)?\.(cancelAction|escape)"#,
         allow: [
             // Unresolved risk, not a reason: Esc closes the Mac search panel while its field may be composing Zhuyin.
-            "ios/DayDo/Screens/Root/RegularSplitView.swift",
+            "ios/DayDo/Screens/Root/MacRootView.swift",
             // Unresolved risk, not a reason: Esc on the Mac email-code step while a field may be composing.
             "ios/DayDo/Screens/Account/SignInView.swift",
         ],
@@ -382,6 +382,17 @@ private let guards: [Guard] = [
         #expect(ownerIdsCalls == 3, "Expected 1 definition + 2 call sites (fetchActive & tasks) for taskOwnerIds(, found \(ownerIdsCalls)")
         #expect(ownerCalls == 2, "Expected 1 definition + 1 call site in taskOwnerIds for taskOwnerId(, found \(ownerCalls)")
         #expect(code.contains("TaskQuery(memberId: memberId)"), "Expected listSections(.smart(.all)) to delegate to fetchActive via TaskQuery(memberId:)")
+    }
+
+    /// RootView picks one shell per platform; RegularSplitView is iPad-only, so a
+    /// `Platform.isMac` there is dead code or a Mac block in the wrong file (the Mac
+    /// shell once lived inside it with iPad-only dead ternaries).
+    @Test func regularSplitViewHasNoMacBranches() throws {
+        let code = try codeLines("ios/DayDo/Screens/Root/RegularSplitView.swift")
+        #expect(code.contains("struct RegularSplitView"), "RegularSplitView moved; re-point this guard")
+        #expect(!code.contains("Platform.isMac"), "Mac layout belongs in MacRootView")
+        let root = try codeLines("ios/DayDo/Screens/Root/RootView.swift")
+        #expect(root.contains("MacRootView("), "RootView must route Mac to MacRootView")
     }
 
     /// A UIUserInterfaceStyle key in the generated Info.plist pins the app to one appearance and
