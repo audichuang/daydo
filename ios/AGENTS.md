@@ -30,7 +30,7 @@ UI 改動一律同時維護 iPhone、iPad、Mac 三個平台：同一個畫面�
 - 用電腦的操作邏輯：右鍵選單、雙擊空白處新增、hover 回饋、Esc 關閉、可拖寬的欄、快捷鍵；不用觸控邏輯（左滑、長按、大圓鈕、浮動小卡、一層層點進去的頁）。
 - 版面：左側圖示欄切分頁；任務分頁是清單欄＋列表主欄＋可拖寬的詳情側欄；頂列自繪、標題靠左，不用系統導覽列；搜尋是浮動面板，設定是左右兩欄。使用者點名過的平板痕跡：列表窄詳情寬、置中標題與圓鈕、卡片式三行任務列、整頁搜尋、一層層點進去的設定、小月曆配行程的日曆。
 - 日曆是 Mac 上最常用的畫面：大螢幕要在月格裡直接看到當天內容，所以 Mac 沒有「清單」模式、預設月檢視；左側小月曆與清單篩選，點任務在右側詳情直接編輯。改日曆要照桌面日曆想，不能只沿用 iPad 版。
-- 擺放：`RootView` 依平台分三個外殼：手機（`CompactTabContent`＋底欄）、iPad（`RegularSplitView`）、Mac（`MacRootView`），外殼裡不再判斷別的平台；整塊只在 Mac 出現的畫面做成獨立 struct、放同資料夾的獨立檔（如 `MacTaskColumns`、`CalendarMacSidebar`），共用畫面用 `if Platform.isMac` 切過去；Mac 的按鈕、選單外框共用 `Components/MacChrome.swift`。尺寸、字級這類小差異的三元式留在原處即可。已經排除 Mac 的程式碼（手機頂列、`isRegular && !Platform.isMac` 的工具列、觸控滑動列）裡不寫 `Platform.isMac` 分支，那裡永遠不會執行。為 Mac 改外觀不動共用的修飾，否則會一起改到 iPhone／iPad（年曆對齊曾這樣漏過去）。
+- 擺放：`RootView` 依平台分三個外殼：手機（`CompactTabContent`＋底欄）、iPad（`RegularSplitView`）、Mac（`MacRootView`），外殼裡不再判斷別的平台。手機與 iPad 依 `horizontalSizeClass`（`isRegular`）分、不看裝置，iPad 分割畫面變窄時要拿到手機版面；Mac 一律用 `Platform.isMac`，不用 `userInterfaceIdiom`。整塊只在 Mac 出現的畫面做成獨立 struct、放同資料夾的獨立檔（如 `MacTaskColumns`、`CalendarMacSidebar`），共用畫面用 `if Platform.isMac` 切過去；Mac 的按鈕、選單外框共用 `Components/MacChrome.swift`。尺寸、字級這類小差異的三元式留在原處即可。已經排除 Mac 的程式碼（手機頂列、`isRegular && !Platform.isMac` 的工具列、觸控滑動列）裡不寫 `Platform.isMac` 分支，那裡永遠不會執行。為 Mac 改外觀不動共用的修飾，否則會一起改到 iPhone／iPad（年曆對齊曾這樣漏過去）。
 - 鍵盤、觸控板、快捷鍵的新行為要包 `Platform.isMac`：不分平台時曾讓 iPhone 接外接鍵盤能無確認永久刪除任務。
 - 同一筆任務同時只能有一份編輯器：浮動面板（搜尋）蓋在仍在運作的編輯器上，再開一份會讓舊草稿覆寫新存的內容。
 - Mac 版沒有 Sign in with Apple（Catalyst 的 Developer ID profile 不支援，Mac 用 `DayDo/DayDo-mac.entitlements`），Apple 登入與連結入口在 Mac 一律隱藏。

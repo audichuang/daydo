@@ -336,6 +336,16 @@ private let guards: [Guard] = [
         ]
     ),
     Guard(
+        name: "layout branches on horizontalSizeClass and Mac on Platform.isMac, not userInterfaceIdiom (an iPad in narrow split view must get the phone layout)",
+        directories: ["ios/DayDo/Screens", "ios/DayDo/Components"],
+        pattern: #"userInterfaceIdiom"#,
+        allow: [
+            // Keyboard type follows the device, not the width: the iPad floating number pad hides the buttons.
+            "ios/DayDo/Screens/Account/EmailCodeSheet.swift",
+        ],
+        bad: ["if UIDevice.current.userInterfaceIdiom == .pad {"]
+    ),
+    Guard(
         name: "Esc goes through SelectionShortcutBridge (skips active text input); .keyboardShortcut(.cancelAction) also steals Esc mid Zhuyin composition",
         directories: ["ios/DayDo/Screens", "ios/DayDo/Components"],
         pattern: #"\.keyboardShortcut\(\s*(KeyboardShortcut)?\.(cancelAction|escape)"#,
